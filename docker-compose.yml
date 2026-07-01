@@ -1,0 +1,23 @@
+# Postgres pour le développement local.
+# Démarrer : docker compose up -d
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: imputo-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: imputo
+      POSTGRES_PASSWORD: imputo
+      POSTGRES_DB: imputo
+    ports:
+      - '5432:5432'
+    volumes:
+      - imputo-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U imputo']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  imputo-pgdata:

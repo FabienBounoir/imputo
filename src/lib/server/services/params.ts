@@ -1,0 +1,263 @@
+import { and, eq, ne, isNull, count, sql } from 'drizzle-orm';
+import { db, category, activity, timeEntry, state, ticket } from '$lib/server/db';
+
+export type CategoryKind = 'PRODUCTIVE' | 'NON_PRODUCTIVE';
+export type CategoryItem = {
+	id: string;
+	label: string;
+	kind: CategoryKind;
+	archived: boolean;
+	usage: number;
+};
+export type ActivityItem = { id: string; label: string; archived: boolean; usage: number };
+
+const kindOf = (v: unknown): CategoryKind => (v === 'NON_PRODUCTIVE' ? 'NON_PRODUCTIVE' : 'PRODUCTIVE');
+
+/** Rejette un label déjà pris par un item actif (insensible à la casse) dans l'espace. */
+async function assertUniqueLabel(
+	table: typeof category | typeof activity,
+	workspaceId: string,
+	trimmed: string,
+	excludeId: string | null
+) {
+	const conds = [
+		eq(table.workspaceId, workspaceId),
+		isNull(table.archivedAt),
+		sql`lower(${table.label}) = ${trimmed.toLowerCase()}`
+	];
+	if (excludeId) conds.push(ne(table.id, excludeId));
+	const dup = await db
+		.select({ id: table.id })
+		.from(table)
+		.where(and(...conds))
+		.limit(1);
+	if (dup.length) throw new Error('Un élément actif porte déjà ce nom.');
+}
+
+// ---------- Catégories ----------
+
+export async function listCategories(workspaceId: string): Promise<CategoryItem[]> {
+	const rows = await db
+		.select({
+			id: category.id,
+			label: category.label,
+			kind: category.kind,
+			archivedAt: category.archivedAt,
+			usage: count(timeEntry.id)
+		})
+		.from(category)
+		.leftJoin(timeEntry, eq(timeEntry.categoryId, category.id))
+		.where(eq(category.workspaceId, workspaceId))
+		.groupBy(category.id, category.label, category.kind, category.archivedAt)
+		.orderBy(category.label);
+	return rows.map((r) => ({
+		id: r.id,
+		label: r.label,
+		kind: kindOf(r.kind),
+		archived: r.archivedAt !== null,
+		usage: r.usage
+	}));
+}
+
+export async function createCategory(workspaceId: string, label: string, kind: CategoryKind) {
+	const trimmed = label.trim();
+	if (!trimmed) throw new Error('Nom requis.');
+	await assertUniqueLabel(category, workspaceId, trimmed, null);
+	await db.insert(category).values({ workspaceId, label: trimmed, kind: kindOf(kind) });
+}
+
+export async function renameCategory(workspaceId: string, id: string, label: string) {
+	const trimmed = label.trim();
+	if (!trimmed) throw new Error('Nom requis.');
+	await assertUniqueLabel(category, workspaceId, trimmed, id);
+	const res = await db
+		.update(category)
+		.set({ label: trimmed })
+		.where(and(eq(category.id, id), eq(category.workspaceId, workspaceId)))
+		.returning({ id: category.id });
+	if (res.length === 0) throw new Error('Introuvable dans cet espace.');
+}
+
+export async function setCategoryKind(workspaceId: string, id: string, kind: CategoryKind) {
+	const res = await db
+		.update(category)
+		.set({ kind: kindOf(kind) })
+		.where(and(eq(category.id, id), eq(category.workspaceId, workspaceId)))
+		.returning({ id: category.id });
+	if (res.length === 0) throw new Error('Introuvable dans cet espace.');
+}
+
+export async function setCategoryArchived(workspaceId: string, id: string, archived: boolean) {
+	const res = await db
+		.update(category)
+		.set({ archivedAt: archived ? new Date() : null })
+		.where(and(eq(category.id, id), eq(category.workspaceId, workspaceId)))
+		.returning({ id: category.id });
+	if (res.length === 0) throw new Error('Introuvable dans cet espace.');
+}
+
+// ---------- Activités ----------
+
+export async function listActivities(workspaceId: string): Promise<ActivityItem[]> {
+	const rows = await db
+		.select({
+			id: activity.id,
+			label: activity.label,
+			archivedAt: activity.archivedAt,
+			usage: count(timeEntry.id)
+		})
+		.from(activity)
+		.leftJoin(timeEntry, eq(timeEntry.activityId, activity.id))
+		.where(eq(activity.workspaceId, workspaceId))
+		.groupBy(activity.id, activity.label, activity.archivedAt)
+		.orderBy(activity.label);
+	return rows.map((r) => ({
+		id: r.id,
+		label: r.label,
+		archived: r.archivedAt !== null,
+		usage: r.usage
+	}));
+}
+
+export async function createActivity(workspaceId: string, label: string) {
+	const trimmed = label.trim();
+	if (!trimmed) throw new Error('Nom requis.');
+	await assertUniqueLabel(activity, workspaceId, trimmed, null);
+	await db.insert(activity).values({ workspaceId, label: trimmed });
+}
+
+export async function renameActivity(workspaceId: string, id: string, label: string) {
+	const trimmed = label.trim();
+	if (!trimmed) throw new Error('Nom requis.');
+	await assertUniqueLabel(activity, workspaceId, trimmed, id);
+	const res = await db
+		.update(activity)
+		.set({ label: trimmed })
+		.where(and(eq(activity.id, id), eq(activity.workspaceId, workspaceId)))
+		.returning({ id: activity.id });
+	if (res.length === 0) throw new Error('Introuvable dans cet espace.');
+}
+
+export async function setActivityArchived(workspaceId: string, id: string, archived: boolean) {
+	const res = await db
+		.update(activity)
+		.set({ archivedAt: archived ? new Date() : null })
+		.where(and(eq(activity.id, id), eq(activity.workspaceId, workspaceId)))
+		.returning({ id: activity.id });
+	if (res.length === 0) throw new Error('Introuvable dans cet espace.');
+}
+
+// ---------- États du workflow ----------
+
+export type StateItem = {
+	id: string;
+	label: string;
+	emoji: string | null;
+	color: string | null;
+	sortOrder: number;
+	usage: number;
+};
+
+const HEX = /^#[0-9a-fA-F]{6}$/;
+
+export async function listStates(workspaceId: string): Promise<StateItem[]> {
+	const rows = await db
+		.select({
+			id: state.id,
+			label: state.label,
+			emoji: state.emoji,
+			color: state.color,
+			sortOrder: state.sortOrder,
+			usage: count(ticket.id)
+		})
+		.from(state)
+		.leftJoin(ticket, and(eq(ticket.stateId, state.id), isNull(ticket.archivedAt)))
+		.where(eq(state.workspaceId, workspaceId))
+		.groupBy(state.id, state.label, state.emoji, state.color, state.sortOrder)
+		.orderBy(state.sortOrder);
+	return rows;
+}
+
+async function assertUniqueStateLabel(workspaceId: string, trimmed: string, excludeId: string | null) {
+	const conds = [
+		eq(state.workspaceId, workspaceId),
+		sql`lower(${state.label}) = ${trimmed.toLowerCase()}`
+	];
+	if (excludeId) conds.push(ne(state.id, excludeId));
+	const dup = await db.select({ id: state.id }).from(state).where(and(...conds)).limit(1);
+	if (dup.length) throw new Error('Un état porte déjà ce nom.');
+}
+
+export async function createState(
+	workspaceId: string,
+	label: string,
+	emoji: string,
+	color: string
+) {
+	const trimmed = label.trim();
+	if (!trimmed) throw new Error('Nom requis.');
+	await assertUniqueStateLabel(workspaceId, trimmed, null);
+	const [{ max }] = await db
+		.select({ max: sql<number>`coalesce(max(${state.sortOrder}), -1)` })
+		.from(state)
+		.where(eq(state.workspaceId, workspaceId));
+	await db.insert(state).values({
+		workspaceId,
+		label: trimmed,
+		emoji: emoji.trim() || null,
+		color: HEX.test(color) ? color : '#94A3B8',
+		sortOrder: Number(max) + 1
+	});
+}
+
+export async function updateState(
+	workspaceId: string,
+	id: string,
+	fields: { label?: string; emoji?: string; color?: string }
+) {
+	const patch: { label?: string; emoji?: string | null; color?: string } = {};
+	if (fields.label !== undefined) {
+		const trimmed = fields.label.trim();
+		if (!trimmed) throw new Error('Nom requis.');
+		await assertUniqueStateLabel(workspaceId, trimmed, id);
+		patch.label = trimmed;
+	}
+	if (fields.emoji !== undefined) patch.emoji = fields.emoji.trim() || null;
+	if (fields.color !== undefined) {
+		if (!HEX.test(fields.color)) throw new Error('Couleur invalide (hex).');
+		patch.color = fields.color;
+	}
+	if (Object.keys(patch).length === 0) return;
+	const res = await db
+		.update(state)
+		.set(patch)
+		.where(and(eq(state.id, id), eq(state.workspaceId, workspaceId)))
+		.returning({ id: state.id });
+	if (res.length === 0) throw new Error('Introuvable dans cet espace.');
+}
+
+/** Échange l'ordre d'un état avec son voisin (haut/bas). */
+export async function moveState(workspaceId: string, id: string, dir: 'up' | 'down') {
+	const rows = await db
+		.select({ id: state.id, sortOrder: state.sortOrder })
+		.from(state)
+		.where(eq(state.workspaceId, workspaceId))
+		.orderBy(state.sortOrder);
+	const idx = rows.findIndex((r) => r.id === id);
+	const swap = dir === 'up' ? idx - 1 : idx + 1;
+	if (idx < 0 || swap < 0 || swap >= rows.length) return;
+	const a = rows[idx];
+	const b = rows[swap];
+	await db.transaction(async (tx) => {
+		await tx.update(state).set({ sortOrder: b.sortOrder }).where(eq(state.id, a.id));
+		await tx.update(state).set({ sortOrder: a.sortOrder }).where(eq(state.id, b.id));
+	});
+}
+
+export async function deleteState(workspaceId: string, id: string) {
+	const res = await db
+		.delete(state)
+		.where(and(eq(state.id, id), eq(state.workspaceId, workspaceId)))
+		.returning({ id: state.id });
+	if (res.length === 0) throw new Error('Introuvable dans cet espace.');
+}

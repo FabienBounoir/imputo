@@ -1,0 +1,3 @@
+ALTER TABLE "activity" ADD COLUMN "archived_at" timestamp with time zone;--> statement-breakpoint
+CREATE UNIQUE INDEX "activity_ws_name_uq" ON "activity" USING btree ("workspace_id",lower("label")) WHERE "activity"."archived_at" is null;--> statement-breakpoint
+CREATE UNIQUE INDEX "category_ws_name_uq" ON "category" USING btree ("workspace_id",lower("label")) WHERE "category"."archived_at" is null;
