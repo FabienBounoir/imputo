@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="fr">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="text-scale" content="scale" />
+
+		<!-- Identité / favicon -->
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<link rel="alternate icon" type="image/png" href="/icons/favicon-32.png" />
+		<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+
+		<!-- PWA -->
+		<link rel="manifest" href="/manifest.webmanifest" />
+		<meta name="theme-color" content="#16a34a" />
+		<meta
+			name="description"
+			content="Suivi de chiffrage & d'imputation : tickets, feuille de temps et reporting au même endroit."
+		/>
+		<meta name="mobile-web-app-capable" content="yes" />
+		<meta name="apple-mobile-web-app-capable" content="yes" />
+		<meta name="apple-mobile-web-app-title" content="Imputo" />
+		<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+
+		<!-- Anti-flash : applique thème + accent AVANT le 1er rendu (depuis le localStorage). -->
+		<script>
+			(function () {
+				try {
+					var t = localStorage.getItem('imputo-theme') || 'system';
+					var dark =
+						t === 'dark' ||
+						(t === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+					document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+					var a = localStorage.getItem('imputo-accent');
+					if (a) document.documentElement.style.setProperty('--accent', a);
+				} catch (e) {}
+			})();
+		</script>
+
+		%sveltekit.head%
+	</head>
+	<body data-sveltekit-preload-data="hover">
+		<div style="display: contents">%sveltekit.body%</div>
+	</body>
+</html>
