@@ -126,6 +126,10 @@ export async function setAccentColor(workspaceId: string, color: string) {
 	await db.update(workspace).set({ accentColor: color }).where(eq(workspace.id, workspaceId));
 }
 
+export async function setTestPhase(workspaceId: string, enabled: boolean) {
+	await db.update(workspace).set({ testPhase: enabled }).where(eq(workspace.id, workspaceId));
+}
+
 const memberWhere = (workspaceId: string, userId: string) =>
 	and(eq(membership.workspaceId, workspaceId), eq(membership.userId, userId));
 

@@ -147,13 +147,15 @@ async function raeStale(refDate: string, members: Member[]): Promise<number> {
 			cnt: sql<number>`count(*)::int`
 		})
 		.from(ticket)
+		.innerJoin(workspace, eq(ticket.workspaceId, workspace.id))
 		.where(
 			and(
 				isNotNull(ticket.assigneeId),
 				isNull(ticket.archivedAt),
 				isNotNull(ticket.raeUpdatedAt),
 				lt(ticket.raeUpdatedAt, cutoff),
-				sql`coalesce(${ticket.raeReal}, 0) + coalesce(${ticket.raeTest}, 0) > 0`
+				// RAE Test ignoré si la phase Test est désactivée sur l'espace.
+				sql`coalesce(${ticket.raeReal}, 0) + case when ${workspace.testPhase} then coalesce(${ticket.raeTest}, 0) else 0 end > 0`
 			)
 		)
 		.groupBy(ticket.workspaceId, ticket.assigneeId);

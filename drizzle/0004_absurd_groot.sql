@@ -1,0 +1,1 @@
+ALTER TABLE "workspace" ADD COLUMN "test_phase" boolean DEFAULT true NOT NULL;

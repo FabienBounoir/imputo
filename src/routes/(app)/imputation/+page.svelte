@@ -2,6 +2,7 @@
 	import { dayName, dayNum, parseISODate, toISODate } from '$lib/utils/date';
 	import { onMount, tick } from 'svelte';
 	import { goto, afterNavigate } from '$app/navigation';
+	import ExportModal from '$lib/components/ExportModal.svelte';
 
 	let { data } = $props();
 
@@ -178,6 +179,7 @@
 				<option value={m.id}>{m.displayName}</option>
 			{/each}
 		</select>
+		<ExportModal label="Exporter Excel" buttonClass="btn btn-ghost" />
 	{/if}
 	<div class="wknav">
 		<a class="wkbtn" href="?w={data.prevWeek}{uSuffix}" aria-label="Semaine précédente">
@@ -294,7 +296,6 @@
 			<span class="kbd">Clique pour faire défiler <b>·</b> → .25 → .5 → .75 → 1</span>
 			<span class="kbd">Clavier : <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> → .25 / .5 / .75 / 1 · <kbd>0</kbd>/<kbd>Suppr</kbd> vide · <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> naviguer · <kbd>←</kbd>/<kbd>→</kbd> en bord = semaine ±</span>
 		{/if}
-		<span class="kbd warn">Les jours dépassant la capacité ({data.capacity} j) sont signalés (non bloquant).</span>
 	</div>
 </div>
 

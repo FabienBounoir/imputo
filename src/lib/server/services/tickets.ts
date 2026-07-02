@@ -66,7 +66,7 @@ export type TicketRow = {
 };
 
 /** Liste les tickets non archivés d'un espace, avec consommé + indicateurs calculés. */
-export async function listTickets(workspaceId: string): Promise<TicketRow[]> {
+export async function listTickets(workspaceId: string, testPhase = true): Promise<TicketRow[]> {
 	const tickets = await db
 		.select({
 			id: ticket.id,
@@ -107,8 +107,8 @@ export async function listTickets(workspaceId: string): Promise<TicketRow[]> {
 	const consumedMap = new Map(consumedRows.map((r) => [r.ticketId, num(r.total)]));
 
 	return tickets.map((t) => {
-		const totalEst = totalEstimation(t.estimationReal, t.estimationTest);
-		const rae = totalRae(t.raeReal, t.raeTest);
+		const totalEst = totalEstimation(t.estimationReal, t.estimationTest, testPhase);
+		const rae = totalRae(t.raeReal, t.raeTest, testPhase);
 		const consumed = consumedMap.get(t.id) ?? 0;
 		return {
 			id: t.id,

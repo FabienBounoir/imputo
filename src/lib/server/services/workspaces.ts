@@ -95,6 +95,7 @@ export type MembershipInfo = {
 	workspaceId: string;
 	workspaceName: string;
 	accentColor: string;
+	testPhase: boolean;
 	allowedDomain: string;
 	role: Role;
 };
@@ -106,6 +107,7 @@ export async function listMembershipsForUser(userId: string): Promise<Membership
 			workspaceId: workspace.id,
 			workspaceName: workspace.name,
 			accentColor: workspace.accentColor,
+			testPhase: workspace.testPhase,
 			allowedDomain: workspace.allowedDomain,
 			role: membership.role
 		})

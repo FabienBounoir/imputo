@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, gte, lte, sql } from 'drizzle-orm';
 import { db, timeEntry, category, activity, user } from '$lib/server/db';
 import { listTickets, getRefData } from './tickets';
 import { num, round, totalEstimation, totalRae, avancement } from './calc';
@@ -30,10 +30,23 @@ export type GroupProgress = {
 	ticketCount: number;
 };
 
-export async function getDashboard(workspaceId: string): Promise<Dashboard> {
-	const [tickets, ref, personRows, activityRows] = await Promise.all([
-		listTickets(workspaceId),
-		getRefData(workspaceId),
+/**
+ * Synthèse d'un espace.
+ * Sans `period` : vue complète (chiffrage état courant + imputations totales).
+ * Avec `period` (mois) : seules les stats issues des imputations sont bornées à la
+ * période ; le chiffrage (estimé/RAE/avancement/état/projet) est masqué car il n'a
+ * pas de dimension temporelle — il reste consultable en « Tout l'espace ».
+ */
+export async function getDashboard(
+	workspaceId: string,
+	period?: { from: string; to: string },
+	testPhase = true
+): Promise<Dashboard> {
+	const inPeriod = period
+		? and(gte(timeEntry.day, period.from), lte(timeEntry.day, period.to))
+		: undefined;
+
+	const [personRows, activityRows] = await Promise.all([
 		db
 			.select({
 				name: user.displayName,
@@ -44,7 +57,7 @@ export async function getDashboard(workspaceId: string): Promise<Dashboard> {
 			.from(timeEntry)
 			.leftJoin(category, eq(timeEntry.categoryId, category.id))
 			.innerJoin(user, eq(timeEntry.userId, user.id))
-			.where(eq(timeEntry.workspaceId, workspaceId))
+			.where(and(eq(timeEntry.workspaceId, workspaceId), inPeriod))
 			.groupBy(user.displayName, timeEntry.targetType, category.kind),
 		db
 			.select({
@@ -53,9 +66,55 @@ export async function getDashboard(workspaceId: string): Promise<Dashboard> {
 			})
 			.from(timeEntry)
 			.leftJoin(activity, eq(timeEntry.activityId, activity.id))
-			.where(eq(timeEntry.workspaceId, workspaceId))
+			.where(and(eq(timeEntry.workspaceId, workspaceId), inPeriod))
 			.groupBy(sql`coalesce(${activity.label}, 'Non précisé')`)
 	]);
+
+	// Par personne (productif vs non productif) + consommé ticket sur la période
+	const persons = new Map<string, { productive: number; nonProductive: number }>();
+	let prodTotal = 0;
+	let nonProdTotal = 0;
+	let ticketConsumed = 0;
+	for (const r of personRows) {
+		const v = num(r.total);
+		if (r.tt === 'TICKET') ticketConsumed = round(ticketConsumed + v);
+		const isNonProd = r.tt === 'CATEGORY' && r.kind === 'NON_PRODUCTIVE';
+		if (!persons.has(r.name)) persons.set(r.name, { productive: 0, nonProductive: 0 });
+		const p = persons.get(r.name)!;
+		if (isNonProd) {
+			p.nonProductive = round(p.nonProductive + v);
+			nonProdTotal = round(nonProdTotal + v);
+		} else {
+			p.productive = round(p.productive + v);
+			prodTotal = round(prodTotal + v);
+		}
+	}
+	const byPerson = [...persons.entries()]
+		.map(([name, p]) => ({ name, ...p, total: round(p.productive + p.nonProductive) }))
+		.sort((a, b) => b.total - a.total);
+
+	const byActivity = activityRows
+		.map((a) => ({ label: a.label, total: round(num(a.total)) }))
+		.sort((a, b) => b.total - a.total);
+
+	const productiveVsNot = { productive: prodTotal, nonProductive: nonProdTotal };
+
+	// Mode mois : on ne renvoie que les stats mensuelles ; chiffrage masqué (vide).
+	if (period) {
+		return {
+			kpis: { estTotal: 0, consumedTotal: ticketConsumed, raeTotal: 0, avancement: 0, ticketCount: 0 },
+			byState: [],
+			byProject: [],
+			bySprint: [],
+			byVersion: [],
+			byPerson,
+			byActivity,
+			productiveVsNot
+		};
+	}
+
+	// Vue complète : chiffrage depuis l'état courant des tickets.
+	const [tickets, ref] = await Promise.all([listTickets(workspaceId), getRefData(workspaceId)]);
 
 	// KPIs + répartition par état + avancement par projet / sprint (depuis les tickets)
 	let estTotal = 0;
@@ -81,8 +140,8 @@ export async function getDashboard(workspaceId: string): Promise<Dashboard> {
 		map.set(name, g);
 	};
 	for (const t of tickets) {
-		const est = totalEstimation(String(t.estimationReal), String(t.estimationTest));
-		const rae = totalRae(String(t.raeReal), String(t.raeTest));
+		const est = totalEstimation(String(t.estimationReal), String(t.estimationTest), testPhase);
+		const rae = totalRae(String(t.raeReal), String(t.raeTest), testPhase);
 		estTotal += est;
 		raeTotalSum += rae;
 		consumedTotal += t.consumed;
@@ -122,31 +181,6 @@ export async function getDashboard(workspaceId: string): Promise<Dashboard> {
 	const noState = stateCount.get(null) ?? 0;
 	if (noState > 0) byState.push({ label: 'Sans état', emoji: '∅', color: '#9CA3AF', count: noState });
 
-	// Par personne (productif vs non productif)
-	const persons = new Map<string, { productive: number; nonProductive: number }>();
-	let prodTotal = 0;
-	let nonProdTotal = 0;
-	for (const r of personRows) {
-		const v = num(r.total);
-		const isNonProd = r.tt === 'CATEGORY' && r.kind === 'NON_PRODUCTIVE';
-		if (!persons.has(r.name)) persons.set(r.name, { productive: 0, nonProductive: 0 });
-		const p = persons.get(r.name)!;
-		if (isNonProd) {
-			p.nonProductive = round(p.nonProductive + v);
-			nonProdTotal = round(nonProdTotal + v);
-		} else {
-			p.productive = round(p.productive + v);
-			prodTotal = round(prodTotal + v);
-		}
-	}
-	const byPerson = [...persons.entries()]
-		.map(([name, p]) => ({ name, ...p, total: round(p.productive + p.nonProductive) }))
-		.sort((a, b) => b.total - a.total);
-
-	const byActivity = activityRows
-		.map((a) => ({ label: a.label, total: round(num(a.total)) }))
-		.sort((a, b) => b.total - a.total);
-
 	return {
 		kpis: {
 			estTotal,
@@ -161,6 +195,6 @@ export async function getDashboard(workspaceId: string): Promise<Dashboard> {
 		byVersion,
 		byPerson,
 		byActivity,
-		productiveVsNot: { productive: prodTotal, nonProductive: nonProdTotal }
+		productiveVsNot
 	};
 }
