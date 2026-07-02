@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { countWorkdays, isWorkday, previousWorkday, todayInParis } from './date';
+import { countWorkdays, isWorkday, previousWorkday, todayInParis, formatRange, parseISODate } from './date';
 
 describe('countWorkdays', () => {
 	it('compte 5 jours sur une semaine pleine (lun→dim)', () => {
@@ -49,5 +49,17 @@ describe('previousWorkday', () => {
 describe('todayInParis', () => {
 	it('renvoie une date au format ISO', () => {
 		expect(todayInParis()).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+	});
+});
+
+describe('formatRange', () => {
+	it('même mois : le mois n\'apparaît qu\'une fois', () => {
+		expect(formatRange(parseISODate('2026-07-06'))).toBe('6 → 10 juil. 2026');
+	});
+	it('chevauchement de mois : ajoute le mois du lundi', () => {
+		expect(formatRange(parseISODate('2026-06-29'))).toBe('29 juin → 3 juil. 2026');
+	});
+	it('chevauchement d\'année : ajoute mois + année du lundi', () => {
+		expect(formatRange(parseISODate('2025-12-29'))).toBe('29 déc. 2025 → 2 janv. 2026');
 	});
 });

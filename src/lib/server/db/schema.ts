@@ -38,6 +38,8 @@ export const workspace = pgTable('workspace', {
 	name: text('name').notNull(),
 	allowedDomain: text('allowed_domain').notNull(),
 	accentColor: text('accent_color').notNull().default('#16A34A'),
+	// Phase Test activée (Est./RAE Test, Prépa, flags qualité). Désactivable par l'admin.
+	testPhase: boolean('test_phase').notNull().default(true),
 	createdByUserId: uuid('created_by_user_id'),
 	createdAt: createdAt()
 });

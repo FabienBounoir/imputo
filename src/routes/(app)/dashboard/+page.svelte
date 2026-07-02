@@ -1,6 +1,8 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	let { data } = $props();
 	const d = $derived(data.dashboard);
+	const isAll = $derived(data.scope === 'all');
 
 	const pct = (x: number) => Math.round(x * 100);
 	// circonférence de l'anneau d'avancement (r=26)
@@ -15,35 +17,46 @@
 </script>
 
 <div class="topbar">
-	<h1>Synthèse<small>Vue d'ensemble de l'espace</small></h1>
+	<h1>Synthèse<small>{isAll ? "Vue d'ensemble de l'espace" : 'Imputations du mois'}</small></h1>
+	<div class="spacer"></div>
+	<select class="periodsel" value={data.scope} onchange={(e) => goto(`?month=${e.currentTarget.value}`, { keepFocus: true })} aria-label="Période des statistiques">
+		{#each data.months as m (m.value)}
+			<option value={m.value}>{m.label}</option>
+		{/each}
+		<option value="all">Tout l'espace</option>
+	</select>
 </div>
 
 <div class="content">
 	<!-- KPIs -->
 	<div class="kpis">
+		{#if isAll}
+			<div class="card kpi">
+				<div class="k">Estimé total</div>
+				<div class="v tabnum">{d.kpis.estTotal}<small>j</small></div>
+			</div>
+		{/if}
 		<div class="card kpi">
-			<div class="k">Estimé total</div>
-			<div class="v tabnum">{d.kpis.estTotal}<small>j</small></div>
-		</div>
-		<div class="card kpi">
-			<div class="k">Consommé total</div>
+			<div class="k">Consommé{isAll ? ' total' : ' (mois)'}</div>
 			<div class="v tabnum">{d.kpis.consumedTotal}<small>j</small></div>
 		</div>
-		<div class="card kpi">
-			<div class="k">RAE global</div>
-			<div class="v tabnum">{d.kpis.raeTotal}<small>j</small></div>
-		</div>
-		<div class="card kpi ring-card">
-			<div>
-				<div class="k">Avancement global</div>
-				<div class="v tabnum">{pct(d.kpis.avancement)}<small>%</small></div>
-				<div class="sub">{d.kpis.ticketCount} tickets</div>
+		{#if isAll}
+			<div class="card kpi">
+				<div class="k">RAE global</div>
+				<div class="v tabnum">{d.kpis.raeTotal}<small>j</small></div>
 			</div>
-			<svg viewBox="0 0 64 64" class="ring">
-				<circle cx="32" cy="32" r="26" fill="none" stroke="var(--surface-sunk)" stroke-width="8" />
-				<circle cx="32" cy="32" r="26" fill="none" stroke="var(--accent)" stroke-width="8" stroke-linecap="round" stroke-dasharray={dash} transform="rotate(-90 32 32)" />
-			</svg>
-		</div>
+			<div class="card kpi ring-card">
+				<div>
+					<div class="k">Avancement global</div>
+					<div class="v tabnum">{pct(d.kpis.avancement)}<small>%</small></div>
+					<div class="sub">{d.kpis.ticketCount} tickets</div>
+				</div>
+				<svg viewBox="0 0 64 64" class="ring">
+					<circle cx="32" cy="32" r="26" fill="none" stroke="var(--surface-sunk)" stroke-width="8" />
+					<circle cx="32" cy="32" r="26" fill="none" stroke="var(--accent)" stroke-width="8" stroke-linecap="round" stroke-dasharray={dash} transform="rotate(-90 32 32)" />
+				</svg>
+			</div>
+		{/if}
 	</div>
 
 	{#snippet groupPanel(title: string, groups: typeof d.byProject)}
@@ -75,29 +88,31 @@
 	{/snippet}
 
 	<div class="grid">
-		{@render groupPanel('Avancement par projet', d.byProject)}
-		{@render groupPanel('Avancement par sprint', d.bySprint)}
-		{#if d.byVersion.some((g) => g.name !== 'Sans version')}
-			{@render groupPanel('Avancement par version', d.byVersion)}
-		{/if}
-
-		<!-- Répartition par état -->
-		<div class="card panel">
-			<h3>Tickets par état</h3>
-			{#if d.byState.length === 0}
-				<p class="empty">Aucun ticket.</p>
-			{:else}
-				<div class="barlist">
-					{#each d.byState as s (s.label)}
-						<div class="barrow">
-							<span class="lbl"><span>{s.emoji ?? ''}</span> {s.label}</span>
-							<div class="track"><i style="width:{(s.count / maxState) * 100}%;background:{s.color ?? 'var(--accent)'}"></i></div>
-							<span class="val tabnum">{s.count}</span>
-						</div>
-					{/each}
-				</div>
+		{#if isAll}
+			{@render groupPanel('Avancement par projet', d.byProject)}
+			{@render groupPanel('Avancement par sprint', d.bySprint)}
+			{#if d.byVersion.some((g) => g.name !== 'Sans version')}
+				{@render groupPanel('Avancement par version', d.byVersion)}
 			{/if}
-		</div>
+
+			<!-- Répartition par état -->
+			<div class="card panel">
+				<h3>Tickets par état</h3>
+				{#if d.byState.length === 0}
+					<p class="empty">Aucun ticket.</p>
+				{:else}
+					<div class="barlist">
+						{#each d.byState as s (s.label)}
+							<div class="barrow">
+								<span class="lbl"><span>{s.emoji ?? ''}</span> {s.label}</span>
+								<div class="track"><i style="width:{(s.count / maxState) * 100}%;background:{s.color ?? 'var(--accent)'}"></i></div>
+								<span class="val tabnum">{s.count}</span>
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</div>
+		{/if}
 
 		<!-- Productif vs non productif -->
 		<div class="card panel">
@@ -160,6 +175,32 @@
 </div>
 
 <style>
+	.periodsel {
+		appearance: none;
+		padding: 9px 34px 9px 14px;
+		border-radius: var(--r-md);
+		border: 1px solid var(--border);
+		background: var(--surface);
+		color: var(--text);
+		font-size: 13px;
+		font-weight: 500;
+		box-shadow: var(--shadow-sm);
+		cursor: pointer;
+		/* chevron */
+		background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+		background-repeat: no-repeat;
+		background-position: right 12px center;
+		transition: border-color 0.15s, box-shadow 0.15s;
+	}
+	.periodsel:hover {
+		border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+	}
+	.periodsel:focus {
+		outline: none;
+		border-color: var(--accent);
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+	}
+
 	.kpis {
 		display: grid;
 		grid-template-columns: repeat(4, 1fr);

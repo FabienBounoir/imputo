@@ -33,6 +33,11 @@ describe('calc', () => {
 		expect(totalEstimation(null, null)).toBe(0);
 	});
 
+	it('phase Test désactivée : Test ignoré (Réal uniquement)', () => {
+		expect(totalEstimation('5', '3', false)).toBe(5);
+		expect(totalRae('2', '1', false)).toBe(2);
+	});
+
 	it('ecart: consommé − estimation (positif = dépassement)', () => {
 		expect(ecart(10, 8)).toBe(2);
 		expect(ecart(5, 8)).toBe(-3);

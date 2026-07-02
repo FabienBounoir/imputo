@@ -8,6 +8,7 @@ import {
 	inviteMember,
 	buildInviteMessage,
 	setAccentColor,
+	setTestPhase,
 	setMemberRole,
 	setMemberActive,
 	setMemberCapacity,
@@ -75,6 +76,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		selfId: locals.user!.id,
 		allowedDomain: ws.allowedDomain,
 		accentColor: ws.accentColor,
+		testPhase: ws.testPhase,
 		projects,
 		sprints,
 		versions,
@@ -119,6 +121,14 @@ export const actions: Actions = {
 		if (!parsed.success) return fail(400, { error: parsed.error.issues[0].message });
 		await setAccentColor(ws.workspaceId, parsed.data.color);
 		return { accentOk: true };
+	},
+
+	testPhase: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const enabled = (await request.formData()).get('enabled') === 'true';
+		await setTestPhase(ws.workspaceId, enabled);
+		return { testPhaseOk: true };
 	},
 
 	refCreate: async ({ request, locals }) => {

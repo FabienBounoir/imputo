@@ -20,14 +20,18 @@ export function clamp(n: number, min: number, max: number): number {
 	return Math.min(max, Math.max(min, n));
 }
 
-/** Estimation totale d'un ticket = Réalisation + Test. */
-export function totalEstimation(estimationReal: string | null, estimationTest: string | null): number {
-	return round(num(estimationReal) + num(estimationTest));
+/** Estimation totale d'un ticket = Réalisation (+ Test si la phase Test est active). */
+export function totalEstimation(
+	estimationReal: string | null,
+	estimationTest: string | null,
+	testPhase = true
+): number {
+	return round(num(estimationReal) + (testPhase ? num(estimationTest) : 0));
 }
 
-/** RAE total = RAE Réalisation + RAE Test. */
-export function totalRae(raeReal: string | null, raeTest: string | null): number {
-	return round(num(raeReal) + num(raeTest));
+/** RAE total = RAE Réalisation (+ RAE Test si la phase Test est active). */
+export function totalRae(raeReal: string | null, raeTest: string | null, testPhase = true): number {
+	return round(num(raeReal) + (testPhase ? num(raeTest) : 0));
 }
 
 /** Écart = consommé − estimation totale (positif = dépassement). */

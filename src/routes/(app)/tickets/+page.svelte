@@ -91,8 +91,8 @@
 	// --- calculs dérivés (mêmes formules que le serveur) ---
 	const n = (v: number | string | null) => (v == null || v === '' ? 0 : Number(v) || 0);
 	const round = (x: number) => Math.round((x + Number.EPSILON) * 100) / 100;
-	const totalEst = (r: Row) => round(n(r.estimationReal) + n(r.estimationTest));
-	const totalRae = (r: Row) => round(n(r.raeReal) + n(r.raeTest));
+	const totalEst = (r: Row) => round(n(r.estimationReal) + (data.testPhase ? n(r.estimationTest) : 0));
+	const totalRae = (r: Row) => round(n(r.raeReal) + (data.testPhase ? n(r.raeTest) : 0));
 	const ecart = (r: Row) => round(r.consumed - totalEst(r));
 	const avancement = (r: Row) => {
 		const te = totalEst(r);
@@ -241,7 +241,7 @@
 				</div>
 				<div class="grid2">
 					<div class="field"><label for="er">Est. Réal</label><input id="er" name="estimationReal" type="number" step="0.25" min="0" /></div>
-					<div class="field"><label for="et">Est. Test</label><input id="et" name="estimationTest" type="number" step="0.25" min="0" /></div>
+					{#if data.testPhase}<div class="field"><label for="et">Est. Test</label><input id="et" name="estimationTest" type="number" step="0.25" min="0" /></div>{/if}
 				</div>
 				<div class="actions-row">
 					<button type="button" class="btn btn-ghost" onclick={() => (showCreate = false)}>Annuler</button>
@@ -293,7 +293,7 @@
 				<tr>
 					<th style="width:170px;">État</th><th>Ticket</th><th style="width:130px;">Dev</th>
 					<th class="num">Est. Réal</th><th class="num">RAE Réal</th>
-					<th class="num">Est. Test</th><th class="num">RAE Test</th><th class="num">Conso.</th>
+					{#if data.testPhase}<th class="num">Est. Test</th><th class="num">RAE Test</th>{/if}<th class="num">Conso.</th>
 					<th class="num">Écart</th><th class="num" style="width:130px;">Avancement</th>
 				</tr>
 			</thead>
@@ -335,8 +335,10 @@
 						</td>
 						<td class="num"><input class="cell-input num-input" type="number" step="0.25" min="0" bind:value={r.estimationReal} onchange={() => saveEst(r, 'real')} /></td>
 						<td class="num"><input class="cell-input num-input" type="number" step="0.25" min="0" bind:value={r.raeReal} onchange={() => save(r, 'raeReal', r.raeReal)} title={`RAE suggéré (total) : ${raeSugg(r)}`} /></td>
-						<td class="num"><input class="cell-input num-input" type="number" step="0.25" min="0" bind:value={r.estimationTest} onchange={() => saveEst(r, 'test')} /></td>
-						<td class="num"><input class="cell-input num-input" type="number" step="0.25" min="0" bind:value={r.raeTest} onchange={() => save(r, 'raeTest', r.raeTest)} /></td>
+						{#if data.testPhase}
+							<td class="num"><input class="cell-input num-input" type="number" step="0.25" min="0" bind:value={r.estimationTest} onchange={() => saveEst(r, 'test')} /></td>
+							<td class="num"><input class="cell-input num-input" type="number" step="0.25" min="0" bind:value={r.raeTest} onchange={() => save(r, 'raeTest', r.raeTest)} /></td>
+						{/if}
 						<td class="num tabnum consumed">{r.consumed || '—'}</td>
 						<td class="num tabnum" class:gap-pos={ecart(r) > 0}>{ecart(r) > 0 ? '+' : ''}{ecart(r) || 0}</td>
 						<td>
@@ -348,7 +350,7 @@
 					</tr>
 					{#if openId === r.id}
 						<tr class="detail-row">
-							<td colspan="10">
+							<td colspan={data.testPhase ? 10 : 8}>
 								<div class="detail-grid">
 									<div class="dfield">
 										<label for="d-proj-{r.id}">Projet</label>
@@ -371,19 +373,21 @@
 											{#each data.ref.versions as v (v.id)}<option value={v.id}>{v.name}</option>{/each}
 										</select>
 									</div>
-									<div class="dfield">
-										<label for="d-prepa-{r.id}">Prépa</label>
-										<input id="d-prepa-{r.id}" class="cell-input" type="number" step="0.25" min="0" bind:value={r.prepa} onchange={() => save(r, 'prepa', r.prepa)} />
-									</div>
-									{#each FLAG_FIELDS as fl (fl.key)}
+									{#if data.testPhase}
 										<div class="dfield">
-											<label for="d-{fl.key}-{r.id}">{fl.label}</label>
-											<select id="d-{fl.key}-{r.id}" class="cell-select" bind:value={r.flags[fl.key]} onchange={() => saveFlag(r, fl.key, r.flags[fl.key])}>
-												<option value="">—</option>
-												{#each FLAG_VALUES as v (v)}<option value={v}>{v}</option>{/each}
-											</select>
+											<label for="d-prepa-{r.id}">Prépa</label>
+											<input id="d-prepa-{r.id}" class="cell-input" type="number" step="0.25" min="0" bind:value={r.prepa} onchange={() => save(r, 'prepa', r.prepa)} />
 										</div>
-									{/each}
+										{#each FLAG_FIELDS as fl (fl.key)}
+											<div class="dfield">
+												<label for="d-{fl.key}-{r.id}">{fl.label}</label>
+												<select id="d-{fl.key}-{r.id}" class="cell-select" bind:value={r.flags[fl.key]} onchange={() => saveFlag(r, fl.key, r.flags[fl.key])}>
+													<option value="">—</option>
+													{#each FLAG_VALUES as v (v)}<option value={v}>{v}</option>{/each}
+												</select>
+											</div>
+										{/each}
+									{/if}
 									<div class="dfield wide">
 										<label for="d-comment-{r.id}">Commentaire</label>
 										<input id="d-comment-{r.id}" class="cell-input" placeholder="Note libre…" bind:value={r.comment} onchange={() => save(r, 'comment', r.comment)} />
@@ -394,12 +398,11 @@
 					{/if}
 				{/each}
 				{#if filtered.length === 0}
-					<tr><td colspan="10" class="empty-row">Aucun ticket. Créez-en un pour démarrer.</td></tr>
+					<tr><td colspan={data.testPhase ? 10 : 8} class="empty-row">Aucun ticket. Créez-en un pour démarrer.</td></tr>
 				{/if}
 			</tbody>
 		</table>
 	</div>
-	<p class="hint-edit">💡 Clique une cellule (état, dev, estimation, RAE) pour l'éditer — la sauvegarde est automatique. Le chevron <b>›</b> déplie projet, sprint, version, prépa &amp; commentaire. Le RAE suggéré apparaît au survol de « RAE Réal ».</p>
 	{:else}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div class="kanban" bind:this={kanbanEl} ondragover={onKanbanDragOver}>
@@ -489,16 +492,18 @@
 				</label>
 				<label class="dfield"><span>Est. Réal</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationReal} onchange={() => saveEst(editRow!, 'real')} /></label>
 				<label class="dfield"><span>RAE Réal</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.raeReal} onchange={() => save(editRow!, 'raeReal', editRow!.raeReal)} /></label>
-				<label class="dfield"><span>Est. Test</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationTest} onchange={() => saveEst(editRow!, 'test')} /></label>
-				<label class="dfield"><span>Prépa</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.prepa} onchange={() => save(editRow!, 'prepa', editRow!.prepa)} /></label>
-				<label class="dfield"><span>RAE Test</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.raeTest} onchange={() => save(editRow!, 'raeTest', editRow!.raeTest)} /></label>
-				{#each FLAG_FIELDS as fl (fl.key)}
-					<label class="dfield"><span>{fl.label}</span>
-						<select class="cell-select" bind:value={editRow.flags[fl.key]} onchange={() => saveFlag(editRow!, fl.key, editRow!.flags[fl.key])}>
-							<option value="">—</option>{#each FLAG_VALUES as v (v)}<option value={v}>{v}</option>{/each}
-						</select>
-					</label>
-				{/each}
+				{#if data.testPhase}
+					<label class="dfield"><span>Est. Test</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationTest} onchange={() => saveEst(editRow!, 'test')} /></label>
+					<label class="dfield"><span>Prépa</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.prepa} onchange={() => save(editRow!, 'prepa', editRow!.prepa)} /></label>
+					<label class="dfield"><span>RAE Test</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.raeTest} onchange={() => save(editRow!, 'raeTest', editRow!.raeTest)} /></label>
+					{#each FLAG_FIELDS as fl (fl.key)}
+						<label class="dfield"><span>{fl.label}</span>
+							<select class="cell-select" bind:value={editRow.flags[fl.key]} onchange={() => saveFlag(editRow!, fl.key, editRow!.flags[fl.key])}>
+								<option value="">—</option>{#each FLAG_VALUES as v (v)}<option value={v}>{v}</option>{/each}
+							</select>
+						</label>
+					{/each}
+				{/if}
 				<label class="dfield wide"><span>Commentaire</span><input class="cell-input" placeholder="Note libre…" bind:value={editRow.comment} onchange={() => save(editRow!, 'comment', editRow!.comment)} /></label>
 			</div>
 			<div class="tk-foot">

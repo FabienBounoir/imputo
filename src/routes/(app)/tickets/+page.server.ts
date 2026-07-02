@@ -51,8 +51,11 @@ function toDisplayOrder(tickets: TicketRow[]): (TicketRow & { isChild: boolean }
 
 export const load: PageServerLoad = async ({ locals }) => {
 	const ws = locals.workspace!;
-	const [tickets, ref] = await Promise.all([listTickets(ws.workspaceId), getRefData(ws.workspaceId)]);
-	return { tickets: toDisplayOrder(tickets), ref };
+	const [tickets, ref] = await Promise.all([
+		listTickets(ws.workspaceId, ws.testPhase),
+		getRefData(ws.workspaceId)
+	]);
+	return { tickets: toDisplayOrder(tickets), ref, testPhase: ws.testPhase };
 };
 
 export const actions: Actions = {

@@ -96,5 +96,14 @@ export function dayNum(d: Date): number {
 
 export function formatRange(monday: Date): string {
 	const fri = addDays(monday, 4);
-	return `${dayNum(monday)} → ${dayNum(fri)} ${MONTHS[fri.getUTCMonth()]} ${fri.getUTCFullYear()}`;
+	const friPart = `${dayNum(fri)} ${MONTHS[fri.getUTCMonth()]} ${fri.getUTCFullYear()}`;
+	// Même mois & année : on n'écrit le mois qu'une fois (ex. "29 → 3 juil. 2026" resterait ambigu,
+	// donc on ajoute le mois du lundi dès que le mois — ou l'année — diffère).
+	if (monday.getUTCMonth() === fri.getUTCMonth() && monday.getUTCFullYear() === fri.getUTCFullYear())
+		return `${dayNum(monday)} → ${friPart}`;
+	const monPart =
+		monday.getUTCFullYear() === fri.getUTCFullYear()
+			? `${dayNum(monday)} ${MONTHS[monday.getUTCMonth()]}`
+			: `${dayNum(monday)} ${MONTHS[monday.getUTCMonth()]} ${monday.getUTCFullYear()}`;
+	return `${monPart} → ${friPart}`;
 }

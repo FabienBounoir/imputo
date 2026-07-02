@@ -11,7 +11,8 @@ import {
 	category,
 	activity,
 	membership,
-	timeEntry
+	timeEntry,
+	workspace
 } from '$lib/server/db';
 import { parseFlags } from '$lib/server/services/tickets';
 import { num, totalEstimation, totalRae, ecart, avancement, round } from '$lib/server/services/calc';
@@ -20,45 +21,144 @@ import { countWorkdays, parseISODate, addDays, dayNum, toISODate } from '$lib/ut
 /** Alias de la table sprint pour joindre séparément les versions sur un ticket. */
 const versionTbl = alias(sprint, 'version');
 
-const HEADER_FILL = 'FF16A34A';
-const MEMBER_HEADER_FILL = 'FF0E7A38'; // vert plus foncé pour les colonnes par-personne
 const SEP_FILL = 'FFB7AE9B'; // gris/taupe (séparateur Synthèse US)
-const ZEBRA_FILL = 'FFF3F6F3'; // gris très clair (lignes alternées)
 const OVER_RED = 'FFC2410C';
+const SCALE_GREEN = 'FF16A34A';
+const SCALE_AMBER = 'FFF59E0B';
+const SCALE_RED = 'FFDC2626';
+const GRID_LINE = 'FF94A3B8';
 
-function styleHeader(row: ExcelJS.Row) {
-	row.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+// --- Helpers couleur (purs) : dérivent tout le thème de l'accent du workspace. ---
+const clampByte = (v: number) => Math.max(0, Math.min(255, Math.round(v)));
+
+/** Décompose un hex (#RRGGBB, RRGGBB ou FFRRGGBB) en [r, g, b]. */
+function parseHex(hex: string): [number, number, number] {
+	let h = hex.replace('#', '').trim();
+	if (h.length === 8) h = h.slice(2); // retire l'alpha éventuel
+	const n = parseInt(h, 16);
+	return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+const toArgb = (r: number, g: number, b: number) =>
+	'FF' + [r, g, b].map((v) => clampByte(v).toString(16).padStart(2, '0')).join('').toUpperCase();
+
+/** Convertit un hex en ARGB ExcelJS ('FFRRGGBB'). */
+export function hexToArgb(hex: string): string {
+	const [r, g, b] = parseHex(hex);
+	return toArgb(r, g, b);
+}
+/** Choisit un texte clair ou foncé selon la luminance perçue du fond (contraste). */
+export function pickInk(bgHex: string): string {
+	const [r, g, b] = parseHex(bgHex);
+	const yiq = (r * 299 + g * 587 + b * 114) / 1000;
+	return yiq >= 140 ? 'FF1F2937' : 'FFFFFFFF';
+}
+/** Éclaircit vers le blanc (amount 0→1). Pour les fonds légers. */
+function tintArgb(hex: string, amount: number): string {
+	const [r, g, b] = parseHex(hex);
+	return toArgb(r + (255 - r) * amount, g + (255 - g) * amount, b + (255 - b) * amount);
+}
+/** Assombrit vers le noir (amount 0→1). Pour les bandeaux foncés. */
+function shadeArgb(hex: string, amount: number): string {
+	const [r, g, b] = parseHex(hex);
+	return toArgb(r * (1 - amount), g * (1 - amount), b * (1 - amount));
+}
+
+type Theme = {
+	header: string; // fond d'en-tête (= accent)
+	ink: string; // texte sur en-tête
+	memberHeader: string; // bandeau foncé (colonnes/lignes par-personne)
+	memberInk: string;
+	zebra: string; // lignes alternées
+	totals: string; // ligne TOTAL
+	section: string; // bandes de section (page de garde)
+};
+function buildTheme(accentHex: string): Theme {
+	const memberHeader = shadeArgb(accentHex, 0.28);
+	return {
+		header: hexToArgb(accentHex),
+		ink: pickInk(accentHex),
+		memberHeader,
+		memberInk: pickInk(memberHeader),
+		zebra: tintArgb(accentHex, 0.93),
+		totals: tintArgb(accentHex, 0.82),
+		section: tintArgb(accentHex, 0.78)
+	};
+}
+
+function styleHeader(row: ExcelJS.Row, theme: Theme) {
+	row.font = { bold: true, color: { argb: theme.ink } };
 	row.eachCell((c) => {
-		c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_FILL } };
+		c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: theme.header } };
 		c.alignment = { vertical: 'middle' };
 	});
 	row.height = 20;
 }
 
-/** En-tête vert + figé + autofiltre + zébrage des lignes de données. */
-function finishDataSheet(sheet: ExcelJS.Worksheet, opts: { xSplit?: number; stripe?: boolean } = {}) {
+/** En-tête accent + figé + autofiltre + zébrage des lignes de données. */
+function finishDataSheet(
+	sheet: ExcelJS.Worksheet,
+	theme: Theme,
+	opts: { xSplit?: number; stripe?: boolean } = {}
+) {
 	const { xSplit = 0, stripe = true } = opts;
-	styleHeader(sheet.getRow(1));
+	styleHeader(sheet.getRow(1), theme);
 	sheet.views = [{ state: 'frozen', ySplit: 1, xSplit }];
 	sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: sheet.columnCount } };
 	if (stripe) {
 		for (let r = 2; r <= sheet.rowCount; r++) {
 			if (r % 2 === 0)
 				sheet.getRow(r).eachCell((c) => {
-					c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ZEBRA_FILL } };
+					c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: theme.zebra } };
 				});
 		}
 	}
 }
 
-/** Ajoute une ligne de totaux (gras + bordure haute). À appeler après finishDataSheet. */
-function addTotalsRow(sheet: ExcelJS.Worksheet, values: Record<string, string | number>) {
+/** Ajoute une ligne de totaux (gras + fond teinté + bordure haute). Après finishDataSheet. */
+function addTotalsRow(
+	sheet: ExcelJS.Worksheet,
+	values: Record<string, string | number>,
+	theme: Theme
+) {
 	const row = sheet.addRow(values);
 	row.font = { bold: true };
 	row.eachCell((c) => {
-		c.border = { top: { style: 'thin', color: { argb: 'FF94A3B8' } } };
+		c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: theme.totals } };
+		c.border = { top: { style: 'thin', color: { argb: GRID_LINE } } };
 	});
 	return row;
+}
+
+/** Mise en forme conditionnelle : barre de données sur une colonne (plage de lignes de données). */
+function addDataBar(sheet: ExcelJS.Worksheet, colKey: string, firstRow: number, lastRow: number, argb: string) {
+	if (lastRow < firstRow) return;
+	const col = sheet.getColumn(colKey).letter;
+	sheet.addConditionalFormatting({
+		ref: `${col}${firstRow}:${col}${lastRow}`,
+		rules: [{ type: 'dataBar', cfvo: [{ type: 'min' }, { type: 'max' }], color: { argb }, priority: 1 } as unknown as ExcelJS.ConditionalFormattingRule]
+	});
+}
+/** Échelle 3 couleurs (min→mid→max) sur une colonne. */
+function addColorScale(
+	sheet: ExcelJS.Worksheet,
+	colKey: string,
+	firstRow: number,
+	lastRow: number,
+	colors: [string, string, string]
+) {
+	if (lastRow < firstRow) return;
+	const col = sheet.getColumn(colKey).letter;
+	sheet.addConditionalFormatting({
+		ref: `${col}${firstRow}:${col}${lastRow}`,
+		rules: [
+			{
+				type: 'colorScale',
+				cfvo: [{ type: 'min' }, { type: 'percentile', value: 50 }, { type: 'max' }],
+				color: colors.map((argb) => ({ argb })),
+				priority: 1
+			} as ExcelJS.ConditionalFormattingRule
+		]
+	});
 }
 
 /** Construit le classeur Excel complet (multi-feuilles) pour un espace, borné sur une période. */
@@ -94,7 +194,8 @@ export async function buildWorkbook(
 		catUser,
 		activityUser,
 		states,
-		dayEntries
+		dayEntries,
+		wsRow
 	] = await Promise.all([
 		db
 			.select({
@@ -161,7 +262,7 @@ export async function buildWorkbook(
 			.where(and(eq(timeEntry.workspaceId, workspaceId), inPeriod))
 			.groupBy(timeEntry.userId, user.displayName, sql`coalesce(${activity.label}, 'Non précisé')`),
 		db
-			.select({ label: state.label, emoji: state.emoji })
+			.select({ label: state.label, emoji: state.emoji, color: state.color })
 			.from(state)
 			.where(eq(state.workspaceId, workspaceId))
 			.orderBy(state.sortOrder),
@@ -188,8 +289,23 @@ export async function buildWorkbook(
 				timeEntry.categoryId,
 				category.label,
 				category.kind
-			)
+			),
+		db
+			.select({ accentColor: workspace.accentColor, testPhase: workspace.testPhase })
+			.from(workspace)
+			.where(eq(workspace.id, workspaceId))
+			.limit(1)
 	]);
+
+	// Thème dérivé de l'accent de l'espace (fallback vert). Contraste texte auto.
+	const theme = buildTheme(wsRow[0]?.accentColor ?? '#16A34A');
+	// Phase Test activée ? Si non, les colonnes/totaux Test sont exclus de l'export.
+	const testPhase = wsRow[0]?.testPhase ?? true;
+	// Couleur d'état (clé = "emoji label") → hex, pour teinter les cellules "État".
+	const stateColorByKey = new Map<string, string>();
+	for (const st of states) {
+		if (st.color) stateColorByKey.set(`${st.emoji ?? ''} ${st.label}`.trim(), st.color);
+	}
 
 	const memberName = new Map(members.map((m) => [m.id, m.name]));
 
@@ -207,6 +323,11 @@ export async function buildWorkbook(
 		for (const v of m.values()) s += v;
 		return round(s);
 	};
+
+	// Les feuilles orientées "US" (Synthèse US, Par projet & sprint, KPI) sont bornées sur
+	// la période : on ne garde que les tickets ayant du consommé sur [from, to]. Une période
+	// sans imputation donne donc un export vide, comme attendu.
+	const periodTickets = tickets.filter((t) => consumedByTicketUser.has(t.id));
 
 	// --- Agrégats globaux + par projet/sprint + par personne×projet ---
 	type Group = { name: string; tickets: number; est: number; rae: number; consumed: number };
@@ -228,9 +349,9 @@ export async function buildWorkbook(
 	let raeTotalSum = 0;
 	let consumedTickets = 0;
 
-	for (const t of tickets) {
-		const est = totalEstimation(t.estimationReal, t.estimationTest);
-		const rae = totalRae(t.raeReal, t.raeTest);
+	for (const t of periodTickets) {
+		const est = totalEstimation(t.estimationReal, t.estimationTest, testPhase);
+		const rae = totalRae(t.raeReal, t.raeTest, testPhase);
 		const consumed = ticketConsumed(t.id);
 		const projName = t.projectName ?? 'Sans projet';
 		const sprName = t.sprintName ?? 'Sans sprint';
@@ -284,18 +405,41 @@ export async function buildWorkbook(
 
 	// ===== Feuille 0 — Page de garde / KPIs =====
 	const s0 = wb.addWorksheet('Synthèse');
-	s0.getColumn(1).width = 30;
-	s0.getColumn(2).width = 22;
+	s0.getColumn(1).width = 32;
+	s0.getColumn(2).width = 24;
+
+	// Bandeau titre (fond accent, texte contrasté, fusionné sur 2 colonnes).
 	const title = s0.addRow([workspaceName || 'Espace']);
-	title.font = { bold: true, size: 16, color: { argb: HEADER_FILL } };
-	s0.addRow(['Export généré le', new Date().toLocaleString('fr-FR')]);
-	s0.addRow(['Période (consommé)', `${from} → ${to}`]);
-	s0.addRow(['Jours ouvrés sur la période', workdays]);
+	s0.mergeCells(title.number, 1, title.number, 2);
+	title.height = 34;
+	title.getCell(1).font = { bold: true, size: 18, color: { argb: theme.ink } };
+	title.getCell(1).alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+	for (let c = 1; c <= 2; c++)
+		title.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: theme.header } };
+
+	const meta = (label: string, value: string | number) => {
+		const r = s0.addRow([label, value]);
+		r.getCell(1).font = { color: { argb: 'FF64748B' } };
+	};
+	meta('Export généré le', new Date().toLocaleString('fr-FR'));
+	meta('Période (consommé)', `${from} → ${to}`);
+	meta('Jours ouvrés sur la période', workdays);
 	s0.addRow([]);
-	const kpiHead = s0.addRow(['Indicateur', 'Valeur']);
-	styleHeader(kpiHead);
+
+	// Bande de section + en-tête KPI.
+	const sectionBand = (text: string) => {
+		const r = s0.addRow([text]);
+		s0.mergeCells(r.number, 1, r.number, 2);
+		r.getCell(1).font = { bold: true, size: 12, color: { argb: pickInk(theme.section) } };
+		r.getCell(1).alignment = { vertical: 'middle', indent: 1 };
+		r.height = 22;
+		for (let c = 1; c <= 2; c++)
+			r.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: theme.section } };
+		return r;
+	};
+	sectionBand('Indicateurs clés');
 	const kpiRows: [string, number, string?][] = [
-		['Tickets', tickets.length],
+		['Tickets (avec conso période)', periodTickets.length],
 		['Estimé total (j)', estTotal, '0.00'],
 		['Consommé sur tickets (j)', consumedTickets, '0.00'],
 		['RAE total (j)', raeTotalSum, '0.00'],
@@ -305,19 +449,32 @@ export async function buildWorkbook(
 	];
 	for (const [label, value, fmt] of kpiRows) {
 		const row = s0.addRow([label, value]);
-		if (fmt) row.getCell(2).numFmt = fmt;
+		row.getCell(1).font = { bold: true, color: { argb: 'FF475569' } };
+		const vc = row.getCell(2);
+		if (fmt) vc.numFmt = fmt;
+		// Carte valeur teintée.
+		vc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: tintArgb(theme.header, 0.9) } };
+		vc.font = { bold: true };
+		vc.alignment = { horizontal: 'right' };
 	}
 	s0.addRow([]);
-	const stHead = s0.addRow(['Tickets par état', 'Nombre']);
-	stHead.font = { bold: true };
+
+	sectionBand('Tickets par état');
 	for (const st of states) {
 		const key = `${st.emoji ?? ''} ${st.label}`.trim();
-		if (stateCount.has(key)) s0.addRow([key, stateCount.get(key)!]);
+		if (!stateCount.has(key)) continue;
+		const row = s0.addRow([key, stateCount.get(key)!]);
+		if (st.color) {
+			row.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: tintArgb(st.color, 0.78) } };
+			row.getCell(1).font = { color: { argb: pickInk(tintArgb(st.color, 0.78)) } };
+		}
 	}
 	if (stateCount.has('Sans état')) s0.addRow(['Sans état', stateCount.get('Sans état')!]);
 
 	// ===== Feuille 1 — Synthèse US =====
 	const s1 = wb.addWorksheet('Synthèse US');
+	// Colonnes liées à la phase Test : retirées si l'admin l'a désactivée.
+	const TEST_COL_KEYS = ['et', 'pr', 'rt', 'cypress', 'docTech', 'prepaQualif'];
 	const baseCols = [
 		{ header: 'Clé', key: 'key', width: 14 },
 		{ header: 'Titre', key: 'title', width: 42 },
@@ -339,18 +496,21 @@ export async function buildWorkbook(
 		{ header: 'Cypress', key: 'cypress', width: 10 },
 		{ header: 'Doc tech.', key: 'docTech', width: 10 },
 		{ header: 'Prépa qualif', key: 'prepaQualif', width: 12 }
-	];
+	].filter((c) => testPhase || !TEST_COL_KEYS.includes(c.key));
 	const sepCol = { header: '', key: '__sep', width: 3 };
 	const memberCols = members.map((m) => ({ header: m.name, key: `u_${m.id}`, width: 13 }));
 	s1.columns = [...baseCols, sepCol, ...memberCols];
 	const sepIndex = baseCols.length + 1;
-	for (const key of ['er', 'rr', 'et', 'pr', 'rt', 'te', 'tr', 'consumed', 'ecart']) s1.getColumn(key).numFmt = '0.00';
+	const numKeys = ['er', 'rr', 'et', 'pr', 'rt', 'te', 'tr', 'consumed', 'ecart'].filter(
+		(k) => testPhase || !TEST_COL_KEYS.includes(k)
+	);
+	for (const key of numKeys) s1.getColumn(key).numFmt = '0.00';
 	s1.getColumn('pct').numFmt = '0%';
 
 	let totEr = 0, totRr = 0, totEt = 0, totPr = 0, totRt = 0, totTe = 0, totTr = 0, totCons = 0;
-	for (const t of tickets) {
-		const totalEst = totalEstimation(t.estimationReal, t.estimationTest);
-		const rae = totalRae(t.raeReal, t.raeTest);
+	for (const t of periodTickets) {
+		const totalEst = totalEstimation(t.estimationReal, t.estimationTest, testPhase);
+		const rae = totalRae(t.raeReal, t.raeTest, testPhase);
 		const perUser = consumedByTicketUser.get(t.id) ?? new Map();
 		const consumed = ticketConsumed(t.id);
 		const fl = parseFlags(t.flags);
@@ -379,26 +539,43 @@ export async function buildWorkbook(
 		for (const m of members) rowData[`u_${m.id}`] = perUser.get(m.id) ?? 0;
 		const row = s1.addRow(rowData);
 		if (totalEst > 0 && ecart(consumed, totalEst) > 0) row.getCell('ecart').font = { color: { argb: OVER_RED } };
+		const stColor = stateColorByKey.get(String(rowData.state));
+		if (stColor) {
+			const bg = tintArgb(stColor, 0.78);
+			row.getCell('state').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+			row.getCell('state').font = { color: { argb: pickInk(bg) } };
+		}
 		totEr += num(t.estimationReal); totRr += num(t.raeReal); totEt += num(t.estimationTest);
 		totPr += num(t.prepa); totRt += num(t.raeTest); totTe += totalEst; totTr += rae; totCons += consumed;
 	}
-	styleHeader(s1.getRow(1));
+	styleHeader(s1.getRow(1), theme);
 	s1.views = [{ state: 'frozen', ySplit: 1, xSplit: 2 }];
 	s1.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: baseCols.length } };
+	// zébrage des lignes de données (avant la ligne TOTAL).
+	for (let r = 2; r <= s1.rowCount; r++)
+		if (r % 2 === 0)
+			s1.getRow(r).eachCell((c) => {
+				if (!c.fill) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: theme.zebra } };
+			});
 	// séparateur + en-têtes par-personne
 	for (let r = 1; r <= s1.rowCount; r++)
 		s1.getRow(r).getCell(sepIndex).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SEP_FILL } };
 	for (let c = sepIndex + 1; c <= s1.columnCount; c++) {
 		const cell = s1.getRow(1).getCell(c);
-		cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: MEMBER_HEADER_FILL } };
-		cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+		cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: theme.memberHeader } };
+		cell.font = { bold: true, color: { argb: theme.memberInk } };
 		cell.alignment = { vertical: 'middle' };
 	}
+	// Barres de données (Consommé, % Avanc.) + échelle Écart, sur les lignes de données.
+	const s1Last = 1 + periodTickets.length;
+	addDataBar(s1, 'consumed', 2, s1Last, theme.header);
+	addDataBar(s1, 'pct', 2, s1Last, theme.header);
+	addColorScale(s1, 'ecart', 2, s1Last, [SCALE_GREEN, 'FFFFFFFF', SCALE_RED]);
 	addTotalsRow(s1, {
 		key: 'TOTAL', er: round(totEr), rr: round(totRr), et: round(totEt), pr: round(totPr),
 		rt: round(totRt), te: round(totTe), tr: round(totTr), consumed: round(totCons),
 		ecart: round(totCons - totTe), pct: avancement(round(totTe), round(totTr))
-	});
+	}, theme);
 
 	// ===== Feuille 2 — Synthèse par projet & sprint =====
 	const s2 = wb.addWorksheet('Par projet & sprint');
@@ -426,7 +603,21 @@ export async function buildWorkbook(
 	};
 	addGroupRows('Projet', projAgg);
 	addGroupRows('Sprint', sprintAgg);
-	finishDataSheet(s2);
+	finishDataSheet(s2, theme, { stripe: false });
+	// Teintes distinctes par bloc (Projet vs Sprint) au lieu du zébrage.
+	const projTint = tintArgb(theme.header, 0.9);
+	const sprTint = 'FFF1F5F9';
+	const projCount = projAgg.size;
+	for (let r = 2; r <= s2.rowCount; r++) {
+		const fill = r <= 1 + projCount ? projTint : sprTint;
+		s2.getRow(r).eachCell((c) => {
+			c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
+		});
+	}
+	const s2Last = 1 + projAgg.size + sprintAgg.size;
+	addDataBar(s2, 'consumed', 2, s2Last, theme.header);
+	addDataBar(s2, 'pct', 2, s2Last, theme.header);
+	addColorScale(s2, 'ecart', 2, s2Last, [SCALE_GREEN, 'FFFFFFFF', SCALE_RED]);
 
 	// ===== Feuille 3 — Par activité =====
 	const s3 = wb.addWorksheet('Par activité');
@@ -457,10 +648,10 @@ export async function buildWorkbook(
 		actGrand += total;
 		s3.addRow(rowData);
 	}
-	finishDataSheet(s3, { xSplit: 1 });
+	finishDataSheet(s3, theme, { xSplit: 1 });
 	const actTotalRow: Record<string, string | number> = { activity: 'TOTAL', total: round(actGrand) };
 	for (const m of members) actTotalRow[`u_${m.id}`] = round(actTotals.get(m.id) ?? 0);
-	addTotalsRow(s3, actTotalRow);
+	addTotalsRow(s3, actTotalRow, theme);
 
 	// ===== Feuille 4 — Imputation détaillée (par personne × cible) =====
 	const s4 = wb.addWorksheet('Imputation détaillée');
@@ -486,7 +677,7 @@ export async function buildWorkbook(
 			person: r.userName, type: r.kind === 'NON_PRODUCTIVE' ? 'Absence/Hors' : 'Catégorie',
 			ref: '', label: r.label, days: round(num(r.total))
 		});
-	finishDataSheet(s4);
+	finishDataSheet(s4, theme);
 
 	// ===== Feuille 5 — Synthèse par personne (enrichie) =====
 	const s5 = wb.addWorksheet('Par personne');
@@ -519,7 +710,9 @@ export async function buildWorkbook(
 		const row = s5.addRow(rowData);
 		if (capPeriod > 0 && total > capPeriod) row.getCell('occ').font = { color: { argb: OVER_RED } };
 	}
-	finishDataSheet(s5, { xSplit: 1 });
+	finishDataSheet(s5, theme, { xSplit: 1 });
+	// Échelle sur le taux d'occupation (vert faible → ambre ~plein → rouge surcharge).
+	addColorScale(s5, 'occ', 2, 1 + members.length, [SCALE_GREEN, SCALE_AMBER, SCALE_RED]);
 
 	// --- Détail jour-par-jour par personne (grille "Mon imputation") ---
 	// ponytail: 2e table dans la même feuille ; la ligne vide avant chaque section
@@ -578,16 +771,16 @@ export async function buildWorkbook(
 
 		const head = s5.addRow([m.name]);
 		s5.mergeCells(head.number, 1, head.number, lastCol);
-		head.getCell(1).font = { bold: true, size: 12, color: { argb: 'FFFFFFFF' } };
-		head.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: MEMBER_HEADER_FILL } };
+		head.getCell(1).font = { bold: true, size: 12, color: { argb: theme.memberInk } };
+		head.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: theme.memberHeader } };
 
 		const hr = s5.addRow(['Tâche / catégorie', ...dayList.map(dayHead), 'Σ']);
 		hr.font = { bold: true };
 		hr.eachCell((c, col) => {
-			c.border = { bottom: { style: 'thin', color: { argb: 'FF94A3B8' } } };
+			c.border = { bottom: { style: 'thin', color: { argb: GRID_LINE } } };
 			if (col >= 2) c.alignment = { horizontal: 'center' };
 			if (col >= 2 && col < lastCol && isWknd(dayList[col - 2]))
-				c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ZEBRA_FILL } };
+				c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: theme.zebra } };
 		});
 
 		const dayTot = new Map<string, number>();
@@ -610,7 +803,8 @@ export async function buildWorkbook(
 		const foot = s5.addRow(['Total / jour', ...dayList.map((iso) => dayTot.get(iso) ?? ''), round(grand)]);
 		foot.font = { bold: true };
 		foot.eachCell((c, col) => {
-			c.border = { top: { style: 'thin', color: { argb: 'FF94A3B8' } } };
+			c.border = { top: { style: 'thin', color: { argb: GRID_LINE } } };
+			c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: theme.totals } };
 			if (col >= 2) c.numFmt = '0.00';
 		});
 		s5.addRow([]);
@@ -630,7 +824,16 @@ export async function buildWorkbook(
 			person: r.userName, cat: r.label,
 			kind: r.kind === 'NON_PRODUCTIVE' ? 'Non productif' : 'Productif', days: round(num(r.total))
 		});
-	finishDataSheet(s6);
+	finishDataSheet(s6, theme, { stripe: false });
+	// Teintes par nature : non-productif = chaud (ambre), productif = froid (accent clair).
+	const warmTint = 'FFFEF3C7';
+	const coolTint = tintArgb(theme.header, 0.9);
+	for (let r = 2; r <= s6.rowCount; r++) {
+		const fill = catUser[r - 2]?.kind === 'NON_PRODUCTIVE' ? warmTint : coolTint;
+		s6.getRow(r).eachCell((c) => {
+			c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
+		});
+	}
 
 	// Retire les feuilles non sélectionnées (sélection vide = on garde tout).
 	if (selected.length > 0) {

@@ -5,7 +5,7 @@ import { db, workspace } from '$lib/server/db';
 import { createWorkspaceWithOwner } from './workspaces';
 import { createTicket } from './tickets';
 import { setCell } from './imputation';
-import { buildWorkbook } from '../excel/export';
+import { buildWorkbook, hexToArgb, pickInk } from '../excel/export';
 import { toISODate } from '$lib/utils/date';
 
 const rnd = Math.random().toString(36).slice(2, 8);
@@ -77,5 +77,55 @@ describe('export buildWorkbook', () => {
 			if (row.getCell(1).value === 'Total / jour') footTotal = row.getCell(4).value; // libellé + 2 jours + Σ
 		});
 		expect(footTotal).toBe(1.5);
+	});
+
+	it('borne respectée : une période sans imputation ne liste aucune US', async () => {
+		const a = await createWorkspaceWithOwner({
+			displayName: 'Empty',
+			email: `empty-${rnd}@acme.test`,
+			password: 'password123',
+			workspaceName: 'Espace Empty'
+		});
+		wsIds.push(a.workspaceId);
+
+		const key = `X-${rnd}`;
+		const t = await createTicket(a.workspaceId, { key, title: 'US non touchée', estimationReal: '3' });
+		await setCell(a.workspaceId, a.userId, { targetType: 'TICKET', targetId: t.id, activityId: null, day: '2026-06-10', amount: 1 });
+
+		// Export d'un jour SANS aucune imputation : la Synthèse US ne doit contenir aucune US.
+		const buf = await buildWorkbook(a.workspaceId, 'Espace Empty', { from: '2026-06-20', to: '2026-06-20', sheets: ['us'] });
+		const wb = new ExcelJS.Workbook();
+		await wb.xlsx.load(buf);
+		const sheet = wb.getWorksheet('Synthèse US')!;
+
+		const keys: unknown[] = [];
+		sheet.eachRow((row) => keys.push(row.getCell(1).value));
+		expect(keys).not.toContain(key); // l'US touchée un autre jour n'apparaît pas
+	});
+
+	it('helpers couleur : ARGB + contraste texte auto', () => {
+		expect(hexToArgb('#16A34A')).toBe('FF16A34A');
+		expect(hexToArgb('16A34A')).toBe('FF16A34A');
+		expect(pickInk('#16A34A')).toBe('FFFFFFFF'); // fond foncé → texte blanc
+		expect(pickInk('#FFFF00')).toBe('FF1F2937'); // fond clair → texte foncé
+	});
+
+	it("en-tête coloré selon l'accent du workspace", async () => {
+		const a = await createWorkspaceWithOwner({
+			displayName: 'Accent',
+			email: `accent-${rnd}@acme.test`,
+			password: 'password123',
+			workspaceName: 'Espace Accent'
+		});
+		wsIds.push(a.workspaceId);
+		await db.update(workspace).set({ accentColor: '#3366FF' }).where(eq(workspace.id, a.workspaceId));
+
+		const today = toISODate(new Date());
+		const buf = await buildWorkbook(a.workspaceId, 'Espace Accent', { from: today, to: today, sheets: ['us'] });
+		const wb = new ExcelJS.Workbook();
+		await wb.xlsx.load(buf);
+		const cell = wb.getWorksheet('Synthèse US')!.getRow(1).getCell(1);
+		const fill = cell.fill as ExcelJS.FillPattern;
+		expect(fill.fgColor?.argb).toBe('FF3366FF');
 	});
 });
