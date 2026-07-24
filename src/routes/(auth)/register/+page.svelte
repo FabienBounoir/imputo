@@ -2,7 +2,6 @@
 	import { enhance } from '$app/forms';
 	let { form } = $props();
 	let email = $state(form?.values?.email ?? '');
-	let domain = $derived(email.includes('@') ? email.split('@')[1] : '…');
 </script>
 
 <div class="auth-wrap">
@@ -17,11 +16,6 @@
 		</div>
 		<h2>Créez votre espace</h2>
 		<p class="sub">Un espace = une équipe. Vous en devenez l'admin.</p>
-
-		<div class="note">
-			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;margin-top:1px;color:var(--accent)"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></svg>
-			<span>Votre domaine <b>@{domain}</b> sera figé : vous ne pourrez inviter que des collègues de ce domaine.</span>
-		</div>
 
 		{#if form?.error}<div class="flash error">{form.error}</div>{/if}
 

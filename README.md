@@ -50,8 +50,7 @@ CronJob Kubernetes.
 ## Variables d'environnement
 
 Voir [`.env.example`](./.env.example). Principales : `DATABASE_URL`, `SESSION_SECRET`,
-`ALLOW_PUBLIC_EMAIL_DOMAINS`, `ALLOWED_SIGNUP_DOMAINS`, `MAGIC_LINK_TTL` (7d),
-`ARCHIVE_RETENTION` (30d), `PUBLIC_BASE_URL`, `CRON_SECRET`, `BUILD_ADAPTER`.
+`MAGIC_LINK_TTL` (7d), `ARCHIVE_RETENTION` (30d), `PUBLIC_BASE_URL`, `CRON_SECRET`, `BUILD_ADAPTER`.
 
 ## État (Lot 1 livré)
 

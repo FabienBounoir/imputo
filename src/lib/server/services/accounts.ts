@@ -2,7 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import { db, user, membership, setupToken, workspace, type Role } from '$lib/server/db';
 import { verifyPassword, hashPassword } from '$lib/server/auth/password';
 import { generateToken, hashToken } from '$lib/server/auth/tokens';
-import { config, emailDomain } from '$lib/server/config';
+import { config } from '$lib/server/config';
 
 /** Connexion par email + mot de passe. */
 export async function login(email: string, password: string): Promise<{ userId: string } | null> {
@@ -18,19 +18,15 @@ export async function login(email: string, password: string): Promise<{ userId: 
 
 /**
  * Invite un membre dans un espace (réservé ADMIN).
- * Restriction stricte : l'email doit appartenir au domaine de l'espace.
  * Retourne le token brut (à insérer dans le message à copier).
  */
 export async function inviteMember(input: {
 	workspaceId: string;
-	allowedDomain: string;
 	email: string;
 	displayName: string;
 	role: Role;
 }): Promise<{ token: string; reused: boolean }> {
 	const email = input.email.trim().toLowerCase();
-	if (emailDomain(email) !== input.allowedDomain.toLowerCase())
-		throw new Error(`Seules les adresses @${input.allowedDomain} peuvent être invitées.`);
 
 	return db.transaction(async (tx) => {
 		let [u] = await tx.select().from(user).where(eq(user.email, email));
