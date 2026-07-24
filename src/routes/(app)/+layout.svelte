@@ -37,7 +37,6 @@
 				<div class="ws-dot">{initials(data.workspace?.workspaceName ?? '—')}</div>
 				<div class="ws-meta">
 					<b>{data.workspace?.workspaceName ?? 'Aucun espace'}</b>
-					<span>@{data.workspace?.allowedDomain ?? ''}</span>
 				</div>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--text-mute)"><path d="m6 9 6 6 6-6"/></svg>
 			</button>

@@ -97,7 +97,6 @@ export const actions: Actions = {
 		try {
 			const { token } = await inviteMember({
 				workspaceId: ws.workspaceId,
-				allowedDomain: ws.allowedDomain,
 				email: parsed.data.email,
 				displayName: parsed.data.displayName,
 				role: parsed.data.role

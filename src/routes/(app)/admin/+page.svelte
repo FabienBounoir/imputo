@@ -33,13 +33,13 @@
 	<div class="cols-2">
 		<section class="card block">
 			<h3>Inviter un membre</h3>
-			<p class="hint">L'invitation génère un message à copier puis envoyer vous-même (pas d'email automatique). Domaine autorisé : <b>@{data.allowedDomain}</b>.</p>
+			<p class="hint">L'invitation génère un message à copier puis envoyer vous-même (pas d'email automatique).</p>
 			{#if form?.error}<div class="flash error">{form.error}</div>{/if}
 
 			<form method="POST" action="?/invite" use:enhance>
 				<div class="invite-row">
 					<div class="field"><label for="dn">Nom</label><input id="dn" name="displayName" placeholder="Prénom Nom" required /></div>
-					<div class="field"><label for="em">Email</label><input id="em" name="email" type="email" placeholder="prenom@{data.allowedDomain}" required /></div>
+					<div class="field"><label for="em">Email</label><input id="em" name="email" type="email" placeholder="prenom.nom@exemple.com" required /></div>
 					<div class="field"><label for="ro">Rôle</label><select id="ro" name="role"><option value="USER">Membre</option><option value="ADMIN">Admin</option></select></div>
 					<button class="btn btn-primary" type="submit">Générer l'invitation</button>
 				</div>

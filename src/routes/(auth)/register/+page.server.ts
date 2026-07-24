@@ -1,7 +1,6 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { registerSchema } from '$lib/server/validation/auth';
-import { canSignup } from '$lib/server/config';
 import { createWorkspaceWithOwner } from '$lib/server/services/workspaces';
 import { createSession, setSessionCookie } from '$lib/server/auth/session';
 
@@ -22,9 +21,6 @@ export const actions: Actions = {
 			return fail(400, { error: parsed.error.issues[0].message, values });
 		}
 		const data = parsed.data;
-
-		const allowed = canSignup(data.email);
-		if (!allowed.ok) return fail(400, { error: allowed.reason, values });
 
 		let userId: string;
 		let workspaceId: string;

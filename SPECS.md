@@ -116,22 +116,17 @@ ADMIN d'un workspace et simple USER d'un autre.
 - **Modèle multi-tenant par espace (workspace).** L'app peut héberger plusieurs équipes /
   projets (logique ESN). Chaque **workspace** a ses propres données isolées (projets,
   tickets, catégories, sprints, états, activités, imputations, membres).
-- **Auto-inscription** : s'inscrire avec une adresse autorisée **crée un nouveau workspace**
-  dont l'inscrit devient **ADMIN**. Le **domaine** du workspace est figé à partir de l'email
-  du fondateur (ex. `soprasteria.com`).
-- **Politique de domaine configurable (variables d'environnement)** — voir §7 :
-  - `ALLOW_PUBLIC_EMAIL_DOMAINS` (bool) : autoriser ou non les fournisseurs grand public
-    (gmail, outlook, yahoo…) à l'auto-inscription.
-  - `ALLOWED_SIGNUP_DOMAINS` (array, optionnel) : si renseigné, **seuls** ces domaines
-    peuvent s'auto-inscrire (whitelist stricte, ex. `["soprasteria.com","capgemini.com"]`).
-    Si vide → tout domaine autorisé, sous réserve du réglage grand public ci-dessus.
-  - La restriction d'**invitation au domaine du workspace** reste indépendante et toujours
-    active (un admin n'invite que son propre domaine).
+- **Auto-inscription** : s'inscrire **crée un nouveau workspace** dont l'inscrit devient
+  **ADMIN**. Le workspace conserve le domaine de l'email du fondateur comme simple libellé
+  informatif (ex. `soprasteria.com`), sans effet restrictif.
+- **Aucune restriction de domaine** : ni à l'auto-inscription, ni à l'invitation — un admin
+  peut inviter n'importe quelle adresse email, quel que soit son domaine. *(Retiré : les
+  anciens réglages `ALLOW_PUBLIC_EMAIL_DOMAINS`/`ALLOWED_SIGNUP_DOMAINS` et la restriction
+  d'invitation au domaine du workspace n'existent plus.)*
 - **Plusieurs admins par workspace** : un admin peut inviter d'autres membres et les
-  promouvoir ADMIN.
-- **Invitations restreintes au domaine du workspace** : un admin `@soprasteria` ne peut
-  inviter que des adresses `@soprasteria` (validation stricte, rejet sinon). Deux admins
-  `@soprasteria` qui s'inscrivent séparément = **deux workspaces distincts et isolés**.
+  promouvoir ADMIN. Un admin peut inviter **n'importe quelle adresse email**, sans
+  restriction de domaine. Deux admins du même domaine qui s'inscrivent séparément = **deux
+  workspaces distincts et isolés**.
 - À la création d'un workspace, l'app **pré-remplit** les référentiels par défaut (états du
   workflow, activités, catégories non-productives) pour démarrer immédiatement.
 - **Pas d'envoi d'email par l'app (pas de SMTP).** À la création d'un compte, l'app génère
@@ -321,18 +316,11 @@ Navigateur (Svelte) ──cookie session──► SvelteKit (Node)
 - **Variables d'environnement (config)** :
   - `DATABASE_URL` — connexion PostgreSQL.
   - `SESSION_SECRET` — secret de signature des sessions/tokens.
-  - `ALLOW_PUBLIC_EMAIL_DOMAINS` (bool, défaut `false`) — accepter les emails grand public
-    à l'auto-inscription.
-  - `ALLOWED_SIGNUP_DOMAINS` (array CSV, optionnel) — whitelist stricte des domaines
-    autorisés à s'auto-inscrire. Vide = tous (sous réserve du booléen ci-dessus).
   - `MAGIC_LINK_TTL` (ex. `7d`) — durée de validité des liens d'invitation/reset.
   - `ARCHIVE_RETENTION` (ex. `30d`) — délai avant purge des éléments archivés.
   - `PUBLIC_BASE_URL` — base d'URL utilisée pour construire les magic links.
   - `CRON_SECRET` — jeton protégeant l'endpoint de jobs planifiés (`/api/jobs/*`).
   - `BUILD_ADAPTER` (`node` | `vercel`, défaut `node`) — choisit l'adapter au build.
-- **Règle de validation d'inscription** (priorité) : si `ALLOWED_SIGNUP_DOMAINS` non vide →
-  le domaine doit y figurer ; sinon, si `ALLOW_PUBLIC_EMAIL_DOMAINS=false` → rejeter les
-  fournisseurs grand public (liste maintenue : gmail, outlook, hotmail, yahoo, icloud…).
 - **Structure de projet indicative** :
   ```
   src/
@@ -436,8 +424,8 @@ Navigateur (Svelte) ──cookie session──► SvelteKit (Node)
 ## 10. Découpage en lots (roadmap)
 - **Lot 0 — Cadrage** : valider ce SPECS.md, schéma DB, maquettes des 2 écrans clés.
 - **Lot 1 — Socle multi-tenant (complet)** : SvelteKit + Postgres + Drizzle, auth complète
-  (auto-inscription → création workspace, magic link, invitations restreintes au domaine,
-  **sélecteur de workspace** pour les users multi-espaces), modèle complet scopé workspace
+  (auto-inscription → création workspace, magic link, invitations sans restriction de
+  domaine, **sélecteur de workspace** pour les users multi-espaces), modèle complet scopé workspace
   (Workspace/User/Membership/Project/Ticket/Category/State/Activity/Sprint/TimeEntry +
   soft-delete), garde d'isolation systématique (toute requête filtrée par workspace) +
   **tests d'isolation**, seed des référentiels par défaut à la création d'un workspace.
@@ -472,11 +460,9 @@ Navigateur (Svelte) ──cookie session──► SvelteKit (Node)
 - **Activité** : **optionnelle**.
 - **Double estimation + double RAE** (Réalisation + Test) sur les tickets.
 - **Auth & multi-tenant** : auto-inscription **ouverte** → crée un **workspace isolé** dont
-  l'inscrit devient ADMIN (domaine figé depuis son email). **Plusieurs admins** par
-  workspace possibles. Les **invitations** sont restreintes au **domaine du workspace**.
-  Deux admins d'un même domaine inscrits séparément = deux workspaces distincts isolés.
-- **Politique de domaine configurable** : `ALLOW_PUBLIC_EMAIL_DOMAINS` (bool) + whitelist
-  optionnelle `ALLOWED_SIGNUP_DOMAINS` (array) en variables d'environnement.
+  l'inscrit devient ADMIN. **Plusieurs admins** par workspace possibles. **Aucune
+  restriction de domaine** : ni à l'inscription, ni à l'invitation (n'importe quelle adresse
+  email peut être invitée). Deux admins inscrits séparément = deux workspaces distincts isolés.
 - **Isolation stricte** : **aucun partage de données entre workspaces** (ni tickets, ni
   référentiels, ni imputations). Chaque workspace est totalement étanche.
 - **Stratégie de livraison** : **multi-espaces complet dès la v1** (auto-inscription,

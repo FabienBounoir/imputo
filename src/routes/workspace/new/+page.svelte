@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
-	let { data, form } = $props();
-	const domain = $derived(data.email?.split('@')[1] ?? '');
+	let { form } = $props();
 </script>
 
 <div class="auth-wrap">
@@ -15,7 +14,7 @@
 			</svg>
 		</div>
 		<h2>Nouvel espace</h2>
-		<p class="sub">Crée un espace de travail isolé dont tu seras administrateur. Domaine autorisé : <b>@{domain}</b>.</p>
+		<p class="sub">Crée un espace de travail isolé dont tu seras administrateur.</p>
 
 		{#if form?.error}<div class="flash error">{form.error}</div>{/if}
 
