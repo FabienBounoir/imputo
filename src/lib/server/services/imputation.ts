@@ -1,5 +1,15 @@
-import { and, eq, gte, lte, isNotNull, isNull, sql } from 'drizzle-orm';
-import { db, timeEntry, ticket, category, activity, weeklyObjective } from '$lib/server/db';
+import { and, eq, gte, inArray, lte, isNotNull, isNull, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
+import {
+	db,
+	timeEntry,
+	ticket,
+	category,
+	activity,
+	sprint,
+	ticketActivityRae,
+	weeklyObjective
+} from '$lib/server/db';
 import { num, round } from './calc';
 import { toISODate, workWeek, parseISODate } from '$lib/utils/date';
 
@@ -13,32 +23,47 @@ export type ImputationRow = {
 	sublabel: string;
 	emoji: string | null;
 	nonProductive: boolean;
+	/** Sprint/version du ticket (null hors ticket ou non rattaché) — affichés en puces sur la ligne. */
+	sprintName: string | null;
+	versionName: string | null;
+	/**
+	 * RAE réel de la paire (ticket, activité). null quand la ligne ne porte pas d'activité :
+	 * le RAE est stocké par activité, il n'est alors ni affichable ni saisissable ici.
+	 */
+	raeReal: number | null;
 	amounts: Record<string, number>; // day ISO → amount
 	total: number;
 };
 
-export type WeekData = {
-	mondayISO: string;
+export type TimesheetData = {
 	days: string[];
+	firstDay: string;
+	lastDay: string;
 	rows: ImputationRow[];
 	dayTotals: Record<string, number>;
-	weekTotal: number;
+	total: number;
 };
 
 function rowKey(targetType: string, targetId: string, activityId: string | null) {
 	return `${targetType}:${targetId}:${activityId ?? ''}`;
 }
 
-/** Feuille de temps d'un utilisateur pour une semaine. */
-export async function getWeek(
+/**
+ * Feuille de temps d'un utilisateur sur une liste de jours ouvrés ordonnée. Le découpage de la
+ * période (semaine / quinzaine / mois, fixe ou glissant) est calculé par `buildPeriod` dans
+ * `$lib/utils/date` — ce service ne connaît qu'une plage de jours.
+ */
+export async function getTimesheet(
 	workspaceId: string,
 	userId: string,
-	mondayISO: string
-): Promise<WeekData> {
-	const monday = parseISODate(mondayISO);
-	const days = workWeek(monday).map(toISODate);
+	days: string[]
+): Promise<TimesheetData> {
 	const firstDay = days[0];
 	const lastDay = days[days.length - 1];
+
+	// `version` et `sprint` vivent dans la même table, discriminés par `kind` : ticket.sprintId et
+	// ticket.versionId pointent tous deux dessus, d'où l'alias pour les joindre en même temps.
+	const versionSprint = alias(sprint, 'version_sprint');
 
 	const entries = await db
 		.select({
@@ -51,6 +76,8 @@ export async function getWeek(
 			amount: timeEntry.amount,
 			ticketKey: ticket.key,
 			ticketTitle: ticket.title,
+			sprintName: sprint.name,
+			versionName: versionSprint.name,
 			categoryLabel: category.label,
 			categoryKind: category.kind,
 			objectiveLabel: weeklyObjective.label,
@@ -58,6 +85,8 @@ export async function getWeek(
 		})
 		.from(timeEntry)
 		.leftJoin(ticket, eq(timeEntry.ticketId, ticket.id))
+		.leftJoin(sprint, eq(ticket.sprintId, sprint.id))
+		.leftJoin(versionSprint, eq(ticket.versionId, versionSprint.id))
 		.leftJoin(category, eq(timeEntry.categoryId, category.id))
 		.leftJoin(weeklyObjective, eq(timeEntry.objectiveId, weeklyObjective.id))
 		.leftJoin(activity, eq(timeEntry.activityId, activity.id))
@@ -74,6 +103,9 @@ export async function getWeek(
 	const dayTotals: Record<string, number> = Object.fromEntries(days.map((d) => [d, 0]));
 
 	for (const e of entries) {
+		// La plage couvre les week-ends (jours contigus) alors que seuls les jours ouvrés sont
+		// affichés : une entrée hors colonnes ne doit pas alimenter un total invisible.
+		if (!(e.day in dayTotals)) continue;
 		const targetId =
 			(e.targetType === 'TICKET' ? e.ticketId : e.targetType === 'CATEGORY' ? e.categoryId : e.objectiveId) ?? '';
 		const key = rowKey(e.targetType, targetId, e.activityId);
@@ -103,6 +135,9 @@ export async function getWeek(
 				sublabel,
 				emoji,
 				nonProductive: e.targetType === 'CATEGORY' && e.categoryKind === 'NON_PRODUCTIVE',
+				sprintName: e.targetType === 'TICKET' ? e.sprintName : null,
+				versionName: e.targetType === 'TICKET' ? e.versionName : null,
+				raeReal: null,
 				amounts: {},
 				total: 0
 			});
@@ -114,8 +149,47 @@ export async function getWeek(
 		dayTotals[e.day] = round(dayTotals[e.day] + amount);
 	}
 
-	const weekTotal = round(Object.values(dayTotals).reduce((a, b) => a + b, 0));
-	return { mondayISO, days, rows: [...rows.values()], dayTotals, weekTotal };
+	await attachActivityRae([...rows.values()]);
+
+	const total = round(Object.values(dayTotals).reduce((a, b) => a + b, 0));
+	return { days, firstDay, lastDay, rows: [...rows.values()], dayTotals, total };
+}
+
+/**
+ * Renseigne `raeReal` sur les lignes ticket portant une activité, depuis `ticket_activity_rae`.
+ * Le RAE étant stocké par (ticket, activité), une ligne sans activité n'a pas de RAE adressable.
+ */
+async function attachActivityRae(rows: ImputationRow[]) {
+	const targets = rows.filter((r) => r.targetType === 'TICKET' && r.activityId);
+	if (targets.length === 0) return;
+	const ticketIds = [...new Set(targets.map((r) => r.targetId))];
+	const activityIds = [...new Set(targets.map((r) => r.activityId!))];
+
+	const raeRows = await db
+		.select({
+			ticketId: ticketActivityRae.ticketId,
+			activityId: ticketActivityRae.activityId,
+			raeReal: ticketActivityRae.raeReal
+		})
+		.from(ticketActivityRae)
+		.where(
+			and(
+				inArray(ticketActivityRae.ticketId, ticketIds),
+				inArray(ticketActivityRae.activityId, activityIds)
+			)
+		);
+
+	const byPair = new Map(raeRows.map((r) => [`${r.ticketId}:${r.activityId}`, num(r.raeReal)]));
+	for (const r of targets) r.raeReal = byPair.get(`${r.targetId}:${r.activityId}`) ?? 0;
+}
+
+/** Feuille de temps d'une semaine ouvrée (lun→ven) — raccourci autour de `getTimesheet`. */
+export async function getWeek(
+	workspaceId: string,
+	userId: string,
+	mondayISO: string
+): Promise<TimesheetData> {
+	return getTimesheet(workspaceId, userId, workWeek(parseISODate(mondayISO)).map(toISODate));
 }
 
 /**
@@ -235,17 +309,22 @@ export async function setCell(
 	}
 }
 
-/** Supprime en un coup toutes les imputations de la semaine pour une ligne (cible + activité). */
+/**
+ * Supprime en un coup toutes les imputations de la période pour une ligne (cible + activité).
+ * Les bornes viennent d'une période reconstruite côté serveur, jamais du client directement.
+ */
 export async function deleteRow(
 	workspaceId: string,
 	userId: string,
-	input: { targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE'; targetId: string; activityId: string | null; mondayISO: string }
+	input: {
+		targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE';
+		targetId: string;
+		activityId: string | null;
+		fromISO: string;
+		toISO: string;
+	}
 ) {
 	await assertTargetInWorkspace(workspaceId, userId, input.targetType, input.targetId);
-
-	const days = workWeek(parseISODate(input.mondayISO)).map(toISODate);
-	const firstDay = days[0];
-	const lastDay = days[days.length - 1];
 
 	const targetMatch =
 		input.targetType === 'TICKET'
@@ -260,8 +339,8 @@ export async function deleteRow(
 			and(
 				eq(timeEntry.workspaceId, workspaceId),
 				eq(timeEntry.userId, userId),
-				gte(timeEntry.day, firstDay),
-				lte(timeEntry.day, lastDay),
+				gte(timeEntry.day, input.fromISO),
+				lte(timeEntry.day, input.toISO),
 				targetMatch,
 				input.activityId ? eq(timeEntry.activityId, input.activityId) : isNull(timeEntry.activityId)
 			)

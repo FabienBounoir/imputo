@@ -2,8 +2,11 @@
 	// Combobox custom "Ajouter un ticket ou une catégorie" (remplace le <select> natif) :
 	// état par défaut = 3-4 tickets suggérés (plus récemment imputés) + catégories complètes ;
 	// la recherche filtre en temps réel sur la liste complète des tickets, côté client.
-	type Ticket = { id: string; key: string; title: string };
+	// `versionId` optionnel : le filtre par version n'apparaît que si l'appelant fournit `versions`
+	// (Mon imputation) ; les autres usages (objectifs admin) gardent la liste telle quelle.
+	type Ticket = { id: string; key: string; title: string; versionId?: string | null };
 	type Category = { id: string; label: string };
+	type Version = { id: string; name: string };
 	type Objective = {
 		id: string;
 		kind: 'TICKET' | 'CUSTOM';
@@ -17,6 +20,7 @@
 		tickets,
 		categories,
 		recentTicketIds,
+		versions = [],
 		objectives = [],
 		placeholder = 'Ajouter un ticket ou une catégorie…',
 		value = $bindable('')
@@ -24,6 +28,7 @@
 		tickets: Ticket[];
 		categories: Category[];
 		recentTicketIds: string[];
+		versions?: Version[];
 		objectives?: Objective[];
 		placeholder?: string;
 		value: string;
@@ -31,6 +36,7 @@
 
 	let open = $state(false);
 	let query = $state('');
+	let versionFilter = $state('');
 	let root: HTMLDivElement | null = $state(null);
 	let searchInput: HTMLInputElement | null = $state(null);
 	// position:fixed calculée au clic — le trigger vit dans une card à overflow:hidden qui
@@ -40,10 +46,13 @@
 	const suggested = $derived(
 		recentTicketIds.map((id) => tickets.find((t) => t.id === id)).filter((t): t is Ticket => !!t)
 	);
+	// Un filtre version actif remplace les suggestions récentes par toute la version : sinon, sans
+	// recherche texte, on continuerait d'afficher 4 tickets hors version et le filtre paraîtrait mort.
 	const filteredTickets = $derived.by(() => {
 		const q = query.trim().toLowerCase();
-		if (!q) return suggested;
-		return tickets.filter((t) => t.key.toLowerCase().includes(q) || t.title.toLowerCase().includes(q));
+		const base = versionFilter ? tickets.filter((t) => t.versionId === versionFilter) : tickets;
+		if (!q) return versionFilter ? base : suggested;
+		return base.filter((t) => t.key.toLowerCase().includes(q) || t.title.toLowerCase().includes(q));
 	});
 	const selectedLabel = $derived.by(() => {
 		if (!value) return '';
@@ -103,7 +112,13 @@
 				bind:value={query}
 				onkeydown={(e) => e.key === 'Escape' && (open = false)}
 			/>
-			{#if objectives.length > 0 && !query.trim()}
+			{#if versions.length > 0}
+				<select class="tp-version" bind:value={versionFilter} aria-label="Filtrer par version">
+					<option value="">Toutes les versions</option>
+					{#each versions as v (v.id)}<option value={v.id}>{v.name}</option>{/each}
+				</select>
+			{/if}
+			{#if objectives.length > 0 && !query.trim() && !versionFilter}
 				<div class="tp-section">
 					<div class="tp-label">🎯 Attribué cette semaine</div>
 					{#each objectives as o (o.id)}
@@ -120,7 +135,7 @@
 				</div>
 			{/if}
 			<div class="tp-section">
-				<div class="tp-label">{query.trim() ? 'Tickets' : 'Suggestions'}</div>
+				<div class="tp-label">{query.trim() || versionFilter ? 'Tickets' : 'Suggestions'}</div>
 				{#each filteredTickets as t (t.id)}
 					<button type="button" class="tp-item" onclick={() => pick(`TICKET::${t.id}`)}>
 						<span class="tp-key">{t.key}</span><span class="tp-title">{t.title}</span>
@@ -190,6 +205,16 @@
 		background: var(--surface-2, var(--surface));
 		color: var(--text);
 		font-size: 13px;
+		margin-bottom: 8px;
+	}
+	.tp-version {
+		width: 100%;
+		padding: 7px 10px;
+		border-radius: 8px;
+		border: 1px solid var(--border);
+		background: var(--surface-2, var(--surface));
+		color: var(--text);
+		font-size: 12.5px;
 		margin-bottom: 8px;
 	}
 	.tp-section + .tp-section {

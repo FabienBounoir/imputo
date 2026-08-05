@@ -134,6 +134,36 @@ export function isoWeek(d: Date): number {
 	return 1 + Math.round((date.getTime() - firstThursday.getTime()) / (7 * 86400000));
 }
 
+/** Jours ouvrés (lun→ven) entre deux dates ISO incluses, ordonnés. Fériés conservés. */
+export function workdaysBetween(fromISO: string, toISO: string): string[] {
+	const to = parseISODate(toISO);
+	const out: string[] = [];
+	for (let d = parseISODate(fromISO); d <= to; d = addDays(d, 1)) {
+		const dow = d.getUTCDay();
+		if (dow !== 0 && dow !== 6) out.push(toISODate(d));
+	}
+	return out;
+}
+
+/** Bornes calendaires de la quinzaine contenant `dateISO` : 1→15 ou 16→fin de mois. */
+export function fortnightBounds(dateISO: string): { start: string; end: string } {
+	const d = parseISODate(dateISO);
+	const y = d.getUTCFullYear();
+	const m = d.getUTCMonth();
+	if (d.getUTCDate() <= 15)
+		return { start: toISODate(new Date(Date.UTC(y, m, 1))), end: toISODate(new Date(Date.UTC(y, m, 15))) };
+	// Jour 0 du mois suivant = dernier jour du mois courant.
+	return { start: toISODate(new Date(Date.UTC(y, m, 16))), end: toISODate(new Date(Date.UTC(y, m + 1, 0))) };
+}
+
+/** Bornes calendaires du mois contenant `dateISO`. */
+export function monthBounds(dateISO: string): { start: string; end: string } {
+	const d = parseISODate(dateISO);
+	const y = d.getUTCFullYear();
+	const m = d.getUTCMonth();
+	return { start: toISODate(new Date(Date.UTC(y, m, 1))), end: toISODate(new Date(Date.UTC(y, m + 1, 0))) };
+}
+
 const DAY_NAMES = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
 const MONTHS = [
 	'janv.',
@@ -148,6 +178,23 @@ const MONTHS = [
 	'oct.',
 	'nov.',
 	'déc.'
+];
+
+// Noms complets — pour un titre de mois (« Juin 2026 ») ; MONTHS est abrégé et ne convient
+// que dans une plage de dates (« 29 juin → 3 juil. »).
+const MONTHS_LONG = [
+	'Janvier',
+	'Février',
+	'Mars',
+	'Avril',
+	'Mai',
+	'Juin',
+	'Juillet',
+	'Août',
+	'Septembre',
+	'Octobre',
+	'Novembre',
+	'Décembre'
 ];
 
 export function dayName(d: Date): string {
@@ -183,16 +230,160 @@ export function currentMoodPeriod(
 	return { start: toISODate(start), end: toISODate(end) };
 }
 
-export function formatRange(monday: Date): string {
-	const fri = addDays(monday, 4);
-	const friPart = `${dayNum(fri)} ${MONTHS[fri.getUTCMonth()]} ${fri.getUTCFullYear()}`;
+/** Plage de dates lisible : « 6 → 10 juil. 2026 », « 29 juin → 3 juil. 2026 », « 29 déc. 2025 → 2 janv. 2026 ». */
+export function formatDayRange(fromISO: string, toISO: string): string {
+	const from = parseISODate(fromISO);
+	const to = parseISODate(toISO);
+	const toPart = `${dayNum(to)} ${MONTHS[to.getUTCMonth()]} ${to.getUTCFullYear()}`;
 	// Même mois & année : on n'écrit le mois qu'une fois (ex. "29 → 3 juil. 2026" resterait ambigu,
-	// donc on ajoute le mois du lundi dès que le mois — ou l'année — diffère).
-	if (monday.getUTCMonth() === fri.getUTCMonth() && monday.getUTCFullYear() === fri.getUTCFullYear())
-		return `${dayNum(monday)} → ${friPart}`;
-	const monPart =
-		monday.getUTCFullYear() === fri.getUTCFullYear()
-			? `${dayNum(monday)} ${MONTHS[monday.getUTCMonth()]}`
-			: `${dayNum(monday)} ${MONTHS[monday.getUTCMonth()]} ${monday.getUTCFullYear()}`;
-	return `${monPart} → ${friPart}`;
+	// donc on ajoute le mois de la borne gauche dès que le mois — ou l'année — diffère).
+	if (from.getUTCMonth() === to.getUTCMonth() && from.getUTCFullYear() === to.getUTCFullYear())
+		return `${dayNum(from)} → ${toPart}`;
+	const fromPart =
+		from.getUTCFullYear() === to.getUTCFullYear()
+			? `${dayNum(from)} ${MONTHS[from.getUTCMonth()]}`
+			: `${dayNum(from)} ${MONTHS[from.getUTCMonth()]} ${from.getUTCFullYear()}`;
+	return `${fromPart} → ${toPart}`;
+}
+
+export function formatRange(monday: Date): string {
+	return formatDayRange(toISODate(monday), toISODate(addDays(monday, 4)));
+}
+
+/** Titre de mois : « Juin 2026 ». */
+export function formatMonthLabel(dateISO: string): string {
+	const d = parseISODate(dateISO);
+	return `${MONTHS_LONG[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+}
+
+// ---------- Périodes d'imputation ----------
+
+export type Granularity = 'WEEK' | 'FORTNIGHT' | 'MONTH';
+export type PeriodMode = 'FIXED' | 'ROLLING';
+
+export const GRANULARITIES: Granularity[] = ['WEEK', 'FORTNIGHT', 'MONTH'];
+export const GRANULARITY_LABELS: Record<Granularity, string> = {
+	WEEK: 'Semaine',
+	FORTNIGHT: 'Quinzaine',
+	MONTH: 'Mois'
+};
+
+// Glissant = k semaines entières finissant sur la semaine ancre. L'alignement semaine est
+// délibéré : il fait tomber juste l'en-tête « S32 », les séparateurs de semaine, et rend la
+// navigation ‹ › (± 1 semaine) exactement réversible.
+const ROLLING_WEEKS: Record<Granularity, number> = { WEEK: 1, FORTNIGHT: 2, MONTH: 4 };
+
+export type PeriodWeek = { mondayISO: string; weekNumber: number; days: string[] };
+
+export type Period = {
+	granularity: Granularity;
+	mode: PeriodMode;
+	/** Ancre normalisée — c'est elle que porte `?w=`. */
+	anchorISO: string;
+	/** Jours ouvrés lun→ven ordonnés. Jamais de week-end ; les fériés restent des colonnes. */
+	days: string[];
+	firstDay: string;
+	lastDay: string;
+	prevAnchor: string;
+	nextAnchor: string;
+	/** « 6 → 10 juil. 2026 », « Juin 2026 », « Glissant · 8 juin → 3 juil. 2026 ». */
+	label: string;
+	/** Pastille compacte entre ‹ › : « S28 », « Q1 juin », « juin », « S25–S28 ». */
+	shortLabel: string;
+	/** Groupement par semaine (en-tête de groupe + séparateurs en vue longue). */
+	weeks: PeriodWeek[];
+	/** Identité de la plage — sert de garde de resynchronisation côté client. */
+	rangeKey: string;
+};
+
+/** Regroupe des jours ISO par lundi de leur semaine ISO (ordre conservé). */
+export function groupByWeek(days: string[]): PeriodWeek[] {
+	const weeks: PeriodWeek[] = [];
+	for (const day of days) {
+		const mondayISO = toISODate(mondayOf(parseISODate(day)));
+		const last = weeks[weeks.length - 1];
+		if (last && last.mondayISO === mondayISO) last.days.push(day);
+		else weeks.push({ mondayISO, weekNumber: isoWeek(parseISODate(day)), days: [day] });
+	}
+	return weeks;
+}
+
+export function parseGranularity(raw: string | null | undefined): Granularity | null {
+	return raw === 'WEEK' || raw === 'FORTNIGHT' || raw === 'MONTH' ? raw : null;
+}
+
+export function parsePeriodMode(raw: string | null | undefined): PeriodMode | null {
+	return raw === 'FIXED' || raw === 'ROLLING' ? raw : null;
+}
+
+/**
+ * Construit la période affichée à partir d'une granularité, d'un mode et d'une date d'ancrage.
+ *
+ * Attention : en mode fixe, la quinzaine et le mois se choisissent depuis la date d'ancre **brute**,
+ * jamais depuis le lundi de sa semaine — `2026-02-01` est un dimanche, `mondayOf` renverrait
+ * `2026-01-26` et on afficherait janvier. Les ancres prev/next pointent sur le premier jour de
+ * l'unité adjacente, ce qui rend la navigation réversible sans heuristique.
+ */
+export function buildPeriod(granularity: Granularity, mode: PeriodMode, anchorISO: string): Period {
+	// Une semaine glissante est par construction une semaine fixe : on n'expose pas la bascule.
+	const effectiveMode: PeriodMode = granularity === 'WEEK' ? 'FIXED' : mode;
+
+	let anchor: string;
+	let days: string[];
+	let prevAnchor: string;
+	let nextAnchor: string;
+	let label: string;
+	let shortLabel: string;
+
+	if (effectiveMode === 'ROLLING' || granularity === 'WEEK') {
+		const monday = mondayOf(parseISODate(anchorISO));
+		const weekCount = ROLLING_WEEKS[granularity];
+		const firstMonday = addDays(monday, -7 * (weekCount - 1));
+		anchor = toISODate(monday);
+		days = [];
+		for (let i = 0; i < weekCount; i++) days.push(...workWeek(addDays(firstMonday, 7 * i)).map(toISODate));
+		prevAnchor = toISODate(addDays(monday, -7));
+		nextAnchor = toISODate(addDays(monday, 7));
+		if (granularity === 'WEEK') {
+			label = formatRange(monday);
+			shortLabel = `S${isoWeek(monday)}`;
+		} else {
+			label = `Glissant · ${formatDayRange(days[0], days[days.length - 1])}`;
+			shortLabel = `S${isoWeek(firstMonday)}–S${isoWeek(monday)}`;
+		}
+	} else {
+		const bounds = granularity === 'FORTNIGHT' ? fortnightBounds(anchorISO) : monthBounds(anchorISO);
+		anchor = bounds.start;
+		days = workdaysBetween(bounds.start, bounds.end);
+		const start = parseISODate(bounds.start);
+		prevAnchor = (granularity === 'FORTNIGHT' ? fortnightBounds : monthBounds)(
+			toISODate(addDays(start, -1))
+		).start;
+		// Le lendemain de la borne haute est le premier jour de l'unité suivante.
+		nextAnchor = toISODate(addDays(parseISODate(bounds.end), 1));
+		if (granularity === 'FORTNIGHT') {
+			label = formatDayRange(bounds.start, bounds.end);
+			shortLabel = `Q${start.getUTCDate() === 1 ? 1 : 2} ${MONTHS[start.getUTCMonth()]}`;
+		} else {
+			label = formatMonthLabel(bounds.start);
+			shortLabel = MONTHS[start.getUTCMonth()];
+		}
+	}
+
+	const firstDay = days[0];
+	const lastDay = days[days.length - 1];
+	return {
+		granularity,
+		mode: effectiveMode,
+		anchorISO: anchor,
+		days,
+		firstDay,
+		lastDay,
+		prevAnchor,
+		nextAnchor,
+		label,
+		shortLabel,
+		weeks: groupByWeek(days),
+		rangeKey: `${granularity}:${effectiveMode}:${firstDay}:${lastDay}`
+	};
 }
