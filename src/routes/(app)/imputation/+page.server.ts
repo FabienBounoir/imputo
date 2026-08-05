@@ -1,8 +1,9 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { getWeek, setCell } from '$lib/server/services/imputation';
+import { getWeek, setCell, deleteRow, getRecentTicketIds } from '$lib/server/services/imputation';
 import { getRefData, listTickets } from '$lib/server/services/tickets';
 import { getMembership } from '$lib/server/services/workspaces';
+import { listObjectivesForUser, isOnVacation } from '$lib/server/services/weeklyObjectives';
 import { num } from '$lib/server/services/calc';
 import { mondayOf, parseISODate, toISODate, isoWeek, formatRange, addDays } from '$lib/utils/date';
 
@@ -31,10 +32,13 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	}
 	const readOnly = viewedId !== user.id;
 
-	const [week, tickets, membership] = await Promise.all([
+	const [week, tickets, membership, recentTicketIds, weeklyObjectives, onVacation] = await Promise.all([
 		getWeek(ws.workspaceId, viewedId, mondayISO),
 		listTickets(ws.workspaceId),
-		getMembership(ws.workspaceId, viewedId)
+		getMembership(ws.workspaceId, viewedId),
+		getRecentTicketIds(ws.workspaceId, viewedId),
+		listObjectivesForUser(ws.workspaceId, viewedId, mondayISO),
+		isOnVacation(ws.workspaceId, viewedId, mondayISO)
 	]);
 
 	return {
@@ -42,7 +46,11 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		activities: ref.activities,
 		categories: ref.categories,
 		tickets: tickets.map((t) => ({ id: t.id, key: t.key, title: t.title })),
+		recentTicketIds,
+		weeklyObjectives,
+		onVacation,
 		capacity: num(membership?.capacityPerDay ?? '1'),
+		imputationStep: num(ws.imputationStep),
 		weekNumber: isoWeek(monday),
 		weekLabel: formatRange(monday),
 		prevWeek: toISODate(addDays(monday, -7)),
@@ -61,13 +69,13 @@ export const actions: Actions = {
 		const ws = locals.workspace;
 		if (!ws || !locals.user) return fail(401, { error: 'Non authentifié.' });
 		const f = await request.formData();
-		const targetType = String(f.get('targetType')) as 'TICKET' | 'CATEGORY';
+		const targetType = String(f.get('targetType')) as 'TICKET' | 'CATEGORY' | 'OBJECTIVE';
 		const targetId = String(f.get('targetId'));
 		const activityId = (f.get('activityId') as string) || null;
 		const day = String(f.get('day'));
 		const amount = Number(f.get('amount'));
 
-		if (!['TICKET', 'CATEGORY'].includes(targetType) || !targetId || !day)
+		if (!['TICKET', 'CATEGORY', 'OBJECTIVE'].includes(targetType) || !targetId || !day)
 			return fail(400, { error: 'Données invalides.' });
 
 		try {
@@ -78,6 +86,26 @@ export const actions: Actions = {
 				day,
 				amount: Number.isFinite(amount) ? amount : 0
 			});
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { ok: true };
+	},
+
+	deleteRow: async ({ request, locals }) => {
+		const ws = locals.workspace;
+		if (!ws || !locals.user) return fail(401, { error: 'Non authentifié.' });
+		const f = await request.formData();
+		const targetType = String(f.get('targetType')) as 'TICKET' | 'CATEGORY' | 'OBJECTIVE';
+		const targetId = String(f.get('targetId'));
+		const activityId = (f.get('activityId') as string) || null;
+		const mondayISO = String(f.get('mondayISO'));
+
+		if (!['TICKET', 'CATEGORY', 'OBJECTIVE'].includes(targetType) || !targetId || !mondayISO)
+			return fail(400, { error: 'Données invalides.' });
+
+		try {
+			await deleteRow(ws.workspaceId, locals.user.id, { targetType, targetId, activityId, mondayISO });
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}

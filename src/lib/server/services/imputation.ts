@@ -1,12 +1,12 @@
-import { and, eq, gte, lte } from 'drizzle-orm';
-import { db, timeEntry, ticket, category, activity } from '$lib/server/db';
+import { and, eq, gte, lte, isNotNull, isNull, sql } from 'drizzle-orm';
+import { db, timeEntry, ticket, category, activity, weeklyObjective } from '$lib/server/db';
 import { num, round } from './calc';
 import { toISODate, workWeek, parseISODate } from '$lib/utils/date';
 
 export type ImputationCell = { day: string; amount: number };
 export type ImputationRow = {
 	rowKey: string;
-	targetType: 'TICKET' | 'CATEGORY';
+	targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE';
 	targetId: string;
 	activityId: string | null;
 	label: string;
@@ -45,6 +45,7 @@ export async function getWeek(
 			targetType: timeEntry.targetType,
 			ticketId: timeEntry.ticketId,
 			categoryId: timeEntry.categoryId,
+			objectiveId: timeEntry.objectiveId,
 			activityId: timeEntry.activityId,
 			day: timeEntry.day,
 			amount: timeEntry.amount,
@@ -52,11 +53,13 @@ export async function getWeek(
 			ticketTitle: ticket.title,
 			categoryLabel: category.label,
 			categoryKind: category.kind,
+			objectiveLabel: weeklyObjective.label,
 			activityLabel: activity.label
 		})
 		.from(timeEntry)
 		.leftJoin(ticket, eq(timeEntry.ticketId, ticket.id))
 		.leftJoin(category, eq(timeEntry.categoryId, category.id))
+		.leftJoin(weeklyObjective, eq(timeEntry.objectiveId, weeklyObjective.id))
 		.leftJoin(activity, eq(timeEntry.activityId, activity.id))
 		.where(
 			and(
@@ -71,23 +74,34 @@ export async function getWeek(
 	const dayTotals: Record<string, number> = Object.fromEntries(days.map((d) => [d, 0]));
 
 	for (const e of entries) {
-		const targetId = (e.targetType === 'TICKET' ? e.ticketId : e.categoryId) ?? '';
+		const targetId =
+			(e.targetType === 'TICKET' ? e.ticketId : e.targetType === 'CATEGORY' ? e.categoryId : e.objectiveId) ?? '';
 		const key = rowKey(e.targetType, targetId, e.activityId);
 		if (!rows.has(key)) {
+			let label: string;
+			let sublabel: string;
+			let emoji: string;
+			if (e.targetType === 'TICKET') {
+				label = e.ticketTitle ?? '—';
+				sublabel = `${e.ticketKey ?? ''}${e.activityLabel ? ' · ' + e.activityLabel : ''}`;
+				emoji = '🎫';
+			} else if (e.targetType === 'CATEGORY') {
+				label = e.categoryLabel ?? '—';
+				sublabel = `Catégorie${e.activityLabel ? ' · ' + e.activityLabel : ''}`;
+				emoji = e.categoryKind === 'NON_PRODUCTIVE' ? '🌴' : '🛟';
+			} else {
+				label = e.objectiveLabel ?? '(tâche supprimée)';
+				sublabel = `Tâche assignée${e.activityLabel ? ' · ' + e.activityLabel : ''}`;
+				emoji = '📝';
+			}
 			rows.set(key, {
 				rowKey: key,
 				targetType: e.targetType,
 				targetId,
 				activityId: e.activityId,
-				label:
-					e.targetType === 'TICKET'
-						? (e.ticketTitle ?? '—')
-						: (e.categoryLabel ?? '—'),
-				sublabel:
-					e.targetType === 'TICKET'
-						? `${e.ticketKey ?? ''}${e.activityLabel ? ' · ' + e.activityLabel : ''}`
-						: `Catégorie${e.activityLabel ? ' · ' + e.activityLabel : ''}`,
-				emoji: e.targetType === 'CATEGORY' ? (e.categoryKind === 'NON_PRODUCTIVE' ? '🌴' : '🛟') : '🎫',
+				label,
+				sublabel,
+				emoji,
 				nonProductive: e.targetType === 'CATEGORY' && e.categoryKind === 'NON_PRODUCTIVE',
 				amounts: {},
 				total: 0
@@ -104,10 +118,33 @@ export async function getWeek(
 	return { mondayISO, days, rows: [...rows.values()], dayTotals, weekTotal };
 }
 
+/**
+ * Tickets les plus récemment imputés par cette personne (dédupliqués, triés par dernière
+ * imputation décroissante) — sert de suggestions par défaut au sélecteur ticket/catégorie.
+ */
+export async function getRecentTicketIds(workspaceId: string, userId: string, limit = 4): Promise<string[]> {
+	const rows = await db
+		.select({ ticketId: timeEntry.ticketId, lastAt: sql<string>`max(${timeEntry.updatedAt})` })
+		.from(timeEntry)
+		.where(
+			and(
+				eq(timeEntry.workspaceId, workspaceId),
+				eq(timeEntry.userId, userId),
+				eq(timeEntry.targetType, 'TICKET'),
+				isNotNull(timeEntry.ticketId)
+			)
+		)
+		.groupBy(timeEntry.ticketId)
+		.orderBy(sql`max(${timeEntry.updatedAt}) desc`)
+		.limit(limit);
+	return rows.map((r) => r.ticketId!).filter(Boolean);
+}
+
 /** Vérifie qu'une cible appartient bien à l'espace (anti-fuite inter-espaces). */
 async function assertTargetInWorkspace(
 	workspaceId: string,
-	targetType: 'TICKET' | 'CATEGORY',
+	userId: string,
+	targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE',
 	targetId: string
 ) {
 	if (targetType === 'TICKET') {
@@ -116,12 +153,25 @@ async function assertTargetInWorkspace(
 			.from(ticket)
 			.where(and(eq(ticket.id, targetId), eq(ticket.workspaceId, workspaceId)));
 		if (!r[0]) throw new Error('Ticket introuvable dans cet espace.');
-	} else {
+	} else if (targetType === 'CATEGORY') {
 		const r = await db
 			.select({ id: category.id })
 			.from(category)
 			.where(and(eq(category.id, targetId), eq(category.workspaceId, workspaceId)));
 		if (!r[0]) throw new Error('Catégorie introuvable dans cet espace.');
+	} else {
+		// Un objectif n'est imputable que par la personne à qui il a été assigné.
+		const r = await db
+			.select({ id: weeklyObjective.id })
+			.from(weeklyObjective)
+			.where(
+				and(
+					eq(weeklyObjective.id, targetId),
+					eq(weeklyObjective.workspaceId, workspaceId),
+					eq(weeklyObjective.userId, userId)
+				)
+			);
+		if (!r[0]) throw new Error('Objectif introuvable pour cette personne dans cet espace.');
 	}
 }
 
@@ -130,25 +180,31 @@ export async function setCell(
 	workspaceId: string,
 	userId: string,
 	input: {
-		targetType: 'TICKET' | 'CATEGORY';
+		targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE';
 		targetId: string;
 		activityId: string | null;
 		day: string;
 		amount: number;
 	}
 ) {
-	await assertTargetInWorkspace(workspaceId, input.targetType, input.targetId);
+	await assertTargetInWorkspace(workspaceId, userId, input.targetType, input.targetId);
 
 	const ticketId = input.targetType === 'TICKET' ? input.targetId : null;
 	const categoryId = input.targetType === 'CATEGORY' ? input.targetId : null;
+	const objectiveId = input.targetType === 'OBJECTIVE' ? input.targetId : null;
+
+	const targetMatch =
+		input.targetType === 'TICKET'
+			? eq(timeEntry.ticketId, input.targetId)
+			: input.targetType === 'CATEGORY'
+				? eq(timeEntry.categoryId, input.targetId)
+				: eq(timeEntry.objectiveId, input.targetId);
 
 	const match = and(
 		eq(timeEntry.workspaceId, workspaceId),
 		eq(timeEntry.userId, userId),
 		eq(timeEntry.day, input.day),
-		input.targetType === 'TICKET'
-			? eq(timeEntry.ticketId, input.targetId)
-			: eq(timeEntry.categoryId, input.targetId),
+		targetMatch,
 		input.activityId ? eq(timeEntry.activityId, input.activityId) : undefined
 	);
 
@@ -171,9 +227,43 @@ export async function setCell(
 			targetType: input.targetType,
 			ticketId,
 			categoryId,
+			objectiveId,
 			activityId: input.activityId,
 			day: input.day,
 			amount: amountStr
 		});
 	}
+}
+
+/** Supprime en un coup toutes les imputations de la semaine pour une ligne (cible + activité). */
+export async function deleteRow(
+	workspaceId: string,
+	userId: string,
+	input: { targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE'; targetId: string; activityId: string | null; mondayISO: string }
+) {
+	await assertTargetInWorkspace(workspaceId, userId, input.targetType, input.targetId);
+
+	const days = workWeek(parseISODate(input.mondayISO)).map(toISODate);
+	const firstDay = days[0];
+	const lastDay = days[days.length - 1];
+
+	const targetMatch =
+		input.targetType === 'TICKET'
+			? eq(timeEntry.ticketId, input.targetId)
+			: input.targetType === 'CATEGORY'
+				? eq(timeEntry.categoryId, input.targetId)
+				: eq(timeEntry.objectiveId, input.targetId);
+
+	await db
+		.delete(timeEntry)
+		.where(
+			and(
+				eq(timeEntry.workspaceId, workspaceId),
+				eq(timeEntry.userId, userId),
+				gte(timeEntry.day, firstDay),
+				lte(timeEntry.day, lastDay),
+				targetMatch,
+				input.activityId ? eq(timeEntry.activityId, input.activityId) : isNull(timeEntry.activityId)
+			)
+		);
 }

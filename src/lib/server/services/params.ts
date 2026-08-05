@@ -1,5 +1,5 @@
 import { and, eq, ne, isNull, count, sql } from 'drizzle-orm';
-import { db, category, activity, timeEntry, state, ticket } from '$lib/server/db';
+import { db, category, activity, timeEntry, state, ticket, ticketActivityRae } from '$lib/server/db';
 
 export type CategoryKind = 'PRODUCTIVE' | 'NON_PRODUCTIVE';
 export type CategoryItem = {
@@ -99,23 +99,34 @@ export async function setCategoryArchived(workspaceId: string, id: string, archi
 // ---------- Activités ----------
 
 export async function listActivities(workspaceId: string): Promise<ActivityItem[]> {
-	const rows = await db
-		.select({
-			id: activity.id,
-			label: activity.label,
-			archivedAt: activity.archivedAt,
-			usage: count(timeEntry.id)
-		})
-		.from(activity)
-		.leftJoin(timeEntry, eq(timeEntry.activityId, activity.id))
-		.where(eq(activity.workspaceId, workspaceId))
-		.groupBy(activity.id, activity.label, activity.archivedAt)
-		.orderBy(activity.label);
+	// Deux comptages séparés (imputations + RAE par activité) plutôt qu'un double join, qui
+	// multiplierait les lignes et fausserait count(timeEntry.id).
+	const [rows, raeCounts] = await Promise.all([
+		db
+			.select({
+				id: activity.id,
+				label: activity.label,
+				archivedAt: activity.archivedAt,
+				usage: count(timeEntry.id)
+			})
+			.from(activity)
+			.leftJoin(timeEntry, eq(timeEntry.activityId, activity.id))
+			.where(eq(activity.workspaceId, workspaceId))
+			.groupBy(activity.id, activity.label, activity.archivedAt)
+			.orderBy(activity.label),
+		db
+			.select({ activityId: ticketActivityRae.activityId, n: count(ticketActivityRae.id) })
+			.from(ticketActivityRae)
+			.innerJoin(activity, eq(ticketActivityRae.activityId, activity.id))
+			.where(eq(activity.workspaceId, workspaceId))
+			.groupBy(ticketActivityRae.activityId)
+	]);
+	const raeCountMap = new Map(raeCounts.map((r) => [r.activityId, r.n]));
 	return rows.map((r) => ({
 		id: r.id,
 		label: r.label,
 		archived: r.archivedAt !== null,
-		usage: r.usage
+		usage: r.usage + (raeCountMap.get(r.id) ?? 0)
 	}));
 }
 
@@ -138,10 +149,42 @@ export async function renameActivity(workspaceId: string, id: string, label: str
 	if (res.length === 0) throw new Error('Introuvable dans cet espace.');
 }
 
-export async function setActivityArchived(workspaceId: string, id: string, archived: boolean) {
+/**
+ * Actif/inactif — pas un archivage : une activité inactive n'apparaît plus dans les sélecteurs
+ * de nouvelles saisies, mais toutes les données existantes qui la référencent restent intactes.
+ * Réutilise la colonne activity.archivedAt existante (non-null = inactif), vocabulaire UI/API seulement.
+ */
+export async function setActivityActive(workspaceId: string, id: string, active: boolean) {
 	const res = await db
 		.update(activity)
-		.set({ archivedAt: archived ? new Date() : null })
+		.set({ archivedAt: active ? null : new Date() })
+		.where(and(eq(activity.id, id), eq(activity.workspaceId, workspaceId)))
+		.returning({ id: activity.id });
+	if (res.length === 0) throw new Error('Introuvable dans cet espace.');
+}
+
+/** Nombre de références à une activité (imputations + RAE par activité), tous statuts confondus. */
+export async function countActivityUsage(workspaceId: string, id: string): Promise<number> {
+	const [[{ n: teCount }], [{ n: raeCount }]] = await Promise.all([
+		db
+			.select({ n: count(timeEntry.id) })
+			.from(timeEntry)
+			.where(and(eq(timeEntry.workspaceId, workspaceId), eq(timeEntry.activityId, id))),
+		db
+			.select({ n: count(ticketActivityRae.id) })
+			.from(ticketActivityRae)
+			.innerJoin(activity, eq(ticketActivityRae.activityId, activity.id))
+			.where(and(eq(activity.workspaceId, workspaceId), eq(ticketActivityRae.activityId, id)))
+	]);
+	return teCount + raeCount;
+}
+
+/** Hard delete — réservé au cas où aucun ticket/imputation n'y est lié. */
+export async function deleteActivity(workspaceId: string, id: string) {
+	const usage = await countActivityUsage(workspaceId, id);
+	if (usage > 0) throw new Error('Activité utilisée : désactivez-la plutôt que de la supprimer.');
+	const res = await db
+		.delete(activity)
 		.where(and(eq(activity.id, id), eq(activity.workspaceId, workspaceId)))
 		.returning({ id: activity.id });
 	if (res.length === 0) throw new Error('Introuvable dans cet espace.');

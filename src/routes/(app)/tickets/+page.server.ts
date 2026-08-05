@@ -2,13 +2,17 @@ import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import {
-	listTickets,
+	listTicketsPage,
 	getRefData,
 	createTicket,
 	updateTicketField,
 	setTicketFlag,
-	type TicketRow
+	type TicketFilters
 } from '$lib/server/services/tickets';
+import { setTicketInGroup } from '$lib/server/services/ticketGroups';
+import { isManagerOrAdmin } from '$lib/server/services/workspaces';
+
+const PAGE_SIZE = 50;
 
 const createSchema = z.object({
 	key: z.string().trim().min(1, 'Clé requise').max(40),
@@ -17,50 +21,58 @@ const createSchema = z.object({
 	projectId: z.string().uuid().optional().or(z.literal('')),
 	sprintId: z.string().uuid().optional().or(z.literal('')),
 	versionId: z.string().uuid().optional().or(z.literal('')),
-	assigneeId: z.string().uuid().optional().or(z.literal('')),
 	stateId: z.string().uuid().optional().or(z.literal('')),
 	estimationReal: z.string().optional(),
 	estimationTest: z.string().optional(),
-	comment: z.string().optional()
+	comment: z.string().optional(),
+	sspCode: z.string().optional(),
+	estimationPrev: z.string().optional(),
+	enveloppeTotale: z.string().optional()
 });
 
-/** Ordonne les tickets : chaque parent suivi de ses sous-tâches. */
-function toDisplayOrder(tickets: TicketRow[]): (TicketRow & { isChild: boolean })[] {
-	const byParent = new Map<string, TicketRow[]>();
-	const roots: TicketRow[] = [];
-	for (const t of tickets) {
-		if (t.parentId) {
-			if (!byParent.has(t.parentId)) byParent.set(t.parentId, []);
-			byParent.get(t.parentId)!.push(t);
-		} else roots.push(t);
-	}
-	const out: (TicketRow & { isChild: boolean })[] = [];
-	const seen = new Set<string>();
-	for (const r of roots) {
-		out.push({ ...r, isChild: false });
-		seen.add(r.id);
-		for (const c of byParent.get(r.id) ?? []) {
-			out.push({ ...c, isChild: true });
-			seen.add(c.id);
-		}
-	}
-	// orphelins (parent archivé/absent)
-	for (const t of tickets) if (!seen.has(t.id)) out.push({ ...t, isChild: !!t.parentId });
-	return out;
-}
-
-export const load: PageServerLoad = async ({ locals }) => {
+export const load: PageServerLoad = async ({ locals, url }) => {
 	const ws = locals.workspace!;
-	const [tickets, ref] = await Promise.all([
-		listTickets(ws.workspaceId, ws.testPhase),
+	const isAdmin = locals.role === 'ADMIN';
+	const view = url.searchParams.get('view') === 'kanban' ? 'kanban' : 'table';
+	const page = Math.max(1, Number(url.searchParams.get('page')) || 1);
+	const filters: TicketFilters = {
+		query: url.searchParams.get('q') ?? undefined,
+		stateId: url.searchParams.get('state') ?? undefined,
+		projectId: url.searchParams.get('project') ?? undefined,
+		sprintId: url.searchParams.get('sprint') ?? undefined,
+		versionId: url.searchParams.get('version') ?? undefined,
+		// Lien direct depuis un dashboard sprint/version (SprintDashboardPanel) : clé exacte,
+		// pas de recherche substring — sinon "SBX-3" isolerait aussi SBX-30..39.
+		exactKey: url.searchParams.get('ticket') ?? undefined
+	};
+
+	// Kanban a besoin du board complet (pas de pagination) ; le tableau ne charge qu'une page —
+	// évite de tout charger d'un coup quand l'espace a beaucoup de tickets (§ retour utilisateur).
+	// estimationPrev/enveloppeTotale/tnfBudget : redaction faite dans listTicketsPage() (source
+	// unique, tout appelant en profite) — pas juste ici, sinon un autre consommateur la raterait.
+	const [{ rows: tickets, total }, ref] = await Promise.all([
+		listTicketsPage(ws.workspaceId, ws.testPhase, isAdmin, filters, view === 'table' ? { pageSize: PAGE_SIZE, page } : undefined),
 		getRefData(ws.workspaceId)
 	]);
-	return { tickets: toDisplayOrder(tickets), ref, testPhase: ws.testPhase };
+	return {
+		tickets,
+		total,
+		page,
+		pageSize: PAGE_SIZE,
+		pageCount: view === 'table' ? Math.max(1, Math.ceil(total / PAGE_SIZE)) : 1,
+		view,
+		filters,
+		ref,
+		testPhase: ws.testPhase,
+		isAdmin
+	};
 };
 
 export const actions: Actions = {
 	create: async ({ request, locals }) => {
 		const ws = locals.workspace!;
+		// ADMIN ou MANAGER : voit/édite les champs budget (Estimation Prév., Enveloppe totale, TNF).
+		const isAdmin = isManagerOrAdmin(locals.role);
 		const form = Object.fromEntries(await request.formData());
 		const parsed = createSchema.safeParse(form);
 		if (!parsed.success) return fail(400, { error: parsed.error.issues[0].message });
@@ -74,7 +86,6 @@ export const actions: Actions = {
 				projectId: empty(d.projectId),
 				sprintId: empty(d.sprintId),
 				versionId: empty(d.versionId),
-				assigneeId: empty(d.assigneeId),
 				stateId: empty(d.stateId),
 				estimationReal: empty(d.estimationReal),
 				estimationTest: empty(d.estimationTest),
@@ -82,7 +93,11 @@ export const actions: Actions = {
 				// → l'avancement démarre à 0 % au lieu de 100 % (RAE vide).
 				raeReal: empty(d.estimationReal),
 				raeTest: empty(d.estimationTest),
-				comment: empty(d.comment)
+				comment: empty(d.comment),
+				sspCode: empty(d.sspCode),
+				// Invisible pour un USER : ignoré silencieusement si soumis malgré tout.
+				estimationPrev: isAdmin ? empty(d.estimationPrev) : null,
+				enveloppeTotale: isAdmin ? empty(d.enveloppeTotale) : null
 			});
 		} catch (e) {
 			return fail(400, {
@@ -97,13 +112,31 @@ export const actions: Actions = {
 
 	update: async ({ request, locals }) => {
 		const ws = locals.workspace!;
+		// ADMIN ou MANAGER : voit/édite les champs budget (Estimation Prév., Enveloppe totale, TNF).
+		const isAdmin = isManagerOrAdmin(locals.role);
 		const f = await request.formData();
 		const ticketId = String(f.get('ticketId') ?? '');
 		const field = String(f.get('field') ?? '');
 		const value = String(f.get('value') ?? '');
 		if (!ticketId || !field) return fail(400, { error: 'Données invalides.' });
 		try {
-			await updateTicketField(ws.workspaceId, ticketId, field, value);
+			await updateTicketField(ws.workspaceId, ticketId, field, value, isAdmin);
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { ok: true };
+	},
+
+	groupToggle: async ({ request, locals }) => {
+		const ws = locals.workspace;
+		if (!ws) return fail(401, { error: 'Non authentifié.' });
+		const f = await request.formData();
+		const ticketId = String(f.get('ticketId') ?? '');
+		const groupId = String(f.get('groupId') ?? '');
+		const member = f.get('member') === 'true';
+		if (!ticketId || !groupId) return fail(400, { error: 'Données invalides.' });
+		try {
+			await setTicketInGroup(ws.workspaceId, ticketId, groupId, member);
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}

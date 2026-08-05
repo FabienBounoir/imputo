@@ -1,5 +1,5 @@
 import { and, eq, gte, lte, sql } from 'drizzle-orm';
-import { db, timeEntry, category, activity, user } from '$lib/server/db';
+import { db, timeEntry, category, activity, user, ticketGroup } from '$lib/server/db';
 import { listTickets, getRefData } from './tickets';
 import { num, round, totalEstimation, totalRae, avancement } from './calc';
 
@@ -15,6 +15,7 @@ export type Dashboard = {
 	byProject: GroupProgress[];
 	bySprint: GroupProgress[];
 	byVersion: GroupProgress[];
+	byGroup: GroupProgress[];
 	byPerson: { name: string; productive: number; nonProductive: number; total: number }[];
 	byActivity: { label: string; total: number }[];
 	productiveVsNot: { productive: number; nonProductive: number };
@@ -107,6 +108,7 @@ export async function getDashboard(
 			byProject: [],
 			bySprint: [],
 			byVersion: [],
+			byGroup: [],
 			byPerson,
 			byActivity,
 			productiveVsNot
@@ -114,7 +116,11 @@ export async function getDashboard(
 	}
 
 	// Vue complète : chiffrage depuis l'état courant des tickets.
-	const [tickets, ref] = await Promise.all([listTickets(workspaceId), getRefData(workspaceId)]);
+	const [tickets, ref, groups] = await Promise.all([
+		listTickets(workspaceId),
+		getRefData(workspaceId),
+		db.select({ id: ticketGroup.id, label: ticketGroup.label }).from(ticketGroup).where(eq(ticketGroup.workspaceId, workspaceId))
+	]);
 
 	// KPIs + répartition par état + avancement par projet / sprint (depuis les tickets)
 	let estTotal = 0;
@@ -124,7 +130,9 @@ export async function getDashboard(
 	const projAgg = new Map<string, GroupProgress>();
 	const sprintAgg = new Map<string, GroupProgress>();
 	const versionAgg = new Map<string, GroupProgress>();
+	const groupAgg = new Map<string, GroupProgress>();
 	const versionName = new Map(ref.versions.map((v) => [v.id, v.name]));
+	const groupName = new Map(groups.map((g) => [g.id, g.label]));
 	const accumulate = (
 		map: Map<string, GroupProgress>,
 		name: string,
@@ -155,6 +163,11 @@ export async function getDashboard(
 			rae,
 			t.consumed
 		);
+		// Many-to-many : un ticket peut alimenter 0..N groupes (pas de fallback "Sans groupe").
+		for (const gid of t.groupIds) {
+			const label = groupName.get(gid);
+			if (label) accumulate(groupAgg, label, est, rae, t.consumed);
+		}
 	}
 	estTotal = round(estTotal);
 	raeTotalSum = round(raeTotalSum);
@@ -174,6 +187,7 @@ export async function getDashboard(
 	const byProject = finalizeGroups(projAgg);
 	const bySprint = finalizeGroups(sprintAgg);
 	const byVersion = finalizeGroups(versionAgg);
+	const byGroup = finalizeGroups(groupAgg);
 
 	const byState = ref.states
 		.map((s) => ({ label: s.label, emoji: s.emoji, color: s.color, count: stateCount.get(s.id) ?? 0 }))
@@ -193,6 +207,7 @@ export async function getDashboard(
 		byProject,
 		bySprint,
 		byVersion,
+		byGroup,
 		byPerson,
 		byActivity,
 		productiveVsNot
