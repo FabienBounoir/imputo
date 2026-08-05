@@ -31,6 +31,26 @@ docker compose up -d --build   # → http://localhost:3000
 Démarre Postgres, applique les migrations puis lance le front buildé (adapter Node), tout dans
 le réseau Docker de `docker-compose.yml`. Après un changement de code : `docker compose up -d --build app`.
 
+**Déploiement sur un serveur distant (VPS…)** : mettre à jour `ORIGIN` **et** `PUBLIC_BASE_URL`
+dans `.env` avec l'URL publique réelle, identique pour les deux (ex. `https://imputo.mondomaine.fr`
+ou `http://12.34.56.78:3000`) :
+- `ORIGIN` manquant → tous les formulaires échouent avec `Cross-site POST form submissions are
+  forbidden` (adapter-node ne connaît par défaut que son adresse interne au container et rejette
+  les `POST` dont l'en-tête `Origin` du navigateur ne correspond pas).
+- `PUBLIC_BASE_URL` manquant → les liens envoyés (invitation membre, magic link) pointent vers
+  `localhost` au lieu de l'URL publique.
+
+Puis `docker compose up -d --build`.
+
+**Scripts ponctuels sur la base déployée (`db:seed`, `db:unseed`, `db:studio`…)** : ces scripts
+utilisent `tsx`/`drizzle-kit`, absents de l'image `app` de prod (devDependencies retirées).
+Utiliser le service `tools` du compose (jamais démarré par `up`, uniquement via `run`) :
+
+```bash
+docker compose run --rm tools npm run db:seed
+docker compose run --rm tools npm run db:unseed
+```
+
 Première utilisation : aller sur `/register` pour **créer un espace** (vous en devenez l'admin).
 
 ## Scripts
