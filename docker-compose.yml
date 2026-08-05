@@ -35,6 +35,10 @@ services:
       ARCHIVE_RETENTION: ${ARCHIVE_RETENTION:-30d}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:3000}
       CRON_SECRET: ${CRON_SECRET:-change-me-cron-secret}
+      # Origine publique réelle (protocole + domaine/IP + port si non standard) — sans ça,
+      # adapter-node ne connaît que son adresse interne et rejette tout POST ("Cross-site
+      # POST form submissions are forbidden") dès qu'on accède au VPS depuis l'extérieur.
+      ORIGIN: ${ORIGIN:-http://localhost:3000}
     ports:
       - '3000:3000'
 
