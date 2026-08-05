@@ -42,5 +42,21 @@ services:
     ports:
       - '3000:3000'
 
+  # Scripts ponctuels ayant besoin des devDependencies (tsx, drizzle-kit) — jamais démarré par
+  # `docker compose up`. Ex. : docker compose run --rm tools npm run db:seed
+  #                            docker compose run --rm tools npm run db:unseed
+  #                            docker compose run --rm tools npm run db:studio
+  tools:
+    build:
+      context: .
+      target: build
+    profiles: ['tools']
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://imputo:imputo@db:5432/imputo
+    command: ['true'] # no-op par défaut ; toujours lancé via `run` avec une commande explicite
+
 volumes:
   imputo-pgdata:
