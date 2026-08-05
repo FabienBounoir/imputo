@@ -1,21 +1,29 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { getWeek, setCell, deleteRow, getRecentTicketIds } from '$lib/server/services/imputation';
+import { getTimesheet, setCell, deleteRow, getRecentTicketIds } from '$lib/server/services/imputation';
 import { getRefData, listTickets } from '$lib/server/services/tickets';
 import { getMembership } from '$lib/server/services/workspaces';
-import { listObjectivesForUser, isOnVacation } from '$lib/server/services/weeklyObjectives';
+import { listObjectivesForUserWeeks, vacationWeeks } from '$lib/server/services/weeklyObjectives';
+import { resolvePeriodPrefs } from '$lib/server/services/imputationPrefs';
 import { num } from '$lib/server/services/calc';
-import { mondayOf, parseISODate, toISODate, isoWeek, formatRange, addDays } from '$lib/utils/date';
+import { buildPeriod, parseGranularity, parsePeriodMode, todayInParis } from '$lib/utils/date';
 
-export const load: PageServerLoad = async ({ locals, url }) => {
+export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 	const user = locals.user!;
 	const ws = locals.workspace;
 	if (!ws) redirect(303, '/register');
 	const isAdmin = locals.role === 'ADMIN';
 
-	const wParam = url.searchParams.get('w');
-	const monday = wParam ? mondayOf(parseISODate(wParam)) : mondayOf(new Date());
-	const mondayISO = toISODate(monday);
+	const { granularity, mode } = resolvePeriodPrefs(
+		cookies,
+		ws.workspaceId,
+		url.searchParams.get('g'),
+		url.searchParams.get('mode')
+	);
+	// `?w=` reste l'ancre (compat des favoris) ; `todayInParis()` et non `new Date()`, sinon la page
+	// s'ouvre sur la veille entre minuit et 2 h heure de Paris.
+	const period = buildPeriod(granularity, mode, url.searchParams.get('w') ?? todayInParis());
+	const weekMondays = period.weeks.map((w) => w.mondayISO);
 
 	const ref = await getRefData(ws.workspaceId);
 
@@ -32,29 +40,33 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	}
 	const readOnly = viewedId !== user.id;
 
-	const [week, tickets, membership, recentTicketIds, weeklyObjectives, onVacation] = await Promise.all([
-		getWeek(ws.workspaceId, viewedId, mondayISO),
+	const [sheet, tickets, membership, recentTicketIds, weeklyObjectives, vacations] = await Promise.all([
+		getTimesheet(ws.workspaceId, viewedId, period.days),
 		listTickets(ws.workspaceId),
 		getMembership(ws.workspaceId, viewedId),
 		getRecentTicketIds(ws.workspaceId, viewedId),
-		listObjectivesForUser(ws.workspaceId, viewedId, mondayISO),
-		isOnVacation(ws.workspaceId, viewedId, mondayISO)
+		listObjectivesForUserWeeks(ws.workspaceId, viewedId, weekMondays),
+		vacationWeeks(ws.workspaceId, viewedId, weekMondays)
 	]);
 
 	return {
-		week,
+		sheet,
+		period,
 		activities: ref.activities,
 		categories: ref.categories,
-		tickets: tickets.map((t) => ({ id: t.id, key: t.key, title: t.title })),
+		versions: ref.versions,
+		tickets: tickets.map((t) => ({
+			id: t.id,
+			key: t.key,
+			title: t.title,
+			versionId: t.versionId,
+			sprintName: t.sprintName
+		})),
 		recentTicketIds,
 		weeklyObjectives,
-		onVacation,
+		vacationWeeks: vacations,
 		capacity: num(membership?.capacityPerDay ?? '1'),
 		imputationStep: num(ws.imputationStep),
-		weekNumber: isoWeek(monday),
-		weekLabel: formatRange(monday),
-		prevWeek: toISODate(addDays(monday, -7)),
-		nextWeek: toISODate(addDays(monday, 7)),
 		isAdmin,
 		members: isAdmin ? ref.members : [],
 		selfId: user.id,
@@ -99,13 +111,27 @@ export const actions: Actions = {
 		const targetType = String(f.get('targetType')) as 'TICKET' | 'CATEGORY' | 'OBJECTIVE';
 		const targetId = String(f.get('targetId'));
 		const activityId = (f.get('activityId') as string) || null;
-		const mondayISO = String(f.get('mondayISO'));
+		const anchor = String(f.get('anchor') ?? '');
 
-		if (!['TICKET', 'CATEGORY', 'OBJECTIVE'].includes(targetType) || !targetId || !mondayISO)
+		if (!['TICKET', 'CATEGORY', 'OBJECTIVE'].includes(targetType) || !targetId || !anchor)
 			return fail(400, { error: 'Données invalides.' });
 
+		// La plage supprimée est recalculée ici : `fetch('?/deleteRow')` perd la query string, et
+		// accepter des bornes brutes du client laisserait effacer une période arbitraire.
+		const period = buildPeriod(
+			parseGranularity(f.get('g') as string) ?? 'WEEK',
+			parsePeriodMode(f.get('mode') as string) ?? 'FIXED',
+			anchor
+		);
+
 		try {
-			await deleteRow(ws.workspaceId, locals.user.id, { targetType, targetId, activityId, mondayISO });
+			await deleteRow(ws.workspaceId, locals.user.id, {
+				targetType,
+				targetId,
+				activityId,
+				fromISO: period.firstDay,
+				toISO: period.lastDay
+			});
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}

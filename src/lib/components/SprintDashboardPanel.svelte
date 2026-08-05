@@ -151,7 +151,7 @@
 			</div>
 			<div class="card kpi">
 				<div class="k">Estimé / Consommé</div>
-				<div class="v tabnum">{dashboard.kpis.consumedTotal}<small>/ {dashboard.kpis.estTotal} j</small></div>
+				<div class="v tabnum">{dashboard.kpis.estTotal}<small>/ {dashboard.kpis.consumedTotal} j</small></div>
 			</div>
 			<div class="card kpi">
 				<div class="k">RAE global</div>
@@ -328,7 +328,9 @@
 	}
 	.kpis {
 		display: grid;
-		grid-template-columns: repeat(5, 1fr);
+		/* auto-fit et non repeat(5) : la carte TNF budget est masquée hors ADMIN/MANAGER, une
+		   grille figée à 5 colonnes laisserait alors un trou. */
+		grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 		gap: 14px;
 		margin-bottom: 18px;
 	}
