@@ -70,6 +70,16 @@
 		}
 	});
 
+	// Clic sur le sprint/version d'une ligne ticket : va sur Tickets & chiffrage filtré sur ce
+	// sprint/version, avec le ticket d'origine mis en surbrillance dans la liste.
+	function goToTicketFilter(row: Row, kind: 'sprint' | 'version') {
+		const t = data.tickets.find((x) => x.id === row.targetId);
+		if (!t) return;
+		const id = kind === 'sprint' ? t.sprintId : t.versionId;
+		if (!id) return;
+		goto(`/tickets?${kind}=${id}&highlight=${encodeURIComponent(t.key)}`);
+	}
+
 	const today = todayInParis();
 	const days = $derived(data.period.days);
 
@@ -426,7 +436,7 @@
 
 	{#if data.weeklyObjectives.length > 0}
 		<div class="card reminder-card">
-			<div class="reminder-head">🎯 Attribué sur cette période — pour ne pas les oublier</div>
+			<div class="reminder-head">🎯 Attribué sur cette période</div>
 			<div class="reminder-list">
 				{#each data.weeklyObjectives as o, i (o.id)}
 					{@const targetType = o.kind === 'TICKET' ? 'TICKET' : 'OBJECTIVE'}
@@ -497,8 +507,22 @@
 									<b>{row.label}</b>
 									<span class="sub">
 										{row.sublabel}
-										{#if row.sprintName}<span class="tag-activity">{row.sprintName}</span>{/if}
-										{#if row.versionName}<span class="tag-activity">{row.versionName}</span>{/if}
+										{#if row.sprintName}
+											<button
+												type="button"
+												class="tag-activity tag-link"
+												onclick={() => goToTicketFilter(row, 'sprint')}
+												title="Voir les tickets du sprint {row.sprintName}"
+											>{row.sprintName}</button>
+										{/if}
+										{#if row.versionName}
+											<button
+												type="button"
+												class="tag-activity tag-link"
+												onclick={() => goToTicketFilter(row, 'version')}
+												title="Voir les tickets de la version {row.versionName}"
+											>{row.versionName}</button>
+										{/if}
 									</span>
 								</div>
 								{#if !data.readOnly}
@@ -721,6 +745,15 @@
 		border-radius: 20px;
 		white-space: nowrap;
 	}
+	button.tag-link {
+		font: inherit;
+		border: none;
+		cursor: pointer;
+	}
+	button.tag-link:hover {
+		color: var(--accent-ink);
+		background: color-mix(in srgb, var(--accent) 18%, var(--surface-sunk));
+	}
 	.reminder-ok {
 		font-size: 12px;
 		font-weight: 600;
@@ -779,13 +812,12 @@
 		   conteneur de défilement — les cellules sticky doivent se résoudre contre .table-scroll. */
 		overflow: clip;
 	}
-	/* Hauteur bornée : sans elle, la barre de défilement horizontale se retrouve tout en bas d'un
-	   tableau plus haut que l'écran (le scroll vertical est porté par .main), donc hors de portée. */
+	/* Pas de hauteur bornée : le scroll vertical doit rester porté par .main (la page), pas par ce
+	   conteneur — sinon un tableau chargé affiche sa propre barre verticale en plus de celle de la
+	   page. Seul le défilement horizontal (colonnes jours) reste local à la table. */
 	.table-scroll {
-		overflow: auto;
-		max-height: calc(100vh - 320px);
-		min-height: 220px; /* garde-fou sur les petits écrans : la zone ne doit pas devenir inutilisable */
-		overscroll-behavior: contain;
+		overflow-x: auto;
+		overflow-y: visible;
 	}
 	table.imp {
 		width: 100%;

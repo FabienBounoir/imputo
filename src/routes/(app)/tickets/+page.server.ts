@@ -47,6 +47,9 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		// pas de recherche substring — sinon "SBX-3" isolerait aussi SBX-30..39.
 		exactKey: url.searchParams.get('ticket') ?? undefined
 	};
+	// Lien depuis l'imputation (clic sur le sprint/version d'une ligne) : filtre sur le sprint ou la
+	// version (liste complète, pas juste ce ticket) + surbrillance du ticket d'origine dans la liste.
+	const highlightKey = url.searchParams.get('highlight') ?? undefined;
 
 	// Kanban a besoin du board complet (pas de pagination) ; le tableau ne charge qu'une page —
 	// évite de tout charger d'un coup quand l'espace a beaucoup de tickets (§ retour utilisateur).
@@ -64,6 +67,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		pageCount: view === 'table' ? Math.max(1, Math.ceil(total / PAGE_SIZE)) : 1,
 		view,
 		filters,
+		highlightKey,
 		ref,
 		testPhase: ws.testPhase,
 		isAdmin,
