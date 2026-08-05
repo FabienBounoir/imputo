@@ -12,11 +12,13 @@ import {
 	activity,
 	membership,
 	timeEntry,
-	workspace
+	workspace,
+	ticketActivityRae
 } from '$lib/server/db';
 import { parseFlags } from '$lib/server/services/tickets';
-import { num, totalEstimation, totalRae, ecart, avancement, round } from '$lib/server/services/calc';
-import { countWorkdays, parseISODate, addDays, dayNum, toISODate } from '$lib/utils/date';
+import { num, totalEstimation, ecartExecution, avancement, round, resolvedRae } from '$lib/server/services/calc';
+import { getWeeklySynthesis } from '$lib/server/services/weeklySynthesis';
+import { countWorkdaysNonHoliday, parseISODate, addDays, dayNum, toISODate } from '$lib/utils/date';
 
 /** Alias de la table sprint pour joindre séparément les versions sur un ticket. */
 const versionTbl = alias(sprint, 'version');
@@ -168,8 +170,10 @@ export const SHEET_KEYS = [
 	'us',
 	'projsprint',
 	'activite',
+	'raeActivite',
 	'imputation',
 	'personne',
+	'hebdo',
 	'absences'
 ] as const;
 export type SheetKey = (typeof SHEET_KEYS)[number];
@@ -195,7 +199,10 @@ export async function buildWorkbook(
 		activityUser,
 		states,
 		dayEntries,
-		wsRow
+		wsRow,
+		activityRaeRows,
+		activities,
+		ticketActivityUserRows
 	] = await Promise.all([
 		db
 			.select({
@@ -209,7 +216,6 @@ export async function buildWorkbook(
 				raeTest: ticket.raeTest,
 				stateLabel: state.label,
 				stateEmoji: state.emoji,
-				assignee: user.displayName,
 				projectName: project.name,
 				sprintName: sprint.name,
 				versionName: versionTbl.name,
@@ -217,7 +223,6 @@ export async function buildWorkbook(
 			})
 			.from(ticket)
 			.leftJoin(state, eq(ticket.stateId, state.id))
-			.leftJoin(user, eq(ticket.assigneeId, user.id))
 			.leftJoin(project, eq(ticket.projectId, project.id))
 			.leftJoin(sprint, eq(ticket.sprintId, sprint.id))
 			.leftJoin(versionTbl, eq(ticket.versionId, versionTbl.id))
@@ -294,7 +299,32 @@ export async function buildWorkbook(
 			.select({ accentColor: workspace.accentColor, testPhase: workspace.testPhase })
 			.from(workspace)
 			.where(eq(workspace.id, workspaceId))
-			.limit(1)
+			.limit(1),
+		// RAE par activité (§2.3) — nécessaire pour résoudre le RAE réel de chaque ticket : la
+		// colonne ticket.rae_real/rae_test n'est plus fiable dès qu'un ticket a des sous-lignes.
+		db
+			.select({
+				ticketId: ticketActivityRae.ticketId,
+				activityId: ticketActivityRae.activityId,
+				raeReal: ticketActivityRae.raeReal,
+				raeTest: ticketActivityRae.raeTest
+			})
+			.from(ticketActivityRae)
+			.innerJoin(ticket, eq(ticketActivityRae.ticketId, ticket.id))
+			.where(eq(ticket.workspaceId, workspaceId)),
+		db.select({ id: activity.id, label: activity.label }).from(activity).where(eq(activity.workspaceId, workspaceId)),
+		// Contributeurs (activité, personne) par ticket sur la période — pour la feuille "RAE par activité".
+		db
+			.select({
+				ticketId: timeEntry.ticketId,
+				activityId: timeEntry.activityId,
+				userName: user.displayName,
+				total: sql<string>`sum(${timeEntry.amount})`
+			})
+			.from(timeEntry)
+			.innerJoin(user, eq(timeEntry.userId, user.id))
+			.where(and(eq(timeEntry.workspaceId, workspaceId), eq(timeEntry.targetType, 'TICKET'), inPeriod))
+			.groupBy(timeEntry.ticketId, timeEntry.activityId, timeEntry.userId, user.displayName)
 	]);
 
 	// Thème dérivé de l'accent de l'espace (fallback vert). Contraste texte auto.
@@ -308,6 +338,19 @@ export async function buildWorkbook(
 	}
 
 	const memberName = new Map(members.map((m) => [m.id, m.name]));
+
+	// RAE résolu par ticket (§2.3) : somme des lignes ticket_activity_rae si présentes, sinon
+	// fallback ticket.raeReal/raeTest — jamais l'inverse (cf. resolvedRae/tickets.ts).
+	const activitiesById = new Map(activities.map((a) => [a.id, a.label]));
+	const activityRaeByTicket = new Map<string, typeof activityRaeRows>();
+	for (const r of activityRaeRows) {
+		if (!activityRaeByTicket.has(r.ticketId)) activityRaeByTicket.set(r.ticketId, []);
+		activityRaeByTicket.get(r.ticketId)!.push(r);
+	}
+	const resolvedRaeByTicket = new Map<string, { real: number; test: number }>();
+	for (const t of tickets) {
+		resolvedRaeByTicket.set(t.id, resolvedRae(t.raeReal, t.raeTest, activityRaeByTicket.get(t.id) ?? []));
+	}
 
 	// consommé par ticket par user (période)
 	const consumedByTicketUser = new Map<string, Map<string, number>>();
@@ -351,7 +394,8 @@ export async function buildWorkbook(
 
 	for (const t of periodTickets) {
 		const est = totalEstimation(t.estimationReal, t.estimationTest, testPhase);
-		const rae = totalRae(t.raeReal, t.raeTest, testPhase);
+		const resolved0 = resolvedRaeByTicket.get(t.id) ?? { real: 0, test: 0 };
+		const rae = round(resolved0.real + (testPhase ? resolved0.test : 0));
 		const consumed = ticketConsumed(t.id);
 		const projName = t.projectName ?? 'Sans projet';
 		const sprName = t.sprintName ?? 'Sans sprint';
@@ -396,7 +440,8 @@ export async function buildWorkbook(
 	const productiveTotal = round(consumedTickets + catProdTotal);
 	const nonProductiveTotal = round(catNonProdTotal);
 
-	const workdays = countWorkdays(from, to);
+	// Jours fériés déduits du temps attendu (capacité/KPI) — on peut quand même imputer dessus.
+	const workdays = countWorkdaysNonHoliday(from, to);
 	const projectList = [...projectNames].sort();
 
 	const wb = new ExcelJS.Workbook();
@@ -482,7 +527,7 @@ export async function buildWorkbook(
 		{ header: 'Sprint', key: 'sprint', width: 14 },
 		{ header: 'Version', key: 'version', width: 14 },
 		{ header: 'État', key: 'state', width: 22 },
-		{ header: 'Dev (assigné)', key: 'assignee', width: 16 },
+		{ header: 'Contributeurs', key: 'assignee', width: 26 },
 		{ header: 'Est. Réal', key: 'er', width: 10 },
 		{ header: 'RAE Réal', key: 'rr', width: 10 },
 		{ header: 'Est. Test', key: 'et', width: 10 },
@@ -491,7 +536,7 @@ export async function buildWorkbook(
 		{ header: 'Est. Totale', key: 'te', width: 11 },
 		{ header: 'RAE Total', key: 'tr', width: 11 },
 		{ header: 'Consommé', key: 'consumed', width: 11 },
-		{ header: 'Écart', key: 'ecart', width: 9 },
+		{ header: "Écart d'exéc.", key: 'ecart', width: 12 },
 		{ header: '% Avanc.', key: 'pct', width: 10 },
 		{ header: 'Cypress', key: 'cypress', width: 10 },
 		{ header: 'Doc tech.', key: 'docTech', width: 10 },
@@ -510,7 +555,8 @@ export async function buildWorkbook(
 	let totEr = 0, totRr = 0, totEt = 0, totPr = 0, totRt = 0, totTe = 0, totTr = 0, totCons = 0;
 	for (const t of periodTickets) {
 		const totalEst = totalEstimation(t.estimationReal, t.estimationTest, testPhase);
-		const rae = totalRae(t.raeReal, t.raeTest, testPhase);
+		const resolved = resolvedRaeByTicket.get(t.id) ?? { real: 0, test: 0 };
+		const rae = round(resolved.real + (testPhase ? resolved.test : 0));
 		const perUser = consumedByTicketUser.get(t.id) ?? new Map();
 		const consumed = ticketConsumed(t.id);
 		const fl = parseFlags(t.flags);
@@ -521,16 +567,18 @@ export async function buildWorkbook(
 			sprint: t.sprintName ?? '',
 			version: t.versionName ?? '',
 			state: t.stateLabel ? `${t.stateEmoji ?? ''} ${t.stateLabel}`.trim() : '',
-			assignee: t.assignee ?? '',
+			// Personnes distinctes ayant imputé sur ce ticket (période exportée), pas de détail par activité ici.
+			assignee: [...perUser.keys()].map((uid) => memberName.get(uid) ?? '?').sort().join(', '),
 			er: num(t.estimationReal),
-			rr: num(t.raeReal),
+			rr: resolved.real,
 			et: num(t.estimationTest),
 			pr: num(t.prepa),
-			rt: num(t.raeTest),
+			rt: resolved.test,
 			te: totalEst,
 			tr: rae,
 			consumed,
-			ecart: ecart(consumed, totalEst),
+			// Réel uniquement, toujours (jamais Estimation/RAE Test même si la phase Test est active).
+			ecart: ecartExecution(resolved.real, consumed, num(t.estimationReal)),
 			pct: avancement(totalEst, rae),
 			cypress: fl.cypress,
 			docTech: fl.docTech,
@@ -538,15 +586,15 @@ export async function buildWorkbook(
 		};
 		for (const m of members) rowData[`u_${m.id}`] = perUser.get(m.id) ?? 0;
 		const row = s1.addRow(rowData);
-		if (totalEst > 0 && ecart(consumed, totalEst) > 0) row.getCell('ecart').font = { color: { argb: OVER_RED } };
+		if (num(t.estimationReal) > 0 && Number(rowData.ecart) > 0) row.getCell('ecart').font = { color: { argb: OVER_RED } };
 		const stColor = stateColorByKey.get(String(rowData.state));
 		if (stColor) {
 			const bg = tintArgb(stColor, 0.78);
 			row.getCell('state').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
 			row.getCell('state').font = { color: { argb: pickInk(bg) } };
 		}
-		totEr += num(t.estimationReal); totRr += num(t.raeReal); totEt += num(t.estimationTest);
-		totPr += num(t.prepa); totRt += num(t.raeTest); totTe += totalEst; totTr += rae; totCons += consumed;
+		totEr += num(t.estimationReal); totRr += resolved.real; totEt += num(t.estimationTest);
+		totPr += num(t.prepa); totRt += resolved.test; totTe += totalEst; totTr += rae; totCons += consumed;
 	}
 	styleHeader(s1.getRow(1), theme);
 	s1.views = [{ state: 'frozen', ySplit: 1, xSplit: 2 }];
@@ -574,7 +622,8 @@ export async function buildWorkbook(
 	addTotalsRow(s1, {
 		key: 'TOTAL', er: round(totEr), rr: round(totRr), et: round(totEt), pr: round(totPr),
 		rt: round(totRt), te: round(totTe), tr: round(totTr), consumed: round(totCons),
-		ecart: round(totCons - totTe), pct: avancement(round(totTe), round(totTr))
+		// Somme des écarts d'exécution ticket = RAE Réel total + consommé total − Est. Réal totale.
+		ecart: round(totRr + totCons - totEr), pct: avancement(round(totTe), round(totTr))
 	}, theme);
 
 	// ===== Feuille 2 — Synthèse par projet & sprint =====
@@ -652,6 +701,55 @@ export async function buildWorkbook(
 	const actTotalRow: Record<string, string | number> = { activity: 'TOTAL', total: round(actGrand) };
 	for (const m of members) actTotalRow[`u_${m.id}`] = round(actTotals.get(m.id) ?? 0);
 	addTotalsRow(s3, actTotalRow, theme);
+
+	// ===== Feuille 3b — RAE par activité (détail ticket × activité, §2.3) =====
+	// Manquait totalement à l'export : le RAE par activité n'existait que dans l'UI (modale ticket).
+	const sRA = wb.addWorksheet('RAE par activité');
+	sRA.columns = [
+		{ header: 'Clé', key: 'key', width: 14 },
+		{ header: 'Titre', key: 'title', width: 38 },
+		{ header: 'Projet', key: 'project', width: 16 },
+		{ header: 'Activité', key: 'activity', width: 20 },
+		{ header: 'RAE Réel', key: 'rr', width: 11 },
+		{ header: 'RAE Test', key: 'rt', width: 11 },
+		{ header: 'Consommé (période)', key: 'consumed', width: 16 },
+		{ header: 'Contributeurs (période)', key: 'contributors', width: 30 }
+	];
+	for (const key of ['rr', 'rt', 'consumed']) sRA.getColumn(key).numFmt = '0.00';
+	const consumedByTicketActivity = new Map<string, { total: number; byName: Map<string, number> }>();
+	for (const r of ticketActivityUserRows) {
+		if (!r.ticketId || !r.activityId) continue;
+		const k = `${r.ticketId}|${r.activityId}`;
+		const cur = consumedByTicketActivity.get(k) ?? { total: 0, byName: new Map() };
+		const v = num(r.total);
+		cur.total = round(cur.total + v);
+		cur.byName.set(r.userName, round((cur.byName.get(r.userName) ?? 0) + v));
+		consumedByTicketActivity.set(k, cur);
+	}
+	let raTotRr = 0, raTotRt = 0, raTotCons = 0, raRowCount = 0;
+	for (const t of tickets) {
+		const rows = activityRaeByTicket.get(t.id);
+		if (!rows || rows.length === 0) continue;
+		for (const r of rows) {
+			const k = `${t.id}|${r.activityId}`;
+			const c = consumedByTicketActivity.get(k);
+			const rr = num(r.raeReal), rt = num(r.raeTest);
+			sRA.addRow({
+				key: t.key,
+				title: t.title,
+				project: t.projectName ?? '',
+				activity: activitiesById.get(r.activityId) ?? '—',
+				rr,
+				rt,
+				consumed: c ? c.total : 0,
+				contributors: c ? [...c.byName.entries()].map(([n, v]) => `${n} (${round(v)})`).sort().join(', ') : ''
+			});
+			raTotRr = round(raTotRr + rr); raTotRt = round(raTotRt + rt);
+			raTotCons = round(raTotCons + (c ? c.total : 0)); raRowCount++;
+		}
+	}
+	finishDataSheet(sRA, theme, { xSplit: 1 });
+	if (raRowCount > 0) addTotalsRow(sRA, { key: 'TOTAL', rr: raTotRr, rt: raTotRt, consumed: raTotCons }, theme);
 
 	// ===== Feuille 4 — Imputation détaillée (par personne × cible) =====
 	const s4 = wb.addWorksheet('Imputation détaillée');
@@ -810,6 +908,50 @@ export async function buildWorkbook(
 		s5.addRow([]);
 	}
 
+	// ===== Feuille — Synthèse hebdo (semaine × personne, % de capacité) =====
+	const sH = wb.addWorksheet('Synthèse hebdo');
+	const weeklyRows = await getWeeklySynthesis(workspaceId, from, to);
+	const weekCols = [...new Map(weeklyRows.map((r) => [r.mondayISO, r.isoWeek])).entries()].sort((a, b) =>
+		a[0].localeCompare(b[0])
+	);
+	sH.columns = [
+		{ header: 'Personne', key: 'person', width: 22 },
+		...weekCols.map(([monday, week]) => ({ header: `S${week}`, key: `w_${monday}`, width: 10 }))
+	];
+	for (const [monday] of weekCols) sH.getColumn(`w_${monday}`).numFmt = '0%';
+	const pctByPerson = new Map<string, Map<string, number>>();
+	const weekAgg = new Map<string, { total: number; capacity: number }>();
+	for (const r of weeklyRows) {
+		if (!pctByPerson.has(r.name)) pctByPerson.set(r.name, new Map());
+		pctByPerson.get(r.name)!.set(r.mondayISO, r.pct);
+		const agg = weekAgg.get(r.mondayISO) ?? { total: 0, capacity: 0 };
+		agg.total = round(agg.total + r.total);
+		agg.capacity = round(agg.capacity + r.capacity);
+		weekAgg.set(r.mondayISO, agg);
+	}
+	const weeklyPersonNames = [...pctByPerson.keys()].sort((a, b) => a.localeCompare(b));
+	for (const name of weeklyPersonNames) {
+		const rowData: Record<string, string | number> = { person: name };
+		for (const [monday] of weekCols) rowData[`w_${monday}`] = pctByPerson.get(name)?.get(monday) ?? 0;
+		const row = sH.addRow(rowData);
+		for (const [monday] of weekCols) {
+			const pct = pctByPerson.get(name)?.get(monday);
+			if (pct !== undefined && pct > 1) row.getCell(`w_${monday}`).font = { color: { argb: OVER_RED } };
+		}
+	}
+	finishDataSheet(sH, theme, { xSplit: 1 });
+	if (weeklyPersonNames.length > 0) {
+		for (const [monday] of weekCols)
+			addColorScale(sH, `w_${monday}`, 2, 1 + weeklyPersonNames.length, [SCALE_GREEN, SCALE_AMBER, SCALE_RED]);
+		// Total par semaine = % d'occupation de l'équipe (somme conso / somme capacité), pas une moyenne des %.
+		const totalRowData: Record<string, string | number> = { person: 'TOTAL ÉQUIPE' };
+		for (const [monday] of weekCols) {
+			const agg = weekAgg.get(monday);
+			totalRowData[`w_${monday}`] = agg && agg.capacity > 0 ? round(agg.total / agg.capacity) : 0;
+		}
+		addTotalsRow(sH, totalRowData, theme);
+	}
+
 	// ===== Feuille 6 — Hors-projet & absences =====
 	const s6 = wb.addWorksheet('Hors-projet & absences');
 	s6.columns = [
@@ -842,8 +984,10 @@ export async function buildWorkbook(
 			us: s1,
 			projsprint: s2,
 			activite: s3,
+			raeActivite: sRA,
 			imputation: s4,
 			personne: s5,
+			hebdo: sH,
 			absences: s6
 		};
 		for (const key of SHEET_KEYS) if (!selected.includes(key)) wb.removeWorksheet(registry[key].id);

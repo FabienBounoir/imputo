@@ -287,6 +287,29 @@ select {
 	padding: 1px 7px;
 	border-radius: 20px;
 }
+.nav-item .mood-check {
+	margin-left: auto;
+	color: var(--accent);
+	font-weight: 700;
+}
+/* Rappel visuel : plage de vote bientôt close et pas encore votée. */
+.nav-item.blink {
+	animation: nav-item-blink 1.6s ease-in-out infinite;
+}
+@keyframes nav-item-blink {
+	0%, 100% {
+		color: var(--text-soft);
+	}
+	50% {
+		color: var(--warn);
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.nav-item.blink {
+		animation: none;
+		color: var(--warn);
+	}
+}
 
 .side-foot {
 	margin-top: auto;
@@ -453,6 +476,13 @@ select {
 }
 .pill .e {
 	font-size: 12px;
+}
+.pill.current {
+	background: var(--accent-tint);
+	color: var(--accent-ink);
+}
+[data-theme='dark'] .pill.current {
+	color: color-mix(in srgb, var(--accent) 78%, #fff);
 }
 
 /* ---------- Forms ---------- */

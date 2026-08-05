@@ -1,6 +1,10 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { parseISODate, toISODate, addDays, dayName, dayNum, formatRange, isPublicHolidayFR } from '$lib/utils/date';
 	let { data } = $props();
+
+	// Synthèse hebdo : bascule % de capacité (vue compacte) / détail jour par jour (5 jours ouvrés).
+	let weeklyMode = $state<'pct' | 'daily'>('pct');
 	const d = $derived(data.dashboard);
 	const isAll = $derived(data.scope === 'all');
 
@@ -14,6 +18,27 @@
 	const maxState = $derived(Math.max(1, ...d.byState.map((s) => s.count)));
 	const prodTotal = $derived(d.productiveVsNot.productive + d.productiveVsNot.nonProductive);
 	const prodPct = $derived(prodTotal > 0 ? d.productiveVsNot.productive / prodTotal : 0);
+
+	// Synthèse hebdo par personne : pivot (semaine × personne) depuis la liste plate du serveur.
+	const weekCols = $derived(
+		[...new Map(data.weeklySynthesis.map((r) => [r.mondayISO, r.isoWeek])).entries()].sort((a, b) => a[0].localeCompare(b[0]))
+	);
+	const weeklyPersons = $derived([...new Set(data.weeklySynthesis.map((r) => r.name))].sort((a, b) => a.localeCompare(b)));
+	const weeklyCell = $derived.by(() => {
+		const m = new Map<string, (typeof data.weeklySynthesis)[number]>();
+		for (const r of data.weeklySynthesis) m.set(`${r.name}:${r.mondayISO}`, r);
+		return m;
+	});
+	const pctInt = (x: number) => Math.round(x * 100);
+
+	// Tooltip sur les en-têtes "S27" (etc) : premier → dernier jour de la semaine.
+	const weekRangeLabel = (mondayISO: string) => formatRange(parseISODate(mondayISO));
+	// Vue détaillée : les 5 jours ouvrés (lun→ven) de chaque semaine, pour l'en-tête et les cellules.
+	const weekdays = (mondayISO: string) => {
+		const m = parseISODate(mondayISO);
+		return Array.from({ length: 5 }, (_, i) => toISODate(addDays(m, i)));
+	};
+	const dayHead = (iso: string) => `${dayName(parseISODate(iso))} ${dayNum(parseISODate(iso))}`;
 </script>
 
 <div class="topbar">
@@ -94,6 +119,9 @@
 			{#if d.byVersion.some((g) => g.name !== 'Sans version')}
 				{@render groupPanel('Avancement par version', d.byVersion)}
 			{/if}
+			{#if d.byGroup.length > 0}
+				{@render groupPanel('Avancement par groupe de tickets', d.byGroup)}
+			{/if}
 
 			<!-- Répartition par état -->
 			<div class="card panel">
@@ -171,6 +199,80 @@
 				</div>
 			{/if}
 		</div>
+	</div>
+
+	<!-- Synthèse hebdo par personne (% de capacité, validation d'imputation) -->
+	<div class="card panel weekly-synth">
+		<div class="weekly-head">
+			<h3>Synthèse hebdo par personne</h3>
+			<div class="seg2">
+				<button type="button" class:on={weeklyMode === 'pct'} onclick={() => (weeklyMode = 'pct')}>% de capacité</button>
+				<button type="button" class:on={weeklyMode === 'daily'} onclick={() => (weeklyMode = 'daily')}>Détail par jour</button>
+			</div>
+		</div>
+		{#if weeklyPersons.length === 0}
+			<p class="empty">Aucune imputation sur la période.</p>
+		{:else if weeklyMode === 'pct'}
+			<div class="weekly-table-wrap">
+				<table class="weekly-table">
+					<thead>
+						<tr>
+							<th>Personne</th>
+							{#each weekCols as [monday, week] (monday)}<th class="num" title={weekRangeLabel(monday)}>S{week}</th>{/each}
+						</tr>
+					</thead>
+					<tbody>
+						{#each weeklyPersons as name (name)}
+							<tr>
+								<td>{name}</td>
+								{#each weekCols as [monday] (monday)}
+									{@const cell = weeklyCell.get(`${name}:${monday}`)}
+									<td class="num tabnum" class:over={cell?.overCapacity}>
+										{#if cell}{pctInt(cell.pct)}%{:else}·{/if}
+									</td>
+								{/each}
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		{:else}
+			<div class="weekly-table-wrap">
+				<table class="weekly-table weekly-daily">
+					<thead>
+						<tr>
+							<th rowspan="2">Personne</th>
+							{#each weekCols as [monday, week] (monday)}
+								<th colspan="5" class="week-sep" title={weekRangeLabel(monday)}>S{week}</th>
+							{/each}
+						</tr>
+						<tr>
+							{#each weekCols as [monday] (monday)}
+								{#each weekdays(monday) as iso (iso)}
+									<th class="num day-col" class:holiday={isPublicHolidayFR(iso)} title={isPublicHolidayFR(iso) ? 'Jour férié' : ''}>{dayHead(iso)}</th>
+								{/each}
+							{/each}
+						</tr>
+					</thead>
+					<tbody>
+						{#each weeklyPersons as name (name)}
+							<tr>
+								<td>{name}</td>
+								{#each weekCols as [monday] (monday)}
+									{@const cell = weeklyCell.get(`${name}:${monday}`)}
+									{#each weekdays(monday) as iso (iso)}
+										{@const v = cell?.days[iso] ?? 0}
+										<td class="num tabnum day-col" class:over={cell && v > cell.capacityPerDay}>
+											{v || '·'}
+										</td>
+									{/each}
+								{/each}
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		{/if}
 	</div>
 </div>
 
@@ -367,7 +469,7 @@
 	.split-bar .nonprod,
 	.dot.nonprod,
 	.track .nonprod {
-		background: color-mix(in srgb, var(--accent) 30%, var(--text-mute));
+		background: color-mix(in srgb, var(--accent) 5%, var(--text-mute));
 	}
 	.split-legend {
 		display: flex;
@@ -384,6 +486,81 @@
 		height: 10px;
 		border-radius: 3px;
 		margin-right: 4px;
+	}
+
+	.weekly-synth {
+		margin-top: 20px;
+	}
+	.weekly-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 14px;
+		margin-bottom: 16px;
+	}
+	.weekly-head h3 {
+		margin-bottom: 0;
+	}
+	.seg2 {
+		display: flex;
+		gap: 2px;
+		padding: 3px;
+		border-radius: 30px;
+		background: var(--surface-sunk);
+		border: 1px solid var(--border);
+		flex-shrink: 0;
+	}
+	.seg2 button {
+		padding: 6px 14px;
+		border-radius: 30px;
+		font-size: 12.5px;
+		font-weight: 600;
+		color: var(--text-mute);
+		transition: background 0.15s, color 0.15s;
+	}
+	.seg2 button.on {
+		background: var(--surface);
+		color: var(--text);
+		box-shadow: var(--shadow-sm);
+	}
+	.weekly-table-wrap {
+		overflow-x: auto;
+	}
+	.weekly-table {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: 13px;
+	}
+	.weekly-table th,
+	.weekly-table td {
+		padding: 8px 12px;
+		border-bottom: 1px solid var(--border);
+		white-space: nowrap;
+	}
+	.weekly-table th.num,
+	.weekly-table td.num {
+		text-align: right;
+	}
+	.weekly-table td.over {
+		color: #c0392b;
+		font-weight: 700;
+	}
+	.weekly-daily th.week-sep {
+		text-align: center;
+		border-left: 1px solid var(--border-strong);
+		cursor: default;
+	}
+	.weekly-daily th.day-col {
+		font-size: 11px;
+		color: var(--text-mute);
+		font-weight: 500;
+	}
+	.weekly-daily td.day-col,
+	.weekly-daily th.day-col {
+		padding: 6px 9px;
+	}
+	.weekly-daily th.day-col.holiday {
+		color: var(--danger, #c0392b);
 	}
 
 	@media (max-width: 1000px) {

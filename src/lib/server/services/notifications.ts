@@ -7,10 +7,11 @@ import {
 	timeEntry,
 	category,
 	ticket,
+	ticketActivityRae,
 	notificationLog
 } from '$lib/server/db';
 import { config } from '$lib/server/config';
-import { num } from './calc';
+import { num, resolvedRae } from './calc';
 import {
 	todayInParis,
 	previousWorkday,
@@ -137,28 +138,58 @@ async function dayMissing(kind: NotifKind, day: string, members: Member[]): Prom
 	return sent;
 }
 
-/** Tickets actifs assignés au RAE périmé. */
+/**
+ * Tickets actifs au RAE périmé, notifiés à leurs contributeurs réels (plus de colonne assigneeId
+ * depuis §2.6 — tout utilisateur ayant déjà imputé au moins une fois sur le ticket, sans fenêtre
+ * temporelle : cf. l'hypothèse actée dans docs/SPECS-pilotage-budget.md §2.6).
+ */
 async function raeStale(refDate: string, members: Member[]): Promise<number> {
 	const cutoff = new Date(Date.now() - config.raeStaleDays * 86400000);
-	const rows = await db
+	const candidates = await db
 		.select({
+			id: ticket.id,
 			workspaceId: ticket.workspaceId,
-			userId: ticket.assigneeId,
-			cnt: sql<number>`count(*)::int`
+			raeReal: ticket.raeReal,
+			raeTest: ticket.raeTest,
+			testPhase: workspace.testPhase
 		})
 		.from(ticket)
 		.innerJoin(workspace, eq(ticket.workspaceId, workspace.id))
-		.where(
-			and(
-				isNotNull(ticket.assigneeId),
-				isNull(ticket.archivedAt),
-				isNotNull(ticket.raeUpdatedAt),
-				lt(ticket.raeUpdatedAt, cutoff),
-				// RAE Test ignoré si la phase Test est désactivée sur l'espace.
-				sql`coalesce(${ticket.raeReal}, 0) + case when ${workspace.testPhase} then coalesce(${ticket.raeTest}, 0) else 0 end > 0`
-			)
-		)
-		.groupBy(ticket.workspaceId, ticket.assigneeId);
+		.where(and(isNull(ticket.archivedAt), isNotNull(ticket.raeUpdatedAt), lt(ticket.raeUpdatedAt, cutoff)));
+	if (candidates.length === 0) return 0;
+
+	// RAE résolu (activités si présentes, sinon repli ticket.raeReal/raeTest) — la colonne ticket
+	// n'est plus mise à jour une fois que le RAE est suivi par activité, donc filtrer sur elle
+	// directement redonnerait de faux positifs (ticket terminé via ses sous-lignes) ou de faux
+	// négatifs (ticket dont le repli est resté à 0 depuis toujours).
+	const activityRaeRows = await db
+		.select({ ticketId: ticketActivityRae.ticketId, raeReal: ticketActivityRae.raeReal, raeTest: ticketActivityRae.raeTest })
+		.from(ticketActivityRae)
+		.where(inArray(ticketActivityRae.ticketId, candidates.map((c) => c.id)));
+	const activityRaeByTicket = new Map<string, typeof activityRaeRows>();
+	for (const r of activityRaeRows) {
+		if (!activityRaeByTicket.has(r.ticketId)) activityRaeByTicket.set(r.ticketId, []);
+		activityRaeByTicket.get(r.ticketId)!.push(r);
+	}
+	const staleTicketIds = candidates
+		.filter((t) => {
+			const resolved = resolvedRae(t.raeReal, t.raeTest, activityRaeByTicket.get(t.id) ?? []);
+			// RAE Test ignoré si la phase Test est désactivée sur l'espace.
+			return resolved.real + (t.testPhase ? resolved.test : 0) > 0;
+		})
+		.map((t) => t.id);
+	if (staleTicketIds.length === 0) return 0;
+
+	const rows = await db
+		.select({
+			workspaceId: ticket.workspaceId,
+			userId: timeEntry.userId,
+			cnt: sql<number>`count(distinct ${ticket.id})::int`
+		})
+		.from(ticket)
+		.innerJoin(timeEntry, eq(timeEntry.ticketId, ticket.id))
+		.where(inArray(ticket.id, staleTicketIds))
+		.groupBy(ticket.workspaceId, timeEntry.userId);
 
 	const byMember = new Map(members.map((m) => [`${m.workspaceId}:${m.userId}`, m]));
 	let sent = 0;

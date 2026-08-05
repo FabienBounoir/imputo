@@ -59,6 +59,70 @@ export function countWorkdays(fromISO: string, toISO: string): number {
 	return count;
 }
 
+/** Dimanche de Pâques (UTC) pour une année donnée — algorithme de Gauss/Meeus. */
+function easterSunday(year: number): Date {
+	const a = year % 19;
+	const b = Math.floor(year / 100);
+	const c = year % 100;
+	const d = Math.floor(b / 4);
+	const e = b % 4;
+	const f = Math.floor((b + 8) / 25);
+	const g = Math.floor((b - f + 1) / 3);
+	const h = (19 * a + b - d - g + 15) % 30;
+	const i = Math.floor(c / 4);
+	const k = c % 4;
+	const l = (32 + 2 * e + 2 * i - h - k) % 7;
+	const m = Math.floor((a + 11 * h + 22 * l) / 451);
+	const month = Math.floor((h + l - 7 * m + 114) / 31); // 3 = mars, 4 = avril
+	const day = ((h + l - 7 * m + 114) % 31) + 1;
+	return new Date(Date.UTC(year, month - 1, day));
+}
+
+/** Jours fériés légaux français (fixes + mobiles calculés depuis Pâques) pour une année. */
+function publicHolidaysFR(year: number): Set<string> {
+	const fixed = [
+		[0, 1], // Jour de l'an
+		[4, 1], // Fête du travail
+		[4, 8], // Victoire 1945
+		[6, 14], // Fête nationale
+		[7, 15], // Assomption
+		[10, 1], // Toussaint
+		[10, 11], // Armistice
+		[11, 25] // Noël
+	].map(([m, d]) => toISODate(new Date(Date.UTC(year, m, d))));
+
+	const easter = easterSunday(year);
+	const mobile = [addDays(easter, 1), addDays(easter, 39), addDays(easter, 50)].map(toISODate); // lundi de Pâques, Ascension, lundi de Pentecôte
+
+	return new Set([...fixed, ...mobile]);
+}
+
+const holidayCache = new Map<number, Set<string>>();
+
+/** True si la date ISO est un jour férié légal français. */
+export function isPublicHolidayFR(dateISO: string): boolean {
+	const year = parseISODate(dateISO).getUTCFullYear();
+	let holidays = holidayCache.get(year);
+	if (!holidays) {
+		holidays = publicHolidaysFR(year);
+		holidayCache.set(year, holidays);
+	}
+	return holidays.has(dateISO);
+}
+
+/** Nombre de jours ouvrés non fériés (lun→ven, hors jours fériés FR) entre deux dates ISO incluses. */
+export function countWorkdaysNonHoliday(fromISO: string, toISO: string): number {
+	const from = parseISODate(fromISO);
+	const to = parseISODate(toISO);
+	if (from > to) return 0;
+	let count = 0;
+	for (let d = from; d <= to; d = addDays(d, 1)) {
+		const dow = d.getUTCDay();
+		if (dow !== 0 && dow !== 6 && !isPublicHolidayFR(toISODate(d))) count++;
+	}
+	return count;
+}
+
 /** Numéro de semaine ISO. */
 export function isoWeek(d: Date): number {
 	const date = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
@@ -92,6 +156,31 @@ export function dayName(d: Date): string {
 
 export function dayNum(d: Date): number {
 	return d.getUTCDate();
+}
+
+const MOOD_PERIOD_DAYS = { WEEK_1: 7, WEEK_2: 14, WEEK_3: 21 } as const;
+
+/**
+ * Plage Team mood active contenant `todayISO`. Pour WEEK_1/2/3 : dernier `startWeekday`
+ * (0=lundi..6=dimanche) au plus tôt égal à aujourd'hui, plage de `days` jours à partir de là.
+ * Pour MONTH : toujours du 1er au dernier jour du mois courant (startWeekday ignoré).
+ */
+export function currentMoodPeriod(
+	kind: 'WEEK_1' | 'WEEK_2' | 'WEEK_3' | 'MONTH',
+	startWeekday: number,
+	todayISO: string
+): { start: string; end: string } {
+	const today = parseISODate(todayISO);
+	if (kind === 'MONTH') {
+		const start = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
+		const end = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 0));
+		return { start: toISODate(start), end: toISODate(end) };
+	}
+	const dow = (today.getUTCDay() + 6) % 7; // 0 = lundi
+	const diff = (dow - startWeekday + 7) % 7;
+	const start = addDays(today, -diff);
+	const end = addDays(start, MOOD_PERIOD_DAYS[kind] - 1);
+	return { start: toISODate(start), end: toISODate(end) };
 }
 
 export function formatRange(monday: Date): string {

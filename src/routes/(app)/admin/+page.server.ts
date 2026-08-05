@@ -2,13 +2,15 @@ import { fail, redirect } from '@sveltejs/kit';
 import { z } from 'zod';
 import { and, eq } from 'drizzle-orm';
 import type { Actions, PageServerLoad } from './$types';
-import { db, membership, user } from '$lib/server/db';
+import { db, membership, user, type Role } from '$lib/server/db';
 import { inviteSchema } from '$lib/server/validation/auth';
 import {
 	inviteMember,
 	buildInviteMessage,
 	setAccentColor,
 	setTestPhase,
+	setPprRatio,
+	setImputationStep,
 	setMemberRole,
 	setMemberActive,
 	setMemberCapacity,
@@ -30,7 +32,8 @@ import {
 	listActivities,
 	createActivity,
 	renameActivity,
-	setActivityArchived,
+	setActivityActive,
+	deleteActivity,
 	listStates,
 	createState,
 	updateState,
@@ -38,12 +41,22 @@ import {
 	deleteState,
 	type CategoryKind
 } from '$lib/server/services/params';
+import {
+	listTicketGroups,
+	createTicketGroup,
+	renameTicketGroup,
+	setTicketGroupArchived
+} from '$lib/server/services/ticketGroups';
+import { getMoodConfig, setMoodEnabled, setMoodPeriodConfig, type MoodPeriodKind } from '$lib/server/services/mood';
 
 function refType(v: FormDataEntryValue | null): RefType {
 	return v === 'sprint' || v === 'version' ? v : 'project';
 }
 
+const MOOD_PERIOD_KINDS: MoodPeriodKind[] = ['WEEK_1', 'WEEK_2', 'WEEK_3', 'MONTH'];
+
 const accentSchema = z.object({ color: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Couleur invalide (hex)') });
+const ratioSchema = z.object({ value: z.coerce.number().gt(0).lte(1) });
 
 export const load: PageServerLoad = async ({ locals }) => {
 	if (locals.role !== 'ADMIN') redirect(303, '/imputation');
@@ -62,13 +75,15 @@ export const load: PageServerLoad = async ({ locals }) => {
 		.innerJoin(user, eq(membership.userId, user.id))
 		.where(eq(membership.workspaceId, ws.workspaceId));
 
-	const [projects, sprints, versions, categories, activities, states] = await Promise.all([
+	const [projects, sprints, versions, categories, activities, states, ticketGroups, mood] = await Promise.all([
 		listRefs(ws.workspaceId, 'project'),
 		listRefs(ws.workspaceId, 'sprint'),
 		listRefs(ws.workspaceId, 'version'),
 		listCategories(ws.workspaceId),
 		listActivities(ws.workspaceId),
-		listStates(ws.workspaceId)
+		listStates(ws.workspaceId),
+		listTicketGroups(ws.workspaceId),
+		getMoodConfig(ws.workspaceId)
 	]);
 
 	return {
@@ -77,12 +92,16 @@ export const load: PageServerLoad = async ({ locals }) => {
 		allowedDomain: ws.allowedDomain,
 		accentColor: ws.accentColor,
 		testPhase: ws.testPhase,
+		pprRatio: ws.pprRatio,
+		imputationStep: ws.imputationStep,
+		mood,
 		projects,
 		sprints,
 		versions,
 		categories,
 		activities,
-		states
+		states,
+		ticketGroups
 	};
 };
 
@@ -130,6 +149,56 @@ export const actions: Actions = {
 		return { testPhaseOk: true };
 	},
 
+	moodEnabled: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const enabled = (await request.formData()).get('enabled') === 'true';
+		await setMoodEnabled(ws.workspaceId, enabled);
+		return { moodOk: true };
+	},
+
+	moodConfig: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const f = await request.formData();
+		const periodKind = MOOD_PERIOD_KINDS.includes(f.get('periodKind') as MoodPeriodKind)
+			? (f.get('periodKind') as MoodPeriodKind)
+			: 'WEEK_1';
+		const startWeekday = Number(f.get('startWeekday') ?? 0);
+		try {
+			await setMoodPeriodConfig(ws.workspaceId, periodKind, startWeekday);
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { moodOk: true };
+	},
+
+	pprRatio: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const parsed = ratioSchema.safeParse(Object.fromEntries(await request.formData()));
+		if (!parsed.success) return fail(400, { error: 'Ratio PPR invalide (entre 0 et 1).' });
+		try {
+			await setPprRatio(ws.workspaceId, parsed.data.value);
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { pprRatioOk: true };
+	},
+
+	imputationStep: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const parsed = ratioSchema.safeParse(Object.fromEntries(await request.formData()));
+		if (!parsed.success) return fail(400, { error: 'Pas d\'imputation invalide (entre 0 et 1).' });
+		try {
+			await setImputationStep(ws.workspaceId, parsed.data.value);
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { imputationStepOk: true };
+	},
+
 	refCreate: async ({ request, locals }) => {
 		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
 		const ws = locals.workspace!;
@@ -175,7 +244,8 @@ export const actions: Actions = {
 		const ws = locals.workspace!;
 		const f = await request.formData();
 		const userId = String(f.get('userId'));
-		const role = f.get('role') === 'ADMIN' ? 'ADMIN' : 'USER';
+		const roleRaw = f.get('role');
+		const role: Role = roleRaw === 'ADMIN' ? 'ADMIN' : roleRaw === 'MANAGER' ? 'MANAGER' : 'USER';
 		if (userId === locals.user!.id) return fail(400, { error: 'Vous ne pouvez pas changer votre propre rôle.' });
 		try {
 			await setMemberRole(ws.workspaceId, userId, role);
@@ -305,16 +375,64 @@ export const actions: Actions = {
 		return { actOk: true };
 	},
 
-	actArchive: async ({ request, locals }) => {
+	actActive: async ({ request, locals }) => {
 		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
 		const ws = locals.workspace!;
 		const f = await request.formData();
 		try {
-			await setActivityArchived(ws.workspaceId, String(f.get('id')), f.get('archived') === 'true');
+			await setActivityActive(ws.workspaceId, String(f.get('id')), f.get('active') === 'true');
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { actOk: true };
+	},
+
+	actDelete: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const f = await request.formData();
+		try {
+			await deleteActivity(ws.workspaceId, String(f.get('id')));
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { actOk: true };
+	},
+
+	groupCreate: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const f = await request.formData();
+		try {
+			await createTicketGroup(ws.workspaceId, String(f.get('label') ?? ''));
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { groupOk: true };
+	},
+
+	groupRename: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const f = await request.formData();
+		try {
+			await renameTicketGroup(ws.workspaceId, String(f.get('id')), String(f.get('label') ?? ''));
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { groupOk: true };
+	},
+
+	groupArchive: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const f = await request.formData();
+		try {
+			await setTicketGroupArchived(ws.workspaceId, String(f.get('id')), f.get('archived') === 'true');
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { groupOk: true };
 	},
 
 	stateCreate: async ({ request, locals }) => {

@@ -16,8 +16,10 @@
 		{ key: 'us', label: 'Synthèse US' },
 		{ key: 'projsprint', label: 'Par projet & sprint' },
 		{ key: 'activite', label: 'Par activité' },
+		{ key: 'raeActivite', label: 'RAE par activité (détail)' },
 		{ key: 'imputation', label: 'Imputation détaillée' },
 		{ key: 'personne', label: 'Par personne' },
+		{ key: 'hebdo', label: 'Synthèse hebdo (% capacité)' },
 		{ key: 'absences', label: 'Hors-projet & absences' }
 	];
 	let show = $state(false);

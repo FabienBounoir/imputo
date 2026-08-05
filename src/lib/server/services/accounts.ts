@@ -126,6 +126,18 @@ export async function setTestPhase(workspaceId: string, enabled: boolean) {
 	await db.update(workspace).set({ testPhase: enabled }).where(eq(workspace.id, workspaceId));
 }
 
+/** Ratio PPR = estimationReal * pprRatio (par défaut 0.90), réservé ADMIN. */
+export async function setPprRatio(workspaceId: string, ratio: number) {
+	if (!Number.isFinite(ratio) || ratio <= 0 || ratio > 1) throw new Error('Ratio PPR invalide (entre 0 et 1).');
+	await db.update(workspace).set({ pprRatio: String(ratio) }).where(eq(workspace.id, workspaceId));
+}
+
+/** Pas de saisie de la grille d'imputation (ex. 0.25 = quart de jour), réservé ADMIN. */
+export async function setImputationStep(workspaceId: string, step: number) {
+	if (!Number.isFinite(step) || step <= 0 || step > 1) throw new Error('Pas d\'imputation invalide (entre 0 et 1).');
+	await db.update(workspace).set({ imputationStep: String(step) }).where(eq(workspace.id, workspaceId));
+}
+
 const memberWhere = (workspaceId: string, userId: string) =>
 	and(eq(membership.workspaceId, workspaceId), eq(membership.userId, userId));
 

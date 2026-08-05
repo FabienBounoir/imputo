@@ -1,16 +1,45 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { goto } from '$app/navigation';
 	let { data, form } = $props();
 
 	let showCreate = $state(false);
-	let query = $state('');
-	let fState = $state('');
-	let fAssignee = $state('');
-	let fProject = $state('');
-	let fSprint = $state('');
-	let fVersion = $state('');
 	let savedFlash = $state(false);
 	let flashTimer: ReturnType<typeof setTimeout>;
+
+	// Filtres/vue/pagination pilotés par l'URL (le serveur filtre + pagine désormais — cf. retour
+	// utilisateur : tout charger d'un coup devient lourd quand l'espace a beaucoup de tickets).
+	// `queryInput` reste local pour ne pas déclencher une requête à chaque frappe (debounce).
+	let queryInput = $state(data.filters.query ?? '');
+	$effect(() => {
+		queryInput = data.filters.query ?? '';
+	});
+	let searchDebounce: ReturnType<typeof setTimeout>;
+	function onSearchInput() {
+		clearTimeout(searchDebounce);
+		searchDebounce = setTimeout(() => navigateWith({ q: queryInput }), 350);
+	}
+	function navigateWith(partial: Record<string, string>) {
+		const merged: Record<string, string> = {
+			q: data.filters.query ?? '',
+			state: data.filters.stateId ?? '',
+			project: data.filters.projectId ?? '',
+			sprint: data.filters.sprintId ?? '',
+			version: data.filters.versionId ?? '',
+			view: data.view,
+			page: '1', // tout changement de filtre/vue revient en page 1 (sauf override explicite)
+			...partial
+		};
+		const p = new URLSearchParams();
+		for (const [k, v] of Object.entries(merged)) if (v) p.set(k, v);
+		goto(`?${p.toString()}`, { keepFocus: true, noScroll: true });
+	}
+	// exactKey : arrivée via un lien direct depuis un dashboard sprint/version (?ticket=…) — sans
+	// ça le bouton Réinitialiser reste invisible et on ne peut plus revenir à la liste complète.
+	const hasFilters = $derived(!!(data.filters.query || data.filters.stateId || data.filters.projectId || data.filters.sprintId || data.filters.versionId || data.filters.exactKey));
+	function resetFilters() {
+		navigateWith({ q: '', state: '', project: '', sprint: '', version: '' });
+	}
 
 	type Row = {
 		id: string;
@@ -18,7 +47,6 @@
 		title: string;
 		isChild: boolean;
 		stateId: string | null;
-		assigneeId: string | null;
 		projectId: string | null;
 		sprintId: string | null;
 		versionId: string | null;
@@ -30,6 +58,19 @@
 		estimationTest: number;
 		raeTest: number;
 		consumed: number;
+		sspCode: string | null;
+		estimationPrev: number | null;
+		enveloppeTotale: number | null;
+		groupIds: string[];
+		activityBreakdown: ActivityBreakdownRow[];
+	};
+
+	type ActivityBreakdownRow = {
+		activityId: string;
+		label: string;
+		raeReal: number;
+		raeTest: number;
+		contributors: { userId: string; displayName: string; consumed: number }[];
 	};
 
 	const FLAG_VALUES = ['Oui', 'Non', 'N/A', 'À MAJ', 'MAJ', 'OK'];
@@ -40,8 +81,24 @@
 	] as const;
 
 	let rows = $state<Row[]>([]);
-	let openId = $state<string | null>(null);
-	const toggleDetail = (id: string) => (openId = openId === id ? null : id);
+
+	// RAE par activité : lignes fines toujours visibles sous le ticket (plus de collapse/fetch à
+	// l'ouverture — data.tickets porte déjà le détail, chargé en une fois avec la liste).
+	async function saveActivityRae(row: Row, activityId: string, field: 'raeReal' | 'raeTest', value: number) {
+		const res = await fetch(`/api/tickets/${row.id}/activity-rae`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ activityId, field, value })
+		});
+		if (!res.ok) return;
+		row.activityBreakdown = (await res.json()).rows;
+		// RAE Réal/Test global = compilation des activités (jamais saisi à la main).
+		if (row.activityBreakdown.length > 0) {
+			row.raeReal = round(row.activityBreakdown.reduce((s, a) => s + a.raeReal, 0));
+			row.raeTest = round(row.activityBreakdown.reduce((s, a) => s + a.raeTest, 0));
+		}
+		flash();
+	}
 	// (Re)synchronise quand les données serveur changent (création, reload).
 	$effect(() => {
 		rows = data.tickets.map((t) => ({
@@ -50,7 +107,6 @@
 			title: t.title,
 			isChild: t.isChild,
 			stateId: t.stateId,
-			assigneeId: t.assigneeId,
 			projectId: t.projectId,
 			sprintId: t.sprintId,
 			versionId: t.versionId,
@@ -61,39 +117,24 @@
 			raeReal: t.raeReal,
 			estimationTest: t.estimationTest,
 			raeTest: t.raeTest,
-			consumed: t.consumed
+			consumed: t.consumed,
+			sspCode: t.sspCode,
+			estimationPrev: t.estimationPrev,
+			enveloppeTotale: t.enveloppeTotale,
+			groupIds: [...t.groupIds],
+			activityBreakdown: t.activityBreakdown.map((a) => ({ ...a, contributors: [...a.contributors] }))
 		}));
 	});
 
 	const stateById = $derived(new Map(data.ref.states.map((s) => [s.id, s])));
-
-	const hasFilters = $derived(
-		!!(query || fState || fAssignee || fProject || fSprint || fVersion)
-	);
-	function resetFilters() {
-		query = fState = fAssignee = fProject = fSprint = fVersion = '';
-	}
-
-	let filtered = $derived(
-		rows.filter(
-			(t) =>
-				(!query ||
-					t.key.toLowerCase().includes(query.toLowerCase()) ||
-					t.title.toLowerCase().includes(query.toLowerCase())) &&
-				(!fState || t.stateId === fState) &&
-				(!fAssignee || t.assigneeId === fAssignee) &&
-				(!fProject || t.projectId === fProject) &&
-				(!fSprint || t.sprintId === fSprint) &&
-				(!fVersion || t.versionId === fVersion)
-		)
-	);
 
 	// --- calculs dérivés (mêmes formules que le serveur) ---
 	const n = (v: number | string | null) => (v == null || v === '' ? 0 : Number(v) || 0);
 	const round = (x: number) => Math.round((x + Number.EPSILON) * 100) / 100;
 	const totalEst = (r: Row) => round(n(r.estimationReal) + (data.testPhase ? n(r.estimationTest) : 0));
 	const totalRae = (r: Row) => round(n(r.raeReal) + (data.testPhase ? n(r.raeTest) : 0));
-	const ecart = (r: Row) => round(r.consumed - totalEst(r));
+	// Écart d'exécution : Réel uniquement, jamais Test (cf. calc.ts:ecartExecution côté serveur).
+	const ecartExecution = (r: Row) => round(n(r.raeReal) + r.consumed - n(r.estimationReal));
 	const avancement = (r: Row) => {
 		const te = totalEst(r);
 		return te > 0 ? Math.min(1, Math.max(0, (te - totalRae(r)) / te)) : 0;
@@ -101,13 +142,12 @@
 	const raeSugg = (r: Row) => round(Math.max(0, totalEst(r) - r.consumed));
 	const pct = (x: number) => Math.round(x * 100);
 
-	// --- Vue Kanban ---
-	let view = $state<'table' | 'kanban'>('table');
+	// --- Vue Kanban --- (data.view piloté par l'URL — le serveur charge le board complet non
+	// paginé dans ce mode, cf. +page.server.ts)
 	let dragId = $state<string | null>(null);
 	// Modal d'édition (ouverte au clic sur une carte Kanban).
 	let editId = $state<string | null>(null);
 	const editRow = $derived(rows.find((r) => r.id === editId) ?? null);
-	const assigneeName = (id: string) => data.ref.members.find((m) => m.id === id)?.displayName ?? '';
 	const kanbanCols = $derived([
 		...data.ref.states.map((s) => ({
 			id: s.id as string | null,
@@ -117,7 +157,7 @@
 		})),
 		{ id: null as string | null, label: 'Sans état', emoji: '∅', color: null as string | null }
 	]);
-	const colTickets = (id: string | null) => filtered.filter((t) => t.stateId === id);
+	const colTickets = (id: string | null) => rows.filter((t) => t.stateId === id);
 	function onColumnDrop(stateId: string | null) {
 		const r = rows.find((x) => x.id === dragId);
 		dragId = null;
@@ -191,6 +231,16 @@
 		await fetch('?/flag', { method: 'POST', body });
 		flash();
 	}
+	async function toggleGroup(row: Row, groupId: string) {
+		const member = !row.groupIds.includes(groupId);
+		row.groupIds = member ? [...row.groupIds, groupId] : row.groupIds.filter((g) => g !== groupId);
+		const body = new FormData();
+		body.set('ticketId', row.id);
+		body.set('groupId', groupId);
+		body.set('member', String(member));
+		await fetch('?/groupToggle', { method: 'POST', body });
+		flash();
+	}
 	function flash() {
 		savedFlash = true;
 		clearTimeout(flashTimer);
@@ -199,7 +249,7 @@
 </script>
 
 <div class="topbar">
-	<h1>Tickets &amp; chiffrage<small>{rows.length} tickets · édition directe</small></h1>
+	<h1>Tickets &amp; chiffrage<small>{data.total} ticket{data.total > 1 ? 's' : ''}{data.view === 'table' && data.pageCount > 1 ? ` · page ${data.page}/${data.pageCount}` : ''} · édition directe</small></h1>
 	<div class="spacer"></div>
 	{#if savedFlash}<span class="saved">Enregistré ✓</span>{/if}
 	<a class="btn btn-ghost" href="/export" data-sveltekit-reload>
@@ -235,14 +285,20 @@
 					<div class="field"><label for="state">État</label>
 						<select id="state" name="stateId"><option value="">—</option>{#each data.ref.states as s (s.id)}<option value={s.id}>{s.emoji} {s.label}</option>{/each}</select>
 					</div>
-					<div class="field"><label for="assignee">Dev</label>
-						<select id="assignee" name="assigneeId"><option value="">—</option>{#each data.ref.members as m (m.id)}<option value={m.id}>{m.displayName}</option>{/each}</select>
-					</div>
 				</div>
 				<div class="grid2">
 					<div class="field"><label for="er">Est. Réal</label><input id="er" name="estimationReal" type="number" step="0.25" min="0" /></div>
 					{#if data.testPhase}<div class="field"><label for="et">Est. Test</label><input id="et" name="estimationTest" type="number" step="0.25" min="0" /></div>{/if}
 				</div>
+				<div class="grid2">
+					<div class="field"><label for="ssp">Code SSP</label><input id="ssp" name="sspCode" /></div>
+					{#if data.isAdmin}<div class="field"><label for="eprev">Estimation prévisionnel</label><input id="eprev" name="estimationPrev" type="number" step="0.25" min="0" /></div>{/if}
+				</div>
+				{#if data.isAdmin}
+					<div class="grid2">
+						<div class="field"><label for="env">Enveloppe totale</label><input id="env" name="enveloppeTotale" type="number" step="0.25" min="0" /></div>
+					</div>
+				{/if}
 				<div class="actions-row">
 					<button type="button" class="btn btn-ghost" onclick={() => (showCreate = false)}>Annuler</button>
 					<button type="submit" class="btn btn-primary">Créer</button>
@@ -253,54 +309,50 @@
 
 	<div class="filters">
 		<div class="seg2">
-			<button class:on={view === 'table'} onclick={() => (view = 'table')}>Tableau</button>
-			<button class:on={view === 'kanban'} onclick={() => (view = 'kanban')}>Kanban</button>
+			<button class:on={data.view === 'table'} onclick={() => navigateWith({ view: 'table' })}>Tableau</button>
+			<button class:on={data.view === 'kanban'} onclick={() => navigateWith({ view: 'kanban' })}>Kanban</button>
 		</div>
-		<select class="filter-sel" bind:value={fState} aria-label="Filtrer par état">
+		<select class="filter-sel" value={data.filters.stateId ?? ''} onchange={(e) => navigateWith({ state: e.currentTarget.value })} aria-label="Filtrer par état">
 			<option value="">Tous les états</option>
 			{#each data.ref.states as s (s.id)}<option value={s.id}>{s.emoji} {s.label}</option>{/each}
 		</select>
-		<select class="filter-sel" bind:value={fAssignee} aria-label="Filtrer par dev">
-			<option value="">Tous les devs</option>
-			{#each data.ref.members as m (m.id)}<option value={m.id}>{m.displayName}</option>{/each}
-		</select>
-		<select class="filter-sel" bind:value={fProject} aria-label="Filtrer par projet">
+		<select class="filter-sel" value={data.filters.projectId ?? ''} onchange={(e) => navigateWith({ project: e.currentTarget.value })} aria-label="Filtrer par projet">
 			<option value="">Tous les projets</option>
 			{#each data.ref.projects as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
 		</select>
-		<select class="filter-sel" bind:value={fSprint} aria-label="Filtrer par sprint">
+		<select class="filter-sel" value={data.filters.sprintId ?? ''} onchange={(e) => navigateWith({ sprint: e.currentTarget.value })} aria-label="Filtrer par sprint">
 			<option value="">Tous les sprints</option>
 			{#each data.ref.sprints as s (s.id)}<option value={s.id}>{s.name}</option>{/each}
 		</select>
-		<select class="filter-sel" bind:value={fVersion} aria-label="Filtrer par version">
+		<select class="filter-sel" value={data.filters.versionId ?? ''} onchange={(e) => navigateWith({ version: e.currentTarget.value })} aria-label="Filtrer par version">
 			<option value="">Toutes les versions</option>
 			{#each data.ref.versions as v (v.id)}<option value={v.id}>{v.name}</option>{/each}
 		</select>
 		{#if hasFilters}
 			<button class="reset-btn" onclick={resetFilters}>✕ Réinitialiser</button>
-			<span class="count">{filtered.length} / {rows.length}</span>
+			<span class="count">{data.total} résultat{data.total > 1 ? 's' : ''}</span>
 		{/if}
 		<div class="search">
 			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-			<input placeholder="Rechercher une US…" bind:value={query} />
+			<input placeholder="Rechercher une US…" bind:value={queryInput} oninput={onSearchInput} />
 		</div>
 	</div>
 
-	{#if view === 'table'}
-	<div class="card" style="overflow:visible;">
+	{#if data.view === 'table'}
+	<div class="card tk-card">
 		<table class="tk">
 			<thead>
 				<tr>
-					<th style="width:170px;">État</th><th>Ticket</th><th style="width:130px;">Dev</th>
+					<th style="width:170px;">État</th><th>Ticket</th>
 					<th class="num">Est. Réal</th><th class="num">RAE Réal</th>
 					{#if data.testPhase}<th class="num">Est. Test</th><th class="num">RAE Test</th>{/if}<th class="num">Conso.</th>
-					<th class="num">Écart</th><th class="num" style="width:130px;">Avancement</th>
+					<th class="num" title="Écart d'exécution : RAE Réel + consommé − Estimation Réelle">Écart d'exéc.</th><th class="num" style="width:130px;">Avancement</th>
 				</tr>
 			</thead>
 			<tbody>
-				{#each filtered as r (r.id)}
+				{#each rows as r (r.id)}
 					{@const st = r.stateId ? stateById.get(r.stateId) : null}
-					<tr class:parent={!r.isChild}>
+					<tr class="ticket-row">
 						<td>
 							<select
 								class="cell-select state-select"
@@ -314,33 +366,33 @@
 						</td>
 						<td class="ttl" class:sub={r.isChild}>
 							<div class="ttl-wrap">
-								<button
-									class="expand-btn"
-									class:open={openId === r.id}
-									onclick={() => toggleDetail(r.id)}
-									aria-label="Plus de champs"
-									aria-expanded={openId === r.id}
-								>›</button>
+								<button class="expand-btn" onclick={() => (editId = r.id)} aria-label="Voir le détail du ticket">
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+							</button>
 								<div class="ttl-main">
 									<div class="key tabnum">{r.key}</div>
 									<input class="cell-input title-input" bind:value={r.title} onchange={() => save(r, 'title', r.title)} />
 								</div>
 							</div>
 						</td>
-						<td>
-							<select class="cell-select" bind:value={r.assigneeId} onchange={() => save(r, 'assigneeId', r.assigneeId)}>
-								<option value={null}>—</option>
-								{#each data.ref.members as m (m.id)}<option value={m.id}>{m.displayName}</option>{/each}
-							</select>
-						</td>
 						<td class="num"><input class="cell-input num-input" type="number" step="0.25" min="0" bind:value={r.estimationReal} onchange={() => saveEst(r, 'real')} /></td>
-						<td class="num"><input class="cell-input num-input" type="number" step="0.25" min="0" bind:value={r.raeReal} onchange={() => save(r, 'raeReal', r.raeReal)} title={`RAE suggéré (total) : ${raeSugg(r)}`} /></td>
+						<td class="num">
+							<input
+								class="cell-input num-input"
+								type="number"
+								step="0.25"
+								min="0"
+								value={r.raeReal}
+								disabled
+								title="RAE Réal = compilation des RAE par activité ci-dessous (non éditable ici)"
+							/>
+						</td>
 						{#if data.testPhase}
 							<td class="num"><input class="cell-input num-input" type="number" step="0.25" min="0" bind:value={r.estimationTest} onchange={() => saveEst(r, 'test')} /></td>
-							<td class="num"><input class="cell-input num-input" type="number" step="0.25" min="0" bind:value={r.raeTest} onchange={() => save(r, 'raeTest', r.raeTest)} /></td>
+							<td class="num"><input class="cell-input num-input" type="number" step="0.25" min="0" value={r.raeTest} disabled title="RAE Test = compilation des RAE par activité ci-dessous (non éditable ici)" /></td>
 						{/if}
 						<td class="num tabnum consumed">{r.consumed || '—'}</td>
-						<td class="num tabnum" class:gap-pos={ecart(r) > 0}>{ecart(r) > 0 ? '+' : ''}{ecart(r) || 0}</td>
+						<td class="num tabnum" class:gap-pos={ecartExecution(r) > 0}>{ecartExecution(r) > 0 ? '+' : ''}{ecartExecution(r) || 0}</td>
 						<td>
 							<div class="prog">
 								<div class="bar"><i style="width:{pct(avancement(r))}%"></i></div>
@@ -348,60 +400,56 @@
 							</div>
 						</td>
 					</tr>
-					{#if openId === r.id}
-						<tr class="detail-row">
-							<td colspan={data.testPhase ? 10 : 8}>
-								<div class="detail-grid">
-									<div class="dfield">
-										<label for="d-proj-{r.id}">Projet</label>
-										<select id="d-proj-{r.id}" class="cell-select" bind:value={r.projectId} onchange={() => save(r, 'projectId', r.projectId)}>
-											<option value={null}>—</option>
-											{#each data.ref.projects as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
-										</select>
-									</div>
-									<div class="dfield">
-										<label for="d-sprint-{r.id}">Sprint</label>
-										<select id="d-sprint-{r.id}" class="cell-select" bind:value={r.sprintId} onchange={() => save(r, 'sprintId', r.sprintId)}>
-											<option value={null}>—</option>
-											{#each data.ref.sprints as s (s.id)}<option value={s.id}>{s.name}</option>{/each}
-										</select>
-									</div>
-									<div class="dfield">
-										<label for="d-version-{r.id}">Version</label>
-										<select id="d-version-{r.id}" class="cell-select" bind:value={r.versionId} onchange={() => save(r, 'versionId', r.versionId)}>
-											<option value={null}>—</option>
-											{#each data.ref.versions as v (v.id)}<option value={v.id}>{v.name}</option>{/each}
-										</select>
-									</div>
-									{#if data.testPhase}
-										<div class="dfield">
-											<label for="d-prepa-{r.id}">Prépa</label>
-											<input id="d-prepa-{r.id}" class="cell-input" type="number" step="0.25" min="0" bind:value={r.prepa} onchange={() => save(r, 'prepa', r.prepa)} />
-										</div>
-										{#each FLAG_FIELDS as fl (fl.key)}
-											<div class="dfield">
-												<label for="d-{fl.key}-{r.id}">{fl.label}</label>
-												<select id="d-{fl.key}-{r.id}" class="cell-select" bind:value={r.flags[fl.key]} onchange={() => saveFlag(r, fl.key, r.flags[fl.key])}>
-													<option value="">—</option>
-													{#each FLAG_VALUES as v (v)}<option value={v}>{v}</option>{/each}
-												</select>
-											</div>
-										{/each}
-									{/if}
-									<div class="dfield wide">
-										<label for="d-comment-{r.id}">Commentaire</label>
-										<input id="d-comment-{r.id}" class="cell-input" placeholder="Note libre…" bind:value={r.comment} onchange={() => save(r, 'comment', r.comment)} />
-									</div>
-								</div>
+					{#each r.activityBreakdown as ar (ar.activityId)}
+						<tr class="activity-subrow">
+							<td></td>
+							<td class="ar-name">↳ {ar.label}
+								{#if ar.contributors.length > 0}
+									<span class="ar-contrib">{#each ar.contributors as c, i (c.userId)}{i > 0 ? ', ' : ''}{c.displayName} <b class="tabnum">{c.consumed}</b>j{/each}</span>
+								{/if}
 							</td>
+							<td></td>
+							<td class="num">
+								<input
+									class="cell-input num-input"
+									type="number"
+									step="0.25"
+									min="0"
+									value={ar.raeReal}
+									onchange={(e) => saveActivityRae(r, ar.activityId, 'raeReal', Number(e.currentTarget.value) || 0)}
+								/>
+							</td>
+							{#if data.testPhase}
+								<td></td>
+								<td class="num">
+									<input
+										class="cell-input num-input"
+										type="number"
+										step="0.25"
+										min="0"
+										value={ar.raeTest}
+										onchange={(e) => saveActivityRae(r, ar.activityId, 'raeTest', Number(e.currentTarget.value) || 0)}
+									/>
+								</td>
+							{/if}
+							<td class="num tabnum consumed">{round(ar.contributors.reduce((s, c) => s + c.consumed, 0)) || '—'}</td>
+							<td></td>
+							<td></td>
 						</tr>
-					{/if}
+					{/each}
 				{/each}
-				{#if filtered.length === 0}
-					<tr><td colspan={data.testPhase ? 10 : 8} class="empty-row">Aucun ticket. Créez-en un pour démarrer.</td></tr>
+				{#if rows.length === 0}
+					<tr><td colspan={data.testPhase ? 9 : 7} class="empty-row">Aucun ticket. Créez-en un pour démarrer.</td></tr>
 				{/if}
 			</tbody>
 		</table>
+		{#if data.pageCount > 1}
+			<div class="pager">
+				<button class="btn btn-ghost" disabled={data.page <= 1} onclick={() => navigateWith({ page: String(data.page - 1) })}>← Précédent</button>
+				<span class="pager-info">Page {data.page} / {data.pageCount} · {data.total} tickets</span>
+				<button class="btn btn-ghost" disabled={data.page >= data.pageCount} onclick={() => navigateWith({ page: String(data.page + 1) })}>Suivant →</button>
+			</div>
+		{/if}
 	</div>
 	{:else}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -438,7 +486,6 @@
 							<div class="kkey tabnum">{t.key}</div>
 							<div class="ktitle">{t.title}</div>
 							<div class="kmeta">
-								{#if t.assigneeId}<span class="kassignee">{assigneeName(t.assigneeId)}</span>{:else}<span class="kassignee none">Non assigné</span>{/if}
 								<span class="kbar"><i style="width:{pct(avancement(t))}%"></i></span>
 								<span class="kpct tabnum">{pct(avancement(t))}%</span>
 							</div>
@@ -470,11 +517,6 @@
 						<option value={null}>—</option>{#each data.ref.states as s (s.id)}<option value={s.id}>{s.emoji} {s.label}</option>{/each}
 					</select>
 				</label>
-				<label class="dfield"><span>Dev</span>
-					<select class="cell-select" bind:value={editRow.assigneeId} onchange={() => save(editRow!, 'assigneeId', editRow!.assigneeId)}>
-						<option value={null}>—</option>{#each data.ref.members as m (m.id)}<option value={m.id}>{m.displayName}</option>{/each}
-					</select>
-				</label>
 				<label class="dfield"><span>Projet</span>
 					<select class="cell-select" bind:value={editRow.projectId} onchange={() => save(editRow!, 'projectId', editRow!.projectId)}>
 						<option value={null}>—</option>{#each data.ref.projects as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
@@ -491,11 +533,11 @@
 					</select>
 				</label>
 				<label class="dfield"><span>Est. Réal</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationReal} onchange={() => saveEst(editRow!, 'real')} /></label>
-				<label class="dfield"><span>RAE Réal</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.raeReal} onchange={() => save(editRow!, 'raeReal', editRow!.raeReal)} /></label>
+				<label class="dfield"><span>RAE Réal</span><input class="cell-input" type="number" step="0.25" min="0" value={editRow.raeReal} disabled title="Compilation des RAE par activité (voir le tableau)" /></label>
 				{#if data.testPhase}
 					<label class="dfield"><span>Est. Test</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationTest} onchange={() => saveEst(editRow!, 'test')} /></label>
 					<label class="dfield"><span>Prépa</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.prepa} onchange={() => save(editRow!, 'prepa', editRow!.prepa)} /></label>
-					<label class="dfield"><span>RAE Test</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.raeTest} onchange={() => save(editRow!, 'raeTest', editRow!.raeTest)} /></label>
+					<label class="dfield"><span>RAE Test</span><input class="cell-input" type="number" step="0.25" min="0" value={editRow.raeTest} disabled title="Compilation des RAE par activité (voir le tableau)" /></label>
 					{#each FLAG_FIELDS as fl (fl.key)}
 						<label class="dfield"><span>{fl.label}</span>
 							<select class="cell-select" bind:value={editRow.flags[fl.key]} onchange={() => saveFlag(editRow!, fl.key, editRow!.flags[fl.key])}>
@@ -504,11 +546,31 @@
 						</label>
 					{/each}
 				{/if}
+				<label class="dfield"><span>Code SSP</span><input class="cell-input" placeholder="—" bind:value={editRow.sspCode} onchange={() => save(editRow!, 'sspCode', editRow!.sspCode)} /></label>
+				{#if data.isAdmin}
+					<label class="dfield"><span>Estimation prévisionnel</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationPrev} onchange={() => save(editRow!, 'estimationPrev', editRow!.estimationPrev)} /></label>
+					<label class="dfield"><span>Enveloppe totale</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.enveloppeTotale} onchange={() => save(editRow!, 'enveloppeTotale', editRow!.enveloppeTotale)} /></label>
+				{/if}
 				<label class="dfield wide"><span>Commentaire</span><input class="cell-input" placeholder="Note libre…" bind:value={editRow.comment} onchange={() => save(editRow!, 'comment', editRow!.comment)} /></label>
+				{#if data.ref.ticketGroups.length > 0}
+					<div class="dfield wide">
+						<span>Groupes</span>
+						<div class="group-chips">
+							{#each data.ref.ticketGroups as g (g.id)}
+								<button
+									type="button"
+									class="group-chip"
+									class:on={editRow.groupIds.includes(g.id)}
+									onclick={() => toggleGroup(editRow!, g.id)}
+								>{g.label}</button>
+							{/each}
+						</div>
+					</div>
+				{/if}
 			</div>
 			<div class="tk-foot">
 				<span>Consommé <b class="tabnum">{editRow.consumed || '—'}</b></span>
-				<span>Écart <b class="tabnum" class:gap-pos={ecart(editRow) > 0}>{ecart(editRow) > 0 ? '+' : ''}{ecart(editRow) || 0}</b></span>
+				<span>Écart d'exécution <b class="tabnum" class:gap-pos={ecartExecution(editRow) > 0}>{ecartExecution(editRow) > 0 ? '+' : ''}{ecartExecution(editRow) || 0}</b></span>
 				<span>Avancement <b class="tabnum">{pct(avancement(editRow))}%</b></span>
 			</div>
 		</div>
@@ -605,6 +667,15 @@
 		font-size: 13px;
 		width: 100%;
 	}
+	/* Coins arrondis de .card : overflow:hidden casserait le thead sticky (le clip devient le
+	   référentiel de la position sticky au lieu de .main) — on arrondit directement les 2 cellules
+	   d'angle du thead pour suivre les coins de la carte sans toucher au clipping. */
+	.tk thead th:first-child {
+		border-top-left-radius: var(--r-lg);
+	}
+	.tk thead th:last-child {
+		border-top-right-radius: var(--r-lg);
+	}
 	table.tk {
 		width: 100%;
 		border-collapse: separate;
@@ -619,6 +690,13 @@
 		padding: 14px 10px 12px;
 		text-align: left;
 		white-space: nowrap;
+		/* Header figé au scroll (relatif à .main, seul ancêtre scrollable) : on voit toujours
+		   à quoi correspond chaque colonne, même en bas d'une longue page de tickets. */
+		position: sticky;
+		top: 0;
+		z-index: 2;
+		background: var(--surface);
+		box-shadow: 0 1px 0 var(--border);
 	}
 	.tk thead th.num {
 		text-align: right;
@@ -635,8 +713,11 @@
 	.tk tbody tr:hover {
 		background: var(--surface-2);
 	}
-	.tk tr.parent td {
+	/* Ligne US toujours mise en évidence (peu importe la hiérarchie parent/enfant) pour bien la
+	   distinguer des lignes fines d'activité juste en dessous. */
+	.tk tr.ticket-row td {
 		background: var(--surface-2);
+		border-top: 1px solid var(--border-strong);
 	}
 	.tk .key {
 		font-size: 11px;
@@ -676,28 +757,65 @@
 		border-color: var(--border-strong);
 		color: var(--text);
 	}
-	.expand-btn.open {
-		transform: rotate(90deg);
-		color: var(--accent);
+	.group-chips {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
 	}
-	.detail-row td {
-		background: var(--surface-2);
-		padding: 4px 14px 16px 36px !important;
+	.group-chip {
+		font-size: 12px;
+		font-weight: 600;
+		color: var(--text-soft);
+		border: 1px solid var(--border);
+		border-radius: 20px;
+		padding: 4px 12px;
+		background: var(--surface);
+		transition: border-color 0.15s, color 0.15s, background 0.15s;
 	}
-	.detail-grid {
-		display: grid;
-		grid-template-columns: repeat(4, minmax(0, 1fr));
-		gap: 14px;
+	.group-chip:hover {
+		border-color: var(--border-strong);
+		color: var(--text);
 	}
-	.detail-grid .dfield.wide {
-		grid-column: 1 / -1;
+	.group-chip.on {
+		background: var(--accent-tint);
+		border-color: var(--accent);
+		color: var(--accent-ink);
+	}
+	/* Fond nettement plus sombre/creusé que la ligne US (surface-2) juste au-dessus, pour bien
+	   marquer où finit un ticket et où commence le suivant. */
+	.activity-subrow {
+		background: var(--surface-sunk);
+	}
+	.activity-subrow td {
+		padding: 2px 14px;
+		border-top: none;
+		line-height: 1.6;
+	}
+	.activity-subrow .ar-name {
+		font-size: 11.5px;
+		color: var(--text-soft);
+		padding-left: 34px;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.activity-subrow .ar-contrib {
+		margin-left: 10px;
+		color: var(--text-mute);
+	}
+	.activity-subrow .num-input {
+		height: 22px;
+		padding: 0 6px;
+		font-size: 11.5px;
+	}
+	.activity-subrow .consumed {
+		font-size: 11.5px;
 	}
 	.dfield {
 		display: flex;
 		flex-direction: column;
 		gap: 4px;
 	}
-	.dfield label,
 	.dfield > span {
 		font-size: 11px;
 		font-weight: 600;
@@ -788,6 +906,20 @@
 		text-align: center;
 		color: var(--text-mute);
 		padding: 30px;
+	}
+	.pager {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 16px;
+		padding: 14px;
+		border-top: 1px solid var(--border);
+	}
+	.pager-info {
+		font-size: 12.5px;
+		font-weight: 600;
+		color: var(--text-mute);
+		font-variant-numeric: tabular-nums;
 	}
 	.seg2 {
 		display: flex;
@@ -898,18 +1030,6 @@
 		display: flex;
 		align-items: center;
 		gap: 8px;
-	}
-	.kassignee {
-		font-size: 11.5px;
-		color: var(--text-soft);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		max-width: 110px;
-	}
-	.kassignee.none {
-		color: var(--text-mute);
-		font-style: italic;
 	}
 	.kbar {
 		flex: 1;

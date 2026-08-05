@@ -1,14 +1,15 @@
 <script lang="ts">
-	import { dayName, dayNum, parseISODate, toISODate } from '$lib/utils/date';
+	import { dayName, dayNum, parseISODate, toISODate, isPublicHolidayFR } from '$lib/utils/date';
 	import { onMount, tick } from 'svelte';
 	import { goto, afterNavigate } from '$app/navigation';
 	import ExportModal from '$lib/components/ExportModal.svelte';
+	import TargetPicker from '$lib/components/TargetPicker.svelte';
 
 	let { data } = $props();
 
 	type Row = {
 		rowKey: string;
-		targetType: 'TICKET' | 'CATEGORY';
+		targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE';
 		targetId: string;
 		activityId: string | null;
 		label: string;
@@ -18,7 +19,23 @@
 		amounts: Record<string, number>;
 	};
 
-	const CYCLE = [0, 0.25, 0.5, 0.75, 1];
+	// Pas de saisie (§7 admin) : ex. 0.25 → [0, .25, .5, .75, 1] ; 0.5 → [0, .5, 1]. Jamais
+	// figé sur .25, sinon un espace qui règle un autre pas ne change rien à la saisie réelle.
+	function round(n: number) {
+		return Math.round((n + Number.EPSILON) * 100) / 100;
+	}
+	let CYCLE = $derived.by(() => {
+		const step = data.imputationStep > 0 ? data.imputationStep : 0.25;
+		const n = Math.max(1, Math.round(1 / step));
+		return Array.from({ length: n + 1 }, (_, i) => round(i * step));
+	});
+	let KEYMAP = $derived.by(() => {
+		const map: Record<string, number> = { '0': 0 };
+		CYCLE.filter((v) => v > 0).forEach((v, i) => {
+			if (i < 9) map[String(i + 1)] = v;
+		});
+		return map;
+	});
 
 	let rows = $state<Row[]>([]);
 	let currentMonday = $state('');
@@ -39,18 +56,22 @@
 		return t;
 	});
 	let weekTotal = $derived(round(Object.values(dayTotals).reduce((a, b) => a + b, 0)));
+	// Capacité hebdo attendue = capacité/jour × jours ouvrés non fériés de la semaine (miroir de
+	// calc.ts:weeklyCapacity/capacityPct côté serveur — dupliqué ici car $lib/server n'est pas
+	// importable côté client, cf. le même motif pour totalEst/ecartExecution dans tickets/+page.svelte).
+	let weekWorkdays = $derived(data.week.days.filter((d) => !isPublicHolidayFR(d)).length);
+	let weeklyCapacity = $derived(round(data.capacity * weekWorkdays));
+	let capacityPct = $derived(weeklyCapacity > 0 ? round(weekTotal / weeklyCapacity) : 0);
+	let overCapacity = $derived(capacityPct > 1);
 	let productive = $derived.by(() => {
 		let s = 0;
 		for (const r of rows) if (!r.nonProductive) for (const d of data.week.days) s += r.amounts[d] ?? 0;
 		return round(s);
 	});
 
-	function round(n: number) {
-		return Math.round((n + Number.EPSILON) * 100) / 100;
-	}
 	function fmt(n: number | undefined) {
 		if (!n) return '·';
-		return n === 1 ? '1' : String(n).replace(/^0/, '');
+		return String(n);
 	}
 
 	async function setAmount(row: Row, day: string, value: number) {
@@ -71,7 +92,6 @@
 	}
 
 	// --- Saisie clavier ---
-	const KEYMAP: Record<string, number> = { '1': 0.25, '2': 0.5, '3': 0.75, '4': 1, '0': 0 };
 	const MOVES: Record<string, [number, number]> = {
 		ArrowRight: [0, 1],
 		ArrowLeft: [0, -1],
@@ -136,16 +156,23 @@
 	// --- Ajout de ligne ---
 	let pickTarget = $state('');
 	let pickActivity = $state('');
+	let confirmDelete = $state<Row | null>(null);
 
-	function addRow() {
-		if (!pickTarget) return;
-		const [targetType, targetId] = pickTarget.split('::') as ['TICKET' | 'CATEGORY', string];
-		const activityId = pickActivity || null;
+	async function doDeleteRow() {
+		const row = confirmDelete;
+		if (!row) return;
+		confirmDelete = null;
+		rows = rows.filter((r) => r.rowKey !== row.rowKey); // optimiste
+		const body = new FormData();
+		body.set('targetType', row.targetType);
+		body.set('targetId', row.targetId);
+		if (row.activityId) body.set('activityId', row.activityId);
+		body.set('mondayISO', data.week.mondayISO);
+		await fetch('?/deleteRow', { method: 'POST', body });
+	}
+
+	function buildRow(targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE', targetId: string, activityId: string | null): Row {
 		const rowKey = `${targetType}:${targetId}:${activityId ?? ''}`;
-		if (rows.some((r) => r.rowKey === rowKey)) {
-			pickTarget = '';
-			return;
-		}
 		let label = '';
 		let sublabel = '';
 		let emoji = '🎫';
@@ -154,23 +181,49 @@
 			const t = data.tickets.find((x) => x.id === targetId);
 			label = t?.title ?? '—';
 			sublabel = t?.key ?? '';
-		} else {
+		} else if (targetType === 'CATEGORY') {
 			const c = data.categories.find((x) => x.id === targetId);
 			label = c?.label ?? '—';
 			nonProductive = c?.kind === 'NON_PRODUCTIVE';
 			emoji = nonProductive ? '🌴' : '🛟';
 			sublabel = 'Catégorie';
+		} else {
+			const o = data.weeklyObjectives.find((x) => x.id === targetId);
+			label = o?.label ?? '—';
+			emoji = '📝';
+			sublabel = 'Tâche assignée';
 		}
 		const act = data.activities.find((a) => a.id === activityId);
 		if (act) sublabel += ` · ${act.label}`;
-		rows = [...rows, { rowKey, targetType, targetId, activityId, label, sublabel, emoji, nonProductive, amounts: {} }];
+		return { rowKey, targetType, targetId, activityId, label, sublabel, emoji, nonProductive, amounts: {} };
+	}
+
+	function addRow() {
+		if (!pickTarget) return;
+		const [targetType, targetId] = pickTarget.split('::') as ['TICKET' | 'CATEGORY' | 'OBJECTIVE', string];
+		const activityId = pickActivity || null;
+		const rowKey = `${targetType}:${targetId}:${activityId ?? ''}`;
+		if (rows.some((r) => r.rowKey === rowKey)) {
+			pickTarget = '';
+			return;
+		}
+		rows = [...rows, buildRow(targetType, targetId, activityId)];
 		pickTarget = '';
 		pickActivity = '';
+	}
+
+	// Ajout en un clic depuis le bandeau de rappel (contourne le picker).
+	function quickAddObjective(o: (typeof data.weeklyObjectives)[number]) {
+		const targetType: 'TICKET' | 'OBJECTIVE' = o.kind === 'TICKET' ? 'TICKET' : 'OBJECTIVE';
+		const targetId = o.kind === 'TICKET' ? (o.ticketId ?? '') : o.id;
+		if (!targetId || rows.some((r) => r.targetType === targetType && r.targetId === targetId)) return;
+		rows = [...rows, buildRow(targetType, targetId, o.activityId ?? null)];
 	}
 </script>
 
 <div class="topbar">
 	<h1>{data.readOnly ? 'Imputation' : 'Mon imputation'}<small>Semaine {data.weekNumber} · {data.weekLabel}</small></h1>
+	{#if data.onVacation}<span class="vac-badge">🏖 En vacances cette semaine</span>{/if}
 	<div class="spacer"></div>
 	{#if data.isAdmin}
 		<select class="member-pick" value={data.viewedId} onchange={(e) => viewMember(e.currentTarget.value)} aria-label="Voir l'imputation de">
@@ -209,7 +262,39 @@
 			<div class="k">Capacité / jour</div>
 			<div class="v tabnum">{data.capacity} <small>j</small></div>
 		</div>
+		<div class="card stat" class:warn-stat={overCapacity}>
+			<div class="k">% de capacité (semaine)</div>
+			<div class="v tabnum">{Math.round(capacityPct * 100)} <small>%</small></div>
+			{#if overCapacity}<div class="cap-warn">⚠ Dépassement — reste possible</div>{/if}
+		</div>
 	</div>
+
+	{#if data.weeklyObjectives.length > 0}
+		<div class="card reminder-card">
+			<div class="reminder-head">🎯 Attribué pour cette semaine — pour ne pas les oublier</div>
+			<div class="reminder-list">
+				{#each data.weeklyObjectives as o (o.id)}
+					{@const targetType = o.kind === 'TICKET' ? 'TICKET' : 'OBJECTIVE'}
+					{@const targetId = o.kind === 'TICKET' ? o.ticketId : o.id}
+					{@const already = rows.some((r) => r.targetType === targetType && r.targetId === targetId)}
+					<div class="reminder-item" class:done={already}>
+						<span class="reminder-label">
+							{o.kind === 'TICKET' ? '🎫' : '📝'}
+							{o.kind === 'TICKET' ? `${o.ticketKey} — ${o.ticketTitle}` : o.label}
+							{#if o.activityLabel}<span class="tag-activity">{o.activityLabel}</span>{/if}
+						</span>
+						{#if !data.readOnly}
+							{#if already}
+								<span class="reminder-ok">✓ ajouté</span>
+							{:else}
+								<button class="btn btn-ghost reminder-add" onclick={() => quickAddObjective(o)}>+ Ajouter</button>
+							{/if}
+						{/if}
+					</div>
+				{/each}
+			</div>
+		</div>
+	{/if}
 
 	<div class="card grid-card">
 		<table class="imp">
@@ -222,7 +307,7 @@
 				<tr>
 					<th class="task-h">Tâche / catégorie</th>
 					{#each data.week.days as d (d)}
-						<th class:today={d === today}>{dayName(parseISODate(d))}<span class="dnum">{dayNum(parseISODate(d))}</span></th>
+						<th class:today={d === today} class:holiday={isPublicHolidayFR(d)} title={isPublicHolidayFR(d) ? 'Jour férié' : ''}>{dayName(parseISODate(d))}<span class="dnum">{dayNum(parseISODate(d))}</span></th>
 					{/each}
 					<th>Σ</th>
 				</tr>
@@ -234,6 +319,11 @@
 							<div class="task-cell">
 								<span class="pill">{row.emoji}</span>
 								<div class="tt"><b>{row.label}</b><span>{row.sublabel}</span></div>
+								{#if !data.readOnly}
+									<button class="row-del" onclick={() => (confirmDelete = row)} aria-label="Supprimer la ligne">
+										<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg>
+									</button>
+								{/if}
 							</div>
 						</td>
 						{#each data.week.days as d, di (d)}
@@ -273,15 +363,13 @@
 		{#if !data.readOnly}
 		<div class="addrow">
 			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-			<select bind:value={pickTarget} aria-label="Choisir une cible">
-				<option value="">Ajouter un ticket ou une catégorie…</option>
-				<optgroup label="Tickets">
-					{#each data.tickets as t (t.id)}<option value="TICKET::{t.id}">{t.key} — {t.title}</option>{/each}
-				</optgroup>
-				<optgroup label="Catégories">
-					{#each data.categories as c (c.id)}<option value="CATEGORY::{c.id}">{c.label}</option>{/each}
-				</optgroup>
-			</select>
+			<TargetPicker
+				bind:value={pickTarget}
+				tickets={data.tickets}
+				categories={data.categories}
+				recentTicketIds={data.recentTicketIds}
+				objectives={data.weeklyObjectives}
+			/>
 			<select bind:value={pickActivity} aria-label="Activité (optionnel)">
 				<option value="">Activité (option)</option>
 				{#each data.activities as a (a.id)}<option value={a.id}>{a.label}</option>{/each}
@@ -293,21 +381,51 @@
 
 	<div class="legend">
 		{#if !data.readOnly}
-			<span class="kbd">Clique pour faire défiler <b>·</b> → .25 → .5 → .75 → 1</span>
-			<span class="kbd">Clavier : <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> → .25 / .5 / .75 / 1 · <kbd>0</kbd>/<kbd>Suppr</kbd> vide · <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> naviguer · <kbd>←</kbd>/<kbd>→</kbd> en bord = semaine ±</span>
+			{@const keyEntries = Object.entries(KEYMAP).filter(([k]) => k !== '0')}
+			<span class="kbd">Clique pour faire défiler <b>·</b> → {CYCLE.slice(1).map((v) => fmt(v)).join(' → ')}</span>
+			<span class="kbd">Clavier : {#each keyEntries as [k] (k)}<kbd>{k}</kbd> {/each}→ {keyEntries.map(([, v]) => fmt(v)).join(' / ')} · <kbd>0</kbd>/<kbd>Suppr</kbd> vide · <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> naviguer · <kbd>←</kbd>/<kbd>→</kbd> en bord = semaine ±</span>
 		{/if}
 	</div>
 </div>
 
+<svelte:window onkeydown={(e) => e.key === 'Escape' && (confirmDelete = null)} />
+
+{#if confirmDelete}
+	{@const row = confirmDelete}
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="modal-backdrop" onclick={() => (confirmDelete = null)}>
+		<div class="modal" onclick={(e) => e.stopPropagation()}>
+			<h3>Supprimer cette ligne ?</h3>
+			<p class="hint">
+				{row.emoji} <b>{row.label}</b>{row.sublabel ? ` — ${row.sublabel}` : ''} — toutes les heures saisies cette semaine sur cette ligne seront supprimées.
+			</p>
+			<div class="modal-actions">
+				<button class="btn btn-ghost" onclick={() => (confirmDelete = null)}>Annuler</button>
+				<button class="btn btn-danger" onclick={doDeleteRow}>🗑 Supprimer</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
 <style>
 	.summary {
 		display: grid;
-		grid-template-columns: repeat(3, 1fr);
+		grid-template-columns: repeat(4, 1fr);
 		gap: 14px;
 		margin-bottom: 18px;
 	}
 	.stat {
 		padding: 16px 18px;
+	}
+	.warn-stat {
+		border-color: #c0392b;
+	}
+	.cap-warn {
+		margin-top: 4px;
+		font-size: 11px;
+		font-weight: 600;
+		color: #c0392b;
 	}
 	.stat .k {
 		font-size: 12px;
@@ -341,6 +459,70 @@
 	.member-pick:focus {
 		outline: none;
 		border-color: var(--accent);
+	}
+	.vac-badge {
+		font-size: 11.5px;
+		font-weight: 600;
+		color: var(--accent-ink);
+		background: var(--accent-tint);
+		padding: 4px 10px;
+		border-radius: 20px;
+		white-space: nowrap;
+	}
+	.reminder-card {
+		padding: 14px 18px;
+		margin-bottom: 16px;
+	}
+	.reminder-head {
+		font-size: 12px;
+		font-weight: 600;
+		color: var(--text-mute);
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		margin-bottom: 10px;
+	}
+	.reminder-list {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+	.reminder-item {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		padding: 6px 4px;
+	}
+	.reminder-item.done {
+		opacity: 0.55;
+	}
+	.reminder-label {
+		font-size: 13.5px;
+		display: flex;
+		align-items: baseline;
+		gap: 7px;
+		min-width: 0;
+	}
+	.tag-activity {
+		display: inline-block;
+		font-size: 11px;
+		font-weight: 600;
+		color: var(--text-soft);
+		background: var(--surface-sunk);
+		padding: 2px 8px;
+		border-radius: 20px;
+		white-space: nowrap;
+	}
+	.reminder-ok {
+		font-size: 12px;
+		font-weight: 600;
+		color: var(--accent-ink);
+		flex-shrink: 0;
+	}
+	.reminder-add {
+		flex-shrink: 0;
+		padding: 5px 11px;
+		font-size: 12px;
 	}
 	.ro-banner {
 		display: flex;
@@ -424,6 +606,20 @@
 	.imp thead th.today .dnum {
 		color: var(--accent);
 	}
+	.imp thead th.holiday,
+	.imp thead th.holiday .dnum {
+		color: var(--danger, #c0392b);
+	}
+	.imp thead th.holiday::after {
+		content: '';
+		display: inline-block;
+		width: 5px;
+		height: 5px;
+		border-radius: 50%;
+		background: var(--danger, #c0392b);
+		margin-left: 4px;
+		vertical-align: middle;
+	}
 	.imp tbody tr:hover {
 		background: var(--surface-2);
 	}
@@ -439,6 +635,10 @@
 		align-items: center;
 		gap: 11px;
 	}
+	.task-cell .tt {
+		flex: 1;
+		min-width: 0;
+	}
 	.task-cell .tt b {
 		font-size: 14px;
 		font-weight: 600;
@@ -449,6 +649,25 @@
 		font-size: 11.5px;
 		color: var(--text-mute);
 		font-variant-numeric: tabular-nums;
+	}
+	.row-del {
+		flex-shrink: 0;
+		width: 26px;
+		height: 26px;
+		display: grid;
+		place-items: center;
+		border-radius: 7px;
+		color: var(--text-mute);
+		opacity: 0;
+		transition: opacity 0.15s, background 0.15s, color 0.15s;
+	}
+	.imp tbody tr:hover .row-del {
+		opacity: 1;
+	}
+	.row-del:hover,
+	.row-del:focus-visible {
+		background: color-mix(in srgb, var(--danger, #c0392b) 12%, transparent);
+		color: var(--danger, #c0392b);
 	}
 	.imp td.day {
 		border-top: 1px solid var(--border);
@@ -586,5 +805,48 @@
 		font-weight: 600;
 		line-height: 1.4;
 		text-align: center;
+	}
+
+	.modal-backdrop {
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.45);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 20px;
+		z-index: 50;
+	}
+	.modal {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: var(--r-lg, 16px);
+		box-shadow: var(--shadow-lg, 0 20px 50px rgba(0, 0, 0, 0.3));
+		padding: 24px;
+		width: 100%;
+		max-width: 420px;
+	}
+	.modal h3 {
+		font-family: var(--font-display);
+		font-size: 19px;
+		font-weight: 600;
+		margin-bottom: 10px;
+	}
+	.modal .hint {
+		color: var(--text-mute);
+		font-size: 13px;
+	}
+	.modal-actions {
+		display: flex;
+		justify-content: flex-end;
+		gap: 10px;
+		margin-top: 20px;
+	}
+	.btn-danger {
+		background: var(--danger, #c0392b);
+		color: #fff;
+	}
+	.btn-danger:hover {
+		background: color-mix(in srgb, var(--danger, #c0392b) 88%, black);
 	}
 </style>

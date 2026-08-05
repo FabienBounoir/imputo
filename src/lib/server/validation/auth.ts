@@ -25,5 +25,5 @@ export const setPasswordSchema = z
 export const inviteSchema = z.object({
 	displayName: z.string().trim().min(1, 'Nom requis').max(80),
 	email: z.string().trim().toLowerCase().email('Email invalide'),
-	role: z.enum(['USER', 'ADMIN'])
+	role: z.enum(['USER', 'ADMIN', 'MANAGER'])
 });

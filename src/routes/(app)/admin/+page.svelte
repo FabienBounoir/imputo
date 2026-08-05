@@ -7,6 +7,16 @@
 	let accent = $state(data.accentColor);
 	let copied = $state(false);
 
+	const WEEKDAYS = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
+	const MOOD_PERIODS: { value: string; label: string }[] = [
+		{ value: 'WEEK_1', label: '1 semaine' },
+		{ value: 'WEEK_2', label: '2 semaines' },
+		{ value: 'WEEK_3', label: '3 semaines' },
+		{ value: 'MONTH', label: '1 mois (du 1er au dernier jour)' }
+	];
+	let moodPeriodKind = $state(data.mood.periodKind);
+	let moodStartWeekday = $state(data.mood.startWeekday);
+
 	const initials = (n: string) => n.split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 
 	async function copyMessage() {
@@ -40,7 +50,7 @@
 				<div class="invite-row">
 					<div class="field"><label for="dn">Nom</label><input id="dn" name="displayName" placeholder="Prénom Nom" required /></div>
 					<div class="field"><label for="em">Email</label><input id="em" name="email" type="email" placeholder="prenom.nom@exemple.com" required /></div>
-					<div class="field"><label for="ro">Rôle</label><select id="ro" name="role"><option value="USER">Membre</option><option value="ADMIN">Admin</option></select></div>
+					<div class="field"><label for="ro">Rôle</label><select id="ro" name="role"><option value="USER">Membre</option><option value="MANAGER">Manager</option><option value="ADMIN">Admin</option></select></div>
 					<button class="btn btn-primary" type="submit">Générer l'invitation</button>
 				</div>
 			</form>
@@ -87,6 +97,77 @@
 					</button>
 				</div>
 			</form>
+		</section>
+
+		<section class="card block">
+			<h3>Team mood</h3>
+			<p class="hint">
+				Chaque membre vote une fois par plage (1-5, anonyme, modifiable tant que la plage est active). Les résultats
+				agrégés sont visibles uniquement par les admins, sur <a href="/admin/mood">la page dédiée</a>.
+			</p>
+			{#if form?.moodOk}<div class="flash ok">Réglage mis à jour ✓</div>{/if}
+
+			<form method="POST" action="?/moodEnabled" use:enhance>
+				<input type="hidden" name="enabled" value={String(!data.mood.enabled)} />
+				<div style="display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:6px;">
+					<span>Team mood actuellement <b>{data.mood.enabled ? 'activé' : 'désactivé'}</b></span>
+					<button class="btn {data.mood.enabled ? 'btn-ghost' : 'btn-primary'}" type="submit">
+						{data.mood.enabled ? 'Désactiver' : 'Activer'}
+					</button>
+				</div>
+			</form>
+
+			<form
+				method="POST"
+				action="?/moodConfig"
+				use:enhance={() => async ({ update }) => update({ reset: false })}
+				style="margin-top:14px;"
+			>
+				<div class="field">
+					<label for="mood-period">Durée de la plage</label>
+					<select id="mood-period" name="periodKind" bind:value={moodPeriodKind}>
+						{#each MOOD_PERIODS as p (p.value)}
+							<option value={p.value}>{p.label}</option>
+						{/each}
+					</select>
+				</div>
+				{#if moodPeriodKind !== 'MONTH'}
+					<div class="field">
+						<label for="mood-weekday">Jour de départ de chaque plage</label>
+						<select id="mood-weekday" name="startWeekday" bind:value={moodStartWeekday}>
+							{#each WEEKDAYS as w, i (i)}
+								<option value={i}>{w}</option>
+							{/each}
+						</select>
+					</div>
+				{/if}
+				<button class="btn btn-ghost" type="submit">Enregistrer</button>
+			</form>
+		</section>
+
+		<section class="card block">
+			<h3>Budget &amp; imputation</h3>
+			<p class="hint">
+				<b>PPR</b> = Estimation Réelle × ratio, calculé à la volée sur chaque ticket. <b>Pas d'imputation</b> = le pas
+				de saisie proposé dans la grille (0.25 = quart de jour).
+			</p>
+			{#if form?.pprRatioOk || form?.imputationStepOk}<div class="flash ok">Réglage mis à jour ✓</div>{/if}
+			<div style="display:flex;flex-direction:column;gap:14px;margin-top:6px;">
+				<form method="POST" action="?/pprRatio" use:enhance style="display:flex;align-items:center;justify-content:space-between;gap:14px;">
+					<span>Ratio PPR</span>
+					<div style="display:flex;align-items:center;gap:8px;">
+						<input class="cap-input" type="number" name="value" min="0.01" max="1" step="0.05" value={data.pprRatio} />
+						<button class="btn btn-ghost" type="submit">Enregistrer</button>
+					</div>
+				</form>
+				<form method="POST" action="?/imputationStep" use:enhance style="display:flex;align-items:center;justify-content:space-between;gap:14px;">
+					<span>Pas d'imputation</span>
+					<div style="display:flex;align-items:center;gap:8px;">
+						<input class="cap-input" type="number" name="value" min="0.00" max="1" step="0.05" value={data.imputationStep} />
+						<button class="btn btn-ghost" type="submit">Enregistrer</button>
+					</div>
+				</form>
+			</div>
 		</section>
 	</div>
 
@@ -252,26 +333,65 @@
 							<input class="ref-name" name="label" value={a.label} disabled={a.archived} onchange={(e) => e.currentTarget.form?.requestSubmit()} />
 						</form>
 						{#if a.usage > 0}<span class="tag-usage" title="Imputations liées">{a.usage} imp.</span>{/if}
-						{#if a.archived}<span class="tag-arch">archivé</span>{/if}
+						{#if a.archived}<span class="tag-arch">inactive</span>{/if}
 						<form
 							method="POST"
-							action="?/actArchive"
+							action="?/actActive"
 							use:enhance
 							onsubmit={(e) => {
-								if (!a.archived && a.usage > 0 && !confirm(`${a.usage} imputation${a.usage > 1 ? 's' : ''} perdront cette activité. Archiver quand même ?`))
+								if (!a.archived && !confirm('Désactiver cette activité ? Elle restera visible sur les imputations et tickets existants, mais ne sera plus proposée pour de nouvelles saisies.'))
 									e.preventDefault();
 							}}
 						>
 							<input type="hidden" name="id" value={a.id} />
-							<input type="hidden" name="archived" value={a.archived ? 'false' : 'true'} />
-							<button class="ref-btn" type="submit">{a.archived ? '↺ Restaurer' : '🗄 Archiver'}</button>
+							<input type="hidden" name="active" value={a.archived ? 'true' : 'false'} />
+							<button class="ref-btn" type="submit">{a.archived ? 'Activer' : 'Désactiver'}</button>
 						</form>
+						{#if a.usage === 0}
+							<form
+								method="POST"
+								action="?/actDelete"
+								use:enhance
+								onsubmit={(e) => { if (!confirm(`Supprimer définitivement l'activité « ${a.label} » ?`)) e.preventDefault(); }}
+							>
+								<input type="hidden" name="id" value={a.id} />
+								<button class="ref-btn ref-btn-danger" type="submit">Supprimer</button>
+							</form>
+						{/if}
 					</div>
 				{/each}
 				{#if data.activities.length === 0}<p class="hint" style="margin:0;">Aucune activité.</p>{/if}
 			</div>
 			<form method="POST" action="?/actCreate" use:enhance class="ref-add">
 				<input class="ref-input" name="label" placeholder="Nouvelle activité…" required />
+				<button class="btn btn-ghost" type="submit">+ Ajouter</button>
+			</form>
+		</section>
+
+		<section class="card block">
+			<h3>Groupes de tickets</h3>
+			<p class="hint">Regroupement libre et transverse, indépendant des sprints/versions. Un ticket peut appartenir à plusieurs groupes.</p>
+			{#if form?.groupOk}<div class="flash ok">Mis à jour ✓</div>{/if}
+			<div class="ref-list">
+				{#each data.ticketGroups as g (g.id)}
+					<div class="ref-item" class:archived={g.archived}>
+						<form method="POST" action="?/groupRename" use:enhance>
+							<input type="hidden" name="id" value={g.id} />
+							<input class="ref-name" name="label" value={g.label} disabled={g.archived} onchange={(e) => e.currentTarget.form?.requestSubmit()} />
+						</form>
+						{#if g.usage > 0}<span class="tag-usage" title="Tickets liés">{g.usage} ticket{g.usage > 1 ? 's' : ''}</span>{/if}
+						{#if g.archived}<span class="tag-arch">inactif</span>{/if}
+						<form method="POST" action="?/groupArchive" use:enhance>
+							<input type="hidden" name="id" value={g.id} />
+							<input type="hidden" name="archived" value={g.archived ? 'false' : 'true'} />
+							<button class="ref-btn" type="submit">{g.archived ? 'Activer' : 'Désactiver'}</button>
+						</form>
+					</div>
+				{/each}
+				{#if data.ticketGroups.length === 0}<p class="hint" style="margin:0;">Aucun groupe.</p>{/if}
+			</div>
+			<form method="POST" action="?/groupCreate" use:enhance class="ref-add">
+				<input class="ref-input" name="label" placeholder="Nouveau groupe…" required />
 				<button class="btn btn-ghost" type="submit">+ Ajouter</button>
 			</form>
 		</section>
@@ -288,12 +408,13 @@
 						<td><div class="mc"><span class="avatar">{initials(m.displayName)}</span><div><b>{m.displayName}{#if isSelf} <span class="you">vous</span>{/if}</b><span>{m.email}</span></div></div></td>
 						<td>
 							{#if isSelf}
-								<span class="pill">{m.role === 'ADMIN' ? 'Admin' : 'Membre'}</span>
+								<span class="pill">{m.role === 'ADMIN' ? 'Admin' : m.role === 'MANAGER' ? 'Manager' : 'Membre'}</span>
 							{:else}
 								<form method="POST" action="?/memberRole" use:enhance>
 									<input type="hidden" name="userId" value={m.id} />
 									<select class="role-sel" name="role" value={m.role} onchange={(e) => e.currentTarget.form?.requestSubmit()}>
 										<option value="USER">Membre</option>
+										<option value="MANAGER">Manager</option>
 										<option value="ADMIN">Admin</option>
 									</select>
 								</form>
@@ -303,8 +424,22 @@
 						<td>
 							<form method="POST" action="?/memberCapacity" use:enhance class="cap-form">
 								<input type="hidden" name="userId" value={m.id} />
-								<input class="cap-input" type="number" name="capacity" min="0" max="1" step="0.25" value={m.capacity} title="Capacité par jour (1 = temps plein)" onchange={(e) => e.currentTarget.form?.requestSubmit()} />
-								<span class="cap-unit">j/j</span>
+								<input type="hidden" name="capacity" value={m.capacity} />
+								<input
+									class="cap-input"
+									type="number"
+									min="0"
+									max="100"
+									step="25"
+									value={Math.round(Number(m.capacity) * 100)}
+									title="Capacité hebdomadaire (100 % = temps plein)"
+									onchange={(e) => {
+										const form = e.currentTarget.form!;
+										(form.elements.namedItem('capacity') as HTMLInputElement).value = String(Number(e.currentTarget.value) / 100);
+										form.requestSubmit();
+									}}
+								/>
+								<span class="cap-unit">%</span>
 							</form>
 						</td>
 						<td class="m-actions">
@@ -711,6 +846,10 @@
 	.ref-btn:hover {
 		border-color: var(--border-strong);
 		color: var(--text);
+	}
+	.ref-btn-danger:hover {
+		border-color: #c0392b;
+		color: #c0392b;
 	}
 	.ref-add {
 		display: flex;
