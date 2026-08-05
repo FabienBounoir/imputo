@@ -24,7 +24,8 @@ import {
 	ticketGroup,
 	ticketGroupMember,
 	timeEntry,
-	ticketSnapshot
+	ticketSnapshot,
+	moodVote
 } from './schema';
 import { getDb, wipeSandbox, WORKSPACE_NAME, SEED_DOMAIN, SEED_USERS } from './seed.shared';
 
@@ -481,10 +482,46 @@ async function main() {
 	}
 	for (const batch of chunk(snapshotRows, 500)) await db.insert(ticketSnapshot).values(batch);
 
+	// ---------- Team mood : quelques semaines de votes pour voir l'écran de résultats admin ----------
+	await db.update(workspace).set({ moodEnabled: true }).where(eq(workspace.id, ws.id));
+
+	const MOOD_MESSAGES = [
+		"Sprint chargé mais on avance bien.",
+		'Un peu de flou sur les priorités cette semaine.',
+		"Bonne ambiance dans l'équipe !",
+		'Beaucoup de réunions, moins de temps de dev.',
+		'Content de la livraison de vendredi.',
+		'Charge un peu élevée en ce moment.',
+		'Semaine calme, on a pu souffler.'
+	];
+	const moodVoteRows: (typeof moodVote.$inferInsert)[] = [];
+	for (let weeksAgo = 6; weeksAgo >= 0; weeksAgo--) {
+		const periodStart = toISODate(mondayWeeksAgo(weeksAgo));
+		const periodEnd = toISODate(addDays(mondayWeeksAgo(weeksAgo), 6));
+		// Semaine courante : pas encore terminée, seule une partie de l'équipe a déjà voté.
+		const voters = weeksAgo === 0 ? shuffled(SEED_USERS).slice(0, 3) : SEED_USERS;
+		// Un coup de mou marqué il y a 3 semaines, pour que la courbe ne soit pas plate.
+		const scoreWeights: [number, number][] =
+			weeksAgo === 3
+				? [[1, 2], [2, 4], [3, 3], [4, 1], [5, 0]]
+				: [[1, 1], [2, 2], [3, 4], [4, 5], [5, 3]];
+		for (const u of voters) {
+			moodVoteRows.push({
+				workspaceId: ws.id,
+				userId: userByEmail.get(u.email)!.id,
+				periodStart,
+				periodEnd,
+				score: weighted(scoreWeights),
+				message: chance(0.35) ? rand(MOOD_MESSAGES) : null
+			});
+		}
+	}
+	await db.insert(moodVote).values(moodVoteRows);
+
 	// ---------- Résumé ----------
 	console.log(
 		`\n✓ "${WORKSPACE_NAME}" créé — ${insertedTickets.length} tickets sur ${SPRINT_DEFS.length} sprints / ${VERSION_NAMES.length} versions, ` +
-			`${entryDrafts.length} imputations (${allDays.length} jours ouvrés, du ${allDays[0]} au ${allDays[allDays.length - 1]}), ${snapshotRows.length} snapshots.\n`
+			`${entryDrafts.length} imputations (${allDays.length} jours ouvrés, du ${allDays[0]} au ${allDays[allDays.length - 1]}), ${snapshotRows.length} snapshots, ${moodVoteRows.length} votes team mood sur 7 semaines.\n`
 	);
 	console.log('Comptes :');
 	for (const u of SEED_USERS) console.log(`  ${u.email.padEnd(24)} ${u.password.padEnd(12)} (${u.role})`);
