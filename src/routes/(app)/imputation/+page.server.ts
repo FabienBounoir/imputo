@@ -59,6 +59,7 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 			id: t.id,
 			key: t.key,
 			title: t.title,
+			sprintId: t.sprintId,
 			versionId: t.versionId,
 			sprintName: t.sprintName
 		})),

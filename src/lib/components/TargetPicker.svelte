@@ -38,10 +38,11 @@
 	let query = $state('');
 	let versionFilter = $state('');
 	let root: HTMLDivElement | null = $state(null);
+	let panelEl: HTMLDivElement | null = $state(null);
 	let searchInput: HTMLInputElement | null = $state(null);
 	// position:fixed calculée au clic — le trigger vit dans une card à overflow:hidden qui
 	// rognerait un panneau en position:absolute.
-	let panelPos = $state({ top: 0, left: 0, width: 320 });
+	let panelPos = $state({ top: 0, left: 0, width: 320, maxHeight: 380 });
 
 	const suggested = $derived(
 		recentTicketIds.map((id) => tickets.find((t) => t.id === id)).filter((t): t is Ticket => !!t)
@@ -69,10 +70,28 @@
 		return c?.label ?? '';
 	});
 
+	const PANEL_GAP = 6;
+	const PANEL_H = 380;
+	const PANEL_MIN_H = 160;
+
 	function toggle() {
 		if (!open && root) {
 			const r = root.getBoundingClientRect();
-			panelPos = { top: r.bottom + 6, left: r.left, width: Math.max(r.width, 320) };
+			const vw = window.innerWidth;
+			const vh = window.innerHeight;
+			const spaceBelow = vh - r.bottom - PANEL_GAP;
+			const spaceAbove = r.top - PANEL_GAP;
+			// Pas assez de place sous le trigger (ex. dernière ligne d'un tableau) : on ouvre vers le
+			// haut si ça laisse plus de place, sinon on garde en bas et on rogne juste la hauteur.
+			const openUp = spaceBelow < PANEL_MIN_H && spaceAbove > spaceBelow;
+			const maxHeight = Math.max(PANEL_MIN_H, Math.min(PANEL_H, openUp ? spaceAbove : spaceBelow));
+			const width = Math.min(Math.max(r.width, 320), vw - 16);
+			panelPos = {
+				top: openUp ? r.top - PANEL_GAP - maxHeight : r.bottom + PANEL_GAP,
+				left: Math.min(Math.max(8, r.left), vw - width - 8),
+				width,
+				maxHeight
+			};
 		}
 		open = !open;
 		if (open) queueMicrotask(() => searchInput?.focus());
@@ -87,9 +106,14 @@
 	}
 	// Écoute en phase de capture : un scroll dans un conteneur imbriqué (ex. la zone
 	// principale scrollable) ne bubble pas jusqu'à window, seule la capture le voit.
+	// Le panneau lui-même passe par window en phase de capture (il est dans le DOM sous root) —
+	// sans l'exclure, le moindre scroll de sa propre liste le refermait aussitôt.
 	$effect(() => {
 		if (!open) return;
-		const onScroll = () => (open = false);
+		const onScroll = (e: Event) => {
+			if (panelEl && e.target instanceof Node && panelEl.contains(e.target)) return;
+			open = false;
+		};
 		window.addEventListener('scroll', onScroll, true);
 		return () => window.removeEventListener('scroll', onScroll, true);
 	});
@@ -103,21 +127,28 @@
 		<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6" /></svg>
 	</button>
 	{#if open}
-		<div class="tp-panel" role="listbox" style="top:{panelPos.top}px; left:{panelPos.left}px; width:{panelPos.width}px;">
-			<input
-				bind:this={searchInput}
-				class="tp-search"
-				type="text"
-				placeholder="Rechercher un ticket (clé ou titre)…"
-				bind:value={query}
-				onkeydown={(e) => e.key === 'Escape' && (open = false)}
-			/>
-			{#if versions.length > 0}
-				<select class="tp-version" bind:value={versionFilter} aria-label="Filtrer par version">
-					<option value="">Toutes les versions</option>
-					{#each versions as v (v.id)}<option value={v.id}>{v.name}</option>{/each}
-				</select>
-			{/if}
+		<div
+			class="tp-panel"
+			role="listbox"
+			bind:this={panelEl}
+			style="top:{panelPos.top}px; left:{panelPos.left}px; width:{panelPos.width}px; max-height:{panelPos.maxHeight}px;"
+		>
+			<div class="tp-row">
+				<input
+					bind:this={searchInput}
+					class="tp-search"
+					type="text"
+					placeholder="Rechercher un ticket (clé ou titre)…"
+					bind:value={query}
+					onkeydown={(e) => e.key === 'Escape' && (open = false)}
+				/>
+				{#if versions.length > 0}
+					<select class="tp-version" bind:value={versionFilter} aria-label="Filtrer par version">
+						<option value="">Toutes versions</option>
+						{#each versions as v (v.id)}<option value={v.id}>{v.name}</option>{/each}
+					</select>
+				{/if}
+			</div>
 			{#if objectives.length > 0 && !query.trim() && !versionFilter}
 				<div class="tp-section">
 					<div class="tp-label">🎯 Attribué cette semaine</div>
@@ -189,7 +220,6 @@
 	.tp-panel {
 		position: fixed;
 		z-index: 30;
-		max-height: 380px;
 		overflow-y: auto;
 		border-radius: var(--r-md, 10px);
 		border: 1px solid var(--border);
@@ -197,25 +227,30 @@
 		box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
 		padding: 8px;
 	}
+	.tp-row {
+		display: flex;
+		gap: 6px;
+		margin-bottom: 8px;
+	}
 	.tp-search {
-		width: 100%;
+		flex: 1;
+		min-width: 0;
 		padding: 8px 10px;
 		border-radius: 8px;
 		border: 1px solid var(--border);
 		background: var(--surface-2, var(--surface));
 		color: var(--text);
 		font-size: 13px;
-		margin-bottom: 8px;
 	}
 	.tp-version {
-		width: 100%;
-		padding: 7px 10px;
+		flex: 0 0 auto;
+		max-width: 40%;
+		padding: 7px 8px;
 		border-radius: 8px;
 		border: 1px solid var(--border);
 		background: var(--surface-2, var(--surface));
 		color: var(--text);
 		font-size: 12.5px;
-		margin-bottom: 8px;
 	}
 	.tp-section + .tp-section {
 		margin-top: 10px;

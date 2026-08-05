@@ -137,6 +137,14 @@
 		}));
 	});
 
+	// Arrivée depuis l'imputation (clic sur le sprint/version d'une ligne, cf. ?highlight=) :
+	// amène le ticket d'origine dans le viewport, la surbrillance elle-même est en CSS pur.
+	$effect(() => {
+		if (!data.highlightKey) return;
+		const row = rows.find((r) => r.key === data.highlightKey);
+		if (row) document.getElementById(`ticket-${row.id}`)?.scrollIntoView({ block: 'center' });
+	});
+
 	const stateById = $derived(new Map(data.ref.states.map((s) => [s.id, s])));
 
 	// --- calculs dérivés (mêmes formules que le serveur) ---
@@ -365,7 +373,7 @@
 			<tbody>
 				{#each rows as r (r.id)}
 					{@const st = r.stateId ? stateById.get(r.stateId) : null}
-					<tr class="ticket-row">
+					<tr class="ticket-row" id="ticket-{r.id}" class:highlighted={r.key === data.highlightKey}>
 						<td>
 							<select
 								class="cell-select state-select"
@@ -737,6 +745,17 @@
 		background: var(--surface-2);
 		border-top: 1px solid var(--border-strong);
 	}
+	/* Le fond est posé sur les <td> ci-dessus (opaque), donc la surbrillance doit aussi cibler
+	   les <td> — un simple background sur <tr> serait invisible, recouvert par celui des cellules. */
+	.tk tr.ticket-row.highlighted td {
+		background: color-mix(in srgb, var(--accent) 28%, var(--surface-2));
+		animation: highlight-fade 2.5s ease-out 1;
+	}
+	@keyframes highlight-fade {
+		from {
+			background: color-mix(in srgb, var(--accent) 50%, var(--surface-2));
+		}
+	}
 	.tk .key {
 		font-size: 11px;
 		font-weight: 600;
@@ -865,10 +884,14 @@
 		color: var(--text);
 		transition: border-color 0.15s, background 0.15s;
 	}
-	.cell-input:hover,
-	.cell-select:hover {
+	.cell-input:hover:not(:disabled),
+	.cell-select:hover:not(:disabled) {
 		border-color: var(--border-strong);
 		background: var(--surface);
+	}
+	.cell-input:disabled,
+	.cell-select:disabled {
+		cursor: not-allowed;
 	}
 	.cell-input:focus,
 	.cell-select:focus {
