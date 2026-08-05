@@ -82,6 +82,17 @@
 
 	let rows = $state<Row[]>([]);
 
+	// Chiffrage : verrouillé pour un USER standard (retour utilisateur). Le RAE d'une activité reste
+	// éditable par ses contributeurs — `contributors` est déjà chargé, aucun appel supplémentaire.
+	// Le serveur applique la même règle (canEditActivityRae), ceci n'est que l'affordance visuelle.
+	const estTitle = $derived(
+		data.canEditEstimation ? '' : "Estimation réservée aux profils Manager et Admin."
+	);
+	const RAE_LOCKED = 'RAE réservé aux personnes ayant imputé sur cette activité.';
+	function canEditRae(ar: { contributors: { userId: string }[] }) {
+		return data.canEditEstimation || ar.contributors.some((c) => c.userId === data.selfId);
+	}
+
 	// RAE par activité : lignes fines toujours visibles sous le ticket (plus de collapse/fetch à
 	// l'ouverture — data.tickets porte déjà le détail, chargé en une fois avec la liste).
 	async function saveActivityRae(row: Row, activityId: string, field: 'raeReal' | 'raeTest', value: number) {
@@ -286,10 +297,12 @@
 						<select id="state" name="stateId"><option value="">—</option>{#each data.ref.states as s (s.id)}<option value={s.id}>{s.emoji} {s.label}</option>{/each}</select>
 					</div>
 				</div>
-				<div class="grid2">
-					<div class="field"><label for="er">Est. Réal</label><input id="er" name="estimationReal" type="number" step="0.25" min="0" /></div>
-					{#if data.testPhase}<div class="field"><label for="et">Est. Test</label><input id="et" name="estimationTest" type="number" step="0.25" min="0" /></div>{/if}
-				</div>
+				{#if data.canEditEstimation}
+					<div class="grid2">
+						<div class="field"><label for="er">Est. Réal</label><input id="er" name="estimationReal" type="number" step="0.25" min="0" /></div>
+						{#if data.testPhase}<div class="field"><label for="et">Est. Test</label><input id="et" name="estimationTest" type="number" step="0.25" min="0" /></div>{/if}
+					</div>
+				{/if}
 				<div class="grid2">
 					<div class="field"><label for="ssp">Code SSP</label><input id="ssp" name="sspCode" /></div>
 					{#if data.isAdmin}<div class="field"><label for="eprev">Estimation prévisionnel</label><input id="eprev" name="estimationPrev" type="number" step="0.25" min="0" /></div>{/if}
@@ -375,7 +388,7 @@
 								</div>
 							</div>
 						</td>
-						<td class="num"><input class="cell-input num-input" type="number" step="0.25" min="0" bind:value={r.estimationReal} onchange={() => saveEst(r, 'real')} /></td>
+						<td class="num"><input class="cell-input num-input" type="number" step="0.25" min="0" bind:value={r.estimationReal} disabled={!data.canEditEstimation} title={estTitle} onchange={() => saveEst(r, 'real')} /></td>
 						<td class="num">
 							<input
 								class="cell-input num-input"
@@ -388,7 +401,7 @@
 							/>
 						</td>
 						{#if data.testPhase}
-							<td class="num"><input class="cell-input num-input" type="number" step="0.25" min="0" bind:value={r.estimationTest} onchange={() => saveEst(r, 'test')} /></td>
+							<td class="num"><input class="cell-input num-input" type="number" step="0.25" min="0" bind:value={r.estimationTest} disabled={!data.canEditEstimation} title={estTitle} onchange={() => saveEst(r, 'test')} /></td>
 							<td class="num"><input class="cell-input num-input" type="number" step="0.25" min="0" value={r.raeTest} disabled title="RAE Test = compilation des RAE par activité ci-dessous (non éditable ici)" /></td>
 						{/if}
 						<td class="num tabnum consumed">{r.consumed || '—'}</td>
@@ -401,6 +414,7 @@
 						</td>
 					</tr>
 					{#each r.activityBreakdown as ar (ar.activityId)}
+						{@const canRae = canEditRae(ar)}
 						<tr class="activity-subrow">
 							<td></td>
 							<td class="ar-name">↳ {ar.label}
@@ -416,6 +430,8 @@
 									step="0.25"
 									min="0"
 									value={ar.raeReal}
+									disabled={!canRae}
+									title={canRae ? '' : RAE_LOCKED}
 									onchange={(e) => saveActivityRae(r, ar.activityId, 'raeReal', Number(e.currentTarget.value) || 0)}
 								/>
 							</td>
@@ -428,6 +444,8 @@
 										step="0.25"
 										min="0"
 										value={ar.raeTest}
+										disabled={!canRae}
+										title={canRae ? '' : RAE_LOCKED}
 										onchange={(e) => saveActivityRae(r, ar.activityId, 'raeTest', Number(e.currentTarget.value) || 0)}
 									/>
 								</td>
@@ -532,11 +550,11 @@
 						<option value={null}>—</option>{#each data.ref.versions as v (v.id)}<option value={v.id}>{v.name}</option>{/each}
 					</select>
 				</label>
-				<label class="dfield"><span>Est. Réal</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationReal} onchange={() => saveEst(editRow!, 'real')} /></label>
+				<label class="dfield"><span>Est. Réal</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationReal} disabled={!data.canEditEstimation} title={estTitle} onchange={() => saveEst(editRow!, 'real')} /></label>
 				<label class="dfield"><span>RAE Réal</span><input class="cell-input" type="number" step="0.25" min="0" value={editRow.raeReal} disabled title="Compilation des RAE par activité (voir le tableau)" /></label>
 				{#if data.testPhase}
-					<label class="dfield"><span>Est. Test</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationTest} onchange={() => saveEst(editRow!, 'test')} /></label>
-					<label class="dfield"><span>Prépa</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.prepa} onchange={() => save(editRow!, 'prepa', editRow!.prepa)} /></label>
+					<label class="dfield"><span>Est. Test</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationTest} disabled={!data.canEditEstimation} title={estTitle} onchange={() => saveEst(editRow!, 'test')} /></label>
+					<label class="dfield"><span>Prépa</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.prepa} disabled={!data.canEditEstimation} title={estTitle} onchange={() => save(editRow!, 'prepa', editRow!.prepa)} /></label>
 					<label class="dfield"><span>RAE Test</span><input class="cell-input" type="number" step="0.25" min="0" value={editRow.raeTest} disabled title="Compilation des RAE par activité (voir le tableau)" /></label>
 					{#each FLAG_FIELDS as fl (fl.key)}
 						<label class="dfield"><span>{fl.label}</span>
@@ -947,14 +965,17 @@
 	.kanban {
 		display: flex;
 		gap: 14px;
-		overflow-x: auto;
+		overflow: auto;
 		padding-bottom: 8px;
 		align-items: stretch;
-		/* Occupe au moins la hauteur visible restante (sous topbar + filtres). */
-		min-height: calc(100dvh - 13rem);
+		/* Hauteur bornée (et non min-height) : une colonne longue faisait dépasser le board, et sa
+		   barre de défilement horizontale partait en bas de page, hors de portée sans tout dérouler.
+		   Le débordement vertical est repris colonne par colonne (.kcards). */
+		height: calc(100dvh - 13rem);
 	}
 	.kcol {
 		flex: 0 0 280px;
+		max-height: 100%;
 		display: flex;
 		flex-direction: column;
 		background: var(--surface-2);
@@ -967,6 +988,11 @@
 		align-items: center;
 		gap: 8px;
 		padding: 2px 4px 12px;
+		/* La colonne défile sous son titre : il doit rester lisible. */
+		position: sticky;
+		top: 0;
+		background: var(--surface-2);
+		z-index: 1;
 	}
 	.kdot {
 		width: 9px;
@@ -995,6 +1021,10 @@
 		display: flex;
 		flex-direction: column;
 		gap: 9px;
+		flex: 1;
+		overflow-y: auto;
+		/* Zone de dépôt utilisable même quand la colonne est vide ou courte. */
+		min-height: 40px;
 	}
 	.kcard {
 		background: var(--surface);

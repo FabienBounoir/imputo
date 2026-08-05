@@ -13,8 +13,10 @@ import {
 	timeEntry,
 	ticketActivityRae,
 	ticketGroup,
-	ticketGroupMember
+	ticketGroupMember,
+	type Role
 } from '$lib/server/db';
+import { isManagerOrAdmin } from './workspaces';
 import {
 	num,
 	round,
@@ -426,6 +428,7 @@ export async function getRefData(workspaceId: string): Promise<RefData> {
 	return { states, sprints, versions, projects, activities, categories, members, ticketGroups };
 }
 
+/** Descriptif du ticket — éditable par tout membre de l'espace. */
 const EDITABLE_FIELDS = new Set([
 	'title',
 	'comment',
@@ -433,29 +436,39 @@ const EDITABLE_FIELDS = new Set([
 	'projectId',
 	'sprintId',
 	'versionId',
+	'sspCode'
+]);
+/**
+ * Chiffrage global du ticket — ADMIN/MANAGER seulement (retour utilisateur : un USER ne doit
+ * toucher ni l'estimation globale ni le RAE des autres). Le RAE fin se saisit par activité, via
+ * `upsertTicketActivityRae` + `canEditActivityRae`.
+ */
+export const MANAGER_ONLY_FIELDS = new Set([
 	'estimationReal',
 	'raeReal',
 	'estimationTest',
 	'prepa',
-	'raeTest',
-	'sspCode'
+	'raeTest'
 ]);
-const NUMERIC_FIELDS = new Set(['estimationReal', 'raeReal', 'estimationTest', 'prepa', 'raeTest']);
-/** Admin only — invisible pour un USER standard, à vérifier par l'appelant (locals.role) avant d'accepter l'édition. */
+/**
+ * Champs budget — même règle ADMIN/MANAGER que le chiffrage (cf. `isManagerOrAdmin`), mais aussi
+ * masqués en lecture pour les autres rôles (redaction dans `listTicketsPage`).
+ */
 export const ADMIN_ONLY_FIELDS = new Set(['estimationPrev', 'enveloppeTotale']);
-const ADMIN_EDITABLE_FIELDS = new Set([...EDITABLE_FIELDS, ...ADMIN_ONLY_FIELDS]);
-const ADMIN_NUMERIC_FIELDS = new Set([...NUMERIC_FIELDS, 'estimationPrev', 'enveloppeTotale']);
+const NUMERIC_FIELDS = new Set([...MANAGER_ONLY_FIELDS, ...ADMIN_ONLY_FIELDS]);
 
-/** Met à jour un champ d'un ticket (édition inline). Scopé workspace + liste blanche. */
+/** Met à jour un champ d'un ticket (édition inline). Scopé workspace + liste blanche par rôle. */
 export async function updateTicketField(
 	workspaceId: string,
 	ticketId: string,
 	field: string,
 	rawValue: string,
-	isAdmin = false
+	role: Role | null = null
 ) {
-	const allowedFields = isAdmin ? ADMIN_EDITABLE_FIELDS : EDITABLE_FIELDS;
-	const numericFields = isAdmin ? ADMIN_NUMERIC_FIELDS : NUMERIC_FIELDS;
+	const allowedFields = new Set(EDITABLE_FIELDS);
+	if (isManagerOrAdmin(role))
+		for (const f of [...MANAGER_ONLY_FIELDS, ...ADMIN_ONLY_FIELDS]) allowedFields.add(f);
+	const numericFields = NUMERIC_FIELDS;
 	if (!allowedFields.has(field)) throw new Error('Champ non éditable.');
 	let value: string | null = rawValue === '' ? null : rawValue;
 	if (numericFields.has(field) && value !== null) {
@@ -571,6 +584,34 @@ export async function getTicketActivityBreakdown(
 			contributors: (contribByActivity.get(id) ?? []).sort((a, b) => a.displayName.localeCompare(b.displayName))
 		}))
 		.sort((a, b) => a.label.localeCompare(b.label));
+}
+
+/**
+ * Un USER standard n'édite le RAE que des activités où il a lui-même imputé du temps — il ne doit
+ * pas toucher au RAE des autres. ADMIN/MANAGER gardent la main sur tout le chiffrage.
+ */
+export async function canEditActivityRae(
+	workspaceId: string,
+	userId: string,
+	role: Role | null,
+	ticketId: string,
+	activityId: string
+): Promise<boolean> {
+	if (isManagerOrAdmin(role)) return true;
+	const rows = await db
+		.select({ id: timeEntry.id })
+		.from(timeEntry)
+		.where(
+			and(
+				eq(timeEntry.workspaceId, workspaceId),
+				eq(timeEntry.userId, userId),
+				eq(timeEntry.targetType, 'TICKET'),
+				eq(timeEntry.ticketId, ticketId),
+				eq(timeEntry.activityId, activityId)
+			)
+		)
+		.limit(1);
+	return rows.length > 0;
 }
 
 /** Upsert du RAE (réel ou test) d'une activité sur un ticket. */
