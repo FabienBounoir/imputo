@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { db, weeklyObjective, weeklyVacation, ticket, user, activity } from '$lib/server/db';
 
 export type ObjectiveKind = 'TICKET' | 'CUSTOM';
@@ -13,6 +13,8 @@ export type WeeklyObjectiveRow = {
 	label: string | null;
 	activityId: string | null;
 	activityLabel: string | null;
+	/** Lundi de la semaine d'attribution — sert à regrouper quand la période couvre plusieurs semaines. */
+	weekMonday: string;
 };
 
 export type WeeklyObjectiveWithUser = WeeklyObjectiveRow & { displayName: string };
@@ -26,7 +28,8 @@ const objectiveSelect = {
 	ticketTitle: ticket.title,
 	label: weeklyObjective.label,
 	activityId: weeklyObjective.activityId,
-	activityLabel: activity.label
+	activityLabel: activity.label,
+	weekMonday: weeklyObjective.weekMonday
 };
 
 /** Objectifs attribués à une personne pour une semaine — épinglés dans Mon imputation. */
@@ -48,6 +51,31 @@ export async function listObjectivesForUser(
 			)
 		)
 		.orderBy(weeklyObjective.createdAt);
+}
+
+/**
+ * Objectifs attribués à une personne sur plusieurs semaines — la période affichée dans Mon
+ * imputation peut couvrir une quinzaine ou un mois, pas seulement la semaine courante.
+ */
+export async function listObjectivesForUserWeeks(
+	workspaceId: string,
+	userId: string,
+	weekMondayISOs: string[]
+): Promise<WeeklyObjectiveRow[]> {
+	if (weekMondayISOs.length === 0) return [];
+	return db
+		.select(objectiveSelect)
+		.from(weeklyObjective)
+		.leftJoin(ticket, eq(weeklyObjective.ticketId, ticket.id))
+		.leftJoin(activity, eq(weeklyObjective.activityId, activity.id))
+		.where(
+			and(
+				eq(weeklyObjective.workspaceId, workspaceId),
+				eq(weeklyObjective.userId, userId),
+				inArray(weeklyObjective.weekMonday, weekMondayISOs)
+			)
+		)
+		.orderBy(weeklyObjective.weekMonday, weeklyObjective.createdAt);
 }
 
 /** Tous les objectifs de l'espace pour une semaine, avec le nom de la personne — vue globale admin. */
@@ -85,6 +113,26 @@ export async function isOnVacation(workspaceId: string, userId: string, weekMond
 			)
 		);
 	return rows.length > 0;
+}
+
+/** Parmi les semaines données, celles où la personne est en congé (lundis ISO). */
+export async function vacationWeeks(
+	workspaceId: string,
+	userId: string,
+	weekMondayISOs: string[]
+): Promise<string[]> {
+	if (weekMondayISOs.length === 0) return [];
+	const rows = await db
+		.select({ weekMonday: weeklyVacation.weekMonday })
+		.from(weeklyVacation)
+		.where(
+			and(
+				eq(weeklyVacation.workspaceId, workspaceId),
+				eq(weeklyVacation.userId, userId),
+				inArray(weeklyVacation.weekMonday, weekMondayISOs)
+			)
+		);
+	return rows.map((r) => r.weekMonday);
 }
 
 export async function addObjective(

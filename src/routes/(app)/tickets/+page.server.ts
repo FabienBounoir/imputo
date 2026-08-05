@@ -32,7 +32,9 @@ const createSchema = z.object({
 
 export const load: PageServerLoad = async ({ locals, url }) => {
 	const ws = locals.workspace!;
-	const isAdmin = locals.role === 'ADMIN';
+	// ADMIN ou MANAGER : même règle en lecture qu'en écriture pour les champs budget et le
+	// chiffrage (cf. isManagerOrAdmin) — un MANAGER pouvait les écrire sans jamais les voir.
+	const isAdmin = isManagerOrAdmin(locals.role);
 	const view = url.searchParams.get('view') === 'kanban' ? 'kanban' : 'table';
 	const page = Math.max(1, Number(url.searchParams.get('page')) || 1);
 	const filters: TicketFilters = {
@@ -64,7 +66,10 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		filters,
 		ref,
 		testPhase: ws.testPhase,
-		isAdmin
+		isAdmin,
+		/** Chiffrage global (estimations, prépa) : lecture seule pour un USER standard. */
+		canEditEstimation: isManagerOrAdmin(locals.role),
+		selfId: locals.user!.id
 	};
 };
 
@@ -112,15 +117,13 @@ export const actions: Actions = {
 
 	update: async ({ request, locals }) => {
 		const ws = locals.workspace!;
-		// ADMIN ou MANAGER : voit/édite les champs budget (Estimation Prév., Enveloppe totale, TNF).
-		const isAdmin = isManagerOrAdmin(locals.role);
 		const f = await request.formData();
 		const ticketId = String(f.get('ticketId') ?? '');
 		const field = String(f.get('field') ?? '');
 		const value = String(f.get('value') ?? '');
 		if (!ticketId || !field) return fail(400, { error: 'Données invalides.' });
 		try {
-			await updateTicketField(ws.workspaceId, ticketId, field, value, isAdmin);
+			await updateTicketField(ws.workspaceId, ticketId, field, value, locals.role);
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
