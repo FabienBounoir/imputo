@@ -18,10 +18,11 @@ import {
 	ABSENCE_PERIODS,
 	absenceRangeBounds,
 	parseAbsenceSpan,
+	groupDaysByMonth,
 	type AbsenceType,
 	type AbsencePeriod
 } from '$lib/absenceTypes';
-import { monthBounds, formatMonthLabel, formatMonthShortLabel, addMonths, toISODate, parseISODate, addDays, todayInParis } from '$lib/utils/date';
+import { monthBounds, formatMonthLabel, addMonths, toISODate, parseISODate, addDays, todayInParis } from '$lib/utils/date';
 
 export const load: PageServerLoad = async ({ locals, url }) => {
 	const user = locals.user!;
@@ -36,13 +37,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	for (let d = parseISODate(range.start); toISODate(d) <= range.end; d = addDays(d, 1)) days.push(toISODate(d));
 
 	// Regroupe les jours par mois pour l'en-tête de la synthèse (utile dès que la plage dépasse un mois).
-	const monthGroups: { label: string; count: number }[] = [];
-	for (const d of days) {
-		const label = formatMonthShortLabel(d);
-		const last = monthGroups[monthGroups.length - 1];
-		if (last?.label === label) last.count++;
-		else monthGroups.push({ label, count: 1 });
-	}
+	const monthGroups = groupDaysByMonth(days);
 
 	const [ref, myAbsences, teamAbsences, externalMembers] = await Promise.all([
 		getRefData(ws.workspaceId),

@@ -22,7 +22,63 @@
 	let subject = $state('me');
 	let extName = $state('');
 	let showExtModal = $state(false);
+	let showImageModal = $state(false);
+	let showExportMenu = $state(false);
+	let imgFrom = $state(data.todayISO);
+	let imgTo = $state(data.todayISO);
+	let imgRowIds = $state<string[]>([]);
+	let imgBusy = $state(false);
 	const sameDay = $derived(startDate === endDate);
+
+	function openImageModal() {
+		imgFrom = data.days[0];
+		imgTo = data.days[data.days.length - 1];
+		imgRowIds = data.rows.map((r) => r.id);
+		showImageModal = true;
+	}
+
+	/** SVG serveur → PNG téléchargeable, via un canvas hors-écran (aucune dépendance). */
+	async function downloadImagePng() {
+		imgBusy = true;
+		const params = new URLSearchParams({ from: imgFrom, to: imgTo });
+		if (imgRowIds.length > 0) params.set('rows', imgRowIds.join(','));
+		let objectUrl = '';
+		try {
+			const res = await fetch(`/absences/export-image?${params}`);
+			if (!res.ok) return;
+			const svgText = await res.text();
+			objectUrl = URL.createObjectURL(new Blob([svgText], { type: 'image/svg+xml' }));
+
+			const img = new Image();
+			await new Promise<void>((resolve, reject) => {
+				img.onload = () => resolve();
+				img.onerror = () => reject(new Error('svg load failed'));
+				img.src = objectUrl;
+			});
+
+			const scale = 2; // rendu net une fois collé/zoomé dans une slide
+			const canvas = document.createElement('canvas');
+			canvas.width = img.naturalWidth * scale;
+			canvas.height = img.naturalHeight * scale;
+			const ctx = canvas.getContext('2d')!;
+			ctx.scale(scale, scale);
+			ctx.fillStyle = '#ffffff';
+			ctx.fillRect(0, 0, img.naturalWidth, img.naturalHeight);
+			ctx.drawImage(img, 0, 0);
+
+			const pngBlob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+			if (!pngBlob) return;
+			const a = document.createElement('a');
+			a.href = URL.createObjectURL(pngBlob);
+			a.download = `absences-${imgFrom}_${imgTo}.png`;
+			a.click();
+			URL.revokeObjectURL(a.href);
+			showImageModal = false;
+		} finally {
+			if (objectUrl) URL.revokeObjectURL(objectUrl);
+			imgBusy = false;
+		}
+	}
 
 	function resetForm() {
 		startDate = data.todayISO;
@@ -114,8 +170,8 @@
 			<h3>Synthèse équipe — {data.rangeLabel}</h3>
 			<div class="spacer"></div>
 			{#if data.canManageOthers}
-				<button type="button" class="btn btn-ghost" onclick={() => (showExtModal = true)}>
-					<span class="ext-dot" style="margin-left:0;"></span> Membres externes
+				<button type="button" class="icon-btn-sq" onclick={() => (showExtModal = true)} title="Membres externes" aria-label="Membres externes">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
 				</button>
 			{/if}
 			<div class="span-pick">
@@ -131,7 +187,31 @@
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m9 18 6-6-6-6"/></svg>
 				</a>
 			</div>
-			<a class="btn btn-ghost" href="/absences/export?m={data.anchorISO}&span={data.span}">⬇ Exporter</a>
+			<div class="dl-wrap">
+				<button type="button" class="icon-btn-sq" onclick={() => (showExportMenu = !showExportMenu)} title="Exporter" aria-label="Exporter">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="3" width="12" height="8" rx="1.5"/><path d="M12 17v-6M9 14l3 3 3-3"/><path d="M3 15v4a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4"/></svg>
+				</button>
+				{#if showExportMenu}
+					<!-- svelte-ignore a11y_click_events_have_key_events -->
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<div class="dl-menu">
+						<a href="/absences/export?m={data.anchorISO}&span={data.span}" onclick={() => (showExportMenu = false)}>
+							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 4v16"/></svg>
+							Excel (.xlsx)
+						</a>
+						<button
+							type="button"
+							onclick={() => {
+								showExportMenu = false;
+								openImageModal();
+							}}
+						>
+							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+							Image (.png)
+						</button>
+					</div>
+				{/if}
+			</div>
 		</div>
 		{#if data.rows.length === 0}
 			<p class="hint" style="margin:0;">Aucun membre actif.</p>
@@ -206,7 +286,14 @@
 	</section>
 </div>
 
-<svelte:window onkeydown={(e) => e.key === 'Escape' && (showExtModal = false)} />
+<svelte:window
+	onkeydown={(e) => {
+		if (e.key !== 'Escape') return;
+		showExtModal = false;
+		showImageModal = false;
+		showExportMenu = false;
+	}}
+/>
 
 {#if showExtModal}
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -245,6 +332,38 @@
 			{/if}
 			<div class="modal-actions">
 				<button class="btn btn-ghost" type="button" onclick={() => (showExtModal = false)}>Fermer</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+{#if showImageModal}
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="modal-backdrop" onclick={() => (showImageModal = false)}>
+		<div class="modal" onclick={(e) => e.stopPropagation()}>
+			<h3>Exporter en image (PNG)</h3>
+			<p class="hint">Pratique pour coller un extrait du planning dans une présentation.</p>
+
+			<div class="ex-dates">
+				<label class="ex-field">Du<input type="date" bind:value={imgFrom} max={imgTo} /></label>
+				<label class="ex-field">Au<input type="date" bind:value={imgTo} min={imgFrom} /></label>
+			</div>
+
+			<div class="field">
+				<label for="imgRows">Lignes (Ctrl/Cmd-clic pour en sélectionner plusieurs)</label>
+				<select id="imgRows" multiple bind:value={imgRowIds} size={Math.min(8, Math.max(3, data.rows.length))}>
+					{#each data.rows as r (r.id)}
+						<option value={r.id}>{r.displayName}{r.external ? ' (externe)' : ''}</option>
+					{/each}
+				</select>
+			</div>
+
+			<div class="modal-actions">
+				<button class="btn btn-ghost" type="button" onclick={() => (showImageModal = false)}>Annuler</button>
+				<button class="btn btn-primary" type="button" disabled={imgRowIds.length === 0 || imgBusy} onclick={downloadImagePng}>
+					{imgBusy ? 'Génération…' : '⬇ Télécharger le PNG'}
+				</button>
 			</div>
 		</div>
 	</div>
@@ -289,6 +408,57 @@
 	}
 	.wkbtn:hover {
 		background: var(--surface-sunk);
+	}
+	.icon-btn-sq {
+		width: 34px;
+		height: 34px;
+		border-radius: var(--r-md);
+		border: 1px solid var(--border);
+		background: var(--surface);
+		box-shadow: var(--shadow-sm);
+		color: var(--text-soft);
+		display: grid;
+		place-items: center;
+		flex-shrink: 0;
+		transition: border-color 0.15s, color 0.15s;
+	}
+	.icon-btn-sq:hover {
+		border-color: var(--border-strong);
+		color: var(--text);
+	}
+	.dl-wrap {
+		position: relative;
+	}
+	.dl-menu {
+		position: absolute;
+		top: calc(100% + 6px);
+		right: 0;
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: var(--r-md);
+		box-shadow: var(--shadow-lg);
+		padding: 6px;
+		min-width: 170px;
+		z-index: 30;
+	}
+	.dl-menu a,
+	.dl-menu button {
+		display: flex;
+		align-items: center;
+		gap: 9px;
+		width: 100%;
+		text-align: left;
+		padding: 8px 9px;
+		border-radius: var(--r-sm);
+		font-size: 13px;
+		color: var(--text-soft);
+		text-decoration: none;
+		white-space: nowrap;
+	}
+	.dl-menu a:hover,
+	.dl-menu button:hover {
+		background: var(--surface-2);
+		color: var(--text);
 	}
 	.synth-head {
 		display: flex;
@@ -559,6 +729,39 @@
 	}
 	.modal .ext-add {
 		margin-top: 16px;
+	}
+	.modal .field {
+		margin-top: 14px;
+	}
+	.modal .field select[multiple] {
+		height: auto;
+		padding: 4px;
+	}
+	.ex-dates {
+		display: flex;
+		gap: 12px;
+		margin-top: 16px;
+	}
+	.ex-field {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		font-size: 11px;
+		font-weight: 600;
+		color: var(--text-mute);
+	}
+	.ex-field input {
+		padding: 9px 11px;
+		border-radius: var(--r-md);
+		border: 1px solid var(--border);
+		background: var(--surface-2);
+		color: var(--text);
+		font-size: 13px;
+	}
+	.ex-field input:focus {
+		outline: none;
+		border-color: var(--accent);
 	}
 	.modal-actions {
 		display: flex;

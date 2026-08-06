@@ -1,7 +1,14 @@
 import ExcelJS from 'exceljs';
 import { getRefData } from '$lib/server/services/tickets';
 import { listAbsencesForRange, buildAbsenceGrid, listExternalMembers, type AbsenceCell } from '$lib/server/services/absences';
-import { ABSENCE_TYPES, ABSENCE_TYPE_LABELS, ABSENCE_TYPE_COLORS, absenceRangeBounds, type AbsenceSpan } from '$lib/absenceTypes';
+import {
+	ABSENCE_TYPES,
+	ABSENCE_TYPE_LABELS,
+	ABSENCE_TYPE_COLORS,
+	absenceRangeBounds,
+	groupDaysByMonth,
+	type AbsenceSpan
+} from '$lib/absenceTypes';
 import { hexToArgb } from './export';
 import { formatMonthLabel, formatMonthShortLabel, toISODate, parseISODate, addDays } from '$lib/utils/date';
 
@@ -78,14 +85,11 @@ export async function buildAbsencesWorkbook(workspaceId: string, anchorISO: stri
 	const dayRow = sheet.getRow(2);
 	days.forEach((d, i) => (dayRow.getCell(2 + i).value = parseISODate(d).getUTCDate()));
 	let cursor = 0;
-	while (cursor < days.length) {
-		const label = formatMonthShortLabel(days[cursor]);
-		let count = 0;
-		while (cursor + count < days.length && formatMonthShortLabel(days[cursor + count]) === label) count++;
+	for (const g of groupDaysByMonth(days)) {
 		const col = 2 + cursor;
-		if (count > 1) sheet.mergeCells(1, col, 1, col + count - 1);
-		monthRow.getCell(col).value = label;
-		cursor += count;
+		if (g.count > 1) sheet.mergeCells(1, col, 1, col + g.count - 1);
+		monthRow.getCell(col).value = g.label;
+		cursor += g.count;
 	}
 	sheet.mergeCells(1, 1, 2, 1);
 	monthRow.getCell(1).value = 'Membre';
