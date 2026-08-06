@@ -113,6 +113,20 @@
       "when": 1785928449088,
       "tag": "0015_first_eternals",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1786015396256,
+      "tag": "0016_equal_rattler",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1786017681094,
+      "tag": "0017_light_marauders",
+      "breakpoints": true
     }
   ]
 }

@@ -28,6 +28,13 @@ export const notificationKindEnum = pgEnum('notification_kind', [
 	'WEEKLY_RECAP'
 ]);
 export const moodPeriodKindEnum = pgEnum('mood_period_kind', ['WEEK_1', 'WEEK_2', 'WEEK_3', 'MONTH']);
+export const absenceTypeEnum = pgEnum('absence_type', [
+	'CONGE_VALIDE',
+	'CONGE_PREVISIONNEL',
+	'FORMATION',
+	'HORS_PROJET'
+]);
+export const absencePeriodEnum = pgEnum('absence_period', ['FULL', 'AM', 'PM']);
 
 const id = () => uuid('id').primaryKey().defaultRandom();
 const createdAt = () => timestamp('created_at', { withTimezone: true }).defaultNow().notNull();
@@ -395,6 +402,50 @@ export const timeEntry = pgTable(
 	]
 );
 
+// ---------- Absences ----------
+// Personne suivie pour ses congés sans avoir de compte sur l'espace (client, prestataire…).
+// Gérée par un admin/manager — jamais de login, jamais dans les pickers de tickets/imputation.
+export const externalMember = pgTable(
+	'external_member',
+	{
+		id: id(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspace.id, { onDelete: 'cascade' }),
+		displayName: text('display_name').notNull(),
+		archivedAt: archivedAt(),
+		createdAt: createdAt()
+	},
+	(t) => [index('external_member_ws_idx').on(t.workspaceId)]
+);
+
+// Une ligne par déclaration (plage de dates + type). `period` ne vaut AM/PM que pour une
+// plage d'un seul jour (startDate = endDate) ; sinon toujours FULL.
+// Sujet = soit un membre réel (userId), soit un membre externe (externalMemberId) — jamais les
+// deux, appliqué en app (pas de contrainte SQL, même convention que timeEntry.ticketId/categoryId).
+export const absence = pgTable(
+	'absence',
+	{
+		id: id(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspace.id, { onDelete: 'cascade' }),
+		userId: uuid('user_id').references(() => user.id, { onDelete: 'cascade' }),
+		externalMemberId: uuid('external_member_id').references(() => externalMember.id, { onDelete: 'cascade' }),
+		startDate: date('start_date').notNull(),
+		endDate: date('end_date').notNull(),
+		type: absenceTypeEnum('type').notNull(),
+		period: absencePeriodEnum('period').notNull().default('FULL'),
+		createdAt: createdAt(),
+		updatedAt: updatedAt()
+	},
+	(t) => [
+		index('absence_ws_user_idx').on(t.workspaceId, t.userId),
+		index('absence_ws_external_idx').on(t.workspaceId, t.externalMemberId),
+		index('absence_ws_range_idx').on(t.workspaceId, t.startDate, t.endDate)
+	]
+);
+
 // ---------- Team mood ----------
 // Un vote par personne et par plage (upsert tant que la plage est active). userId reste en base
 // pour la contrainte d'unicité et pour permettre au votant de retrouver/modifier son propre vote,
@@ -487,6 +538,10 @@ export type Sprint = typeof sprint.$inferSelect;
 export type TimeEntry = typeof timeEntry.$inferSelect;
 export type WeeklyObjective = typeof weeklyObjective.$inferSelect;
 export type WeeklyVacation = typeof weeklyVacation.$inferSelect;
+export type Absence = typeof absence.$inferSelect;
+export type ExternalMember = typeof externalMember.$inferSelect;
+export type AbsenceType = (typeof absenceTypeEnum.enumValues)[number];
+export type AbsencePeriod = (typeof absencePeriodEnum.enumValues)[number];
 export type MoodVote = typeof moodVote.$inferSelect;
 export type Role = (typeof roleEnum.enumValues)[number];
 export type MoodPeriodKind = (typeof moodPeriodKindEnum.enumValues)[number];

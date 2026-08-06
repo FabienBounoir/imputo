@@ -373,6 +373,10 @@ select {
 	font-size: 11px;
 	color: var(--text-mute);
 }
+.owner-crown {
+	font-size: 10px;
+	margin-left: 3px;
+}
 .icon-btn {
 	width: 34px;
 	height: 34px;
