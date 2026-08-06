@@ -1,7 +1,7 @@
 // Constantes partagées client/serveur (formulaire, synthèse équipe, export Excel). Les valeurs
 // doivent rester synchronisées avec absenceTypeEnum/absencePeriodEnum de db/schema.ts — ce fichier
 // ne peut pas importer schema.ts (sous $lib/server), qui est interdit côté client.
-import { monthBounds, addMonths } from './utils/date';
+import { monthBounds, addMonths, formatMonthShortLabel } from './utils/date';
 
 export const ABSENCE_TYPES = ['CONGE_VALIDE', 'CONGE_PREVISIONNEL', 'FORMATION', 'HORS_PROJET'] as const;
 export type AbsenceType = (typeof ABSENCE_TYPES)[number];
@@ -52,4 +52,16 @@ export function absenceRangeBounds(anchorISO: string, span: AbsenceSpan): { star
 export function parseAbsenceSpan(raw: string | null): AbsenceSpan {
 	const n = Number(raw);
 	return (ABSENCE_SPANS as readonly number[]).includes(n) ? (n as AbsenceSpan) : 1;
+}
+
+/** Regroupe des jours ISO consécutifs par mois — en-tête « bandeau mois » de la synthèse/export/image. */
+export function groupDaysByMonth(days: string[]): { label: string; count: number }[] {
+	const groups: { label: string; count: number }[] = [];
+	for (const d of days) {
+		const label = formatMonthShortLabel(d);
+		const last = groups[groups.length - 1];
+		if (last?.label === label) last.count++;
+		else groups.push({ label, count: 1 });
+	}
+	return groups;
 }
