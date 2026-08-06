@@ -141,14 +141,40 @@ export async function setImputationStep(workspaceId: string, step: number) {
 const memberWhere = (workspaceId: string, userId: string) =>
 	and(eq(membership.workspaceId, workspaceId), eq(membership.userId, userId));
 
-/** Change le rôle d'un membre dans un espace (réservé ADMIN). */
+/** Le créateur de l'espace (super admin) : rôle et statut protégés, seul le transfert de propriété peut les changer. */
+async function isWorkspaceOwner(workspaceId: string, userId: string): Promise<boolean> {
+	const rows = await db.select({ id: workspace.id }).from(workspace).where(
+		and(eq(workspace.id, workspaceId), eq(workspace.createdByUserId, userId))
+	);
+	return rows.length > 0;
+}
+
+/** Change le rôle d'un membre dans un espace (réservé ADMIN). Le créateur de l'espace ne peut être rétrogradé. */
 export async function setMemberRole(workspaceId: string, userId: string, role: Role) {
+	if (role !== 'ADMIN' && (await isWorkspaceOwner(workspaceId, userId)))
+		throw new Error("Le créateur de l'espace ne peut pas être rétrogradé (transférez la propriété d'abord).");
 	const res = await db
 		.update(membership)
 		.set({ role })
 		.where(memberWhere(workspaceId, userId))
 		.returning({ id: membership.id });
 	if (!res[0]) throw new Error('Membre introuvable dans cet espace.');
+}
+
+/** Transmet la propriété de l'espace à un autre membre ADMIN actif ; l'ancien créateur redevient un admin classique. */
+export async function transferOwnership(workspaceId: string, currentOwnerId: string, newOwnerId: string) {
+	if (newOwnerId === currentOwnerId) throw new Error('Ce membre est déjà le créateur de l’espace.');
+	const [target] = await db.select({ role: membership.role, active: membership.active }).from(membership).where(
+		memberWhere(workspaceId, newOwnerId)
+	);
+	if (!target || !target.active) throw new Error('Membre introuvable ou inactif dans cet espace.');
+
+	await db.transaction(async (tx) => {
+		await tx.update(workspace).set({ createdByUserId: newOwnerId }).where(eq(workspace.id, workspaceId));
+		if (target.role !== 'ADMIN') {
+			await tx.update(membership).set({ role: 'ADMIN' }).where(memberWhere(workspaceId, newOwnerId));
+		}
+	});
 }
 
 /** Définit la capacité quotidienne d'un membre (temps partiel ; 1 = journée pleine). */
@@ -163,8 +189,10 @@ export async function setMemberCapacity(workspaceId: string, userId: string, cap
 	if (!res[0]) throw new Error('Membre introuvable dans cet espace.');
 }
 
-/** Active ou désactive un membre (un membre inactif conserve son historique). */
+/** Active ou désactive un membre (un membre inactif conserve son historique). Le créateur de l'espace ne peut être désactivé. */
 export async function setMemberActive(workspaceId: string, userId: string, active: boolean) {
+	if (!active && (await isWorkspaceOwner(workspaceId, userId)))
+		throw new Error("Le créateur de l'espace ne peut pas être désactivé (transférez la propriété d'abord).");
 	const res = await db
 		.update(membership)
 		.set({ active })
