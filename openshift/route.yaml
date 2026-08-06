@@ -1,0 +1,18 @@
+# Pas de spec.host : OpenShift génère un sous-domaine du cluster (récupérable ensuite avec
+# `oc get route imputo -o jsonpath='{.spec.host}'`). Ajuster ORIGIN/PUBLIC_BASE_URL dans le
+# ConfigMap une fois ce host connu.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: imputo
+  labels:
+    app: imputo
+spec:
+  to:
+    kind: Service
+    name: imputo
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

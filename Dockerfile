@@ -24,6 +24,11 @@ COPY --from=pruned /app/node_modules ./node_modules
 COPY --from=pruned /app/package.json ./package.json
 COPY --from=pruned /app/drizzle ./drizzle
 COPY --from=pruned /app/scripts/migrate.js ./scripts/migrate.js
+# Rend l'image utilisable sous un UID arbitraire (ex. SCC "restricted" d'OpenShift, qui exécute
+# les containers avec un UID aléatoire du groupe 0) : sans ça, les fichiers copiés ci-dessus
+# n'appartiennent qu'à root et sont illisibles pour cet UID arbitraire.
+RUN chgrp -R 0 /app && chmod -R g=u /app
+USER 1001
 EXPOSE 3000
 ENV PORT=3000
 CMD ["sh", "-c", "node scripts/migrate.js && node build"]

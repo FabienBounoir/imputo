@@ -1,0 +1,58 @@
+# Deployment (pas DeploymentConfig, obsolète sur les versions récentes d'OpenShift).
+# Le redeploy automatique après chaque build est assuré par l'annotation
+# image.openshift.io/triggers ci-dessous, l'équivalent du trigger ImageChange natif d'un DC.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: imputo
+  labels:
+    app: imputo
+  annotations:
+    image.openshift.io/triggers: |
+      [{"from":{"kind":"ImageStreamTag","name":"imputo:latest"},"fieldPath":"spec.template.spec.containers[?(@.name==\"imputo\")].image"}]
+spec:
+  replicas: 1
+  # Migrations Drizzle exécutées au boot du container (scripts/migrate.js, cf. Dockerfile) :
+  # une seule réplique + Recreate évite que deux pods migrent en même temps pendant un rollout.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: imputo
+  template:
+    metadata:
+      labels:
+        app: imputo
+    spec:
+      containers:
+        - name: imputo
+          # Image réécrite automatiquement par le trigger image.openshift.io/triggers ci-dessus ;
+          # valeur de départ nécessaire pour que le premier apply soit valide.
+          image: 'image-registry.openshift-image-registry.svc:5000/CHANGEME-namespace/imputo:latest'
+          ports:
+            - containerPort: 3000
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: imputo-config
+            - secretRef:
+                name: imputo-secrets
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
