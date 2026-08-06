@@ -230,6 +230,15 @@ export function currentMoodPeriod(
 	return { start: toISODate(start), end: toISODate(end) };
 }
 
+/** Début de la plage Team mood précédant celle qui commence à `periodStartISO` (pour calculer un streak). */
+export function previousMoodPeriodStart(kind: 'WEEK_1' | 'WEEK_2' | 'WEEK_3' | 'MONTH', periodStartISO: string): string {
+	const start = parseISODate(periodStartISO);
+	if (kind === 'MONTH') {
+		return toISODate(new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() - 1, 1)));
+	}
+	return toISODate(addDays(start, -MOOD_PERIOD_DAYS[kind]));
+}
+
 /** Plage de dates lisible : « 6 → 10 juil. 2026 », « 29 juin → 3 juil. 2026 », « 29 déc. 2025 → 2 janv. 2026 ». */
 export function formatDayRange(fromISO: string, toISO: string): string {
 	const from = parseISODate(fromISO);

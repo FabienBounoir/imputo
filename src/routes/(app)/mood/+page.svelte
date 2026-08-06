@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { scale } from 'svelte/transition';
 
 	let { data, form } = $props();
 
@@ -23,6 +24,18 @@
 		message = data.myVote?.message ?? '';
 	}
 
+	const REACTIONS: Record<number, string> = {
+		1: 'On est là si besoin 💙',
+		2: 'Ça va s’arranger, courage',
+		3: 'Journée dans la moyenne',
+		4: 'Content de le lire !',
+		5: 'Trop bien, merci du partage !'
+	};
+	const selectedEmoji = $derived(EMOJIS.find((e) => e.score === score));
+	const participationPct = $derived(
+		data.participation.total > 0 ? Math.round((data.participation.voted / data.participation.total) * 100) : 0
+	);
+
 	const fmt = (iso: string) =>
 		new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }).format(
 			new Date(iso + 'T00:00:00Z')
@@ -33,7 +46,7 @@
 	<h1>Team mood<small>Du {fmt(data.periodStart)} au {fmt(data.periodEnd)}</small></h1>
 </div>
 
-<div class="content">
+<div class="content mood-layout">
 	<section class="card block mood-block">
 		<h3>Comment vous sentez-vous ?</h3>
 		<p class="hint">
@@ -82,16 +95,118 @@
 			{/if}
 		</div>
 	</section>
+
+	<aside class="mood-side">
+		<div class="card side-card reaction-card">
+			{#key selectedEmoji?.score ?? 0}
+				<span class="reaction-emoji" in:scale={{ duration: 220, start: 0.5 }}>{selectedEmoji?.emoji ?? '🤔'}</span>
+			{/key}
+			<p class="reaction-text">{selectedEmoji ? REACTIONS[selectedEmoji.score] : 'Choisissez une humeur…'}</p>
+		</div>
+
+		<div class="card side-card">
+			<h4>Participation</h4>
+			<div class="bar-track"><div class="bar-fill" style="width:{participationPct}%"></div></div>
+			<p class="side-hint">{data.participation.voted} / {data.participation.total} ont déjà voté sur cette plage</p>
+		</div>
+
+		{#if data.streak > 0}
+			<div class="card side-card streak-card">
+				<span class="streak-flame">🔥</span>
+				<div>
+					<b>{data.streak}</b> plage{data.streak > 1 ? 's' : ''} d'affilée
+					<span class="side-hint">Continuez comme ça !</span>
+				</div>
+			</div>
+		{/if}
+	</aside>
 </div>
 
 <style>
+	.mood-layout {
+		display: grid;
+		grid-template-columns: minmax(0, 580px) minmax(220px, 260px);
+		align-items: start;
+		gap: 18px;
+	}
+	@media (max-width: 900px) {
+		.mood-layout {
+			grid-template-columns: 1fr;
+		}
+	}
 	.mood-block {
-		max-width: 580px;
 		padding: 28px 30px;
-		margin-bottom: 18px;
+		margin-bottom: 0;
 		/* Filet de sécurité : quoi qu'il arrive, rien (halo de flou compris) ne peut déborder du
 		   cadre arrondi de la card. */
 		overflow: hidden;
+	}
+
+	.mood-side {
+		display: flex;
+		flex-direction: column;
+		gap: 14px;
+	}
+	.side-card {
+		padding: 18px 20px;
+		text-align: center;
+	}
+	.side-card h4 {
+		font-family: var(--font-display);
+		font-size: 13.5px;
+		font-weight: 600;
+		margin-bottom: 12px;
+		text-align: left;
+	}
+	.side-hint {
+		display: block;
+		font-size: 12px;
+		color: var(--text-mute);
+		margin-top: 6px;
+	}
+	.reaction-card {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 10px;
+	}
+	.reaction-emoji {
+		display: block;
+		font-size: 42px;
+		line-height: 1;
+	}
+	.reaction-text {
+		font-size: 13px;
+		font-weight: 600;
+		color: var(--text-soft);
+	}
+	.bar-track {
+		height: 8px;
+		border-radius: 30px;
+		background: var(--surface-sunk);
+		overflow: hidden;
+	}
+	.bar-fill {
+		height: 100%;
+		background: var(--accent);
+		border-radius: 30px;
+		transition: width 0.3s;
+	}
+	.side-card .side-hint {
+		text-align: left;
+	}
+	.streak-card {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		gap: 12px;
+		text-align: left;
+	}
+	.streak-flame {
+		font-size: 28px;
+	}
+	.streak-card b {
+		font-size: 15px;
 	}
 	.mood-block h3 {
 		font-family: var(--font-display);
