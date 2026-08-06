@@ -19,6 +19,8 @@
 		return page.url.pathname === path || page.url.pathname.startsWith(path + '/');
 	}
 
+	const isOwner = $derived(!!data.user && data.user.id === data.workspace?.createdByUserId);
+	const roleLabel = $derived(data.role === 'ADMIN' ? 'Admin' : data.role === 'MANAGER' ? 'Manager' : 'Membre');
 </script>
 
 <div class="app">
@@ -69,6 +71,10 @@
 		<a class="nav-item" class:active={isActive('/tickets')} href="/tickets">
 			<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h16M4 12h16M4 19h10"/></svg>
 			Tickets &amp; chiffrage
+		</a>
+		<a class="nav-item" class:active={isActive('/absences')} href="/absences">
+			<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="18" rx="3"/><path d="M3 10h18M8 2v4M16 2v4"/><path d="m8.5 15 2 2 4-4"/></svg>
+			Absences
 		</a>
 		<a class="nav-item" class:active={isActive('/dashboard', true)} href="/dashboard">
 			<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v18h18"/><path d="m7 14 4-4 3 3 5-6"/></svg>
@@ -123,7 +129,10 @@
 			<div class="user-card">
 				<a class="user-main" href="/settings" title="Réglages">
 					<div class="avatar">{initials(data.user?.displayName ?? '?')}</div>
-					<div class="um"><b>{data.user?.displayName}</b><span>{data.role === 'ADMIN' ? 'Admin' : data.role === 'MANAGER' ? 'Manager' : 'Membre'}</span></div>
+					<div class="um">
+					<b>{data.user?.displayName}</b>
+					<span>{isOwner ? 'Créateur' : roleLabel}{#if isOwner}<span class="owner-crown" title="Créateur de l'espace">👑</span>{/if}</span>
+				</div>
 				</a>
 				<form method="POST" action="/logout">
 					<button class="icon-btn" title="Se déconnecter" aria-label="Se déconnecter">

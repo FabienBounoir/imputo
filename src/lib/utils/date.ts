@@ -265,6 +265,18 @@ export function formatMonthLabel(dateISO: string): string {
 	return `${MONTHS_LONG[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
 }
 
+/** Titre de mois abrégé : « Juin 2026 » avec le mois court (pour un en-tête de colonne groupée). */
+export function formatMonthShortLabel(dateISO: string): string {
+	const d = parseISODate(dateISO);
+	return `${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+}
+
+/** Décale une date ISO de `n` mois, calée sur le 1er du mois résultant. */
+export function addMonths(dateISO: string, n: number): string {
+	const d = parseISODate(dateISO);
+	return toISODate(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + n, 1)));
+}
+
 // ---------- Périodes d'imputation ----------
 
 export type Granularity = 'WEEK' | 'FORTNIGHT' | 'MONTH';

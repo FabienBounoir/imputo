@@ -25,7 +25,8 @@ import {
 	ticketGroupMember,
 	timeEntry,
 	ticketSnapshot,
-	moodVote
+	moodVote,
+	absence
 } from './schema';
 import { getDb, wipeSandbox, WORKSPACE_NAME, SEED_DOMAIN, SEED_USERS } from './seed.shared';
 
@@ -518,10 +519,52 @@ async function main() {
 	}
 	await db.insert(moodVote).values(moodVoteRows);
 
+	// ---------- Absences : congés/formations passés (déjà pris) et à venir (prévisionnels) ----------
+	const absenceRows: (typeof absence.$inferInsert)[] = [];
+	for (const u of SEED_USERS) {
+		const userId = userByEmail.get(u.email)!.id;
+
+		// Une semaine (ou deux jours) de congés déjà posée dans les dernières semaines.
+		const pastStart = addDays(mondayWeeksAgo(2 + Math.floor(Math.random() * 6)), Math.floor(Math.random() * 3));
+		absenceRows.push({
+			workspaceId: ws.id,
+			userId,
+			startDate: toISODate(pastStart),
+			endDate: toISODate(addDays(pastStart, chance(0.5) ? 4 : 1)),
+			type: 'CONGE_VALIDE',
+			period: 'FULL'
+		});
+
+		// Une demi-journée de formation ou hors-projet, passée.
+		const trainingDay = addDays(mondayWeeksAgo(1 + Math.floor(Math.random() * 8)), Math.floor(Math.random() * 5));
+		absenceRows.push({
+			workspaceId: ws.id,
+			userId,
+			startDate: toISODate(trainingDay),
+			endDate: toISODate(trainingDay),
+			type: rand(['FORMATION', 'HORS_PROJET'] as const),
+			period: rand(['FULL', 'AM', 'PM'] as const)
+		});
+
+		// Des congés prévisionnels à venir (pas encore validés), pas systématiques.
+		if (chance(0.7)) {
+			const futureStart = addDays(mondayWeeksAgo(-2 - Math.floor(Math.random() * 6)), Math.floor(Math.random() * 3));
+			absenceRows.push({
+				workspaceId: ws.id,
+				userId,
+				startDate: toISODate(futureStart),
+				endDate: toISODate(addDays(futureStart, chance(0.4) ? 4 : 1)),
+				type: 'CONGE_PREVISIONNEL',
+				period: 'FULL'
+			});
+		}
+	}
+	await db.insert(absence).values(absenceRows);
+
 	// ---------- Résumé ----------
 	console.log(
 		`\n✓ "${WORKSPACE_NAME}" créé — ${insertedTickets.length} tickets sur ${SPRINT_DEFS.length} sprints / ${VERSION_NAMES.length} versions, ` +
-			`${entryDrafts.length} imputations (${allDays.length} jours ouvrés, du ${allDays[0]} au ${allDays[allDays.length - 1]}), ${snapshotRows.length} snapshots, ${moodVoteRows.length} votes team mood sur 7 semaines.\n`
+			`${entryDrafts.length} imputations (${allDays.length} jours ouvrés, du ${allDays[0]} au ${allDays[allDays.length - 1]}), ${snapshotRows.length} snapshots, ${moodVoteRows.length} votes team mood sur 7 semaines, ${absenceRows.length} absences.\n`
 	);
 	console.log('Comptes :');
 	for (const u of SEED_USERS) console.log(`  ${u.email.padEnd(24)} ${u.password.padEnd(12)} (${u.role})`);
