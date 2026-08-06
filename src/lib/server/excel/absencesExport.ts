@@ -1,12 +1,14 @@
 import ExcelJS from 'exceljs';
 import { getRefData } from '$lib/server/services/tickets';
-import { listAbsencesForRange, buildAbsenceGrid, listExternalMembers, type AbsenceCell } from '$lib/server/services/absences';
+import { listAbsencesForRange, buildAbsenceGrid, listExternalMembers } from '$lib/server/services/absences';
 import {
 	ABSENCE_TYPES,
 	ABSENCE_TYPE_LABELS,
 	ABSENCE_TYPE_COLORS,
 	absenceRangeBounds,
 	groupDaysByMonth,
+	type AbsenceType,
+	type AbsencePeriod,
 	type AbsenceSpan
 } from '$lib/absenceTypes';
 import { hexToArgb } from './export';
@@ -27,7 +29,7 @@ const NAME_COL_BORDER = { style: 'medium' as const, color: { argb: 'FF94A3B8' } 
 
 const solidFill = (argb: string): ExcelJS.Fill => ({ type: 'pattern', pattern: 'solid', fgColor: { argb } });
 
-function fillFor(cell: AbsenceCell): ExcelJS.Fill {
+function fillFor(cell: { type: AbsenceType; period: AbsencePeriod }): ExcelJS.Fill {
 	const argb = hexToArgb(ABSENCE_TYPE_COLORS[cell.type]);
 	if (cell.period === 'FULL') return solidFill(argb);
 	// Demi-journée : dégradé diagonal blanc → couleur, comme dans "Prévisions congés.xlsx".

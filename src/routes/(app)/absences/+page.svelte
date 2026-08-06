@@ -28,7 +28,20 @@
 	let imgTo = $state(data.todayISO);
 	let imgRowIds = $state<string[]>([]);
 	let imgBusy = $state(false);
+	let editingId = $state<string | null>(null);
+	let formEl: HTMLElement | undefined = $state();
 	const sameDay = $derived(startDate === endDate);
+
+	/** Bascule le formulaire en mode édition, préremplit ses champs et le ramène à l'écran. */
+	function startEdit(a: { id: string; startDate: string; endDate: string; type: AbsenceType; period: AbsencePeriod }) {
+		editingId = a.id;
+		startDate = a.startDate;
+		endDate = a.endDate;
+		type = a.type;
+		period = a.period;
+		subject = 'me';
+		formEl?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+	}
 
 	function openImageModal() {
 		imgFrom = data.days[0];
@@ -86,6 +99,7 @@
 		type = 'CONGE_VALIDE';
 		period = 'FULL';
 		subject = 'me';
+		editingId = null;
 	}
 
 	function isWeekend(dayISO: string) {
@@ -109,18 +123,19 @@
 	{#if form?.error}<div class="flash error">{form.error}</div>{/if}
 	{#if form?.ok}<div class="flash ok">Mis à jour ✓</div>{/if}
 
-	<section class="card block">
-		<h3>Déclarer une absence</h3>
+	<section class="card block" bind:this={formEl}>
+		<h3>{editingId ? "Modifier l'absence" : 'Déclarer une absence'}</h3>
 		<form
 			method="POST"
-			action="?/create"
+			action={editingId ? '?/update' : '?/create'}
 			class="abs-form"
 			use:enhance={() => async ({ update }) => {
 				await update();
 				resetForm();
 			}}
 		>
-			{#if data.canManageOthers && data.externalMembers.length > 0}
+			{#if editingId}<input type="hidden" name="id" value={editingId} />{/if}
+			{#if data.canManageOthers && data.externalMembers.length > 0 && !editingId}
 				<div class="field">
 					<label for="subject">Pour</label>
 					<select id="subject" name="subject" bind:value={subject}>
@@ -161,7 +176,12 @@
 					</div>
 				</div>
 			{/if}
-			<button class="btn btn-primary" type="submit">+ Déclarer</button>
+			<div class="abs-form-actions">
+				<button class="btn btn-primary" type="submit">{editingId ? 'Enregistrer' : '+ Déclarer'}</button>
+				{#if editingId}
+					<button class="btn btn-ghost" type="button" onclick={resetForm}>Annuler</button>
+				{/if}
+			</div>
 		</form>
 	</section>
 
@@ -241,11 +261,16 @@
 								<td class="name-col">{m.displayName}{#if m.external}<span class="ext-dot" title="Membre externe"></span>{/if}</td>
 								{#each data.days as d (d)}
 									{@const cell = data.grid[m.id]?.[d]}
+									{@const editable = !!cell && (m.external ? data.canManageOthers : m.id === data.selfId || data.canManageOthers)}
+									<!-- svelte-ignore a11y_click_events_have_key_events -->
+									<!-- svelte-ignore a11y_no_static_element_interactions -->
 									<td
 										class:weekend={isWeekend(d)}
 										class:today={d === data.todayISO}
+										class:cell-editable={editable}
 										style={cellStyle(cell)}
-										title={cell ? `${m.displayName} — ${ABSENCE_TYPE_LABELS[cell.type]}${cell.period !== 'FULL' ? ' (' + ABSENCE_PERIOD_LABELS[cell.period] + ')' : ''}` : ''}
+										title={cell ? `${m.displayName} — ${ABSENCE_TYPE_LABELS[cell.type]}${cell.period !== 'FULL' ? ' (' + ABSENCE_PERIOD_LABELS[cell.period] + ')' : ''}${editable ? ' · cliquer pour modifier' : ''}` : ''}
+										onclick={editable ? () => cell && startEdit(cell) : undefined}
 									></td>
 								{/each}
 							</tr>
@@ -275,6 +300,7 @@
 						<span class="abs-range">{formatDayRange(a.startDate, a.endDate)}</span>
 						<span class="pill">{ABSENCE_TYPE_LABELS[a.type]}</span>
 						{#if a.period !== 'FULL'}<span class="pill">{ABSENCE_PERIOD_LABELS[a.period]}</span>{/if}
+						<button class="ref-btn" type="button" onclick={() => startEdit(a)}>✏️ Modifier</button>
 						<form method="POST" action="?/remove" use:enhance>
 							<input type="hidden" name="id" value={a.id} />
 							<button class="ref-btn ref-btn-danger" type="submit">🗑 Retirer</button>
@@ -492,14 +518,22 @@
 	}
 
 	.abs-form {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: flex-end;
-		gap: 12px;
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+		align-items: end;
+		gap: 14px;
 	}
 	.abs-form .field {
 		margin-bottom: 0;
-		min-width: 160px;
+		min-width: 0;
+	}
+	.abs-form-actions {
+		grid-column: 1 / -1;
+		display: flex;
+		gap: 10px;
+		padding-top: 14px;
+		margin-top: 4px;
+		border-top: 1px solid var(--border);
 	}
 	.period-field {
 		display: flex;
@@ -685,6 +719,12 @@
 	.grid tr.external-row td.weekend,
 	.grid tr.external-row td.name-col {
 		background: rgba(148, 163, 184, 0.12);
+	}
+	.grid td.cell-editable {
+		cursor: pointer;
+	}
+	.grid td.cell-editable:hover {
+		box-shadow: inset 0 0 0 2px var(--accent);
 	}
 
 	.legend {

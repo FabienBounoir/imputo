@@ -83,7 +83,33 @@ export async function deleteAbsence(workspaceId: string, requesterId: string, id
 	await db.delete(absence).where(and(...conditions));
 }
 
-export type AbsenceCell = { type: AbsenceType; period: AbsencePeriod };
+/**
+ * Modifie une absence existante (dates/type/demi-journée) — mêmes permissions que la suppression.
+ * Ne change jamais le sujet (userId/externalMemberId) : réassigner reviendrait à en créer une autre.
+ */
+export async function updateAbsence(
+	workspaceId: string,
+	requesterId: string,
+	canManageOthers: boolean,
+	id: string,
+	input: { startDate: string; endDate: string; type: AbsenceType; period: AbsencePeriod }
+) {
+	if (parseISODate(input.startDate) > parseISODate(input.endDate))
+		throw new Error('La date de fin doit être après la date de début.');
+	const period = input.startDate === input.endDate ? input.period : 'FULL';
+
+	const conditions = [eq(absence.workspaceId, workspaceId), eq(absence.id, id)];
+	if (!canManageOthers) conditions.push(eq(absence.userId, requesterId));
+	const updated = await db
+		.update(absence)
+		.set({ startDate: input.startDate, endDate: input.endDate, type: input.type, period, updatedAt: new Date() })
+		.where(and(...conditions))
+		.returning({ id: absence.id });
+	if (updated.length === 0) throw new Error('Absence introuvable ou non autorisée.');
+}
+
+/** Une cellule de la grille porte toute l'absence (pas juste type/période) pour permettre l'édition en un clic. */
+export type AbsenceCell = { id: string; startDate: string; endDate: string; type: AbsenceType; period: AbsencePeriod };
 export type AbsenceGrid = Record<string, Record<string, AbsenceCell>>;
 
 /**
@@ -95,7 +121,7 @@ export function buildAbsenceGrid(absences: AbsenceWithUser[], days: string[]): A
 	const grid: AbsenceGrid = {};
 	const daySet = new Set(days);
 	for (const a of absences) {
-		const cell: AbsenceCell = { type: a.type, period: a.period };
+		const cell: AbsenceCell = { id: a.id, startDate: a.startDate, endDate: a.endDate, type: a.type, period: a.period };
 		let d = parseISODate(a.startDate);
 		let iso = toISODate(d);
 		while (iso <= a.endDate) {

@@ -7,6 +7,7 @@ import {
 	listAbsencesForRange,
 	createAbsenceFor,
 	deleteAbsence,
+	updateAbsence,
 	buildAbsenceGrid,
 	listExternalMembers,
 	addExternalMember,
@@ -65,7 +66,8 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		prevAnchor: addMonths(anchorISO, -span),
 		nextAnchor: addMonths(anchorISO, span),
 		todayISO: todayInParis(),
-		canManageOthers: isManagerOrAdmin(locals.role)
+		canManageOthers: isManagerOrAdmin(locals.role),
+		selfId: user.id
 	};
 };
 
@@ -91,6 +93,27 @@ export const actions: Actions = {
 
 		try {
 			await createAbsenceFor(ws.workspaceId, subject, { startDate, endDate, type, period });
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { ok: true };
+	},
+
+	update: async ({ request, locals }) => {
+		const ws = locals.workspace;
+		if (!ws || !locals.user) return fail(401, { error: 'Non authentifié.' });
+		const f = await request.formData();
+		const id = String(f.get('id') ?? '');
+		const startDate = String(f.get('startDate') ?? '');
+		const endDate = String(f.get('endDate') ?? startDate);
+		const type = String(f.get('type') ?? '') as AbsenceType;
+		const period = (String(f.get('period') ?? 'FULL') || 'FULL') as AbsencePeriod;
+
+		if (!id || !startDate || !endDate || !ABSENCE_TYPES.includes(type) || !ABSENCE_PERIODS.includes(period))
+			return fail(400, { error: 'Données invalides.' });
+
+		try {
+			await updateAbsence(ws.workspaceId, locals.user.id, isManagerOrAdmin(locals.role), id, { startDate, endDate, type, period });
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
