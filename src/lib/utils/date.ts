@@ -33,6 +33,20 @@ export function todayInParis(): string {
 	return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris' }).format(new Date());
 }
 
+/** Date + heure de dépôt, lisibles, fuseau Paris : « 06/08/2026 à 14:32 ». */
+export function formatDateTime(d: Date): string {
+	return new Intl.DateTimeFormat('fr-FR', {
+		timeZone: 'Europe/Paris',
+		day: '2-digit',
+		month: '2-digit',
+		year: 'numeric',
+		hour: '2-digit',
+		minute: '2-digit'
+	})
+		.format(d)
+		.replace(',', ' à');
+}
+
 /** True si la date ISO est un jour ouvré (lundi→vendredi). */
 export function isWorkday(dateISO: string): boolean {
 	const dow = parseISODate(dateISO).getUTCDay();

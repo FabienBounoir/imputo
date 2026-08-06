@@ -1,7 +1,10 @@
-import { and, desc, eq, gte, isNull, lte, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, isNull, lte, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import { db, absence, user, externalMember } from '$lib/server/db';
 import type { AbsenceType, AbsencePeriod } from '$lib/absenceTypes';
 import { parseISODate, toISODate, addDays } from '$lib/utils/date';
+
+const validator = alias(user, 'absence_validator');
 
 /** Sujet d'une absence : soit un membre réel, soit un membre externe (jamais les deux). */
 export type AbsenceSubject = { userId: string } | { externalMemberId: string };
@@ -14,6 +17,11 @@ export type AbsenceRow = {
 	endDate: string;
 	type: AbsenceType;
 	period: AbsencePeriod;
+	/** Horodatage de dépôt — sert à trancher « qui a imputé en premier » en cas de conflit de dates. */
+	createdAt: Date;
+	/** Renseignés uniquement une fois validé (type CONGE_VALIDE) — qui et quand. */
+	validatedAt: Date | null;
+	validatedByName: string | null;
 };
 
 export type AbsenceWithUser = AbsenceRow & { displayName: string; external: boolean };
@@ -26,7 +34,10 @@ const absenceSelect = {
 	startDate: absence.startDate,
 	endDate: absence.endDate,
 	type: absence.type,
-	period: absence.period
+	period: absence.period,
+	createdAt: absence.createdAt,
+	validatedAt: absence.validatedAt,
+	validatedByName: validator.displayName
 };
 
 /** Absences d'une personne (compte réel), les plus récentes/à venir en premier. */
@@ -34,6 +45,7 @@ export async function listAbsencesForUser(workspaceId: string, userId: string): 
 	return db
 		.select(absenceSelect)
 		.from(absence)
+		.leftJoin(validator, eq(absence.validatedById, validator.id))
 		.where(and(eq(absence.workspaceId, workspaceId), eq(absence.userId, userId)))
 		.orderBy(desc(absence.startDate));
 }
@@ -53,7 +65,33 @@ export async function listAbsencesForRange(
 		.from(absence)
 		.leftJoin(user, eq(absence.userId, user.id))
 		.leftJoin(externalMember, eq(absence.externalMemberId, externalMember.id))
+		.leftJoin(validator, eq(absence.validatedById, validator.id))
 		.where(and(eq(absence.workspaceId, workspaceId), lte(absence.startDate, toISO), gte(absence.endDate, fromISO)));
+}
+
+/** Congés prévisionnels en attente de validation, tout l'espace confondu — la « liste d'actions » admin/manager. */
+export async function listPendingAbsences(workspaceId: string): Promise<AbsenceWithUser[]> {
+	return db
+		.select({
+			...absenceSelect,
+			displayName: sql<string>`coalesce(${user.displayName}, ${externalMember.displayName})`,
+			external: sql<boolean>`${absence.externalMemberId} is not null`
+		})
+		.from(absence)
+		.leftJoin(user, eq(absence.userId, user.id))
+		.leftJoin(externalMember, eq(absence.externalMemberId, externalMember.id))
+		.leftJoin(validator, eq(absence.validatedById, validator.id))
+		.where(and(eq(absence.workspaceId, workspaceId), eq(absence.type, 'CONGE_PREVISIONNEL')))
+		.orderBy(asc(absence.startDate));
+}
+
+/** Nombre de congés en attente de validation — pour le badge de nav admin/manager. */
+export async function countPendingAbsences(workspaceId: string): Promise<number> {
+	const [row] = await db
+		.select({ count: sql<number>`count(*)::int` })
+		.from(absence)
+		.where(and(eq(absence.workspaceId, workspaceId), eq(absence.type, 'CONGE_PREVISIONNEL')));
+	return row?.count ?? 0;
 }
 
 export async function createAbsenceFor(
@@ -108,8 +146,28 @@ export async function updateAbsence(
 	if (updated.length === 0) throw new Error('Absence introuvable ou non autorisée.');
 }
 
+/** Passe un congé prévisionnel en validé — réservé admin/manager (vérifié par l'appelant). */
+export async function validateAbsence(workspaceId: string, id: string, validatedById: string) {
+	const now = new Date();
+	const updated = await db
+		.update(absence)
+		.set({ type: 'CONGE_VALIDE', validatedById, validatedAt: now, updatedAt: now })
+		.where(and(eq(absence.workspaceId, workspaceId), eq(absence.id, id), eq(absence.type, 'CONGE_PREVISIONNEL')))
+		.returning({ id: absence.id });
+	if (updated.length === 0) throw new Error('Absence introuvable ou déjà traitée.');
+}
+
 /** Une cellule de la grille porte toute l'absence (pas juste type/période) pour permettre l'édition en un clic. */
-export type AbsenceCell = { id: string; startDate: string; endDate: string; type: AbsenceType; period: AbsencePeriod };
+export type AbsenceCell = {
+	id: string;
+	startDate: string;
+	endDate: string;
+	type: AbsenceType;
+	period: AbsencePeriod;
+	createdAt: Date;
+	validatedAt: Date | null;
+	validatedByName: string | null;
+};
 export type AbsenceGrid = Record<string, Record<string, AbsenceCell>>;
 
 /**
@@ -121,7 +179,16 @@ export function buildAbsenceGrid(absences: AbsenceWithUser[], days: string[]): A
 	const grid: AbsenceGrid = {};
 	const daySet = new Set(days);
 	for (const a of absences) {
-		const cell: AbsenceCell = { id: a.id, startDate: a.startDate, endDate: a.endDate, type: a.type, period: a.period };
+		const cell: AbsenceCell = {
+			id: a.id,
+			startDate: a.startDate,
+			endDate: a.endDate,
+			type: a.type,
+			period: a.period,
+			createdAt: a.createdAt,
+			validatedAt: a.validatedAt,
+			validatedByName: a.validatedByName
+		};
 		let d = parseISODate(a.startDate);
 		let iso = toISODate(d);
 		while (iso <= a.endDate) {

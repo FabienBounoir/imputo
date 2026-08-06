@@ -5,9 +5,11 @@ import { isManagerOrAdmin } from '$lib/server/services/workspaces';
 import {
 	listAbsencesForUser,
 	listAbsencesForRange,
+	listPendingAbsences,
 	createAbsenceFor,
 	deleteAbsence,
 	updateAbsence,
+	validateAbsence,
 	buildAbsenceGrid,
 	listExternalMembers,
 	addExternalMember,
@@ -40,11 +42,13 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	// Regroupe les jours par mois pour l'en-tête de la synthèse (utile dès que la plage dépasse un mois).
 	const monthGroups = groupDaysByMonth(days);
 
-	const [ref, myAbsences, teamAbsences, externalMembers] = await Promise.all([
+	const canManageOthers = isManagerOrAdmin(locals.role);
+	const [ref, myAbsences, teamAbsences, externalMembers, pendingAbsences] = await Promise.all([
 		getRefData(ws.workspaceId),
 		listAbsencesForUser(ws.workspaceId, user.id),
 		listAbsencesForRange(ws.workspaceId, range.start, range.end),
-		listExternalMembers(ws.workspaceId)
+		listExternalMembers(ws.workspaceId),
+		canManageOthers ? listPendingAbsences(ws.workspaceId) : Promise.resolve([])
 	]);
 
 	// Une seule liste pour la synthèse équipe (réels + externes) — `external` pilote la teinte de ligne.
@@ -60,13 +64,14 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		monthGroups,
 		grid: buildAbsenceGrid(teamAbsences, days),
 		myAbsences,
+		pendingAbsences,
 		rangeLabel: span === 1 ? formatMonthLabel(range.start) : `${formatMonthLabel(range.start)} → ${formatMonthLabel(range.end)}`,
 		anchorISO,
 		span,
 		prevAnchor: addMonths(anchorISO, -span),
 		nextAnchor: addMonths(anchorISO, span),
 		todayISO: todayInParis(),
-		canManageOthers: isManagerOrAdmin(locals.role),
+		canManageOthers,
 		selfId: user.id
 	};
 };
@@ -84,6 +89,8 @@ export const actions: Actions = {
 
 		if (!startDate || !endDate || !ABSENCE_TYPES.includes(type) || !ABSENCE_PERIODS.includes(period))
 			return fail(400, { error: 'Données invalides.' });
+		// Un congé ne se déclare qu'en prévisionnel ; seul un admin/manager peut le valider (action `validate`).
+		if (type === 'CONGE_VALIDE' && !isManagerOrAdmin(locals.role)) return fail(403, { error: 'Réservé aux admins/managers.' });
 
 		// Un membre externe ne peut être ciblé que par un admin/manager — sinon on retombe sur soi-même.
 		const subject: AbsenceSubject =
@@ -111,9 +118,26 @@ export const actions: Actions = {
 
 		if (!id || !startDate || !endDate || !ABSENCE_TYPES.includes(type) || !ABSENCE_PERIODS.includes(period))
 			return fail(400, { error: 'Données invalides.' });
+		if (type === 'CONGE_VALIDE' && !isManagerOrAdmin(locals.role)) return fail(403, { error: 'Réservé aux admins/managers.' });
 
 		try {
 			await updateAbsence(ws.workspaceId, locals.user.id, isManagerOrAdmin(locals.role), id, { startDate, endDate, type, period });
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { ok: true };
+	},
+
+	/** Valide un congé prévisionnel — réservé admin/manager. */
+	validate: async ({ request, locals }) => {
+		const ws = locals.workspace;
+		if (!ws || !locals.user) return fail(401, { error: 'Non authentifié.' });
+		if (!isManagerOrAdmin(locals.role)) return fail(403, { error: 'Réservé aux admins/managers.' });
+		const f = await request.formData();
+		const id = String(f.get('id') ?? '');
+		if (!id) return fail(400, { error: 'Données invalides.' });
+		try {
+			await validateAbsence(ws.workspaceId, id, locals.user.id);
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
+	import { beep } from '$lib/sound';
 	let { children, data } = $props();
 
 	let wsMenuOpen = $state(false);
@@ -21,12 +22,51 @@
 
 	const isOwner = $derived(!!data.user && data.user.id === data.workspace?.createdByUserId);
 	const roleLabel = $derived(data.role === 'ADMIN' ? 'Admin' : data.role === 'MANAGER' ? 'Manager' : 'Membre');
+
+	// Easter egg : 10 clics rapides sur le logo -> il prend vie un instant, avec un son par clic
+	// (gamme montante) et un jingle différent au 10e.
+	let logoClicks = 0;
+	let logoClickTimer: ReturnType<typeof setTimeout> | undefined;
+	let logoAlive = $state(false);
+
+	// Gamme montante pour les clics 1 à 9 (Ré4 -> Mi5).
+	const CLICK_NOTES = [293.66, 329.63, 369.99, 392, 440, 493.88, 554.37, 587.33, 659.25];
+
+	function clickLogo() {
+		logoClicks++;
+		clearTimeout(logoClickTimer);
+		logoClickTimer = setTimeout(() => (logoClicks = 0), 1200);
+		if (logoClicks >= 10) {
+			logoClicks = 0;
+			logoAlive = false;
+			requestAnimationFrame(() => (logoAlive = true));
+			// Jingle distinct (timbre + rythme différents des simples clics) pour marquer le 10e.
+			[880, 1108.73, 1318.51].forEach((freq, i) =>
+				beep(freq, { offset: i * 0.1, duration: i === 2 ? 0.3 : 0.1, type: 'triangle', volume: 0.14 })
+			);
+			console.log(
+				'%cImputo',
+				'font-size:26px;font-weight:800;color:#e0483e;',
+				"\nBravo, vous avez trouvé un easter egg. Essayez aussi le code Konami ↑↑↓↓←→←→BA."
+			);
+		} else {
+			beep(CLICK_NOTES[logoClicks - 1], { duration: 0.07, volume: 0.09 });
+		}
+	}
 </script>
 
 <div class="app">
 	<aside class="sidebar">
 		<div class="brand">
-			<div class="mark">
+			<div
+				class="mark"
+				class:alive={logoAlive}
+				role="button"
+				tabindex="0"
+				onclick={clickLogo}
+				onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && clickLogo()}
+				onanimationend={() => (logoAlive = false)}
+			>
 				<svg viewBox="108 84 296 296" fill="#fff" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
 					<rect x="132" y="284" width="64" height="96" rx="30" />
 					<rect x="224" y="230" width="64" height="150" rx="30" />
@@ -75,19 +115,24 @@
 		<a class="nav-item" class:active={isActive('/absences')} href="/absences">
 			<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="18" rx="3"/><path d="M3 10h18M8 2v4M16 2v4"/><path d="m8.5 15 2 2 4-4"/></svg>
 			Absences
+			{#if (data.role === 'ADMIN' || data.role === 'MANAGER') && data.pendingAbsencesCount > 0}
+				<span class="badge" title="Congés en attente de validation">{data.pendingAbsencesCount}</span>
+			{/if}
 		</a>
 		<a class="nav-item" class:active={isActive('/dashboard', true)} href="/dashboard">
 			<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v18h18"/><path d="m7 14 4-4 3 3 5-6"/></svg>
 			Synthèse
 		</a>
-		<a class="nav-item" class:active={isActive('/dashboard/version')} href="/dashboard/version">
-			<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="11" width="4" height="8"/><rect x="10" y="6" width="4" height="13"/><rect x="17" y="3" width="4" height="16"/></svg>
-			Par version
-		</a>
-		<a class="nav-item" class:active={isActive('/dashboard/sprint')} href="/dashboard/sprint">
-			<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg>
-			Par sprint
-		</a>
+		<div class="nav-sub-group">
+			<a class="nav-item" class:active={isActive('/dashboard/version')} href="/dashboard/version">
+				<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="11" width="4" height="8"/><rect x="10" y="6" width="4" height="13"/><rect x="17" y="3" width="4" height="16"/></svg>
+				Par version
+			</a>
+			<a class="nav-item" class:active={isActive('/dashboard/sprint')} href="/dashboard/sprint">
+				<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg>
+				Par sprint
+			</a>
+		</div>
 		{#if data.workspace?.moodEnabled}
 			<a
 				class="nav-item"

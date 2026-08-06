@@ -442,6 +442,10 @@ export const absence = pgTable(
 		endDate: date('end_date').notNull(),
 		type: absenceTypeEnum('type').notNull(),
 		period: absencePeriodEnum('period').notNull().default('FULL'),
+		// Renseignés uniquement au passage CONGE_PREVISIONNEL → CONGE_VALIDE (action `validate`) — distincts
+		// de updatedAt pour ne pas perdre la trace si l'absence est modifiée après coup (dates, etc.).
+		validatedById: uuid('validated_by').references(() => user.id, { onDelete: 'set null' }),
+		validatedAt: timestamp('validated_at', { withTimezone: true }),
 		createdAt: createdAt(),
 		updatedAt: updatedAt()
 	},

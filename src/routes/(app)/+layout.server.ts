@@ -1,6 +1,7 @@
 import { redirect } from '@sveltejs/kit';
 import type { LayoutServerLoad } from './$types';
 import { countVotes, getMoodConfig, getMyVote } from '$lib/server/services/mood';
+import { countPendingAbsences } from '$lib/server/services/absences';
 import { currentMoodPeriod, todayInParis, parseISODate } from '$lib/utils/date';
 
 // En dessous de ce seuil de jours restants sur la plage active, on relance visuellement (blink)
@@ -24,12 +25,16 @@ export const load: LayoutServerLoad = async ({ locals }) => {
 		if (locals.role === 'ADMIN') moodTotalVotes = await countVotes(locals.workspace.workspaceId);
 	}
 
+	const canManageOthers = locals.role === 'ADMIN' || locals.role === 'MANAGER';
+	const pendingAbsencesCount = canManageOthers ? await countPendingAbsences(locals.workspace.workspaceId) : 0;
+
 	return {
 		user: locals.user,
 		workspace: locals.workspace,
 		memberships: locals.memberships,
 		role: locals.role,
 		moodStatus,
-		moodTotalVotes
+		moodTotalVotes,
+		pendingAbsencesCount
 	};
 };
