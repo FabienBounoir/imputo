@@ -1,7 +1,20 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { Confetti } from 'svelte-confetti';
 
 	let { data, form } = $props();
+
+	// Unanime : tout le monde a voté le même score sur la plage (à partir de 2 votes, sinon ça n'a pas de sens).
+	function isUnanimous(p: { voteCount: number; distribution: Record<1 | 2 | 3 | 4 | 5, number> }) {
+		return p.voteCount >= 2 && SCORES.some((s) => p.distribution[s] === p.voteCount);
+	}
+
+	// Célébration ponctuelle : seulement pour la plage en cours, une fois au chargement de la page.
+	const currentPeriod = $derived(data.periods.find((p) => p.periodStart === data.currentPeriodStart));
+	let celebrate = $state(false);
+	$effect(() => {
+		if (currentPeriod && isUnanimous(currentPeriod)) celebrate = true;
+	});
 
 	const EMOJI: Record<number, string> = { 1: '😞', 2: '🙁', 3: '😐', 4: '🙂', 5: '😄' };
 	// Palette fixe rouge → orange → jaune → vert clair → vert : seulement 5 valeurs possibles (1..5),
@@ -124,6 +137,12 @@
 	<h1>Team mood — Résultats<small>Vue admin, votes anonymes</small></h1>
 </div>
 
+{#if celebrate}
+	<div class="mood-confetti" aria-hidden="true">
+		<Confetti x={[-2, 2]} y={[0, 0.3]} amount={120} fallDistance="100vh" duration={3000} rounded />
+	</div>
+{/if}
+
 {#if form?.resetOk}<div class="content" style="padding-bottom:0;"><div class="flash ok">Plage en cours réinitialisée ✓</div></div>{/if}
 
 <div class="page-grid">
@@ -169,6 +188,7 @@
 						<span class="prow-date">
 							{fmt(p.periodStart)} → {fmt(p.periodEnd)}
 							{#if isCurrent}<span class="pill current">En cours</span>{/if}
+							{#if isUnanimous(p)}<span class="pill unanimous" title="Tout le monde a voté pareil">🎉 Unanime</span>{/if}
 						</span>
 						<div class="stackbar" title="Répartition des votes">
 							{#each SCORES as score (score)}
@@ -550,6 +570,21 @@
 		background: var(--accent-tint);
 		padding: 2px 8px;
 		border-radius: 20px;
+	}
+	.pill.unanimous {
+		font-size: 11px;
+		font-weight: 700;
+		color: #22c55e;
+		background: color-mix(in srgb, #22c55e 15%, transparent);
+		padding: 2px 8px;
+		border-radius: 20px;
+	}
+	.mood-confetti {
+		position: fixed;
+		top: 0;
+		left: 50%;
+		z-index: 9999;
+		pointer-events: none;
 	}
 	.expand {
 		padding: 14px 16px 16px;

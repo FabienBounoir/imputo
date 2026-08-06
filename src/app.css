@@ -123,6 +123,23 @@ select {
 	font-weight: 600;
 	font-size: 20px;
 	transform: rotate(-4deg);
+	cursor: pointer;
+}
+/* Easter egg : 10 clics rapides sur le logo (routes/(app)/+layout.svelte). */
+.brand .mark.alive {
+	animation: logo-alive 0.7s ease;
+}
+@keyframes logo-alive {
+	0% { transform: rotate(-4deg) scale(1); }
+	30% { transform: rotate(-18deg) scale(1.18); }
+	55% { transform: rotate(14deg) scale(0.92); }
+	78% { transform: rotate(-8deg) scale(1.08); }
+	100% { transform: rotate(-4deg) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+	.brand .mark.alive {
+		animation: none;
+	}
 }
 .mark svg {
 	width: 62%;
@@ -277,6 +294,39 @@ select {
 	height: 20px;
 	border-radius: 0 4px 4px 0;
 	background: var(--accent);
+	z-index: 1;
+}
+/* Chaîne visuelle : "Par version" / "Par sprint" descendent de la Synthèse. */
+.nav-sub-group {
+	position: relative;
+	margin-left: 20px;
+	padding-left: 12px;
+}
+.nav-sub-group::before {
+	content: '';
+	position: absolute;
+	left: 0;
+	top: 0;
+	/* s'arrête au milieu de la dernière entrée (2 items, sans gap entre eux) : (n-0.5)/n */
+	height: 75%;
+	width: 2px;
+	background: var(--border);
+}
+.nav-sub-group .nav-item {
+	font-size: 13px;
+	padding: 7px 11px;
+}
+.nav-sub-group .nav-item.active::before {
+	left: -12px;
+}
+.nav-sub-group .nav-item::after {
+	content: '';
+	position: absolute;
+	left: -12px;
+	top: 50%;
+	width: 10px;
+	height: 2px;
+	background: var(--border);
 }
 .nav-item .badge {
 	margin-left: auto;

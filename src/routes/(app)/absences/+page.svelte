@@ -11,13 +11,13 @@
 		type AbsenceType,
 		type AbsencePeriod
 	} from '$lib/absenceTypes';
-	import { parseISODate, formatDayRange } from '$lib/utils/date';
+	import { parseISODate, formatDayRange, formatDateTime } from '$lib/utils/date';
 
 	let { data, form } = $props();
 
 	let startDate = $state(data.todayISO);
 	let endDate = $state(data.todayISO);
-	let type = $state<AbsenceType>('CONGE_VALIDE');
+	let type = $state<AbsenceType>('CONGE_PREVISIONNEL');
 	let period = $state<AbsencePeriod>('FULL');
 	let subject = $state('me');
 	let extName = $state('');
@@ -30,7 +30,14 @@
 	let imgBusy = $state(false);
 	let editingId = $state<string | null>(null);
 	let formEl: HTMLElement | undefined = $state();
+	let cellPopover = $state<{ top: number; left: number; displayName: string; cell: ClickableCell } | null>(null);
 	const sameDay = $derived(startDate === endDate);
+	// Un membre ne déclare qu'en prévisionnel — "Congé validé" n'est atteignable que via le bouton
+	// "Valider" (admin/manager). Un admin/manager peut en revanche le poser directement. Dans les deux
+	// cas on garde la valeur déjà en cours d'édition, pour ne pas la perdre en modifiant juste les dates.
+	const typeOptions = $derived(
+		data.canManageOthers ? ABSENCE_TYPES : ABSENCE_TYPES.filter((t) => t !== 'CONGE_VALIDE' || type === 'CONGE_VALIDE')
+	);
 
 	/** Bascule le formulaire en mode édition, préremplit ses champs et le ramène à l'écran. */
 	function startEdit(a: { id: string; startDate: string; endDate: string; type: AbsenceType; period: AbsencePeriod }) {
@@ -41,6 +48,30 @@
 		period = a.period;
 		subject = 'me';
 		formEl?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+	}
+
+	type ClickableCell = {
+		id: string;
+		startDate: string;
+		endDate: string;
+		type: AbsenceType;
+		period: AbsencePeriod;
+		createdAt: Date;
+		validatedAt: Date | null;
+		validatedByName: string | null;
+	};
+
+	/** Case cliquée dans la grille : popover juste en dessous, avec les infos et les actions (modifier / valider). */
+	function handleCellClick(e: MouseEvent, cell: ClickableCell, displayName: string) {
+		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		cellPopover = { top: rect.bottom + 6, left: rect.left, displayName, cell };
+	}
+
+	function editFromPopover() {
+		if (!cellPopover) return;
+		const cell = cellPopover.cell;
+		cellPopover = null;
+		startEdit(cell);
 	}
 
 	function openImageModal() {
@@ -96,7 +127,7 @@
 	function resetForm() {
 		startDate = data.todayISO;
 		endDate = data.todayISO;
-		type = 'CONGE_VALIDE';
+		type = 'CONGE_PREVISIONNEL';
 		period = 'FULL';
 		subject = 'me';
 		editingId = null;
@@ -157,7 +188,7 @@
 			<div class="field">
 				<label for="type">Type</label>
 				<select id="type" name="type" bind:value={type}>
-					{#each ABSENCE_TYPES as t (t)}
+					{#each typeOptions as t (t)}
 						<option value={t}>{ABSENCE_TYPE_LABELS[t]}</option>
 					{/each}
 				</select>
@@ -269,8 +300,8 @@
 										class:today={d === data.todayISO}
 										class:cell-editable={editable}
 										style={cellStyle(cell)}
-										title={cell ? `${m.displayName} — ${ABSENCE_TYPE_LABELS[cell.type]}${cell.period !== 'FULL' ? ' (' + ABSENCE_PERIOD_LABELS[cell.period] + ')' : ''}${editable ? ' · cliquer pour modifier' : ''}` : ''}
-										onclick={editable ? () => cell && startEdit(cell) : undefined}
+										title={cell ? `${m.displayName} — ${ABSENCE_TYPE_LABELS[cell.type]}${cell.period !== 'FULL' ? ' (' + ABSENCE_PERIOD_LABELS[cell.period] + ')' : ''}${data.canManageOthers ? ' · imputé le ' + formatDateTime(cell.createdAt) : ''}${editable ? ' · cliquer pour les actions' : ''}` : ''}
+										onclick={editable ? (e) => cell && handleCellClick(e, cell, m.displayName) : undefined}
 									></td>
 								{/each}
 							</tr>
@@ -288,6 +319,26 @@
 		{/if}
 	</section>
 
+	{#if data.canManageOthers && data.pendingAbsences.length > 0}
+		<section class="card block">
+			<h3>À valider <span class="pill">{data.pendingAbsences.length}</span></h3>
+			<div class="abs-list">
+				{#each data.pendingAbsences as a (a.id)}
+					<div class="abs-item">
+						<span class="swatch" style={cellStyle({ type: a.type, period: a.period })}></span>
+						<span class="abs-range">{a.displayName} — {formatDayRange(a.startDate, a.endDate)}</span>
+						{#if a.period !== 'FULL'}<span class="pill">{ABSENCE_PERIOD_LABELS[a.period]}</span>{/if}
+						<span class="abs-created hint">imputé le {formatDateTime(a.createdAt)}</span>
+						<form method="POST" action="?/validate" use:enhance>
+							<input type="hidden" name="id" value={a.id} />
+							<button class="ref-btn ref-btn-accept" type="submit">✓ Valider</button>
+						</form>
+					</div>
+				{/each}
+			</div>
+		</section>
+	{/if}
+
 	<section class="card block">
 		<h3>Mes absences</h3>
 		{#if data.myAbsences.length === 0}
@@ -300,6 +351,7 @@
 						<span class="abs-range">{formatDayRange(a.startDate, a.endDate)}</span>
 						<span class="pill">{ABSENCE_TYPE_LABELS[a.type]}</span>
 						{#if a.period !== 'FULL'}<span class="pill">{ABSENCE_PERIOD_LABELS[a.period]}</span>{/if}
+						<span class="abs-created hint">imputé le {formatDateTime(a.createdAt)}</span>
 						<button class="ref-btn" type="button" onclick={() => startEdit(a)}>✏️ Modifier</button>
 						<form method="POST" action="?/remove" use:enhance>
 							<input type="hidden" name="id" value={a.id} />
@@ -318,8 +370,47 @@
 		showExtModal = false;
 		showImageModal = false;
 		showExportMenu = false;
+		cellPopover = null;
 	}}
 />
+
+{#if cellPopover}
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="popover-backdrop" onclick={() => (cellPopover = null)}>
+		<!-- svelte-ignore a11y_click_events_have_key_events -->
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div class="popover" style="top:{cellPopover.top}px; left:{cellPopover.left}px;" onclick={(e) => e.stopPropagation()}>
+			<strong>{cellPopover.displayName}</strong>
+			<p>{ABSENCE_TYPE_LABELS[cellPopover.cell.type]}{cellPopover.cell.period !== 'FULL' ? ' · ' + ABSENCE_PERIOD_LABELS[cellPopover.cell.period] : ''}</p>
+			{#if cellPopover.cell.type === 'CONGE_VALIDE'}
+				{#if cellPopover.cell.validatedAt}
+					<p class="hint">Validé le {formatDateTime(cellPopover.cell.validatedAt)}{#if cellPopover.cell.validatedByName} par {cellPopover.cell.validatedByName}{/if}</p>
+				{:else}
+					<p class="hint">Validé — détails non suivis (absence créée avant l'activation du suivi).</p>
+				{/if}
+			{:else}
+				<p class="hint">Imputé le {formatDateTime(cellPopover.cell.createdAt)}</p>
+			{/if}
+			<div class="popover-actions">
+				<button class="ref-btn" type="button" onclick={editFromPopover}>✏️ Modifier</button>
+				{#if cellPopover.cell.type === 'CONGE_PREVISIONNEL' && data.canManageOthers}
+					<form
+						method="POST"
+						action="?/validate"
+						use:enhance={() => async ({ update }) => {
+							await update();
+							cellPopover = null;
+						}}
+					>
+						<input type="hidden" name="id" value={cellPopover.cell.id} />
+						<button class="ref-btn ref-btn-accept" type="submit">✓ Valider</button>
+					</form>
+				{/if}
+			</div>
+		</div>
+	</div>
+{/if}
 
 {#if showExtModal}
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -614,6 +705,9 @@
 	.abs-range {
 		flex: 1;
 	}
+	.abs-created {
+		white-space: nowrap;
+	}
 	.ref-btn {
 		font-size: 12px;
 		font-weight: 600;
@@ -627,6 +721,44 @@
 	.ref-btn-danger:hover {
 		border-color: #c0392b;
 		color: #c0392b;
+	}
+	.ref-btn-accept:hover {
+		border-color: #2e7d32;
+		color: #2e7d32;
+	}
+
+	.popover-backdrop {
+		position: fixed;
+		inset: 0;
+		z-index: 45;
+	}
+	.popover {
+		position: fixed;
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: var(--r-md);
+		box-shadow: var(--shadow-lg);
+		padding: 10px 13px;
+		font-size: 12.5px;
+		max-width: 270px;
+		z-index: 46;
+	}
+	.popover strong {
+		display: block;
+		margin-bottom: 3px;
+	}
+	.popover p {
+		color: var(--text-soft);
+		margin: 0 0 4px;
+	}
+	.popover p:last-of-type {
+		margin-bottom: 0;
+	}
+	.popover-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+		margin-top: 9px;
 	}
 
 	.swatch {

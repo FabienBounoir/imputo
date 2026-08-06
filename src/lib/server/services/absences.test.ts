@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { buildAbsenceGrid, type AbsenceWithUser } from './absences';
 
+const createdAt = new Date('2026-06-01T09:00:00Z');
+
 const abs = (over: Partial<AbsenceWithUser>): AbsenceWithUser => ({
 	id: 'a1',
 	subjectId: 'u1',
@@ -8,6 +10,9 @@ const abs = (over: Partial<AbsenceWithUser>): AbsenceWithUser => ({
 	endDate: '2026-06-01',
 	type: 'CONGE_VALIDE',
 	period: 'FULL',
+	createdAt,
+	validatedAt: null,
+	validatedByName: null,
 	displayName: 'Alice',
 	external: false,
 	...over
@@ -16,7 +21,16 @@ const abs = (over: Partial<AbsenceWithUser>): AbsenceWithUser => ({
 describe('buildAbsenceGrid', () => {
 	it('place une absence d\'un jour sur le bon jour', () => {
 		const grid = buildAbsenceGrid([abs({})], ['2026-06-01', '2026-06-02']);
-		expect(grid.u1['2026-06-01']).toEqual({ id: 'a1', startDate: '2026-06-01', endDate: '2026-06-01', type: 'CONGE_VALIDE', period: 'FULL' });
+		expect(grid.u1['2026-06-01']).toEqual({
+			id: 'a1',
+			startDate: '2026-06-01',
+			endDate: '2026-06-01',
+			type: 'CONGE_VALIDE',
+			period: 'FULL',
+			createdAt,
+			validatedAt: null,
+			validatedByName: null
+		});
 		expect(grid.u1['2026-06-02']).toBeUndefined();
 	});
 
