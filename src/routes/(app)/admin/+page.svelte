@@ -77,6 +77,11 @@
 		<section class="card block">
 			<h3>Membres ({data.members.length})</h3>
 			{#if form?.memberOk}<div class="flash ok">Membre mis à jour ✓</div>{/if}
+			{#if form?.ownerOk}<div class="flash ok">Propriété de l'espace transmise ✓</div>{/if}
+			<p class="hint" style="margin-bottom:0;">
+				👑 Le <b>créateur de l'espace</b> a les mêmes droits qu'un admin, mais ne peut être ni rétrogradé ni
+				désactivé par personne d'autre. Il peut transmettre ce statut à un autre membre actif.
+			</p>
 			<table class="members">
 				<tbody>
 					{#each data.members as m (m.id)}
@@ -84,7 +89,9 @@
 						<tr class:inactive={!m.active && !m.pending}>
 							<td><div class="mc"><span class="avatar">{initials(m.displayName)}</span><div><b>{m.displayName}{#if isSelf} <span class="you">vous</span>{/if}</b><span>{m.email}</span></div></div></td>
 							<td>
-								{#if isSelf}
+								{#if m.isOwner}
+									<span class="pill owner" title="Créateur de l'espace">👑 Créateur</span>
+								{:else if isSelf}
 									<span class="pill">{m.role === 'ADMIN' ? 'Admin' : m.role === 'MANAGER' ? 'Manager' : 'Membre'}</span>
 								{:else}
 									<form method="POST" action="?/memberRole" use:enhance>
@@ -125,12 +132,30 @@
 										<input type="hidden" name="userId" value={m.id} />
 										<button class="ref-btn" type="submit">↻ Régénérer le lien</button>
 									</form>
-								{:else if !isSelf}
-									<form method="POST" action="?/memberActive" use:enhance>
-										<input type="hidden" name="userId" value={m.id} />
-										<input type="hidden" name="active" value={m.active ? 'false' : 'true'} />
-										<button class="ref-btn" type="submit">{m.active ? 'Désactiver' : 'Réactiver'}</button>
-									</form>
+								{:else}
+									<div class="action-group">
+										{#if data.isOwner && !m.isOwner && m.active}
+											<form
+												method="POST"
+												action="?/transferOwnership"
+												use:enhance
+												onsubmit={(e) => {
+													if (!confirm(`Transmettre la propriété de l'espace à ${m.displayName} ? Vous resterez admin, mais perdrez la protection de créateur.`))
+														e.preventDefault();
+												}}
+											>
+												<input type="hidden" name="userId" value={m.id} />
+												<button class="ref-btn" type="submit">👑 Transmettre</button>
+											</form>
+										{/if}
+										{#if !isSelf && !m.isOwner}
+											<form method="POST" action="?/memberActive" use:enhance>
+												<input type="hidden" name="userId" value={m.id} />
+												<input type="hidden" name="active" value={m.active ? 'false' : 'true'} />
+												<button class="ref-btn" type="submit">{m.active ? 'Désactiver' : 'Réactiver'}</button>
+											</form>
+										{/if}
+									</div>
 								{/if}
 							</td>
 						</tr>
@@ -662,6 +687,10 @@
 		background: var(--surface-sunk);
 		color: var(--text-mute);
 	}
+	.pill.owner {
+		background: color-mix(in srgb, #CA8A04 18%, transparent);
+		color: #CA8A04;
+	}
 	.members tr.inactive td {
 		opacity: 0.6;
 	}
@@ -706,6 +735,11 @@
 	}
 	.m-actions {
 		text-align: right;
+	}
+	.action-group {
+		display: flex;
+		gap: 6px;
+		justify-content: flex-end;
 	}
 	.cap-form {
 		display: flex;

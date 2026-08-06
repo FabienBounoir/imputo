@@ -101,6 +101,7 @@ export type MembershipInfo = {
 	allowedDomain: string;
 	moodEnabled: boolean;
 	role: Role;
+	createdByUserId: string | null;
 };
 
 /** Liste les espaces actifs d'un utilisateur. */
@@ -115,7 +116,8 @@ export async function listMembershipsForUser(userId: string): Promise<Membership
 			imputationStep: workspace.imputationStep,
 			allowedDomain: workspace.allowedDomain,
 			moodEnabled: workspace.moodEnabled,
-			role: membership.role
+			role: membership.role,
+			createdByUserId: workspace.createdByUserId
 		})
 		.from(membership)
 		.innerJoin(workspace, eq(membership.workspaceId, workspace.id))

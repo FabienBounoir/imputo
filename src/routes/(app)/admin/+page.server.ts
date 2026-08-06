@@ -14,7 +14,8 @@ import {
 	setMemberRole,
 	setMemberActive,
 	setMemberCapacity,
-	regenerateInvite
+	regenerateInvite,
+	transferOwnership
 } from '$lib/server/services/accounts';
 import {
 	listRefs,
@@ -87,8 +88,9 @@ export const load: PageServerLoad = async ({ locals }) => {
 	]);
 
 	return {
-		members: members.map((m) => ({ ...m, pending: m.pending === null })),
+		members: members.map((m) => ({ ...m, pending: m.pending === null, isOwner: m.id === ws.createdByUserId })),
 		selfId: locals.user!.id,
+		isOwner: locals.user!.id === ws.createdByUserId,
 		allowedDomain: ws.allowedDomain,
 		accentColor: ws.accentColor,
 		testPhase: ws.testPhase,
@@ -280,6 +282,19 @@ export const actions: Actions = {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { memberOk: true };
+	},
+
+	transferOwnership: async ({ request, locals }) => {
+		const ws = locals.workspace!;
+		if (locals.user!.id !== ws.createdByUserId)
+			return fail(403, { error: "Seul le créateur de l'espace peut transmettre la propriété." });
+		const userId = String((await request.formData()).get('userId'));
+		try {
+			await transferOwnership(ws.workspaceId, locals.user!.id, userId);
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { ownerOk: true };
 	},
 
 	memberInvite: async ({ request, locals }) => {
