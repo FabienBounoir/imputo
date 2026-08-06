@@ -61,6 +61,63 @@
 		for (const p of data.periods) for (const s of SCORES) { sum += s * p.distribution[s]; n += p.distribution[s]; }
 		return n > 0 ? Math.round((sum / n) * 100) / 100 : 0;
 	});
+
+	// ---------- Répartition globale (donut) : toutes semaines confondues ----------
+	const globalDistribution = $derived.by(() => {
+		const d: Record<1 | 2 | 3 | 4 | 5, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+		for (const p of data.periods) for (const s of SCORES) d[s] += p.distribution[s];
+		return d;
+	});
+	const totalVotes = $derived(data.periods.reduce((sum, p) => sum + p.voteCount, 0));
+	const DONUT_R = 26;
+	const DONUT_C = 2 * Math.PI * DONUT_R;
+	// Segments empilés dans l'ordre 5→1 (le plus positif en premier) : cumul du dash-offset au fil
+	// des scores pour dessiner chaque part du camembert sur le même cercle.
+	const donutSegments = $derived.by(() => {
+		let cumulative = 0;
+		const segs: { score: 1 | 2 | 3 | 4 | 5; dash: number; offset: number }[] = [];
+		for (const score of [5, 4, 3, 2, 1] as const) {
+			const count = globalDistribution[score];
+			if (count === 0) continue;
+			const dash = (count / Math.max(1, totalVotes)) * DONUT_C;
+			segs.push({ score, dash, offset: -cumulative });
+			cumulative += dash;
+		}
+		return segs;
+	});
+
+	// ---------- Meilleure / moins bonne semaine (par moyenne) ----------
+	const bestWeek = $derived.by(() =>
+		data.periods.reduce((best, p) => (p.avgScore > best.avgScore ? p : best), data.periods[0])
+	);
+	const worstWeek = $derived.by(() =>
+		data.periods.reduce((worst, p) => (p.avgScore < worst.avgScore ? p : worst), data.periods[0])
+	);
+
+	// ---------- Export CSV : une ligne par semaine, résultats agrégés (jamais de message —
+	// l'export doit rester aussi anonyme que l'écran). ----------
+	function exportCsv() {
+		const header = ['Debut', 'Fin', 'Moyenne', 'Votes', 'Score_5', 'Score_4', 'Score_3', 'Score_2', 'Score_1'];
+		const rows = chrono.map((p) => [
+			p.periodStart,
+			p.periodEnd,
+			p.avgScore.toFixed(2),
+			String(p.voteCount),
+			String(p.distribution[5]),
+			String(p.distribution[4]),
+			String(p.distribution[3]),
+			String(p.distribution[2]),
+			String(p.distribution[1])
+		]);
+		// BOM + point-virgule : Excel FR n'ouvre proprement un CSV qu'avec ces deux conventions.
+		const csv = '﻿' + [header, ...rows].map((r) => r.join(';')).join('\n');
+		const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = 'team-mood-resultats.csv';
+		a.click();
+		URL.revokeObjectURL(url);
+	}
 </script>
 
 <div class="topbar">
@@ -69,6 +126,7 @@
 
 {#if form?.resetOk}<div class="content" style="padding-bottom:0;"><div class="flash ok">Plage en cours réinitialisée ✓</div></div>{/if}
 
+<div class="page-grid">
 <div class="content">
 	{#if data.periods.length === 0}
 		<section class="card block">
@@ -128,21 +186,20 @@
 						<svg class="chev" class:open={isOpen} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6" /></svg>
 					</button>
 
-					{#if isCurrent}
-						<form
-							method="POST"
-							action="?/resetCurrentPeriod"
-							class="prow-reset"
-							use:enhance={({ cancel }) => {
-								if (!confirmReset(p.voteCount)) cancel();
-							}}
-						>
-							<button class="btn btn-ghost danger" type="submit">Réinitialiser</button>
-						</form>
-					{/if}
-
 					{#if isOpen}
 						<div class="expand">
+							{#if isCurrent}
+								<form
+									method="POST"
+									action="?/resetCurrentPeriod"
+									class="prow-reset"
+									use:enhance={({ cancel }) => {
+										if (!confirmReset(p.voteCount)) cancel();
+									}}
+								>
+									<button class="btn btn-ghost danger btn-sm" type="submit">Réinitialiser</button>
+								</form>
+							{/if}
 							<div class="barlist">
 								{#each [5, 4, 3, 2, 1] as score (score)}
 									<div class="barrow">
@@ -173,9 +230,167 @@
 	{/if}
 </div>
 
+{#if data.periods.length > 0}
+	<aside class="side">
+		<section class="card block side-card">
+			<h3>Répartition globale</h3>
+			<div class="donut-row">
+				<svg viewBox="0 0 64 64" class="donut">
+					<circle cx="32" cy="32" r={DONUT_R} fill="none" stroke="var(--surface-sunk)" stroke-width="10" />
+					{#each donutSegments as seg (seg.score)}
+						<circle
+							cx="32"
+							cy="32"
+							r={DONUT_R}
+							fill="none"
+							stroke={SCORE_COLOR[seg.score]}
+							stroke-width="10"
+							stroke-dasharray="{seg.dash} {DONUT_C - seg.dash}"
+							stroke-dashoffset={seg.offset}
+							transform="rotate(-90 32 32)"
+						>
+							<title>{EMOJI[seg.score]} × {globalDistribution[seg.score]}</title>
+						</circle>
+					{/each}
+				</svg>
+				<ul class="donut-legend">
+					{#each [5, 4, 3, 2, 1] as score (score)}
+						<li>
+							<span class="dot" style="background:{SCORE_COLOR[score as 1 | 2 | 3 | 4 | 5]};"></span>
+							{EMOJI[score]}
+							<b class="tabnum">{globalDistribution[score as 1 | 2 | 3 | 4 | 5]}</b>
+						</li>
+					{/each}
+				</ul>
+			</div>
+			<p class="side-note">{totalVotes} vote{totalVotes > 1 ? 's' : ''} au total</p>
+		</section>
+
+		<section class="card block side-card">
+			<h3>Meilleure / moins bonne semaine</h3>
+			<div class="weekcard best">
+				<span class="wk-label">🏆 Meilleure</span>
+				<span class="wk-date">{fmt(bestWeek.periodStart)} → {fmt(bestWeek.periodEnd)}</span>
+				<span class="wk-score">{EMOJI[Math.round(bestWeek.avgScore)] ?? '—'} {bestWeek.avgScore.toFixed(2)}</span>
+			</div>
+			{#if worstWeek.periodStart !== bestWeek.periodStart}
+				<div class="weekcard worst">
+					<span class="wk-label">📉 Moins bonne</span>
+					<span class="wk-date">{fmt(worstWeek.periodStart)} → {fmt(worstWeek.periodEnd)}</span>
+					<span class="wk-score">{EMOJI[Math.round(worstWeek.avgScore)] ?? '—'} {worstWeek.avgScore.toFixed(2)}</span>
+				</div>
+			{/if}
+		</section>
+
+		<section class="card block side-card">
+			<h3>Export</h3>
+			<p class="hint">Résultats agrégés par semaine, au format CSV (jamais les commentaires).</p>
+			<button type="button" class="btn btn-ghost" onclick={exportCsv}>Exporter en CSV</button>
+		</section>
+	</aside>
+{/if}
+</div>
+
 <style>
+	.page-grid {
+		display: flex;
+		align-items: flex-start;
+		gap: 24px;
+		flex-wrap: wrap;
+	}
 	.content {
 		max-width: 900px;
+		flex: 1 1 480px;
+	}
+	.side {
+		flex: 0 0 260px;
+		width: 260px;
+		display: flex;
+		flex-direction: column;
+		gap: 16px;
+		/* .main (le scroller de la page, cf. app.css) contient aussi la topbar : elle défile avec le
+		   reste, donc rien au-dessus du sticky ne reste fixe — un simple top suffit, pas d'offset topbar. */
+		position: sticky;
+		top: 20px;
+		max-height: calc(100vh - 40px);
+		overflow-y: auto;
+	}
+	.side-card {
+		padding: 18px 20px;
+	}
+	.side-card h3 {
+		margin: 0 0 12px;
+		font-family: var(--font-display);
+		font-weight: 600;
+		font-size: 15px;
+	}
+	.side-note {
+		margin: 12px 0 0;
+		font-size: 12.5px;
+		color: var(--text-mute);
+		text-align: center;
+	}
+	.donut-row {
+		display: flex;
+		align-items: center;
+		gap: 16px;
+	}
+	.donut {
+		width: 84px;
+		height: 84px;
+		flex-shrink: 0;
+	}
+	.donut-legend {
+		margin: 0;
+		padding: 0;
+		list-style: none;
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		flex: 1;
+		min-width: 0;
+	}
+	.donut-legend li {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 12.5px;
+		color: var(--text-soft);
+	}
+	.donut-legend b {
+		margin-left: auto;
+	}
+	.dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		flex-shrink: 0;
+	}
+	.weekcard {
+		display: flex;
+		flex-direction: column;
+		gap: 3px;
+		padding: 10px 12px;
+		border-radius: var(--r-sm);
+		background: var(--surface-sunk);
+	}
+	.weekcard + .weekcard {
+		margin-top: 8px;
+	}
+	.wk-label {
+		font-size: 11px;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
+		color: var(--text-mute);
+	}
+	.wk-date {
+		font-size: 12.5px;
+		color: var(--text-soft);
+	}
+	.wk-score {
+		font-size: 14px;
+		font-weight: 700;
 	}
 	.block {
 		padding: 24px 26px;
@@ -307,10 +522,16 @@
 	.chev.open {
 		transform: rotate(180deg);
 	}
+	/* Repose dans le padding de .expand (visible seulement déplié) plutôt que sa propre ligne pleine
+	   largeur : un bouton qui ne prend qu'une fraction de la largeur n'a pas besoin d'une rangée dédiée. */
 	.prow-reset {
-		padding: 0 16px 12px;
 		display: flex;
 		justify-content: flex-end;
+		margin-bottom: 10px;
+	}
+	.btn-sm {
+		padding: 4px 10px;
+		font-size: 12px;
 	}
 	.btn-ghost.danger {
 		color: var(--warn);
