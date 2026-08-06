@@ -1,5 +1,6 @@
 import { and, count, eq } from 'drizzle-orm';
-import { db, workspace, moodVote, type MoodPeriodKind } from '$lib/server/db';
+import { db, workspace, moodVote, membership, type MoodPeriodKind } from '$lib/server/db';
+import { previousMoodPeriodStart } from '$lib/utils/date';
 
 export type { MoodPeriodKind };
 
@@ -7,6 +8,24 @@ export type { MoodPeriodKind };
 export async function countVotes(workspaceId: string): Promise<number> {
 	const rows = await db.select({ n: count() }).from(moodVote).where(eq(moodVote.workspaceId, workspaceId));
 	return rows[0]?.n ?? 0;
+}
+
+/** Participation sur la plage en cours : nombre de votes / membres actifs. Jamais le score, pour ne pas influencer les votes restants. */
+export async function getPeriodParticipation(
+	workspaceId: string,
+	periodStart: string
+): Promise<{ voted: number; total: number }> {
+	const [votedRows, totalRows] = await Promise.all([
+		db
+			.select({ n: count() })
+			.from(moodVote)
+			.where(and(eq(moodVote.workspaceId, workspaceId), eq(moodVote.periodStart, periodStart))),
+		db
+			.select({ n: count() })
+			.from(membership)
+			.where(and(eq(membership.workspaceId, workspaceId), eq(membership.active, true)))
+	]);
+	return { voted: votedRows[0]?.n ?? 0, total: totalRows[0]?.n ?? 0 };
 }
 
 export async function getMoodConfig(
@@ -54,6 +73,28 @@ export async function getMyVote(
 			)
 		);
 	return rows[0] ?? null;
+}
+
+/** Nombre de plages consécutives (jusqu'à la plus récente votée) où l'utilisateur a voté — son propre vote, jamais anonymisé pour lui-même. */
+export async function getMyStreak(
+	workspaceId: string,
+	userId: string,
+	kind: MoodPeriodKind,
+	currentPeriodStart: string
+): Promise<number> {
+	const rows = await db
+		.select({ periodStart: moodVote.periodStart })
+		.from(moodVote)
+		.where(and(eq(moodVote.workspaceId, workspaceId), eq(moodVote.userId, userId)));
+	const voted = new Set(rows.map((r) => r.periodStart));
+
+	let pointer = voted.has(currentPeriodStart) ? currentPeriodStart : previousMoodPeriodStart(kind, currentPeriodStart);
+	let streak = 0;
+	while (voted.has(pointer)) {
+		streak += 1;
+		pointer = previousMoodPeriodStart(kind, pointer);
+	}
+	return streak;
 }
 
 /** Upsert du vote de l'utilisateur pour la plage — modifiable tant que la plage est active. */

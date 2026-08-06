@@ -1,7 +1,7 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { currentMoodPeriod, todayInParis } from '$lib/utils/date';
-import { getMoodConfig, getMyVote, submitVote } from '$lib/server/services/mood';
+import { getMoodConfig, getMyVote, getMyStreak, getPeriodParticipation, submitVote } from '$lib/server/services/mood';
 
 export const load: PageServerLoad = async ({ locals }) => {
 	const ws = locals.workspace!;
@@ -9,9 +9,13 @@ export const load: PageServerLoad = async ({ locals }) => {
 
 	const config = await getMoodConfig(ws.workspaceId);
 	const { start, end } = currentMoodPeriod(config.periodKind, config.startWeekday, todayInParis());
-	const myVote = await getMyVote(ws.workspaceId, locals.user!.id, start);
+	const [myVote, streak, participation] = await Promise.all([
+		getMyVote(ws.workspaceId, locals.user!.id, start),
+		getMyStreak(ws.workspaceId, locals.user!.id, config.periodKind, start),
+		getPeriodParticipation(ws.workspaceId, start)
+	]);
 
-	return { periodStart: start, periodEnd: end, myVote };
+	return { periodStart: start, periodEnd: end, myVote, streak, participation };
 };
 
 export const actions: Actions = {
