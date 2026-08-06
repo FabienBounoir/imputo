@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { enhance } from '$app/forms';
 	import {
 		pushSupported,
 		isSubscribed,
@@ -10,8 +11,9 @@
 		type NotifPrefs
 	} from '$lib/push';
 	import { setTheme, storedTheme, type ThemePref } from '$lib/theme';
+	import AccentPicker from '$lib/components/AccentPicker.svelte';
 
-	let { data } = $props();
+	let { data, form } = $props();
 
 	let supported = $state(true);
 	let subscribed = $state(false);
@@ -19,6 +21,11 @@
 	let flash = $state('');
 	let prefs = $state<NotifPrefs>({ ...data.prefs });
 	let themePref = $state<ThemePref>('system');
+
+	const PRESETS = ['#16A34A', '#4F46E5', '#9333EA', '#0EA5E9', '#E11D48', '#EA580C', '#0D9488', '#CA8A04'];
+	let accentOverride = $state(data.accentMode !== 'WORKSPACE');
+	let accentRgb = $state(data.accentMode === 'RGB');
+	let accentColor = $state(data.accentColor ?? data.workspace?.accentColor ?? PRESETS[0]);
 
 	const TYPES: { key: keyof NotifPrefs; label: string }[] = [
 		{ key: 'eveningMissing', label: "Soir : imputation du jour non saisie" },
@@ -126,6 +133,26 @@
 			<button type="button" class:on={themePref === 'light'} onclick={() => pickTheme('light')}>Clair</button>
 			<button type="button" class:on={themePref === 'dark'} onclick={() => pickTheme('dark')}>Sombre</button>
 		</div>
+	</section>
+
+	<section class="card block">
+		<h3>Couleur d’accent</h3>
+		<p class="hint">Par défaut, suit la couleur choisie par l’admin de l’espace. Force ta propre couleur (ou le mode RGB) si tu préfères, sur tous les espaces.</p>
+		{#if form?.accentPrefOk}<div class="flash ok">Préférence enregistrée ✓</div>{/if}
+		<form method="POST" action="?/accentPref" use:enhance>
+			<div class="seg">
+				<button type="button" class:on={!accentOverride} onclick={() => (accentOverride = false)}>Suivre l’espace</button>
+				<button type="button" class:on={accentOverride} onclick={() => (accentOverride = true)}>Personnaliser</button>
+			</div>
+			{#if accentOverride}
+				<div style="margin-top:14px;">
+					<AccentPicker bind:color={accentColor} bind:rgbMode={accentRgb} presets={PRESETS} />
+				</div>
+			{/if}
+			<input type="hidden" name="mode" value={!accentOverride ? 'WORKSPACE' : accentRgb ? 'RGB' : 'CUSTOM'} />
+			<input type="hidden" name="color" value={accentColor} />
+			<button class="btn btn-primary" type="submit" style="margin-top:14px;">Enregistrer</button>
+		</form>
 	</section>
 </div>
 

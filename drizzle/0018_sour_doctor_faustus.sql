@@ -1,0 +1,1 @@
+ALTER TABLE "workspace" ADD COLUMN "accent_rgb" boolean DEFAULT false NOT NULL;

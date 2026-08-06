@@ -127,6 +127,20 @@
       "when": 1786017681094,
       "tag": "0017_light_marauders",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1786022511953,
+      "tag": "0018_sour_doctor_faustus",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1786023166131,
+      "tag": "0019_marvelous_justin_hammer",
+      "breakpoints": true
     }
   ]
 }

@@ -4,7 +4,14 @@ import type { MembershipInfo } from '$lib/server/services/workspaces';
 declare global {
 	namespace App {
 		interface Locals {
-			user: { id: string; displayName: string; email: string; themePref: string } | null;
+			user: {
+				id: string;
+				displayName: string;
+				email: string;
+				themePref: string;
+				accentMode: string;
+				accentColor: string | null;
+			} | null;
 			sessionToken: string | null;
 			memberships: MembershipInfo[];
 			workspace: MembershipInfo | null;

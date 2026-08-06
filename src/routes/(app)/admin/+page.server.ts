@@ -56,7 +56,13 @@ function refType(v: FormDataEntryValue | null): RefType {
 
 const MOOD_PERIOD_KINDS: MoodPeriodKind[] = ['WEEK_1', 'WEEK_2', 'WEEK_3', 'MONTH'];
 
-const accentSchema = z.object({ color: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Couleur invalide (hex)') });
+const accentSchema = z.object({
+	color: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Couleur invalide (hex)'),
+	rgb: z
+		.string()
+		.optional()
+		.transform((v) => v === 'true')
+});
 const ratioSchema = z.object({ value: z.coerce.number().gt(0).lte(1) });
 
 export const load: PageServerLoad = async ({ locals }) => {
@@ -93,6 +99,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		isOwner: locals.user!.id === ws.createdByUserId,
 		allowedDomain: ws.allowedDomain,
 		accentColor: ws.accentColor,
+		accentRgb: ws.accentRgb,
 		testPhase: ws.testPhase,
 		pprRatio: ws.pprRatio,
 		imputationStep: ws.imputationStep,
@@ -139,7 +146,7 @@ export const actions: Actions = {
 		const ws = locals.workspace!;
 		const parsed = accentSchema.safeParse(Object.fromEntries(await request.formData()));
 		if (!parsed.success) return fail(400, { error: parsed.error.issues[0].message });
-		await setAccentColor(ws.workspaceId, parsed.data.color);
+		await setAccentColor(ws.workspaceId, parsed.data.color, parsed.data.rgb);
 		return { accentOk: true };
 	},
 
