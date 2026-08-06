@@ -95,6 +95,7 @@ export type MembershipInfo = {
 	workspaceId: string;
 	workspaceName: string;
 	accentColor: string;
+	accentRgb: boolean;
 	testPhase: boolean;
 	pprRatio: string;
 	imputationStep: string;
@@ -111,6 +112,7 @@ export async function listMembershipsForUser(userId: string): Promise<Membership
 			workspaceId: workspace.id,
 			workspaceName: workspace.name,
 			accentColor: workspace.accentColor,
+			accentRgb: workspace.accentRgb,
 			testPhase: workspace.testPhase,
 			pprRatio: workspace.pprRatio,
 			imputationStep: workspace.imputationStep,

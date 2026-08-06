@@ -2,17 +2,32 @@
 	import '../app.css';
 	import { page } from '$app/stores';
 	import { applyTheme, storedTheme, type ThemePref } from '$lib/theme';
+	import { hslToHex } from '$lib/color';
 
 	let { children, data } = $props();
 
 	const SITE_DESC = 'Tickets, feuille de temps et reporting au même endroit.';
 
-	// Applique la couleur d'accent de l'espace courant + la met en cache pour l'anti-flash.
+	// Applique la couleur d'accent (fixe, ou défilante) + la met en cache pour l'anti-flash.
+	// La préférence personnelle (Réglages) prend le pas sur celle de l'espace si elle est activée.
+	// Vit ici (racine, toujours montée) pour continuer à défiler quelle que soit la page, et reprendre après un rechargement.
 	$effect(() => {
-		const accent = data.workspace?.accentColor;
-		if (accent) {
-			document.documentElement.style.setProperty('--accent', accent);
-			localStorage.setItem('imputo-accent', accent);
+		const ws = data.workspace;
+		const u = data.user;
+		const mode = u?.accentMode === 'WORKSPACE' || !u ? (ws?.accentRgb ? 'RGB' : 'STATIC') : u.accentMode;
+		const color = mode === 'CUSTOM' ? u!.accentColor : ws?.accentColor;
+
+		if (mode === 'RGB') {
+			let hue = 0;
+			const id = setInterval(() => {
+				hue = (hue + 1) % 360;
+				document.documentElement.style.setProperty('--accent', hslToHex(hue, 70, 50));
+			}, 120);
+			return () => clearInterval(id);
+		}
+		if (color) {
+			document.documentElement.style.setProperty('--accent', color);
+			localStorage.setItem('imputo-accent', color);
 		} else {
 			document.documentElement.style.removeProperty('--accent');
 			localStorage.removeItem('imputo-accent');

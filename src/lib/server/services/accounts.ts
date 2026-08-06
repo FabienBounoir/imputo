@@ -117,9 +117,14 @@ export async function setThemePref(userId: string, pref: 'LIGHT' | 'DARK' | 'SYS
 	await db.update(user).set({ themePref: pref }).where(eq(user.id, userId));
 }
 
+/** Force (ou non) une couleur d'accent personnelle, indépendante de celle de l'espace. */
+export async function setAccentPref(userId: string, mode: 'WORKSPACE' | 'CUSTOM' | 'RGB', color: string | null) {
+	await db.update(user).set({ accentMode: mode, accentColor: mode === 'CUSTOM' ? color : null }).where(eq(user.id, userId));
+}
+
 /** Met à jour la couleur d'accent d'un espace (réservé ADMIN). */
-export async function setAccentColor(workspaceId: string, color: string) {
-	await db.update(workspace).set({ accentColor: color }).where(eq(workspace.id, workspaceId));
+export async function setAccentColor(workspaceId: string, color: string, rgb: boolean) {
+	await db.update(workspace).set({ accentColor: color, accentRgb: rgb }).where(eq(workspace.id, workspaceId));
 }
 
 export async function setTestPhase(workspaceId: string, enabled: boolean) {

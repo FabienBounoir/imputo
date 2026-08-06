@@ -1,11 +1,15 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import ExportModal from '$lib/components/ExportModal.svelte';
+	import AccentPicker from '$lib/components/AccentPicker.svelte';
 	let { data, form } = $props();
 
 	const PRESETS = ['#16A34A', '#4F46E5', '#9333EA', '#0EA5E9', '#E11D48', '#EA580C', '#0D9488', '#CA8A04'];
 	let accent = $state(data.accentColor);
 	let copied = $state(false);
+	// initialisé depuis la valeur enregistrée : le défilement lui-même vit dans le layout racine
+	// (toujours monté), donc il continue de tourner en changeant de page et après un rechargement.
+	let rgbMode = $state(data.accentRgb);
 
 	const WEEKDAYS = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
 	const MOOD_PERIODS: { value: string; label: string }[] = [
@@ -410,14 +414,10 @@
 				<p class="hint">Personnalise l'accent de toute l'interface pour cet espace.</p>
 				{#if form?.accentOk}<div class="flash ok">Couleur mise à jour ✓ (rechargez pour l'appliquer partout)</div>{/if}
 				<form method="POST" action="?/accent" use:enhance>
-					<div class="swatches">
-						{#each PRESETS as c (c)}
-							<button type="button" class="sw" class:sel={accent.toLowerCase() === c.toLowerCase()} style="background:{c}" onclick={() => (accent = c)} aria-label={c}></button>
-						{/each}
-						<input class="hex" type="text" bind:value={accent} maxlength="7" aria-label="Couleur personnalisée" />
-						<span class="preview" style="background:{accent}"></span>
-					</div>
+					<AccentPicker bind:color={accent} bind:rgbMode presets={PRESETS} />
 					<input type="hidden" name="color" value={accent} />
+					<input type="hidden" name="rgb" value={rgbMode} />
+					{#if rgbMode}<p class="hint" style="margin:8px 0 0;">Le mode RGB fait défiler l'accent en continu sur toute l'interface, une fois enregistré.</p>{/if}
 					<button class="btn btn-primary" type="submit" style="margin-top:14px;">Enregistrer la couleur</button>
 				</form>
 			</section>
@@ -613,42 +613,6 @@
 		color: var(--text-soft);
 		border-top: 1px solid var(--border);
 		background: var(--surface-2);
-	}
-	.swatches {
-		display: flex;
-		gap: 10px;
-		align-items: center;
-		flex-wrap: wrap;
-	}
-	.sw {
-		width: 30px;
-		height: 30px;
-		border-radius: 9px;
-		cursor: pointer;
-		outline: 2px solid transparent;
-		outline-offset: 2px;
-		transition: transform 0.12s;
-	}
-	.sw:hover {
-		transform: scale(1.1);
-	}
-	.sw.sel {
-		outline-color: var(--text-soft);
-	}
-	.hex {
-		width: 100px;
-		padding: 7px 10px;
-		border-radius: var(--r-sm);
-		border: 1px solid var(--border);
-		background: var(--surface-2);
-		color: var(--text);
-		font-size: 13px;
-	}
-	.preview {
-		width: 30px;
-		height: 30px;
-		border-radius: 9px;
-		border: 1px solid var(--border);
 	}
 	table.members {
 		width: 100%;
