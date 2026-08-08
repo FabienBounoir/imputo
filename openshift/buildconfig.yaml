@@ -21,14 +21,16 @@ spec:
       dockerfilePath: Dockerfile
   # Sans ce bloc, le pod de build hérite du défaut du namespace (100m CPU / 512Mi) et
   # rampe pendant `npm install`/`vite build` (constaté : ~25min pour un build qui devrait
-  # prendre quelques minutes avec plus de CPU).
+  # prendre quelques minutes avec plus de CPU). Plafonné à 1000m pour rester sous le
+  # ResourceQuota du namespace (`core-resource-quota`, limits.cpu: 4) une fois cumulé
+  # avec les limites de imputo (1500m) et imputo-db (1000m).
   resources:
     requests:
-      cpu: 1000m
-      memory: 1Gi
+      cpu: 500m
+      memory: 768Mi
     limits:
-      cpu: 2000m
-      memory: 2Gi
+      cpu: 1000m
+      memory: 1.5Gi
   output:
     to:
       kind: ImageStreamTag
