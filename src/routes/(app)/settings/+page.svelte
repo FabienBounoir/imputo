@@ -70,8 +70,8 @@
 		note('Préférences enregistrées ✓');
 	}
 	async function test() {
-		const ok = await sendTestNotification();
-		note(ok ? 'Notification de test envoyée.' : 'Échec de l’envoi (abonné ?).');
+		const sent = await sendTestNotification();
+		note(sent > 0 ? 'Notification de test envoyée.' : 'Aucun appareil abonné — active les notifications ci-dessus.');
 	}
 	function pickTheme(p: ThemePref) {
 		themePref = p;
