@@ -19,6 +19,16 @@ spec:
     type: Docker
     dockerStrategy:
       dockerfilePath: Dockerfile
+  # Sans ce bloc, le pod de build hérite du défaut du namespace (100m CPU / 512Mi) et
+  # rampe pendant `npm install`/`vite build` (constaté : ~25min pour un build qui devrait
+  # prendre quelques minutes avec plus de CPU).
+  resources:
+    requests:
+      cpu: 1000m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 2Gi
   output:
     to:
       kind: ImageStreamTag
