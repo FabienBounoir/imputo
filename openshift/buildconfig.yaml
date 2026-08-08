@@ -25,7 +25,6 @@ spec:
       name: imputo:latest
   triggers:
     - type: ConfigChange
-    - type: ImageChange
     - type: GitHub
       github:
         # Remplacer par un secret généré (ex: `oc create secret ...` ou valeur aléatoire) avant
