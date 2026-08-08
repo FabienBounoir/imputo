@@ -2,18 +2,36 @@
 	import { enhance } from '$app/forms';
 	import { goto } from '$app/navigation';
 	import TargetPicker from '$lib/components/TargetPicker.svelte';
+	import { downloadSvgAsPng } from '$lib/utils/svgToPng';
 
 	let { data, form } = $props();
 
-	let pickTicket = $state('');
-	let customLabel = $state('');
+	// Un seul champ pour "assigner un ticket" ou "créer une tâche personnalisée" : la recherche qui
+	// ne trouve aucun ticket propose de créer une tâche avec le texte tapé (cf. TargetPicker,
+	// prop allowCustom) — évite deux formulaires séparés pour ce qui est le même geste.
+	let pickTarget = $state('');
 	let pickTicketActivity = $state('');
-	let customActivity = $state('');
+	let imgBusy = $state(false);
+
+	const pickedKind = $derived(pickTarget.startsWith('CUSTOM::') ? 'CUSTOM' : 'TICKET');
+	const pickedTicketId = $derived(pickTarget.startsWith('TICKET::') ? pickTarget.slice(8) : '');
+	const pickedLabel = $derived(pickTarget.startsWith('CUSTOM::') ? pickTarget.slice(8) : '');
 
 	function selectUser(id: string) {
 		goto(`?w=${data.weekMondayISO}&u=${id}`);
 	}
 
+	async function downloadObjectivesPng() {
+		imgBusy = true;
+		try {
+			const res = await fetch(`/admin/objectifs/export-image?w=${data.weekMondayISO}`);
+			if (!res.ok) return;
+			const svgText = await res.text();
+			await downloadSvgAsPng(svgText, `objectifs-semaine-${data.weekNumber}.png`);
+		} finally {
+			imgBusy = false;
+		}
+	}
 </script>
 
 <div class="topbar">
@@ -36,7 +54,7 @@
 	{:else}
 		<section class="card block">
 			<h3>Attribuer pour la semaine</h3>
-			<p class="hint">Choisis une personne, puis ajoute un ticket existant ou une tâche personnalisée. Ces éléments seront épinglés en tête de sa page « Mon imputation ».</p>
+			<p class="hint">Choisis une personne, puis cherche un ticket à assigner — si la recherche ne trouve rien, tu peux créer une tâche personnalisée avec le texte tapé. Ces éléments seront épinglés en tête de sa page « Mon imputation ».</p>
 			{#if form?.error}<div class="flash error">{form.error}</div>{/if}
 			{#if form?.objOk}<div class="flash ok">Mis à jour ✓</div>{/if}
 
@@ -76,43 +94,59 @@
 				{#if data.objectives.length === 0}<p class="hint" style="margin:0;">Aucun objectif pour cette personne cette semaine.</p>{/if}
 			</div>
 
-			<div class="add-objective">
-				<form method="POST" action="?/addObjective" use:enhance={() => async ({ update }) => { pickTicket = ''; pickTicketActivity = ''; await update(); }} class="add-ticket">
-					<input type="hidden" name="userId" value={data.selectedUserId} />
-					<input type="hidden" name="weekMondayISO" value={data.weekMondayISO} />
-					<input type="hidden" name="kind" value="TICKET" />
-					<input type="hidden" name="ticketId" value={pickTicket.startsWith('TICKET::') ? pickTicket.slice(8) : ''} />
-					<TargetPicker bind:value={pickTicket} tickets={data.tickets} categories={[]} recentTicketIds={[]} placeholder="Rechercher un ticket à assigner…" />
-					<select class="activity-pick" name="activityId" bind:value={pickTicketActivity} aria-label="Type d'activité (optionnel)">
-						<option value="">Type d'activité (option)</option>
-						{#each data.activities as a (a.id)}<option value={a.id}>{a.label}</option>{/each}
-					</select>
-					<button class="btn btn-ghost" type="submit" disabled={!pickTicket}>+ Assigner</button>
-				</form>
-				<form method="POST" action="?/addObjective" use:enhance={() => async ({ update }) => { customLabel = ''; customActivity = ''; await update(); }} class="ref-add">
-					<input type="hidden" name="userId" value={data.selectedUserId} />
-					<input type="hidden" name="weekMondayISO" value={data.weekMondayISO} />
-					<input type="hidden" name="kind" value="CUSTOM" />
-					<input class="ref-input" name="label" bind:value={customLabel} placeholder="Tâche personnalisée (pas un ticket)…" required />
-					<select class="activity-pick" name="activityId" bind:value={customActivity} aria-label="Type d'activité (optionnel)">
-						<option value="">Type d'activité (option)</option>
-						{#each data.activities as a (a.id)}<option value={a.id}>{a.label}</option>{/each}
-					</select>
-					<button class="btn btn-ghost" type="submit">+ Ajouter</button>
-				</form>
-			</div>
+			{#if data.selectedOnVacation}
+				<p class="hint vac-hint">🏖 Cette personne est marquée en vacances cette semaine — aucun objectif ne peut lui être attribué tant que ce n'est pas retiré ci-dessus.</p>
+			{:else}
+				<div class="add-objective">
+					<form
+						method="POST"
+						action="?/addObjective"
+						use:enhance={() => async ({ update }) => { pickTarget = ''; pickTicketActivity = ''; await update(); }}
+						class="add-ticket"
+					>
+						<input type="hidden" name="userId" value={data.selectedUserId} />
+						<input type="hidden" name="weekMondayISO" value={data.weekMondayISO} />
+						<input type="hidden" name="kind" value={pickedKind} />
+						<input type="hidden" name="ticketId" value={pickedTicketId} />
+						<input type="hidden" name="label" value={pickedLabel} />
+						<TargetPicker
+							bind:value={pickTarget}
+							tickets={data.tickets}
+							categories={[]}
+							recentTicketIds={[]}
+							allowCustom
+							placeholder="Rechercher un ticket, ou taper un nom pour créer une tâche…"
+						/>
+						<select class="activity-pick" name="activityId" bind:value={pickTicketActivity} aria-label="Type d'activité (optionnel)">
+							<option value="">Type d'activité (option)</option>
+							{#each data.activities as a (a.id)}<option value={a.id}>{a.label}</option>{/each}
+						</select>
+						<button class="btn btn-ghost" type="submit" disabled={!pickTarget}>+ {pickedKind === 'CUSTOM' ? 'Créer' : 'Assigner'}</button>
+					</form>
+				</div>
+			{/if}
 		</section>
 	{/if}
 
 	<section class="card block">
-		<h3>Vue globale — Semaine {data.weekNumber}</h3>
-		<p class="hint">Ce que chaque membre a comme objectif cette semaine.</p>
+		<div class="block-head">
+			<div>
+				<h3>Vue globale — Semaine {data.weekNumber}</h3>
+				<p class="hint">Ce que chaque membre a comme objectif cette semaine.</p>
+			</div>
+			<button class="btn btn-ghost" type="button" disabled={imgBusy} onclick={downloadObjectivesPng}>
+				{imgBusy ? 'Génération…' : '⬇ Exporter en image (PNG)'}
+			</button>
+		</div>
 		<div class="ref-grid">
 			{#each data.members as m (m.id)}
 				{@const mine = data.globalObjectives.filter((o) => o.userId === m.id)}
 				{@const onVac = data.vacations.includes(m.id)}
-				<section class="card block person-card">
-					<h3>{m.displayName}</h3>
+				<section class="card block person-card" class:on-vac={onVac}>
+					<div class="person-card-head">
+						<h3>{m.displayName}</h3>
+						{#if !onVac && mine.length > 0}<span class="obj-count">{mine.length}</span>{/if}
+					</div>
 					{#if onVac}
 						<span class="tag-vac">🏖 En vacances</span>
 					{:else if mine.length === 0}
@@ -121,7 +155,7 @@
 						<ul class="person-tasks">
 							{#each mine as o (o.id)}
 								<li>
-									{o.kind === 'TICKET' ? `🎫 ${o.ticketKey} — ${o.ticketTitle}` : `📝 ${o.label}`}
+									<span class="task-text">{o.kind === 'TICKET' ? `🎫 ${o.ticketKey} — ${o.ticketTitle}` : `📝 ${o.label}`}</span>
 									{#if o.activityLabel}<span class="tag-activity">{o.activityLabel}</span>{/if}
 								</li>
 							{/each}
@@ -151,6 +185,13 @@
 		color: var(--text-mute);
 		font-size: 13px;
 		margin-bottom: 16px;
+	}
+	.vac-hint {
+		background: var(--accent-tint);
+		color: var(--accent-ink);
+		padding: 10px 12px;
+		border-radius: var(--r-md);
+		margin-bottom: 0;
 	}
 	.spacer {
 		flex: 1;
@@ -243,30 +284,23 @@
 		flex-direction: column;
 		gap: 10px;
 	}
-	.add-ticket,
-	.ref-add {
+	.add-ticket {
 		display: flex;
 		gap: 8px;
 	}
-	.add-ticket .btn,
-	.ref-add .btn {
+	.add-ticket .btn {
 		white-space: nowrap;
 		flex-shrink: 0;
 	}
-	.ref-input {
-		flex: 1;
-		min-width: 0;
-		padding: 9px 11px;
-		border-radius: var(--r-md);
-		border: 1px solid var(--border);
-		background: var(--surface-2);
-		color: var(--text);
-		font-size: 13.5px;
+	.block-head {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 12px;
 	}
-	.ref-input:focus {
-		outline: none;
-		border-color: var(--accent);
-		box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+	.block-head .btn {
+		white-space: nowrap;
+		flex-shrink: 0;
 	}
 	.ref-grid {
 		display: grid;
@@ -278,15 +312,47 @@
 	}
 	.person-card h3 {
 		font-size: 14px;
-		margin-bottom: 8px;
+		margin-bottom: 0;
+	}
+	.person-card-head {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		margin-bottom: 10px;
+	}
+	.person-card-head h3 {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.obj-count {
+		font-size: 11px;
+		font-weight: 700;
+		color: var(--text-mute);
+		background: var(--surface-sunk);
+		padding: 2px 8px;
+		border-radius: 20px;
+		flex-shrink: 0;
+	}
+	.person-card.on-vac {
+		background: var(--accent-tint-2);
+		border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
 	}
 	.person-tasks {
 		display: flex;
 		flex-direction: column;
-		gap: 5px;
+		gap: 7px;
 		font-size: 12.5px;
 		padding-left: 18px;
 		color: var(--text-soft);
+	}
+	.person-tasks li {
+		word-break: break-word;
+	}
+	.task-text {
+		word-break: break-word;
 	}
 	.tag-vac {
 		display: inline-block;

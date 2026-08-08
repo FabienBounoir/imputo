@@ -28,7 +28,9 @@ import {
 	moodVote,
 	absence,
 	externalMember,
-	changeLog
+	changeLog,
+	weeklyObjective,
+	weeklyVacation
 } from './schema';
 import { getDb, wipeSandbox, WORKSPACE_NAME, SEED_DOMAIN, SEED_USERS } from './seed.shared';
 
@@ -603,6 +605,72 @@ async function main() {
 		)
 	);
 
+	// ---------- Objectifs de la semaine : pour tester la vue globale (/admin/objectifs) et la règle
+	// "personne en vacances -> pas d'objectif attribuable" — David est volontairement en vacances la
+	// semaine prochaine (vue par défaut de la page) et n'a donc aucun objectif ce jour-là.
+	const nextMondayISO = toISODate(mondayWeeksAgo(-1));
+	const thisMondayISO = toISODate(currentMonday);
+	const assignerId = userByEmail.get(`manon@${SEED_DOMAIN}`)!.id;
+	const uid = (email: string) => userByEmail.get(email)!.id;
+	const ticketPick = (n: number) => insertedTickets[n % insertedTickets.length];
+
+	await db.insert(weeklyObjective).values([
+		// Semaine prochaine (vue par défaut de la page).
+		{
+			workspaceId: ws.id,
+			userId: uid(`bob@${SEED_DOMAIN}`),
+			weekMonday: nextMondayISO,
+			kind: 'TICKET',
+			ticketId: ticketPick(0).id,
+			activityId: activityByLabel.get('Dev')!.id,
+			createdByUserId: assignerId
+		},
+		{
+			workspaceId: ws.id,
+			userId: uid(`bob@${SEED_DOMAIN}`),
+			weekMonday: nextMondayISO,
+			kind: 'CUSTOM',
+			// Libellé volontairement long pour vérifier le rendu (page + export SVG) sur une tâche qui déborde.
+			label: 'Finaliser la migration complète de la base clients avec vérification post-déploiement',
+			createdByUserId: assignerId
+		},
+		{
+			workspaceId: ws.id,
+			userId: uid(`chloe@${SEED_DOMAIN}`),
+			weekMonday: nextMondayISO,
+			kind: 'TICKET',
+			ticketId: ticketPick(1).id,
+			activityId: activityByLabel.get('TU')!.id,
+			createdByUserId: assignerId
+		},
+		{
+			workspaceId: ws.id,
+			userId: uid(`alice@${SEED_DOMAIN}`),
+			weekMonday: nextMondayISO,
+			kind: 'CUSTOM',
+			label: "Revue de code de l'équipe",
+			createdByUserId: assignerId
+		},
+		// Semaine courante (pour tester la navigation "précédent").
+		{
+			workspaceId: ws.id,
+			userId: uid(`bob@${SEED_DOMAIN}`),
+			weekMonday: thisMondayISO,
+			kind: 'TICKET',
+			ticketId: ticketPick(2).id,
+			createdByUserId: assignerId
+		},
+		{
+			workspaceId: ws.id,
+			userId: uid(`manon@${SEED_DOMAIN}`),
+			weekMonday: thisMondayISO,
+			kind: 'CUSTOM',
+			label: 'Point budget mensuel',
+			createdByUserId: assignerId
+		}
+	]);
+	await db.insert(weeklyVacation).values({ workspaceId: ws.id, userId: uid(`david@${SEED_DOMAIN}`), weekMonday: nextMondayISO });
+
 	// ---------- Historique des modifications (change_log) : révisions d'estimation ticket, RAE par
 	// activité et absences, + les suppressions ci-dessus — dans les 30 derniers jours (fenêtre
 	// affichée par /admin/history), quelle que soit la date réelle du sprint ou de l'absence, pour
@@ -691,7 +759,7 @@ async function main() {
 	const totalAbsences = insertedAbsences.length + clientAbsenceRows.length;
 	console.log(
 		`\n✓ "${WORKSPACE_NAME}" créé — ${insertedTickets.length} tickets sur ${SPRINT_DEFS.length} sprints / ${VERSION_NAMES.length} versions, ` +
-			`${entryDrafts.length} imputations (${allDays.length} jours ouvrés, du ${allDays[0]} au ${allDays[allDays.length - 1]}), ${snapshotRows.length} snapshots, ${moodVoteRows.length} votes team mood sur 7 semaines, ${totalAbsences} absences (dont 1 membre externe), ${changeLogRows.length} entrées d'historique.\n`
+			`${entryDrafts.length} imputations (${allDays.length} jours ouvrés, du ${allDays[0]} au ${allDays[allDays.length - 1]}), ${snapshotRows.length} snapshots, ${moodVoteRows.length} votes team mood sur 7 semaines, ${totalAbsences} absences (dont 1 membre externe), ${changeLogRows.length} entrées d'historique, 6 objectifs de semaine (dont David en vacances la semaine prochaine, sans objectif).\n`
 	);
 	console.log('Comptes :');
 	for (const u of SEED_USERS) console.log(`  ${u.email.padEnd(24)} ${u.password.padEnd(12)} (${u.role})`);

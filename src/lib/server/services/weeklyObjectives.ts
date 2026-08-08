@@ -147,6 +147,9 @@ export async function addObjective(
 		activityId?: string;
 	}
 ) {
+	if (await isOnVacation(workspaceId, input.userId, input.weekMondayISO))
+		throw new Error('Cette personne est marquée en vacances cette semaine-là : impossible de lui attribuer un objectif.');
+
 	if (input.kind === 'TICKET') {
 		if (!input.ticketId) throw new Error('Ticket requis.');
 		const r = await db
