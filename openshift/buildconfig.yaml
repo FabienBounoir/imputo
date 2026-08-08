@@ -1,0 +1,32 @@
+# BuildConfig : construit l'image imputo directement dans OpenShift à partir du Dockerfile
+# du dépôt, sans registry externe. Déclenchable manuellement (`oc start-build imputo`),
+# sur changement de config, ou via webhook GitHub (à brancher sur le repo une fois le secret
+# remplacé, voir README.md de ce dossier).
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: imputo
+  labels:
+    app: imputo
+spec:
+  source:
+    type: Git
+    git:
+      # À adapter si le dépôt Git réel diffère.
+      uri: https://github.com/FabienBounoir/imputo.git
+      ref: main
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Dockerfile
+  output:
+    to:
+      kind: ImageStreamTag
+      name: imputo:latest
+  triggers:
+    - type: ConfigChange
+    - type: GitHub
+      github:
+        # Remplacer par un secret généré (ex: `oc create secret ...` ou valeur aléatoire) avant
+        # de configurer le webhook côté GitHub — ne jamais committer le vrai secret ici.
+        secret: CHANGEME-github-webhook-secret
