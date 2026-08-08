@@ -17,6 +17,7 @@ import {
 	type Role
 } from '$lib/server/db';
 import { isManagerOrAdmin } from './workspaces';
+import { logChange } from './changeLog';
 import {
 	num,
 	round,
@@ -27,6 +28,16 @@ import {
 	raeSuggested,
 	resolvedRae
 } from './calc';
+
+/** Champs budget/estimation tracés dans l'historique (changeLog) — pas le reste (titre, état, code SSP…). */
+const TRACKED_FIELDS = new Set([
+	'estimationReal',
+	'estimationTest',
+	'raeReal',
+	'raeTest',
+	'estimationPrev',
+	'enveloppeTotale'
+]);
 
 /** Indicateurs libres d'un ticket (sérialisés en JSON dans ticket.flags). */
 export const FLAG_KEYS = ['cypress', 'docTech', 'prepaQualif'] as const;
@@ -463,7 +474,8 @@ export async function updateTicketField(
 	ticketId: string,
 	field: string,
 	rawValue: string,
-	role: Role | null = null
+	role: Role | null = null,
+	actorId: string | null = null
 ) {
 	const allowedFields = new Set(EDITABLE_FIELDS);
 	if (isManagerOrAdmin(role))
@@ -476,6 +488,17 @@ export async function updateTicketField(
 		if (!Number.isFinite(n) || n < 0) throw new Error('Valeur numérique invalide.');
 		value = String(n);
 	}
+
+	// Valeur avant modif — uniquement pour les champs tracés dans l'historique (changeLog).
+	let oldValue: unknown;
+	if (TRACKED_FIELDS.has(field)) {
+		const [before] = await db
+			.select()
+			.from(ticket)
+			.where(and(eq(ticket.id, ticketId), eq(ticket.workspaceId, workspaceId)));
+		oldValue = before ? (before as Record<string, unknown>)[field] : undefined;
+	}
+
 	const patch: Record<string, unknown> = { [field]: value, updatedAt: new Date() };
 	// Trace la dernière mise à jour du RAE (pour les rappels « RAE périmé »).
 	if (field === 'raeReal' || field === 'raeTest') patch.raeUpdatedAt = new Date();
@@ -484,6 +507,19 @@ export async function updateTicketField(
 		.set(patch)
 		.where(and(eq(ticket.id, ticketId), eq(ticket.workspaceId, workspaceId)))
 		.returning({ id: ticket.id });
+
+	if (TRACKED_FIELDS.has(field) && String(oldValue ?? '') !== String(value ?? '')) {
+		await logChange({
+			workspaceId,
+			entityType: 'TICKET',
+			entityId: ticketId,
+			field,
+			action: 'UPDATE',
+			oldValue: oldValue == null ? null : String(oldValue),
+			newValue: value,
+			changedById: actorId
+		});
+	}
 	if (res.length === 0) throw new Error('Ticket introuvable dans cet espace.');
 }
 
@@ -620,7 +656,8 @@ export async function upsertTicketActivityRae(
 	ticketId: string,
 	activityId: string,
 	field: 'raeReal' | 'raeTest',
-	value: number
+	value: number,
+	actorId: string | null = null
 ) {
 	if (!Number.isFinite(value) || value < 0) throw new Error('Valeur numérique invalide.');
 	const [ownedTicket] = await db
@@ -634,6 +671,12 @@ export async function upsertTicketActivityRae(
 		.where(and(eq(activity.id, activityId), eq(activity.workspaceId, workspaceId)));
 	if (!ownedActivity) throw new Error('Activité introuvable dans cet espace.');
 
+	const [before] = await db
+		.select()
+		.from(ticketActivityRae)
+		.where(and(eq(ticketActivityRae.ticketId, ticketId), eq(ticketActivityRae.activityId, activityId)));
+	const oldValue = before ? (before as Record<string, unknown>)[field] : undefined;
+
 	await db
 		.insert(ticketActivityRae)
 		.values({ ticketId, activityId, [field]: String(value) })
@@ -644,6 +687,20 @@ export async function upsertTicketActivityRae(
 	// Trace la dernière mise à jour du RAE au niveau ticket aussi (rappels « RAE périmé »),
 	// même quand le RAE est suivi par activité et non plus sur le champ ticket directement.
 	await db.update(ticket).set({ raeUpdatedAt: new Date() }).where(eq(ticket.id, ticketId));
+
+	if (String(oldValue ?? '0') !== String(value)) {
+		await logChange({
+			workspaceId,
+			entityType: 'TICKET',
+			entityId: ticketId,
+			activityId,
+			field,
+			action: 'UPDATE',
+			oldValue: oldValue == null ? null : String(oldValue),
+			newValue: String(value),
+			changedById: actorId
+		});
+	}
 }
 
 export async function createTicket(

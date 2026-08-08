@@ -37,6 +37,8 @@ export const absenceTypeEnum = pgEnum('absence_type', [
 	'HORS_PROJET'
 ]);
 export const absencePeriodEnum = pgEnum('absence_period', ['FULL', 'AM', 'PM']);
+export const changeLogEntityEnum = pgEnum('change_log_entity', ['TICKET', 'ABSENCE']);
+export const changeLogActionEnum = pgEnum('change_log_action', ['UPDATE', 'DELETE']);
 
 const id = () => uuid('id').primaryKey().defaultRandom();
 const createdAt = () => timestamp('created_at', { withTimezone: true }).defaultNow().notNull();
@@ -453,6 +455,33 @@ export const absence = pgTable(
 		index('absence_ws_user_idx').on(t.workspaceId, t.userId),
 		index('absence_ws_external_idx').on(t.workspaceId, t.externalMemberId),
 		index('absence_ws_range_idx').on(t.workspaceId, t.startDate, t.endDate)
+	]
+);
+
+// ---------- Historique des modifications (estimations tickets, absences) ----------
+// entityId reste un UUID nu (pas de FK réelle) : polymorphe entre ticket/absence, et doit survivre
+// à la suppression d'une absence (on veut garder la trace même quand la ligne source a disparu).
+export const changeLog = pgTable(
+	'change_log',
+	{
+		id: id(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspace.id, { onDelete: 'cascade' }),
+		entityType: changeLogEntityEnum('entity_type').notNull(),
+		entityId: uuid('entity_id').notNull(),
+		// Uniquement pour une ligne de RAE par activité d'un ticket.
+		activityId: uuid('activity_id').references(() => activity.id, { onDelete: 'set null' }),
+		field: text('field'), // null pour une suppression
+		action: changeLogActionEnum('action').notNull(),
+		oldValue: text('old_value'),
+		newValue: text('new_value'),
+		changedById: uuid('changed_by_id').references(() => user.id, { onDelete: 'set null' }),
+		createdAt: createdAt()
+	},
+	(t) => [
+		index('change_log_entity_idx').on(t.workspaceId, t.entityType, t.entityId),
+		index('change_log_ws_created_idx').on(t.workspaceId, t.createdAt)
 	]
 );
 

@@ -1,11 +1,28 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { goto } from '$app/navigation';
+	import { formatDateTime } from '$lib/utils/date';
+	import { TICKET_FIELD_LABELS } from '$lib/changeLogLabels';
 	let { data, form } = $props();
 
 	let showCreate = $state(false);
 	let savedFlash = $state(false);
 	let flashTimer: ReturnType<typeof setTimeout>;
+
+	// Anti-rafale pour les champs numériques à spinner (flèches/molette) : chaque clic déclenche un
+	// onchange, donc sans ça une simple ligne d'historique par champ devient une ligne par pas — on
+	// attend que ça se stabilise avant d'enregistrer (et donc de tracer un seul changement net).
+	const pendingSaves = new Map<string, ReturnType<typeof setTimeout>>();
+	function debouncedSave(key: string, fn: () => void, delay = 600) {
+		clearTimeout(pendingSaves.get(key));
+		pendingSaves.set(
+			key,
+			setTimeout(() => {
+				pendingSaves.delete(key);
+				fn();
+			}, delay)
+		);
+	}
 
 	// Filtres/vue/pagination pilotés par l'URL (le serveur filtre + pagine désormais — cf. retour
 	// utilisateur : tout charger d'un coup devient lourd quand l'espace a beaucoup de tickets).
@@ -167,6 +184,30 @@
 	// Modal d'édition (ouverte au clic sur une carte Kanban).
 	let editId = $state<string | null>(null);
 	const editRow = $derived(rows.find((r) => r.id === editId) ?? null);
+
+	// Historique (champs budget/estimation) — chargé à la demande à l'ouverture de la modal, pas
+	// avec la liste des tickets (rarement consulté, autant ne pas alourdir le chargement initial).
+	type HistoryEntry = {
+		field: string | null;
+		action: 'UPDATE' | 'DELETE';
+		oldValue: string | null;
+		newValue: string | null;
+		changedByName: string | null;
+		createdAt: string;
+	};
+	let historyEntries = $state<HistoryEntry[]>([]);
+	let historyLoading = $state(false);
+	$effect(() => {
+		if (!editId) {
+			historyEntries = [];
+			return;
+		}
+		historyLoading = true;
+		fetch(`/api/tickets/${editId}/history`)
+			.then((r) => (r.ok ? r.json() : { entries: [] }))
+			.then((d) => (historyEntries = d.entries))
+			.finally(() => (historyLoading = false));
+	});
 	const kanbanCols = $derived([
 		...data.ref.states.map((s) => ({
 			id: s.id as string | null,
@@ -355,7 +396,8 @@
 		{/if}
 		<div class="search">
 			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-			<input placeholder="Rechercher une US…" bind:value={queryInput} oninput={onSearchInput} />
+			<!-- svelte-ignore a11y_autofocus -->
+			<input placeholder="Rechercher une US…" bind:value={queryInput} oninput={onSearchInput} autofocus />
 		</div>
 	</div>
 
@@ -396,7 +438,7 @@
 								</div>
 							</div>
 						</td>
-						<td class="num"><input class="cell-input num-input" type="number" step="0.25" min="0" bind:value={r.estimationReal} disabled={!data.canEditEstimation} title={estTitle} onchange={() => saveEst(r, 'real')} /></td>
+						<td class="num"><input class="cell-input num-input" type="number" step="0.25" min="0" bind:value={r.estimationReal} disabled={!data.canEditEstimation} title={estTitle} onchange={() => debouncedSave(`est-${r.id}-real`, () => saveEst(r, 'real'))} /></td>
 						<td class="num">
 							<input
 								class="cell-input num-input"
@@ -409,7 +451,7 @@
 							/>
 						</td>
 						{#if data.testPhase}
-							<td class="num"><input class="cell-input num-input" type="number" step="0.25" min="0" bind:value={r.estimationTest} disabled={!data.canEditEstimation} title={estTitle} onchange={() => saveEst(r, 'test')} /></td>
+							<td class="num"><input class="cell-input num-input" type="number" step="0.25" min="0" bind:value={r.estimationTest} disabled={!data.canEditEstimation} title={estTitle} onchange={() => debouncedSave(`est-${r.id}-test`, () => saveEst(r, 'test'))} /></td>
 							<td class="num"><input class="cell-input num-input" type="number" step="0.25" min="0" value={r.raeTest} disabled title="RAE Test = compilation des RAE par activité ci-dessous (non éditable ici)" /></td>
 						{/if}
 						<td class="num tabnum consumed">{r.consumed || '—'}</td>
@@ -440,7 +482,10 @@
 									value={ar.raeReal}
 									disabled={!canRae}
 									title={canRae ? '' : RAE_LOCKED}
-									onchange={(e) => saveActivityRae(r, ar.activityId, 'raeReal', Number(e.currentTarget.value) || 0)}
+									onchange={(e) => {
+										const value = Number(e.currentTarget.value) || 0;
+										debouncedSave(`ar-${r.id}-${ar.activityId}-raeReal`, () => saveActivityRae(r, ar.activityId, 'raeReal', value));
+									}}
 								/>
 							</td>
 							{#if data.testPhase}
@@ -454,7 +499,10 @@
 										value={ar.raeTest}
 										disabled={!canRae}
 										title={canRae ? '' : RAE_LOCKED}
-										onchange={(e) => saveActivityRae(r, ar.activityId, 'raeTest', Number(e.currentTarget.value) || 0)}
+										onchange={(e) => {
+										const value = Number(e.currentTarget.value) || 0;
+										debouncedSave(`ar-${r.id}-${ar.activityId}-raeTest`, () => saveActivityRae(r, ar.activityId, 'raeTest', value));
+									}}
 									/>
 								</td>
 							{/if}
@@ -558,11 +606,11 @@
 						<option value={null}>—</option>{#each data.ref.versions as v (v.id)}<option value={v.id}>{v.name}</option>{/each}
 					</select>
 				</label>
-				<label class="dfield"><span>Est. Réal</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationReal} disabled={!data.canEditEstimation} title={estTitle} onchange={() => saveEst(editRow!, 'real')} /></label>
+				<label class="dfield"><span>Est. Réal</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationReal} disabled={!data.canEditEstimation} title={estTitle} onchange={() => debouncedSave(`est-${editRow!.id}-real`, () => saveEst(editRow!, 'real'))} /></label>
 				<label class="dfield"><span>RAE Réal</span><input class="cell-input" type="number" step="0.25" min="0" value={editRow.raeReal} disabled title="Compilation des RAE par activité (voir le tableau)" /></label>
 				{#if data.testPhase}
-					<label class="dfield"><span>Est. Test</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationTest} disabled={!data.canEditEstimation} title={estTitle} onchange={() => saveEst(editRow!, 'test')} /></label>
-					<label class="dfield"><span>Prépa</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.prepa} disabled={!data.canEditEstimation} title={estTitle} onchange={() => save(editRow!, 'prepa', editRow!.prepa)} /></label>
+					<label class="dfield"><span>Est. Test</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationTest} disabled={!data.canEditEstimation} title={estTitle} onchange={() => debouncedSave(`est-${editRow!.id}-test`, () => saveEst(editRow!, 'test'))} /></label>
+					<label class="dfield"><span>Prépa</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.prepa} disabled={!data.canEditEstimation} title={estTitle} onchange={() => debouncedSave(`f-${editRow!.id}-prepa`, () => save(editRow!, 'prepa', editRow!.prepa))} /></label>
 					<label class="dfield"><span>RAE Test</span><input class="cell-input" type="number" step="0.25" min="0" value={editRow.raeTest} disabled title="Compilation des RAE par activité (voir le tableau)" /></label>
 					{#each FLAG_FIELDS as fl (fl.key)}
 						<label class="dfield"><span>{fl.label}</span>
@@ -574,8 +622,8 @@
 				{/if}
 				<label class="dfield"><span>Code SSP</span><input class="cell-input" placeholder="—" bind:value={editRow.sspCode} onchange={() => save(editRow!, 'sspCode', editRow!.sspCode)} /></label>
 				{#if data.isAdmin}
-					<label class="dfield"><span>Estimation prévisionnel</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationPrev} onchange={() => save(editRow!, 'estimationPrev', editRow!.estimationPrev)} /></label>
-					<label class="dfield"><span>Enveloppe totale</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.enveloppeTotale} onchange={() => save(editRow!, 'enveloppeTotale', editRow!.enveloppeTotale)} /></label>
+					<label class="dfield"><span>Estimation prévisionnel</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationPrev} onchange={() => debouncedSave(`f-${editRow!.id}-estimationPrev`, () => save(editRow!, 'estimationPrev', editRow!.estimationPrev))} /></label>
+					<label class="dfield"><span>Enveloppe totale</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.enveloppeTotale} onchange={() => debouncedSave(`f-${editRow!.id}-enveloppeTotale`, () => save(editRow!, 'enveloppeTotale', editRow!.enveloppeTotale))} /></label>
 				{/if}
 				<label class="dfield wide"><span>Commentaire</span><input class="cell-input" placeholder="Note libre…" bind:value={editRow.comment} onchange={() => save(editRow!, 'comment', editRow!.comment)} /></label>
 				{#if data.ref.ticketGroups.length > 0}
@@ -598,6 +646,24 @@
 				<span>Consommé <b class="tabnum">{editRow.consumed || '—'}</b></span>
 				<span>Écart d'exécution <b class="tabnum" class:gap-pos={ecartExecution(editRow) > 0}>{ecartExecution(editRow) > 0 ? '+' : ''}{ecartExecution(editRow) || 0}</b></span>
 				<span>Avancement <b class="tabnum">{pct(avancement(editRow))}%</b></span>
+			</div>
+			<div class="tk-history">
+				<h4>Historique</h4>
+				{#if historyLoading}
+					<p class="hint">Chargement…</p>
+				{:else if historyEntries.length === 0}
+					<p class="hint">Aucune modification tracée pour l'instant.</p>
+				{:else}
+					<ul>
+						{#each historyEntries as h, i (i)}
+							<li>
+								<span class="hf">{TICKET_FIELD_LABELS[h.field ?? ''] ?? h.field}</span>
+								<span class="hv">{h.oldValue ?? '—'} → {h.newValue ?? '—'}</span>
+								<span class="hm hint">{h.changedByName ?? 'Quelqu’un'} · {formatDateTime(new Date(h.createdAt))}</span>
+							</li>
+						{/each}
+					</ul>
+				{/if}
 			</div>
 		</div>
 	</div>
@@ -1191,6 +1257,45 @@
 	.tk-foot b {
 		color: var(--text-soft);
 		margin-left: 4px;
+	}
+	.tk-history {
+		margin-top: 14px;
+		padding-top: 14px;
+		border-top: 1px solid var(--border);
+	}
+	.tk-history h4 {
+		margin: 0 0 8px;
+		font-size: 13px;
+		font-weight: 600;
+		color: var(--text-soft);
+	}
+	.tk-history ul {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		max-height: 160px;
+		overflow-y: auto;
+	}
+	.tk-history li {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 8px;
+		font-size: 12.5px;
+	}
+	.tk-history .hf {
+		font-weight: 600;
+		color: var(--text-soft);
+	}
+	.tk-history .hv {
+		color: var(--text);
+	}
+	.tk-history .hm {
+		margin-left: auto;
+		white-space: nowrap;
 	}
 	@media (max-width: 560px) {
 		.tk-grid {

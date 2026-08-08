@@ -4,6 +4,7 @@ import { getTimesheet, setCell, deleteRow, getRecentTicketIds } from '$lib/serve
 import { getRefData, listTickets } from '$lib/server/services/tickets';
 import { getMembership } from '$lib/server/services/workspaces';
 import { listObjectivesForUserWeeks, vacationWeeks } from '$lib/server/services/weeklyObjectives';
+import { listAbsencesForRange, buildAbsenceGrid } from '$lib/server/services/absences';
 import { resolvePeriodPrefs } from '$lib/server/services/imputationPrefs';
 import { num } from '$lib/server/services/calc';
 import { buildPeriod, parseGranularity, parsePeriodMode, todayInParis } from '$lib/utils/date';
@@ -40,14 +41,21 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 	}
 	const readOnly = viewedId !== user.id;
 
-	const [sheet, tickets, membership, recentTicketIds, weeklyObjectives, vacations] = await Promise.all([
+	const [sheet, tickets, membership, recentTicketIds, weeklyObjectives, vacations, periodAbsences] = await Promise.all([
 		getTimesheet(ws.workspaceId, viewedId, period.days),
 		listTickets(ws.workspaceId),
 		getMembership(ws.workspaceId, viewedId),
 		getRecentTicketIds(ws.workspaceId, viewedId),
 		listObjectivesForUserWeeks(ws.workspaceId, viewedId, weekMondays),
-		vacationWeeks(ws.workspaceId, viewedId, weekMondays)
+		vacationWeeks(ws.workspaceId, viewedId, weekMondays),
+		listAbsencesForRange(ws.workspaceId, period.firstDay, period.lastDay)
 	]);
+	// Congés/formation/hors-projet du membre affiché sur la période — remonté depuis la page Absences
+	// pour voir d'un coup d'œil, sans y aller, pourquoi une case n'a pas d'imputation attendue.
+	const absences = buildAbsenceGrid(
+		periodAbsences.filter((a) => a.subjectId === viewedId),
+		period.days
+	)[viewedId] ?? {};
 
 	return {
 		sheet,
@@ -66,6 +74,7 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 		recentTicketIds,
 		weeklyObjectives,
 		vacationWeeks: vacations,
+		absences,
 		capacity: num(membership?.capacityPerDay ?? '1'),
 		imputationStep: num(ws.imputationStep),
 		isAdmin,

@@ -15,6 +15,7 @@
 	import { goto, afterNavigate } from '$app/navigation';
 	import ExportModal from '$lib/components/ExportModal.svelte';
 	import TargetPicker from '$lib/components/TargetPicker.svelte';
+	import { ABSENCE_TYPE_COLORS, ABSENCE_TYPE_LABELS, ABSENCE_PERIOD_LABELS } from '$lib/absenceTypes';
 
 	let { data } = $props();
 
@@ -274,15 +275,28 @@
 		await fetch('?/deleteRow', { method: 'POST', body });
 	}
 
+	// Anti-rafale pour le champ RAE (spinner/molette) : chaque pas déclenche un onchange, donc sans
+	// ça une ligne d'historique par pas — on attend que ça se stabilise avant d'enregistrer (même
+	// principe que l'onglet « Tickets & chiffrage »).
+	const pendingRaeSaves = new Map<string, ReturnType<typeof setTimeout>>();
+
 	/** RAE d'une ligne ticket + activité — même endpoint que l'onglet « Tickets & chiffrage ». */
 	async function saveRae(row: Row, value: number) {
 		if (!row.activityId) return;
 		row.raeReal = value; // optimiste
-		await fetch(`/api/tickets/${row.targetId}/activity-rae`, {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ activityId: row.activityId, field: 'raeReal', value })
-		});
+		const key = `${row.targetId}-${row.activityId}`;
+		clearTimeout(pendingRaeSaves.get(key));
+		pendingRaeSaves.set(
+			key,
+			setTimeout(async () => {
+				pendingRaeSaves.delete(key);
+				await fetch(`/api/tickets/${row.targetId}/activity-rae`, {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ activityId: row.activityId, field: 'raeReal', value })
+				});
+			}, 600)
+		);
 	}
 
 	function buildRow(targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE', targetId: string, activityId: string | null): Row {
@@ -486,12 +500,20 @@
 					<th class="task-h">Tâche / catégorie</th>
 					{#if showRae}<th class="rae-h" title="Reste à engager de la paire ticket + activité">RAE</th>{/if}
 					{#each days as d (d)}
+						{@const abs = data.absences[d]}
 						<th
 							data-day={d}
 							class:today={d === today}
 							class:holiday={isPublicHolidayFR(d)}
 							class:wk-end={weekBoundaries.has(d)}
-							title={isPublicHolidayFR(d) ? 'Jour férié' : ''}
+							class:absent={!!abs}
+							style={abs ? `--absence-color:${ABSENCE_TYPE_COLORS[abs.type]}` : undefined}
+							title={[
+								isPublicHolidayFR(d) ? 'Jour férié' : '',
+								abs ? `${ABSENCE_TYPE_LABELS[abs.type]}${abs.period !== 'FULL' ? ' — ' + ABSENCE_PERIOD_LABELS[abs.period] : ''}` : ''
+							]
+								.filter(Boolean)
+								.join(' · ')}
 						>{dayName(parseISODate(d))}<span class="dnum">{dayNum(parseISODate(d))}</span></th>
 					{/each}
 					<th class="sum-h">Σ</th>
@@ -1029,6 +1051,21 @@
 		height: 5px;
 		border-radius: 50%;
 		background: var(--danger, #c0392b);
+		margin-left: 4px;
+		vertical-align: middle;
+	}
+	/* Absence (congé/formation/hors-projet) remontée depuis la page Absences — couleur par type. */
+	.imp thead th.absent,
+	.imp thead th.absent .dnum {
+		color: var(--absence-color);
+	}
+	.imp thead th.absent::after {
+		content: '';
+		display: inline-block;
+		width: 5px;
+		height: 5px;
+		border-radius: 50%;
+		background: var(--absence-color);
 		margin-left: 4px;
 		vertical-align: middle;
 	}

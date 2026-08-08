@@ -3,6 +3,7 @@ import { alias } from 'drizzle-orm/pg-core';
 import { db, absence, user, externalMember } from '$lib/server/db';
 import type { AbsenceType, AbsencePeriod } from '$lib/absenceTypes';
 import { parseISODate, toISODate, addDays } from '$lib/utils/date';
+import { logChange } from './changeLog';
 
 const validator = alias(user, 'absence_validator');
 
@@ -101,6 +102,9 @@ export async function createAbsenceFor(
 ) {
 	if (parseISODate(input.startDate) > parseISODate(input.endDate))
 		throw new Error('La date de fin doit être après la date de début.');
+	// Un membre externe n'a personne pour valider son congé en son nom : on le pose directement validé.
+	if ('externalMemberId' in subject && input.type === 'CONGE_PREVISIONNEL')
+		throw new Error("Un membre externe ne peut avoir qu'un congé validé (pas de congé prévisionnel).");
 	// La demi-journée n'a de sens que pour une plage d'un seul jour.
 	const period = input.startDate === input.endDate ? input.period : 'FULL';
 	await db.insert(absence).values({
@@ -118,7 +122,26 @@ export async function createAbsenceFor(
 export async function deleteAbsence(workspaceId: string, requesterId: string, id: string, canManageOthers: boolean) {
 	const conditions = [eq(absence.workspaceId, workspaceId), eq(absence.id, id)];
 	if (!canManageOthers) conditions.push(eq(absence.userId, requesterId));
+
+	// Capturée avant suppression : la ligne source disparaît, mais la trace doit rester lisible.
+	const [existing] = await db
+		.select({ startDate: absence.startDate, endDate: absence.endDate, type: absence.type })
+		.from(absence)
+		.where(and(...conditions));
+
 	await db.delete(absence).where(and(...conditions));
+
+	if (existing) {
+		await logChange({
+			workspaceId,
+			entityType: 'ABSENCE',
+			entityId: id,
+			action: 'DELETE',
+			oldValue: `${existing.startDate} → ${existing.endDate} (${existing.type})`,
+			newValue: null,
+			changedById: requesterId
+		});
+	}
 }
 
 /**
@@ -136,6 +159,20 @@ export async function updateAbsence(
 		throw new Error('La date de fin doit être après la date de début.');
 	const period = input.startDate === input.endDate ? input.period : 'FULL';
 
+	const [existing] = await db
+		.select({
+			externalMemberId: absence.externalMemberId,
+			startDate: absence.startDate,
+			endDate: absence.endDate,
+			type: absence.type,
+			period: absence.period
+		})
+		.from(absence)
+		.where(and(eq(absence.workspaceId, workspaceId), eq(absence.id, id)));
+
+	if (input.type === 'CONGE_PREVISIONNEL' && existing?.externalMemberId)
+		throw new Error("Un membre externe ne peut avoir qu'un congé validé (pas de congé prévisionnel).");
+
 	const conditions = [eq(absence.workspaceId, workspaceId), eq(absence.id, id)];
 	if (!canManageOthers) conditions.push(eq(absence.userId, requesterId));
 	const updated = await db
@@ -144,6 +181,27 @@ export async function updateAbsence(
 		.where(and(...conditions))
 		.returning({ id: absence.id });
 	if (updated.length === 0) throw new Error('Absence introuvable ou non autorisée.');
+
+	if (existing) {
+		const changes: { field: string; oldValue: string; newValue: string }[] = [
+			{ field: 'startDate', oldValue: existing.startDate, newValue: input.startDate },
+			{ field: 'endDate', oldValue: existing.endDate, newValue: input.endDate },
+			{ field: 'type', oldValue: existing.type, newValue: input.type },
+			{ field: 'period', oldValue: existing.period, newValue: period }
+		].filter((c) => c.oldValue !== c.newValue);
+		for (const c of changes) {
+			await logChange({
+				workspaceId,
+				entityType: 'ABSENCE',
+				entityId: id,
+				field: c.field,
+				action: 'UPDATE',
+				oldValue: c.oldValue,
+				newValue: c.newValue,
+				changedById: requesterId
+			});
+		}
+	}
 }
 
 /** Passe un congé prévisionnel en validé — réservé admin/manager (vérifié par l'appelant). */
