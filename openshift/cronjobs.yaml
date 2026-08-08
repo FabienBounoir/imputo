@@ -24,7 +24,7 @@ spec:
                 - -X
                 - POST
                 - -H
-                - Authorization: Bearer $(CRON_SECRET)
+                - 'Authorization: Bearer $(CRON_SECRET)'
                 - http://imputo:3000/api/jobs/cleanup
               env:
                 - name: CRON_SECRET
@@ -57,7 +57,7 @@ spec:
                 - -X
                 - POST
                 - -H
-                - Authorization: Bearer $(CRON_SECRET)
+                - 'Authorization: Bearer $(CRON_SECRET)'
                 - http://imputo:3000/api/jobs/snapshot
               env:
                 - name: CRON_SECRET
@@ -90,7 +90,7 @@ spec:
                 - -X
                 - POST
                 - -H
-                - Authorization: Bearer $(CRON_SECRET)
+                - 'Authorization: Bearer $(CRON_SECRET)'
                 - 'http://imputo:3000/api/jobs/notify?kind=morning'
               env:
                 - name: CRON_SECRET
@@ -123,7 +123,7 @@ spec:
                 - -X
                 - POST
                 - -H
-                - Authorization: Bearer $(CRON_SECRET)
+                - 'Authorization: Bearer $(CRON_SECRET)'
                 - 'http://imputo:3000/api/jobs/notify?kind=evening'
               env:
                 - name: CRON_SECRET
