@@ -103,7 +103,7 @@
 			{/if}
 		</div>
 
-		<div class="nav-label">Espace de travail</div>
+		<div class="nav-label">Mon espace</div>
 		<a class="nav-item" class:active={isActive('/imputation')} href="/imputation">
 			<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="18" rx="3"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
 			Mon imputation
@@ -119,6 +119,24 @@
 				<span class="badge" title="Congés en attente de validation">{data.pendingAbsencesCount}</span>
 			{/if}
 		</a>
+		{#if data.workspace?.moodEnabled}
+			<a
+				class="nav-item"
+				class:active={isActive('/mood')}
+				class:blink={data.moodStatus?.urgent}
+				href="/mood"
+			>
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+					<path d="M15.4754 9.51572C15.6898 10.3159 15.4311 11.0805 14.8977 11.2234C14.3642 11.3664 13.7579 10.8336 13.5435 10.0334C13.3291 9.23316 13.5877 8.4686 14.1212 8.32565C14.6547 8.18271 15.2609 8.71552 15.4754 9.51572Z" fill="currentColor"/>
+					<path d="M9.67994 11.0687C9.89436 11.8689 9.63571 12.6335 9.10225 12.7764C8.56878 12.9194 7.9625 12.3865 7.74809 11.5863C7.53368 10.7861 7.79232 10.0216 8.32579 9.87863C8.85925 9.73569 9.46553 10.2685 9.67994 11.0687Z" fill="currentColor"/>
+					<path fill-rule="evenodd" clip-rule="evenodd" d="M12 2.75C6.89137 2.75 2.75 6.89137 2.75 12C2.75 17.1086 6.89137 21.25 12 21.25C17.1086 21.25 21.25 17.1086 21.25 12C21.25 6.89137 17.1086 2.75 12 2.75ZM1.25 12C1.25 6.06294 6.06294 1.25 12 1.25C17.9371 1.25 22.75 6.06294 22.75 12C22.75 17.9371 17.9371 22.75 12 22.75C6.06294 22.75 1.25 17.9371 1.25 12ZM17.1789 13.3409C17.467 13.6385 17.4593 14.1133 17.1617 14.4014C16.9917 14.566 16.8128 14.7246 16.6256 14.8766L16.8441 15.3216C17.3971 16.4482 16.9214 17.8094 15.787 18.3464C14.6752 18.8728 13.3468 18.4085 12.8047 17.3043L12.5315 16.7477C11.2117 16.998 9.90919 16.9561 8.73026 16.6606C8.32847 16.5599 8.0844 16.1526 8.1851 15.7508C8.2858 15.349 8.69315 15.1049 9.09494 15.2056C10.2252 15.4889 11.5232 15.4924 12.841 15.1393C14.1588 14.7862 15.2811 14.1342 16.1183 13.3237C16.4159 13.0356 16.8908 13.0433 17.1789 13.3409ZM14.0048 16.345L14.1513 16.6433C14.3319 17.0114 14.7747 17.1661 15.1452 16.9907C15.5233 16.8117 15.6818 16.358 15.4975 15.9825L15.3707 15.7241C14.9417 15.9631 14.4851 16.1716 14.0048 16.345Z" fill="currentColor"/>
+				</svg>
+				Team mood
+				{#if data.moodStatus?.voted}<span class="mood-check" title="Vous avez voté">✓</span>{/if}
+			</a>
+		{/if}
+
+		<div class="nav-label">Pilotage</div>
 		<a class="nav-item" class:active={isActive('/dashboard', true)} href="/dashboard">
 			<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v18h18"/><path d="m7 14 4-4 3 3 5-6"/></svg>
 			Synthèse
@@ -133,22 +151,26 @@
 				Par sprint
 			</a>
 		</div>
-		{#if data.workspace?.moodEnabled}
-			<a
-				class="nav-item"
-				class:active={isActive('/mood')}
-				class:blink={data.moodStatus?.urgent}
-				href="/mood"
-			>
-				<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/></svg>
-				Team mood
-				{#if data.moodStatus?.voted}<span class="mood-check" title="Vous avez voté">✓</span>{/if}
+		{#if data.role === 'ADMIN' || data.role === 'MANAGER'}
+			<a class="nav-item" class:active={isActive('/admin/objectifs')} href="/admin/objectifs">
+				<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+				Objectifs de la semaine
+			</a>
+		{/if}
+		{#if data.role === 'ADMIN' && data.workspace?.moodEnabled}
+			<a class="nav-item" class:active={isActive('/admin/mood')} href="/admin/mood">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+					<path d="M15.4754 9.51572C15.6898 10.3159 15.4311 11.0805 14.8977 11.2234C14.3642 11.3664 13.7579 10.8336 13.5435 10.0334C13.3291 9.23316 13.5877 8.4686 14.1212 8.32565C14.6547 8.18271 15.2609 8.71552 15.4754 9.51572Z" fill="currentColor"/>
+					<path d="M9.67994 11.0687C9.89436 11.8689 9.63571 12.6335 9.10225 12.7764C8.56878 12.9194 7.9625 12.3865 7.74809 11.5863C7.53368 10.7861 7.79232 10.0216 8.32579 9.87863C8.85925 9.73569 9.46553 10.2685 9.67994 11.0687Z" fill="currentColor"/>
+					<path fill-rule="evenodd" clip-rule="evenodd" d="M12 2.75C6.89137 2.75 2.75 6.89137 2.75 12C2.75 17.1086 6.89137 21.25 12 21.25C17.1086 21.25 21.25 17.1086 21.25 12C21.25 6.89137 17.1086 2.75 12 2.75ZM1.25 12C1.25 6.06294 6.06294 1.25 12 1.25C17.9371 1.25 22.75 6.06294 22.75 12C22.75 17.9371 17.9371 22.75 12 22.75C6.06294 22.75 1.25 17.9371 1.25 12ZM17.1789 13.3409C17.467 13.6385 17.4593 14.1133 17.1617 14.4014C16.9917 14.566 16.8128 14.7246 16.6256 14.8766L16.8441 15.3216C17.3971 16.4482 16.9214 17.8094 15.787 18.3464C14.6752 18.8728 13.3468 18.4085 12.8047 17.3043L12.5315 16.7477C11.2117 16.998 9.90919 16.9561 8.73026 16.6606C8.32847 16.5599 8.0844 16.1526 8.1851 15.7508C8.2858 15.349 8.69315 15.1049 9.09494 15.2056C10.2252 15.4889 11.5232 15.4924 12.841 15.1393C14.1588 14.7862 15.2811 14.1342 16.1183 13.3237C16.4159 13.0356 16.8908 13.0433 17.1789 13.3409ZM14.0048 16.345L14.1513 16.6433C14.3319 17.0114 14.7747 17.1661 15.1452 16.9907C15.5233 16.8117 15.6818 16.358 15.4975 15.9825L15.3707 15.7241C14.9417 15.9631 14.4851 16.1716 14.0048 16.345Z" fill="currentColor"/>
+				</svg>
+				Résultats Team mood
+				{#if data.moodTotalVotes > 0}<span class="badge">{data.moodTotalVotes}</span>{/if}
 			</a>
 		{/if}
 
-		{#if data.role === 'ADMIN' || data.role === 'MANAGER'}
+		{#if data.role === 'ADMIN'}
 			<div class="nav-label">Administration</div>
-			{#if data.role === 'ADMIN'}
 			<a class="nav-item" class:active={isActive('/admin', true)} href="/admin">
 				<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none">
 <path fill-rule="evenodd" clip-rule="evenodd" d="M12 8.25C9.92894 8.25 8.25 9.92893 8.25 12C8.25 14.0711 9.92894 15.75 12 15.75C14.0711 15.75 15.75 14.0711 15.75 12C15.75 9.92893 14.0711 8.25 12 8.25ZM9.75 12C9.75 10.7574 10.7574 9.75 12 9.75C13.2426 9.75 14.25 10.7574 14.25 12C14.25 13.2426 13.2426 14.25 12 14.25C10.7574 14.25 9.75 13.2426 9.75 12Z" fill="currentColor"/>
@@ -156,18 +178,10 @@
 </svg>
 				Paramètres &amp; membres
 			</a>
-			{/if}
-			<a class="nav-item" class:active={isActive('/admin/objectifs')} href="/admin/objectifs">
-				<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-				Objectifs de la semaine
+			<a class="nav-item" class:active={isActive('/admin/history')} href="/admin/history">
+				<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>
+				Historique
 			</a>
-			{#if data.role === 'ADMIN' && data.workspace?.moodEnabled}
-				<a class="nav-item" class:active={isActive('/admin/mood')} href="/admin/mood">
-					<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/></svg>
-					Résultats Team mood
-					{#if data.moodTotalVotes > 0}<span class="badge">{data.moodTotalVotes}</span>{/if}
-				</a>
-			{/if}
 		{/if}
 
 		<div class="side-foot">

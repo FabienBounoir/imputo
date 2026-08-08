@@ -24,7 +24,7 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
 		error(403, 'RAE réservé aux personnes ayant imputé sur cette activité.');
 
 	try {
-		await upsertTicketActivityRae(ws.workspaceId, params.id, activityId, field, value);
+		await upsertTicketActivityRae(ws.workspaceId, params.id, activityId, field, value, locals.user.id);
 		const rows = await getTicketActivityBreakdown(ws.workspaceId, params.id);
 		return json({ rows });
 	} catch (e) {

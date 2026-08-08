@@ -203,14 +203,21 @@
 				{#if dashboard.byActivity.length === 0}
 					<p class="empty">Aucune donnée.</p>
 				{:else}
-					<div class="barlist">
-						{#each dashboard.byActivity as a (a.label)}
-							<div class="barrow">
-								<span class="lbl">{a.label}</span>
-								<div class="track"><i style="width:{((a.raeReal + a.raeTest) / maxActivity) * 100}%"></i></div>
-								<span class="val tabnum">{round2(a.raeReal + a.raeTest)}</span>
+					<div class="rae-activity-wrap">
+						<div class="barlist">
+							{#each dashboard.byActivity as a (a.label)}
+								<div class="barrow">
+									<span class="lbl">{a.label}</span>
+									<div class="track"><i style="width:{((a.raeReal + a.raeTest) / maxActivity) * 100}%"></i></div>
+									<span class="val tabnum">{round2(a.raeReal + a.raeTest)}</span>
+								</div>
+							{/each}
+						</div>
+						{#if dashboard.kpis.raeTotal === 0}
+							<div class="rae-zero-overlay">
+								<p>Rien à engager — le RAE de ce sprint est à zéro.</p>
 							</div>
-						{/each}
+						{/if}
 					</div>
 				{/if}
 			</div>
@@ -325,6 +332,33 @@
 	.empty {
 		color: var(--text-mute);
 		font-size: 13px;
+	}
+	/* RAE par activité à 0 partout : la barlist reste dessous, ce message flotte par-dessus et
+	   s'efface au survol pour la laisser consultable plutôt que la cacher. */
+	.rae-activity-wrap {
+		position: relative;
+	}
+	.rae-zero-overlay {
+		position: absolute;
+		inset: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		text-align: center;
+		padding: 12px;
+		background: color-mix(in srgb, var(--surface) 92%, transparent);
+		backdrop-filter: blur(2px);
+		border-radius: var(--r-md);
+		transition: opacity 0.15s ease;
+	}
+	.rae-zero-overlay p {
+		color: var(--text-mute);
+		font-size: 13px;
+		margin: 0;
+	}
+	.rae-activity-wrap:hover .rae-zero-overlay {
+		opacity: 0;
+		pointer-events: none;
 	}
 	.kpis {
 		display: grid;

@@ -29,17 +29,66 @@
 	let imgRowIds = $state<string[]>([]);
 	let imgBusy = $state(false);
 	let editingId = $state<string | null>(null);
-	let formEl: HTMLElement | undefined = $state();
 	let cellPopover = $state<{ top: number; left: number; displayName: string; cell: ClickableCell } | null>(null);
 	const sameDay = $derived(startDate === endDate);
+	const targetsExternal = $derived(subject.startsWith('ext:'));
 	// Un membre ne déclare qu'en prévisionnel — "Congé validé" n'est atteignable que via le bouton
 	// "Valider" (admin/manager). Un admin/manager peut en revanche le poser directement. Dans les deux
 	// cas on garde la valeur déjà en cours d'édition, pour ne pas la perdre en modifiant juste les dates.
+	// Un membre externe n'a personne pour valider en son nom : uniquement "Congé validé", posé direct.
 	const typeOptions = $derived(
-		data.canManageOthers ? ABSENCE_TYPES : ABSENCE_TYPES.filter((t) => t !== 'CONGE_VALIDE' || type === 'CONGE_VALIDE')
+		targetsExternal
+			? ABSENCE_TYPES.filter((t) => t === 'CONGE_VALIDE' || t === 'FORMATION' || t === 'HORS_PROJET')
+			: data.canManageOthers
+				? ABSENCE_TYPES
+				: ABSENCE_TYPES.filter((t) => t !== 'CONGE_VALIDE' || type === 'CONGE_VALIDE')
 	);
 
-	/** Bascule le formulaire en mode édition, préremplit ses champs et le ramène à l'écran. */
+	// Bascule sur un membre externe : le prévisionnel n'a pas de sens, on repasse sur validé direct.
+	$effect(() => {
+		if (targetsExternal && type === 'CONGE_PREVISIONNEL') type = 'CONGE_VALIDE';
+	});
+
+	// ---------- Modal « Déclarer / Modifier une absence » (assistant en étapes) ----------
+	let showDeclareModal = $state(false);
+	let wizardStep = $state(0);
+
+	// Étape "Pour qui" seulement pour un admin/manager qui a des membres externes à choisir, et
+	// seulement à la création (le sujet d'une absence existante ne se réassigne jamais).
+	const wizardSteps = $derived(
+		!editingId && data.canManageOthers && data.externalMembers.length > 0
+			? [
+					{ key: 'subject', label: 'Pour qui' },
+					{ key: 'dates', label: 'Dates' },
+					{ key: 'type', label: 'Type' }
+				]
+			: [
+					{ key: 'dates', label: 'Dates' },
+					{ key: 'type', label: 'Type' }
+				]
+	);
+	const canGoNext = $derived(
+		wizardSteps[wizardStep]?.key !== 'dates' || (!!startDate && !!endDate && startDate <= endDate)
+	);
+
+	function nextStep() {
+		if (canGoNext && wizardStep < wizardSteps.length - 1) wizardStep++;
+	}
+	function prevStep() {
+		if (wizardStep > 0) wizardStep--;
+	}
+
+	function openDeclareModal() {
+		resetForm();
+		wizardStep = 0;
+		showDeclareModal = true;
+	}
+	function closeDeclareModal() {
+		showDeclareModal = false;
+		resetForm();
+	}
+
+	/** Bascule le formulaire en mode édition, préremplit ses champs et ouvre l'assistant. */
 	function startEdit(a: { id: string; startDate: string; endDate: string; type: AbsenceType; period: AbsencePeriod }) {
 		editingId = a.id;
 		startDate = a.startDate;
@@ -47,7 +96,8 @@
 		type = a.type;
 		period = a.period;
 		subject = 'me';
-		formEl?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+		wizardStep = 0;
+		showDeclareModal = true;
 	}
 
 	type ClickableCell = {
@@ -61,10 +111,18 @@
 		validatedByName: string | null;
 	};
 
+	// Historique (modifications) de l'absence affichée dans le popover — chargé à l'ouverture.
+	type HistoryEntry = { field: string | null; oldValue: string | null; newValue: string | null; changedByName: string | null; createdAt: string };
+	let popoverHistory = $state<HistoryEntry[]>([]);
+
 	/** Case cliquée dans la grille : popover juste en dessous, avec les infos et les actions (modifier / valider). */
 	function handleCellClick(e: MouseEvent, cell: ClickableCell, displayName: string) {
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
 		cellPopover = { top: rect.bottom + 6, left: rect.left, displayName, cell };
+		popoverHistory = [];
+		fetch(`/api/absences/${cell.id}/history`)
+			.then((r) => (r.ok ? r.json() : { entries: [] }))
+			.then((d) => (popoverHistory = d.entries));
 	}
 
 	function editFromPopover() {
@@ -154,67 +212,9 @@
 	{#if form?.error}<div class="flash error">{form.error}</div>{/if}
 	{#if form?.ok}<div class="flash ok">Mis à jour ✓</div>{/if}
 
-	<section class="card block" bind:this={formEl}>
-		<h3>{editingId ? "Modifier l'absence" : 'Déclarer une absence'}</h3>
-		<form
-			method="POST"
-			action={editingId ? '?/update' : '?/create'}
-			class="abs-form"
-			use:enhance={() => async ({ update }) => {
-				await update();
-				resetForm();
-			}}
-		>
-			{#if editingId}<input type="hidden" name="id" value={editingId} />{/if}
-			{#if data.canManageOthers && data.externalMembers.length > 0 && !editingId}
-				<div class="field">
-					<label for="subject">Pour</label>
-					<select id="subject" name="subject" bind:value={subject}>
-						<option value="me">Moi-même</option>
-						{#each data.externalMembers as em (em.id)}
-							<option value="ext:{em.id}">{em.displayName} (externe)</option>
-						{/each}
-					</select>
-				</div>
-			{/if}
-			<div class="field">
-				<label for="startDate">Date de début</label>
-				<input id="startDate" type="date" name="startDate" bind:value={startDate} required />
-			</div>
-			<div class="field">
-				<label for="endDate">Date de fin</label>
-				<input id="endDate" type="date" name="endDate" bind:value={endDate} min={startDate} required />
-			</div>
-			<div class="field">
-				<label for="type">Type</label>
-				<select id="type" name="type" bind:value={type}>
-					{#each typeOptions as t (t)}
-						<option value={t}>{ABSENCE_TYPE_LABELS[t]}</option>
-					{/each}
-				</select>
-			</div>
-			<input type="hidden" name="period" value={sameDay ? period : 'FULL'} />
-			{#if sameDay}
-				<div class="field period-field">
-					<span>Durée</span>
-					<div class="period-pick">
-						{#each ABSENCE_PERIODS as p (p)}
-							<label class="period-opt" class:active={period === p}>
-								<input type="radio" bind:group={period} value={p} />
-								{ABSENCE_PERIOD_LABELS[p]}
-							</label>
-						{/each}
-					</div>
-				</div>
-			{/if}
-			<div class="abs-form-actions">
-				<button class="btn btn-primary" type="submit">{editingId ? 'Enregistrer' : '+ Déclarer'}</button>
-				{#if editingId}
-					<button class="btn btn-ghost" type="button" onclick={resetForm}>Annuler</button>
-				{/if}
-			</div>
-		</form>
-	</section>
+	<div class="declare-cta">
+		<button class="btn btn-primary" type="button" onclick={openDeclareModal}>+ Déclarer une absence</button>
+	</div>
 
 	<section class="card block">
 		<div class="synth-head">
@@ -288,8 +288,13 @@
 					</thead>
 					<tbody>
 						{#each data.rows as m (m.id)}
-							<tr class:external-row={m.external}>
-								<td class="name-col">{m.displayName}{#if m.external}<span class="ext-dot" title="Membre externe"></span>{/if}</td>
+							<tr
+								class:external-row={m.external}
+								title={m.external
+									? "Membre externe : ce n'est pas un vrai membre de l'équipe. Ses congés sont posés directement en « Congé validé », il n'y a pas de congé prévisionnel pour ces personnes."
+									: undefined}
+							>
+								<td class="name-col">{m.displayName}{#if m.external}<span class="ext-dot"></span>{/if}</td>
 								{#each data.days as d (d)}
 									{@const cell = data.grid[m.id]?.[d]}
 									{@const editable = !!cell && (m.external ? data.canManageOthers : m.id === data.selfId || data.canManageOthers)}
@@ -367,12 +372,106 @@
 <svelte:window
 	onkeydown={(e) => {
 		if (e.key !== 'Escape') return;
+		if (showDeclareModal) closeDeclareModal();
 		showExtModal = false;
 		showImageModal = false;
 		showExportMenu = false;
 		cellPopover = null;
 	}}
 />
+
+{#if showDeclareModal}
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="modal-backdrop" onclick={closeDeclareModal}>
+		<div class="modal wizard-modal" onclick={(e) => e.stopPropagation()}>
+			<h3>{editingId ? "Modifier l'absence" : 'Déclarer une absence'}</h3>
+
+			<div class="wizard-steps">
+				{#each wizardSteps as s, i (s.key)}
+					<div class="wizard-step" class:done={i < wizardStep} class:current={i === wizardStep}>
+						<span class="wizard-dot">{i < wizardStep ? '✓' : i + 1}</span>
+						<span class="wizard-label">{s.label}</span>
+					</div>
+					{#if i < wizardSteps.length - 1}<span class="wizard-line" class:done={i < wizardStep}></span>{/if}
+				{/each}
+			</div>
+			<p class="hint wizard-progress">Étape {wizardStep + 1} sur {wizardSteps.length}</p>
+
+			{#if form?.error}<div class="flash error">{form.error}</div>{/if}
+
+			<form
+				method="POST"
+				action={editingId ? '?/update' : '?/create'}
+				use:enhance={() => async ({ result, update }) => {
+					await update();
+					if (result.type === 'success') closeDeclareModal();
+				}}
+			>
+				{#if editingId}<input type="hidden" name="id" value={editingId} />{/if}
+				<input type="hidden" name="subject" value={subject} />
+				<input type="hidden" name="startDate" value={startDate} />
+				<input type="hidden" name="endDate" value={endDate} />
+				<input type="hidden" name="type" value={type} />
+				<input type="hidden" name="period" value={sameDay ? period : 'FULL'} />
+
+				{#if wizardSteps[wizardStep].key === 'subject'}
+					<div class="field">
+						<label for="subject">Pour qui ?</label>
+						<select id="subject" bind:value={subject}>
+							<option value="me">Moi-même</option>
+							{#each data.externalMembers as em (em.id)}
+								<option value="ext:{em.id}">{em.displayName} (externe)</option>
+							{/each}
+						</select>
+					</div>
+				{:else if wizardSteps[wizardStep].key === 'dates'}
+					<div class="field">
+						<label for="startDate">Date de début</label>
+						<input id="startDate" type="date" bind:value={startDate} required />
+					</div>
+					<div class="field">
+						<label for="endDate">Date de fin</label>
+						<input id="endDate" type="date" bind:value={endDate} min={startDate} required />
+					</div>
+				{:else if wizardSteps[wizardStep].key === 'type'}
+					<div class="field">
+						<label for="type">Type</label>
+						<select id="type" bind:value={type}>
+							{#each typeOptions as t (t)}
+								<option value={t}>{ABSENCE_TYPE_LABELS[t]}</option>
+							{/each}
+						</select>
+					</div>
+					{#if sameDay}
+						<div class="field period-field">
+							<span>Durée</span>
+							<div class="period-pick">
+								{#each ABSENCE_PERIODS as p (p)}
+									<label class="period-opt" class:active={period === p}>
+										<input type="radio" bind:group={period} value={p} />
+										{ABSENCE_PERIOD_LABELS[p]}
+									</label>
+								{/each}
+							</div>
+						</div>
+					{/if}
+				{/if}
+
+				<div class="wizard-actions">
+					<button class="btn btn-ghost" type="button" onclick={wizardStep > 0 ? prevStep : closeDeclareModal}>
+						{wizardStep > 0 ? '← Précédent' : 'Annuler'}
+					</button>
+					{#if wizardStep < wizardSteps.length - 1}
+						<button class="btn btn-primary" type="button" disabled={!canGoNext} onclick={nextStep}>Suivant →</button>
+					{:else}
+						<button class="btn btn-primary" type="submit">{editingId ? 'Enregistrer' : '+ Déclarer'}</button>
+					{/if}
+				</div>
+			</form>
+		</div>
+	</div>
+{/if}
 
 {#if cellPopover}
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -391,6 +490,9 @@
 				{/if}
 			{:else}
 				<p class="hint">Imputé le {formatDateTime(cellPopover.cell.createdAt)}</p>
+			{/if}
+			{#if popoverHistory.length > 0}
+				<p class="hint">Modifié le {formatDateTime(new Date(popoverHistory[0].createdAt))} par {popoverHistory[0].changedByName ?? 'quelqu’un'}</p>
 			{/if}
 			<div class="popover-actions">
 				<button class="ref-btn" type="button" onclick={editFromPopover}>✏️ Modifier</button>
@@ -608,24 +710,6 @@
 		box-shadow: var(--shadow-sm);
 	}
 
-	.abs-form {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-		align-items: end;
-		gap: 14px;
-	}
-	.abs-form .field {
-		margin-bottom: 0;
-		min-width: 0;
-	}
-	.abs-form-actions {
-		grid-column: 1 / -1;
-		display: flex;
-		gap: 10px;
-		padding-top: 14px;
-		margin-top: 4px;
-		border-top: 1px solid var(--border);
-	}
 	.period-field {
 		display: flex;
 		flex-direction: column;
@@ -852,6 +936,15 @@
 	.grid tr.external-row td.name-col {
 		background: rgba(148, 163, 184, 0.12);
 	}
+	/* Survol : bascule en bleu + le title du <tr> explique que ce n'est pas un vrai membre. */
+	.grid tr.external-row:hover {
+		cursor: help;
+	}
+	.grid tr.external-row:hover td,
+	.grid tr.external-row:hover td.weekend,
+	.grid tr.external-row:hover td.name-col {
+		background: rgba(59, 130, 246, 0.16);
+	}
 	.grid td.cell-editable {
 		cursor: pointer;
 	}
@@ -940,5 +1033,77 @@
 		justify-content: flex-end;
 		gap: 10px;
 		margin-top: 18px;
+	}
+
+	.declare-cta {
+		margin-bottom: 18px;
+	}
+
+	.wizard-modal {
+		max-width: 460px;
+	}
+	.wizard-steps {
+		display: flex;
+		align-items: center;
+		margin-top: 18px;
+	}
+	.wizard-step {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 5px;
+	}
+	.wizard-dot {
+		width: 26px;
+		height: 26px;
+		border-radius: 50%;
+		display: grid;
+		place-items: center;
+		font-size: 12px;
+		font-weight: 700;
+		background: var(--surface-sunk);
+		color: var(--text-mute);
+		border: 1px solid var(--border);
+		transition: background 0.15s, color 0.15s, border-color 0.15s;
+	}
+	.wizard-step.current .wizard-dot {
+		background: var(--accent);
+		border-color: var(--accent);
+		color: #fff;
+	}
+	.wizard-step.done .wizard-dot {
+		background: var(--accent-tint);
+		border-color: var(--accent);
+		color: var(--accent-ink);
+	}
+	.wizard-label {
+		font-size: 10.5px;
+		color: var(--text-mute);
+		white-space: nowrap;
+	}
+	.wizard-step.current .wizard-label {
+		color: var(--text);
+		font-weight: 600;
+	}
+	.wizard-line {
+		flex: 1;
+		height: 2px;
+		background: var(--border);
+		margin: 0 6px 18px;
+	}
+	.wizard-line.done {
+		background: var(--accent);
+	}
+	.wizard-progress {
+		text-align: center;
+		margin: 8px 0 0;
+	}
+	.wizard-actions {
+		display: flex;
+		justify-content: space-between;
+		gap: 10px;
+		margin-top: 20px;
+		padding-top: 14px;
+		border-top: 1px solid var(--border);
 	}
 </style>

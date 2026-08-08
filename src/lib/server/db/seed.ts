@@ -5,7 +5,7 @@
 //
 // Usage : npm run db:seed   (déploie/rafraîchit)
 //         npm run db:unseed (supprime tout)
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { hashPassword } from '../auth/password';
 import { DEFAULT_STATES, DEFAULT_ACTIVITIES, DEFAULT_CATEGORIES } from '../services/defaults';
 import { round } from '../services/calc';
@@ -26,7 +26,9 @@ import {
 	timeEntry,
 	ticketSnapshot,
 	moodVote,
-	absence
+	absence,
+	externalMember,
+	changeLog
 } from './schema';
 import { getDb, wipeSandbox, WORKSPACE_NAME, SEED_DOMAIN, SEED_USERS } from './seed.shared';
 
@@ -524,31 +526,37 @@ async function main() {
 	for (const u of SEED_USERS) {
 		const userId = userByEmail.get(u.email)!.id;
 
-		// Une semaine (ou deux jours) de congés déjà posée dans les dernières semaines.
-		const pastStart = addDays(mondayWeeksAgo(2 + Math.floor(Math.random() * 6)), Math.floor(Math.random() * 3));
-		absenceRows.push({
-			workspaceId: ws.id,
-			userId,
-			startDate: toISODate(pastStart),
-			endDate: toISODate(addDays(pastStart, chance(0.5) ? 4 : 1)),
-			type: 'CONGE_VALIDE',
-			period: 'FULL'
-		});
+		// 2 à 3 congés déjà posés, étalés sur toute la fenêtre du seed (pas juste les dernières semaines).
+		const pastCount = chance(0.5) ? 3 : 2;
+		for (let i = 0; i < pastCount; i++) {
+			const pastStart = addDays(mondayWeeksAgo(1 + Math.floor(Math.random() * 14)), Math.floor(Math.random() * 5));
+			absenceRows.push({
+				workspaceId: ws.id,
+				userId,
+				startDate: toISODate(pastStart),
+				endDate: toISODate(addDays(pastStart, chance(0.4) ? 4 : chance(0.5) ? 1 : 0)),
+				type: 'CONGE_VALIDE',
+				period: 'FULL'
+			});
+		}
 
-		// Une demi-journée de formation ou hors-projet, passée.
-		const trainingDay = addDays(mondayWeeksAgo(1 + Math.floor(Math.random() * 8)), Math.floor(Math.random() * 5));
-		absenceRows.push({
-			workspaceId: ws.id,
-			userId,
-			startDate: toISODate(trainingDay),
-			endDate: toISODate(trainingDay),
-			type: rand(['FORMATION', 'HORS_PROJET'] as const),
-			period: rand(['FULL', 'AM', 'PM'] as const)
-		});
+		// 2 demi-journées ou journées de formation / hors-projet, passées.
+		for (let i = 0; i < 2; i++) {
+			const trainingDay = addDays(mondayWeeksAgo(1 + Math.floor(Math.random() * 14)), Math.floor(Math.random() * 5));
+			absenceRows.push({
+				workspaceId: ws.id,
+				userId,
+				startDate: toISODate(trainingDay),
+				endDate: toISODate(trainingDay),
+				type: rand(['FORMATION', 'HORS_PROJET'] as const),
+				period: rand(['FULL', 'AM', 'PM'] as const)
+			});
+		}
 
-		// Des congés prévisionnels à venir (pas encore validés), pas systématiques.
-		if (chance(0.7)) {
-			const futureStart = addDays(mondayWeeksAgo(-2 - Math.floor(Math.random() * 6)), Math.floor(Math.random() * 3));
+		// Des congés prévisionnels à venir (pas encore validés) — au moins un, parfois deux.
+		const futureCount = chance(0.4) ? 2 : 1;
+		for (let i = 0; i < futureCount; i++) {
+			const futureStart = addDays(mondayWeeksAgo(-1 - Math.floor(Math.random() * 8)), Math.floor(Math.random() * 5));
 			absenceRows.push({
 				workspaceId: ws.id,
 				userId,
@@ -559,12 +567,131 @@ async function main() {
 			});
 		}
 	}
-	await db.insert(absence).values(absenceRows);
+	const insertedAbsences = await db.insert(absence).values(absenceRows).returning();
+
+	// Un membre externe (client) — jamais de congé prévisionnel pour lui (posé direct en validé),
+	// cf. règle métier dans absences.ts.
+	const [client] = await db.insert(externalMember).values({ workspaceId: ws.id, displayName: 'Client Acme' }).returning();
+	const clientAbsenceRows: (typeof absence.$inferInsert)[] = Array.from({ length: 3 }, () => {
+		const start = addDays(mondayWeeksAgo(1 + Math.floor(Math.random() * 10)), Math.floor(Math.random() * 5));
+		return {
+			workspaceId: ws.id,
+			externalMemberId: client.id,
+			startDate: toISODate(start),
+			endDate: toISODate(addDays(start, chance(0.3) ? 3 : 0)),
+			type: 'CONGE_VALIDE' as const,
+			period: 'FULL' as const
+		};
+	});
+	await db.insert(absence).values(clientAbsenceRows);
+
+	// Quelques absences créées puis retirées (erreur de saisie corrigée) — pour peupler les
+	// suppressions tracées dans l'historique, en plus des révisions ci-dessous.
+	const phantomAbsenceRows: (typeof absence.$inferInsert)[] = SEED_USERS.slice(0, 3).map((u) => ({
+		workspaceId: ws.id,
+		userId: userByEmail.get(u.email)!.id,
+		startDate: toISODate(addDays(mondayWeeksAgo(1 + Math.floor(Math.random() * 3)), Math.floor(Math.random() * 5))),
+		endDate: toISODate(addDays(mondayWeeksAgo(1 + Math.floor(Math.random() * 3)), Math.floor(Math.random() * 5))),
+		type: 'CONGE_PREVISIONNEL' as const,
+		period: 'FULL' as const
+	}));
+	const insertedPhantomAbsences = await db.insert(absence).values(phantomAbsenceRows).returning();
+	await db.delete(absence).where(
+		inArray(
+			absence.id,
+			insertedPhantomAbsences.map((a) => a.id)
+		)
+	);
+
+	// ---------- Historique des modifications (change_log) : révisions d'estimation ticket, RAE par
+	// activité et absences, + les suppressions ci-dessus — dans les 30 derniers jours (fenêtre
+	// affichée par /admin/history), quelle que soit la date réelle du sprint ou de l'absence, pour
+	// avoir de quoi filtrer/rechercher/paginer sur cet écran dès le premier chargement.
+	const recentTimestamp = (maxDaysAgo = 25) => new Date(Date.now() - Math.random() * maxDaysAgo * 24 * 60 * 60 * 1000);
+	const anyUserId = () => userByEmail.get(rand(SEED_USERS).email)!.id;
+	const changeLogRows: (typeof changeLog.$inferInsert)[] = [];
+
+	// Révisions de champs budget/estimation, sur ~40% des tickets.
+	for (const tk of insertedTickets) {
+		if (!chance(0.4)) continue;
+		const fields = (['estimationReal', 'estimationTest', 'estimationPrev', 'enveloppeTotale'] as const)
+			.map((field) => ({ field, current: tk[field] }))
+			.filter((f) => f.current != null);
+		if (fields.length === 0) continue;
+		const { field, current } = rand(fields) as { field: string; current: string };
+		const oldValue = String(Math.max(0, round(Number(current) - rand([1, 1.5, 2, 3, -1, -2]))));
+		if (oldValue === current) continue;
+		changeLogRows.push({
+			workspaceId: ws.id,
+			entityType: 'TICKET',
+			entityId: tk.id,
+			field,
+			action: 'UPDATE',
+			oldValue,
+			newValue: current,
+			changedById: anyUserId(),
+			createdAt: recentTimestamp()
+		});
+	}
+
+	// Révisions de RAE par activité, sur ~25% des lignes déjà générées plus haut.
+	for (const row of activityRaeRows) {
+		if (!chance(0.25) || !row.ticketId || !row.activityId) continue;
+		const field = rand(['raeReal', 'raeTest'] as const);
+		const current = row[field] as string;
+		const oldValue = String(Math.max(0, round(Number(current) + rand([1, 1.5, 2, -1, -1.5]))));
+		if (oldValue === current) continue;
+		changeLogRows.push({
+			workspaceId: ws.id,
+			entityType: 'TICKET',
+			entityId: row.ticketId,
+			activityId: row.activityId,
+			field,
+			action: 'UPDATE',
+			oldValue,
+			newValue: current,
+			changedById: anyUserId(),
+			createdAt: recentTimestamp()
+		});
+	}
+
+	// Révisions d'absences (dates ajustées après coup), sur ~25% des absences déjà posées.
+	for (const a of insertedAbsences) {
+		if (!chance(0.25)) continue;
+		changeLogRows.push({
+			workspaceId: ws.id,
+			entityType: 'ABSENCE',
+			entityId: a.id,
+			field: 'endDate',
+			action: 'UPDATE',
+			oldValue: toISODate(addDays(parseISODate(a.endDate), chance(0.5) ? 1 : -1)),
+			newValue: a.endDate,
+			changedById: a.userId ?? anyUserId(),
+			createdAt: recentTimestamp()
+		});
+	}
+
+	// Les 3 absences retirées plus haut — une ligne de suppression chacune.
+	for (const a of insertedPhantomAbsences) {
+		changeLogRows.push({
+			workspaceId: ws.id,
+			entityType: 'ABSENCE',
+			entityId: a.id,
+			action: 'DELETE',
+			oldValue: `${a.startDate} → ${a.endDate} (${a.type})`,
+			newValue: null,
+			changedById: a.userId ?? anyUserId(),
+			createdAt: recentTimestamp(10)
+		});
+	}
+
+	for (const batch of chunk(changeLogRows, 500)) await db.insert(changeLog).values(batch);
 
 	// ---------- Résumé ----------
+	const totalAbsences = insertedAbsences.length + clientAbsenceRows.length;
 	console.log(
 		`\n✓ "${WORKSPACE_NAME}" créé — ${insertedTickets.length} tickets sur ${SPRINT_DEFS.length} sprints / ${VERSION_NAMES.length} versions, ` +
-			`${entryDrafts.length} imputations (${allDays.length} jours ouvrés, du ${allDays[0]} au ${allDays[allDays.length - 1]}), ${snapshotRows.length} snapshots, ${moodVoteRows.length} votes team mood sur 7 semaines, ${absenceRows.length} absences.\n`
+			`${entryDrafts.length} imputations (${allDays.length} jours ouvrés, du ${allDays[0]} au ${allDays[allDays.length - 1]}), ${snapshotRows.length} snapshots, ${moodVoteRows.length} votes team mood sur 7 semaines, ${totalAbsences} absences (dont 1 membre externe), ${changeLogRows.length} entrées d'historique.\n`
 	);
 	console.log('Comptes :');
 	for (const u of SEED_USERS) console.log(`  ${u.email.padEnd(24)} ${u.password.padEnd(12)} (${u.role})`);

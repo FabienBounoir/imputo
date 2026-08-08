@@ -127,7 +127,7 @@ export const actions: Actions = {
 		const value = String(f.get('value') ?? '');
 		if (!ticketId || !field) return fail(400, { error: 'Données invalides.' });
 		try {
-			await updateTicketField(ws.workspaceId, ticketId, field, value, locals.role);
+			await updateTicketField(ws.workspaceId, ticketId, field, value, locals.role, locals.user?.id ?? null);
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
