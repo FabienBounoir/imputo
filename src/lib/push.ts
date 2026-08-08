@@ -75,7 +75,10 @@ export async function saveNotifPrefs(prefs: NotifPrefs): Promise<void> {
 	});
 }
 
-export async function sendTestNotification(): Promise<boolean> {
+/** Renvoie le nombre de notifications réellement envoyées (0 si non abonné ou échec). */
+export async function sendTestNotification(): Promise<number> {
 	const res = await fetch('/api/push/test', { method: 'POST' });
-	return res.ok;
+	if (!res.ok) return 0;
+	const { sent } = (await res.json()) as { sent: number };
+	return sent;
 }
