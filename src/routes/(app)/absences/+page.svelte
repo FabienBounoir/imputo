@@ -12,6 +12,7 @@
 		type AbsencePeriod
 	} from '$lib/absenceTypes';
 	import { parseISODate, formatDayRange, formatDateTime } from '$lib/utils/date';
+	import { downloadSvgAsPng } from '$lib/utils/svgToPng';
 
 	let { data, form } = $props();
 
@@ -139,45 +140,17 @@
 		showImageModal = true;
 	}
 
-	/** SVG serveur → PNG téléchargeable, via un canvas hors-écran (aucune dépendance). */
 	async function downloadImagePng() {
 		imgBusy = true;
 		const params = new URLSearchParams({ from: imgFrom, to: imgTo });
 		if (imgRowIds.length > 0) params.set('rows', imgRowIds.join(','));
-		let objectUrl = '';
 		try {
 			const res = await fetch(`/absences/export-image?${params}`);
 			if (!res.ok) return;
 			const svgText = await res.text();
-			objectUrl = URL.createObjectURL(new Blob([svgText], { type: 'image/svg+xml' }));
-
-			const img = new Image();
-			await new Promise<void>((resolve, reject) => {
-				img.onload = () => resolve();
-				img.onerror = () => reject(new Error('svg load failed'));
-				img.src = objectUrl;
-			});
-
-			const scale = 2; // rendu net une fois collé/zoomé dans une slide
-			const canvas = document.createElement('canvas');
-			canvas.width = img.naturalWidth * scale;
-			canvas.height = img.naturalHeight * scale;
-			const ctx = canvas.getContext('2d')!;
-			ctx.scale(scale, scale);
-			ctx.fillStyle = '#ffffff';
-			ctx.fillRect(0, 0, img.naturalWidth, img.naturalHeight);
-			ctx.drawImage(img, 0, 0);
-
-			const pngBlob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
-			if (!pngBlob) return;
-			const a = document.createElement('a');
-			a.href = URL.createObjectURL(pngBlob);
-			a.download = `absences-${imgFrom}_${imgTo}.png`;
-			a.click();
-			URL.revokeObjectURL(a.href);
+			await downloadSvgAsPng(svgText, `absences-${imgFrom}_${imgTo}.png`);
 			showImageModal = false;
 		} finally {
-			if (objectUrl) URL.revokeObjectURL(objectUrl);
 			imgBusy = false;
 		}
 	}

@@ -23,6 +23,10 @@
 		versions = [],
 		objectives = [],
 		placeholder = 'Ajouter un ticket ou une catégorie…',
+		// Quand activé : si la recherche ne trouve aucun ticket, propose de créer une tâche
+		// personnalisée avec le texte tapé (cf. page Objectifs) — évite deux champs séparés
+		// "chercher un ticket" / "saisir une tâche libre" quand un seul suffit.
+		allowCustom = false,
 		value = $bindable('')
 	}: {
 		tickets: Ticket[];
@@ -31,6 +35,7 @@
 		versions?: Version[];
 		objectives?: Objective[];
 		placeholder?: string;
+		allowCustom?: boolean;
 		value: string;
 	} = $props();
 
@@ -57,7 +62,10 @@
 	});
 	const selectedLabel = $derived.by(() => {
 		if (!value) return '';
-		const [type, id] = value.split('::');
+		// indexOf plutôt que split('::') : un libellé personnalisé peut lui-même contenir "::".
+		const sep = value.indexOf('::');
+		const type = value.slice(0, sep);
+		const id = value.slice(sep + 2);
 		if (type === 'TICKET') {
 			const t = tickets.find((x) => x.id === id);
 			return t ? `${t.key} — ${t.title}` : '';
@@ -66,6 +74,7 @@
 			const o = objectives.find((x) => x.id === id);
 			return o?.label ?? '';
 		}
+		if (type === 'CUSTOM') return id;
 		const c = categories.find((x) => x.id === id);
 		return c?.label ?? '';
 	});
@@ -172,7 +181,15 @@
 						<span class="tp-key">{t.key}</span><span class="tp-title">{t.title}</span>
 					</button>
 				{/each}
-				{#if filteredTickets.length === 0}<div class="tp-empty">Aucun ticket.</div>{/if}
+				{#if filteredTickets.length === 0}
+					{#if allowCustom && query.trim()}
+						<button type="button" class="tp-item tp-custom" onclick={() => pick(`CUSTOM::${query.trim()}`)}>
+							<span class="tp-title">+ Créer la tâche personnalisée « {query.trim()} »</span>
+						</button>
+					{:else}
+						<div class="tp-empty">Aucun ticket{allowCustom ? ' — tape un nom pour créer une tâche' : ''}.</div>
+					{/if}
+				{/if}
 			</div>
 			{#if categories.length > 0}
 				<div class="tp-section">
@@ -278,6 +295,10 @@
 	}
 	.tp-item:hover {
 		background: var(--accent-tint, var(--surface-2));
+	}
+	.tp-custom {
+		color: var(--accent-ink, var(--accent));
+		font-weight: 600;
 	}
 	.tp-key {
 		flex-shrink: 0;
