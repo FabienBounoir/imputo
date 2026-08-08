@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import PasswordField from '$lib/components/PasswordField.svelte';
 	let { form } = $props();
 	let email = $state(form?.values?.email ?? '');
 </script>
@@ -32,10 +33,14 @@
 				<label for="em">Email professionnel</label>
 				<input id="em" name="email" type="email" bind:value={email} placeholder="vous@entreprise.com" required />
 			</div>
-			<div class="field">
-				<label for="pw">Mot de passe</label>
-				<input id="pw" name="password" type="password" placeholder="8 caractères minimum" required />
-			</div>
+			<PasswordField
+				id="pw"
+				name="password"
+				label="Mot de passe"
+				placeholder="8 caractères minimum"
+				autocomplete="new-password"
+				required
+			/>
 			<button class="btn btn-primary" type="submit">Créer mon espace</button>
 		</form>
 

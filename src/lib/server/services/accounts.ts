@@ -112,6 +112,21 @@ export async function setPasswordWithToken(rawToken: string, password: string): 
 	return true;
 }
 
+/** Change son propre mot de passe (nécessite l'ancien). */
+export async function changePassword(
+	userId: string,
+	currentPassword: string,
+	newPassword: string
+): Promise<boolean> {
+	const [u] = await db.select().from(user).where(eq(user.id, userId));
+	if (!u || !u.passwordHash) return false;
+	const ok = await verifyPassword(u.passwordHash, currentPassword);
+	if (!ok) return false;
+	const passwordHash = await hashPassword(newPassword);
+	await db.update(user).set({ passwordHash }).where(eq(user.id, userId));
+	return true;
+}
+
 /** Mémorise la préférence de thème d'un utilisateur (identité globale). */
 export async function setThemePref(userId: string, pref: 'LIGHT' | 'DARK' | 'SYSTEM') {
 	await db.update(user).set({ themePref: pref }).where(eq(user.id, userId));

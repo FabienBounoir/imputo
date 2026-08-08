@@ -2,6 +2,7 @@
 	import { enhance } from '$app/forms';
 	import ExportModal from '$lib/components/ExportModal.svelte';
 	import AccentPicker from '$lib/components/AccentPicker.svelte';
+	import { confirmDialog } from '$lib/confirm.svelte';
 	let { data, form } = $props();
 
 	const PRESETS = ['#16A34A', '#4F46E5', '#9333EA', '#0EA5E9', '#E11D48', '#EA580C', '#0D9488', '#CA8A04'];
@@ -138,14 +139,20 @@
 									</form>
 								{:else}
 									<div class="action-group">
+										<form method="POST" action="?/memberInvite" use:enhance>
+											<input type="hidden" name="userId" value={m.id} />
+											<button class="ref-btn" type="submit" title="Envoyer un lien pour réinitialiser son mot de passe">🔑 Lien de réinitialisation</button>
+										</form>
 										{#if data.isOwner && !m.isOwner && m.active}
 											<form
 												method="POST"
 												action="?/transferOwnership"
-												use:enhance
-												onsubmit={(e) => {
-													if (!confirm(`Transmettre la propriété de l'espace à ${m.displayName} ? Vous resterez admin, mais perdrez la protection de créateur.`))
-														e.preventDefault();
+												use:enhance={async ({ cancel }) => {
+													const ok = await confirmDialog({
+														message: `Transmettre la propriété de l'espace à ${m.displayName} ? Vous resterez admin, mais perdrez la protection de créateur.`,
+														confirmLabel: 'Transmettre'
+													});
+													if (!ok) cancel();
 												}}
 											>
 												<input type="hidden" name="userId" value={m.id} />
@@ -192,10 +199,13 @@
 						<form
 							method="POST"
 							action="?/refArchive"
-							use:enhance
-							onsubmit={(e) => {
-								if (!it.archived && it.usage > 0 && !confirm(`${it.usage} ticket${it.usage > 1 ? 's' : ''} seront détachés à terme. Archiver quand même ?`))
-									e.preventDefault();
+							use:enhance={async ({ cancel }) => {
+								if (!it.archived && it.usage > 0) {
+									const ok = await confirmDialog(
+										`${it.usage} ticket${it.usage > 1 ? 's' : ''} seront détachés à terme. Archiver quand même ?`
+									);
+									if (!ok) cancel();
+								}
 							}}
 						>
 							<input type="hidden" name="type" value={type} />
@@ -246,10 +256,13 @@
 							<form
 								method="POST"
 								action="?/catArchive"
-								use:enhance
-								onsubmit={(e) => {
-									if (!c.archived && c.usage > 0 && !confirm(`${c.usage} imputation${c.usage > 1 ? 's' : ''} seront supprimées à terme. Archiver quand même ?`))
-										e.preventDefault();
+								use:enhance={async ({ cancel }) => {
+									if (!c.archived && c.usage > 0) {
+										const ok = await confirmDialog(
+											`${c.usage} imputation${c.usage > 1 ? 's' : ''} seront supprimées à terme. Archiver quand même ?`
+										);
+										if (!ok) cancel();
+									}
 								}}
 							>
 								<input type="hidden" name="id" value={c.id} />
@@ -286,10 +299,13 @@
 							<form
 								method="POST"
 								action="?/actActive"
-								use:enhance
-								onsubmit={(e) => {
-									if (!a.archived && !confirm('Désactiver cette activité ? Elle restera visible sur les imputations et tickets existants, mais ne sera plus proposée pour de nouvelles saisies.'))
-										e.preventDefault();
+								use:enhance={async ({ cancel }) => {
+									if (!a.archived) {
+										const ok = await confirmDialog(
+											'Désactiver cette activité ? Elle restera visible sur les imputations et tickets existants, mais ne sera plus proposée pour de nouvelles saisies.'
+										);
+										if (!ok) cancel();
+									}
 								}}
 							>
 								<input type="hidden" name="id" value={a.id} />
@@ -300,8 +316,13 @@
 								<form
 									method="POST"
 									action="?/actDelete"
-									use:enhance
-									onsubmit={(e) => { if (!confirm(`Supprimer définitivement l'activité « ${a.label} » ?`)) e.preventDefault(); }}
+									use:enhance={async ({ cancel }) => {
+										const ok = await confirmDialog({
+											message: `Supprimer définitivement l'activité « ${a.label} » ?`,
+											confirmLabel: 'Supprimer'
+										});
+										if (!ok) cancel();
+									}}
 								>
 									<input type="hidden" name="id" value={a.id} />
 									<button class="ref-btn ref-btn-danger" type="submit">Supprimer</button>
@@ -377,10 +398,13 @@
 						<form
 							method="POST"
 							action="?/stateDelete"
-							use:enhance
-							onsubmit={(e) => {
-								if (s.usage > 0 && !confirm(`${s.usage} ticket${s.usage > 1 ? 's' : ''} perdront cet état. Supprimer quand même ?`))
-									e.preventDefault();
+							use:enhance={async ({ cancel }) => {
+								if (s.usage > 0) {
+									const ok = await confirmDialog(
+										`${s.usage} ticket${s.usage > 1 ? 's' : ''} perdront cet état. Supprimer quand même ?`
+									);
+									if (!ok) cancel();
+								}
 							}}
 						>
 							<input type="hidden" name="id" value={s.id} />

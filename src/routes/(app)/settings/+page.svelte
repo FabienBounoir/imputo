@@ -12,6 +12,7 @@
 	} from '$lib/push';
 	import { setTheme, storedTheme, type ThemePref } from '$lib/theme';
 	import AccentPicker from '$lib/components/AccentPicker.svelte';
+	import PasswordField from '$lib/components/PasswordField.svelte';
 
 	let { data, form } = $props();
 
@@ -77,6 +78,14 @@
 		themePref = p;
 		setTheme(p);
 	}
+
+	const TABS = [
+		{ key: 'notifications', label: 'Notifications' },
+		{ key: 'securite', label: 'Sécurité' },
+		{ key: 'apparence', label: 'Apparence' }
+	] as const;
+	type Tab = (typeof TABS)[number]['key'];
+	let tab = $state<Tab>(form?.pwOk || form?.pwError ? 'securite' : form?.accentPrefOk ? 'apparence' : 'notifications');
 </script>
 
 <div class="topbar">
@@ -86,79 +95,121 @@
 </div>
 
 <div class="content settings">
-	<section class="card block">
-		<h3>Notifications</h3>
-		<p class="hint">Rappels pour ne pas oublier de saisir ton imputation ou de mettre à jour ton RAE. Envoyés même quand l’app est fermée (navigateur compatible, ou app installée sur iOS).</p>
+	<div class="tabs">
+		{#each TABS as t (t.key)}
+			<button type="button" class:on={tab === t.key} onclick={() => (tab = t.key)}>{t.label}</button>
+		{/each}
+	</div>
 
-		{#if !data.vapidConfigured}
-			<div class="flash error">Notifications non configurées côté serveur (clés VAPID manquantes).</div>
-		{:else if !supported}
-			<div class="flash error">Ton navigateur ne supporte pas les notifications push.</div>
-		{:else}
-			<div class="row">
-				<div>
-					<b>Notifications push</b>
-					<span class="sub">{subscribed ? 'Activées sur cet appareil' : 'Désactivées sur cet appareil'}</span>
+	{#if tab === 'notifications'}
+		<section class="card block">
+			<h3>Notifications</h3>
+			<p class="hint">Rappels pour ne pas oublier de saisir ton imputation ou de mettre à jour ton RAE. Envoyés même quand l’app est fermée (navigateur compatible, ou app installée sur iOS).</p>
+
+			{#if !data.vapidConfigured}
+				<div class="flash error">Notifications non configurées côté serveur (clés VAPID manquantes).</div>
+			{:else if !supported}
+				<div class="flash error">Ton navigateur ne supporte pas les notifications push.</div>
+			{:else}
+				<div class="row">
+					<div>
+						<b>Notifications push</b>
+						<span class="sub">{subscribed ? 'Activées sur cet appareil' : 'Désactivées sur cet appareil'}</span>
+					</div>
+					{#if subscribed}
+						<button class="btn btn-ghost" onclick={disable} disabled={busy}>Désactiver</button>
+					{:else}
+						<button class="btn btn-primary" onclick={enable} disabled={busy}>Activer</button>
+					{/if}
 				</div>
+
 				{#if subscribed}
-					<button class="btn btn-ghost" onclick={disable} disabled={busy}>Désactiver</button>
-				{:else}
-					<button class="btn btn-primary" onclick={enable} disabled={busy}>Activer</button>
-				{/if}
-			</div>
-
-			{#if subscribed}
-				<div class="prefs">
-					<label class="pref master">
-						<input type="checkbox" bind:checked={prefs.enabled} onchange={savePref} />
-						<span>Activer les rappels</span>
-					</label>
-					{#each TYPES as t (t.key)}
-						<label class="pref" class:off={!prefs.enabled}>
-							<input type="checkbox" bind:checked={prefs[t.key]} onchange={savePref} disabled={!prefs.enabled} />
-							<span>{t.label}</span>
+					<div class="prefs">
+						<label class="pref master">
+							<input type="checkbox" bind:checked={prefs.enabled} onchange={savePref} />
+							<span>Activer les rappels</span>
 						</label>
-					{/each}
-					<button class="btn btn-ghost test" onclick={test}>Envoyer une notification de test</button>
-				</div>
+						{#each TYPES as t (t.key)}
+							<label class="pref" class:off={!prefs.enabled}>
+								<input type="checkbox" bind:checked={prefs[t.key]} onchange={savePref} disabled={!prefs.enabled} />
+								<span>{t.label}</span>
+							</label>
+						{/each}
+						<button class="btn btn-ghost test" onclick={test}>Envoyer une notification de test</button>
+					</div>
+				{/if}
 			{/if}
-		{/if}
-	</section>
-
-	<section class="card block">
-		<h3>Thème</h3>
-		<p class="hint">Apparence de l’interface. « Système » suit le réglage de ton appareil.</p>
-		<div class="seg">
-			<button type="button" class:on={themePref === 'system'} onclick={() => pickTheme('system')}>Système</button>
-			<button type="button" class:on={themePref === 'light'} onclick={() => pickTheme('light')}>Clair</button>
-			<button type="button" class:on={themePref === 'dark'} onclick={() => pickTheme('dark')}>Sombre</button>
-		</div>
-	</section>
-
-	<section class="card block">
-		<h3>Couleur d’accent</h3>
-		<p class="hint">Par défaut, suit la couleur choisie par l’admin de l’espace. Force ta propre couleur (ou le mode RGB) si tu préfères, sur tous les espaces.</p>
-		{#if form?.accentPrefOk}<div class="flash ok">Préférence enregistrée ✓</div>{/if}
-		<form method="POST" action="?/accentPref" use:enhance>
+		</section>
+	{:else if tab === 'securite'}
+		<section class="card block">
+			<h3>Mot de passe</h3>
+			<p class="hint">Change ton mot de passe de connexion.</p>
+			{#if form?.pwOk}<div class="flash ok">Mot de passe changé ✓</div>{/if}
+			{#if form?.pwError}<div class="flash error">{form.pwError}</div>{/if}
+			<form method="POST" action="?/changePassword" use:enhance>
+				<PasswordField id="cpw" name="currentPassword" label="Mot de passe actuel" autocomplete="current-password" required />
+				<PasswordField id="npw" name="password" label="Nouveau mot de passe" placeholder="8 caractères minimum" autocomplete="new-password" required />
+				<PasswordField id="ncf" name="confirm" label="Confirmer le nouveau mot de passe" autocomplete="new-password" required />
+				<button class="btn btn-primary" type="submit">Changer le mot de passe</button>
+			</form>
+		</section>
+	{:else if tab === 'apparence'}
+		<section class="card block">
+			<h3>Thème</h3>
+			<p class="hint">Apparence de l’interface. « Système » suit le réglage de ton appareil.</p>
 			<div class="seg">
-				<button type="button" class:on={!accentOverride} onclick={() => (accentOverride = false)}>Suivre l’espace</button>
-				<button type="button" class:on={accentOverride} onclick={() => (accentOverride = true)}>Personnaliser</button>
+				<button type="button" class:on={themePref === 'system'} onclick={() => pickTheme('system')}>Système</button>
+				<button type="button" class:on={themePref === 'light'} onclick={() => pickTheme('light')}>Clair</button>
+				<button type="button" class:on={themePref === 'dark'} onclick={() => pickTheme('dark')}>Sombre</button>
 			</div>
-			{#if accentOverride}
-				<div style="margin-top:14px;">
-					<AccentPicker bind:color={accentColor} bind:rgbMode={accentRgb} presets={PRESETS} />
+		</section>
+
+		<section class="card block">
+			<h3>Couleur d’accent</h3>
+			<p class="hint">Par défaut, suit la couleur choisie par l’admin de l’espace. Force ta propre couleur (ou le mode RGB) si tu préfères, sur tous les espaces.</p>
+			{#if form?.accentPrefOk}<div class="flash ok">Préférence enregistrée ✓</div>{/if}
+			<form method="POST" action="?/accentPref" use:enhance>
+				<div class="seg">
+					<button type="button" class:on={!accentOverride} onclick={() => (accentOverride = false)}>Suivre l’espace</button>
+					<button type="button" class:on={accentOverride} onclick={() => (accentOverride = true)}>Personnaliser</button>
 				</div>
-			{/if}
-			<input type="hidden" name="mode" value={!accentOverride ? 'WORKSPACE' : accentRgb ? 'RGB' : 'CUSTOM'} />
-			<input type="hidden" name="color" value={accentColor} />
-			<button class="btn btn-primary" type="submit" style="margin-top:14px;">Enregistrer</button>
-		</form>
-	</section>
+				{#if accentOverride}
+					<div style="margin-top:14px;">
+						<AccentPicker bind:color={accentColor} bind:rgbMode={accentRgb} presets={PRESETS} />
+					</div>
+				{/if}
+				<input type="hidden" name="mode" value={!accentOverride ? 'WORKSPACE' : accentRgb ? 'RGB' : 'CUSTOM'} />
+				<input type="hidden" name="color" value={accentColor} />
+				<button class="btn btn-primary" type="submit" style="margin-top:14px;">Enregistrer</button>
+			</form>
+		</section>
+	{/if}
 </div>
 
 <style>
 	.settings {
 		max-width: 680px;
+	}
+	.tabs {
+		display: inline-flex;
+		gap: 2px;
+		padding: 3px;
+		border-radius: 30px;
+		background: var(--surface-sunk);
+		border: 1px solid var(--border);
+		margin-bottom: 18px;
+	}
+	.tabs button {
+		padding: 8px 18px;
+		border-radius: 30px;
+		font-size: 13px;
+		font-weight: 600;
+		color: var(--text-mute);
+	}
+	.tabs button.on {
+		background: var(--surface);
+		color: var(--text);
+		box-shadow: var(--shadow-sm);
 	}
 	.block {
 		padding: 22px;

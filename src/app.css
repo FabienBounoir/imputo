@@ -569,6 +569,29 @@ select {
 	background: var(--surface);
 }
 
+.pw-field {
+	position: relative;
+}
+.pw-field input {
+	padding-right: 42px;
+}
+.pw-toggle {
+	position: absolute;
+	right: 2px;
+	top: 50%;
+	transform: translateY(-50%);
+	background: none;
+	border: none;
+	cursor: pointer;
+	font-size: 15px;
+	padding: 6px 10px;
+	line-height: 1;
+	color: var(--text-mute);
+}
+.pw-toggle:hover {
+	color: var(--text);
+}
+
 .flash {
 	padding: 11px 14px;
 	border-radius: var(--r-md);
