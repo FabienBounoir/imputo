@@ -1,0 +1,16 @@
+# Configuration non sensible de l'application. Voir .env.example à la racine du projet pour
+# la liste complète et la description de chaque variable.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: imputo-config
+  labels:
+    app: imputo
+data:
+  MAGIC_LINK_TTL: '7d'
+  ARCHIVE_RETENTION: '30d'
+  # À ajuster une fois le host de la Route connu (voir `oc get route imputo`).
+  PUBLIC_BASE_URL: 'https://CHANGEME.apps.example.com'
+  ORIGIN: 'https://CHANGEME.apps.example.com'
+  VAPID_SUBJECT: 'mailto:admin@imputo.app'
+  NOTIF_RAE_STALE_DAYS: '7'

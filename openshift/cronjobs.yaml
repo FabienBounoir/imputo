@@ -1,0 +1,143 @@
+# Jobs planifiés décrits dans README.md (§ Déploiement portable) — appelés ici via le Service
+# ClusterIP interne "imputo" (pas la Route publique), authentifiés par CRON_SECRET.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: imputo-cron-cleanup
+  labels:
+    app: imputo
+spec:
+  schedule: '0 3 * * *'
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 60
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: curl
+              image: curlimages/curl:latest
+              args:
+                - -fsS
+                - --max-time
+                - '30'
+                - -X
+                - POST
+                - -H
+                - Authorization: Bearer $(CRON_SECRET)
+                - http://imputo:3000/api/jobs/cleanup
+              env:
+                - name: CRON_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: imputo-secrets
+                      key: CRON_SECRET
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: imputo-cron-snapshot
+  labels:
+    app: imputo
+spec:
+  schedule: '0 2 * * *'
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 60
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: curl
+              image: curlimages/curl:latest
+              args:
+                - -fsS
+                - --max-time
+                - '30'
+                - -X
+                - POST
+                - -H
+                - Authorization: Bearer $(CRON_SECRET)
+                - http://imputo:3000/api/jobs/snapshot
+              env:
+                - name: CRON_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: imputo-secrets
+                      key: CRON_SECRET
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: imputo-cron-notify-morning
+  labels:
+    app: imputo
+spec:
+  schedule: '0 8 * * *'
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 60
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: curl
+              image: curlimages/curl:latest
+              args:
+                - -fsS
+                - --max-time
+                - '30'
+                - -X
+                - POST
+                - -H
+                - Authorization: Bearer $(CRON_SECRET)
+                - 'http://imputo:3000/api/jobs/notify?kind=morning'
+              env:
+                - name: CRON_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: imputo-secrets
+                      key: CRON_SECRET
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: imputo-cron-notify-evening
+  labels:
+    app: imputo
+spec:
+  schedule: '0 18 * * *'
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 60
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: curl
+              image: curlimages/curl:latest
+              args:
+                - -fsS
+                - --max-time
+                - '30'
+                - -X
+                - POST
+                - -H
+                - Authorization: Bearer $(CRON_SECRET)
+                - 'http://imputo:3000/api/jobs/notify?kind=evening'
+              env:
+                - name: CRON_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: imputo-secrets
+                      key: CRON_SECRET
+# Variante hebdomadaire (?kind=weekly), à dupliquer si besoin avec un schedule du type
+# '0 8 * * 1' (chaque lundi matin) :
+#
+# apiVersion: batch/v1
+# kind: CronJob
+# metadata:
+#   name: imputo-cron-notify-weekly
+# spec:
+#   schedule: '0 8 * * 1'
+#   ...

@@ -1,0 +1,91 @@
+# PostgreSQL pour l'environnement OpenShift. Utilise l'image Red Hat "registry.redhat.io/
+# rhel9/postgresql-16" (pas postgres:16-alpine comme en local) : cette image est conçue pour
+# tourner sous l'UID arbitraire / groupe 0 imposé par la SCC "restricted" par défaut d'OpenShift,
+# contrairement à l'image Docker Hub officielle dont les scripts d'initdb exigent d'être root
+# ou l'UID "postgres" propriétaire du volume.
+# Si registry.redhat.io n'est pas accessible depuis votre cluster, utiliser en repli :
+#   quay.io/sclorg/postgresql-16-c9s
+apiVersion: v1
+kind: Secret
+metadata:
+  name: imputo-db-secret
+  labels:
+    app: imputo-db
+type: Opaque
+stringData:
+  # Remplacer avant déploiement — doit correspondre à la valeur DATABASE_URL du secret
+  # imputo-secrets (postgres://<user>:<password>@imputo-db:5432/<db>).
+  POSTGRESQL_USER: imputo
+  POSTGRESQL_PASSWORD: 'CHANGEME-generate-a-random-password'
+  POSTGRESQL_DATABASE: imputo
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: imputo-db
+  labels:
+    app: imputo-db
+spec:
+  clusterIP: None
+  selector:
+    app: imputo-db
+  ports:
+    - name: postgresql
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: imputo-db
+  labels:
+    app: imputo-db
+spec:
+  serviceName: imputo-db
+  replicas: 1
+  selector:
+    matchLabels:
+      app: imputo-db
+  template:
+    metadata:
+      labels:
+        app: imputo-db
+    spec:
+      containers:
+        - name: postgresql
+          image: 'registry.redhat.io/rhel9/postgresql-16'
+          ports:
+            - containerPort: 5432
+              protocol: TCP
+          envFrom:
+            - secretRef:
+                name: imputo-db-secret
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/pgsql/data
+          readinessProbe:
+            exec:
+              command: ['/usr/libexec/check-container']
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ['/usr/libexec/check-container', '--live']
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ['ReadWriteOnce']
+        resources:
+          requests:
+            # À ajuster selon le volume de données attendu.
+            storage: 5Gi
