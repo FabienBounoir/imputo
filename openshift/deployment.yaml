@@ -43,6 +43,14 @@ spec:
               port: 3000
             initialDelaySeconds: 5
             periodSeconds: 10
+          # Couvre le temps de migrate.js au boot (cf. Dockerfile) avant que le port 3000
+          # ne soit ouvert ; tant qu'elle n'a pas réussi, liveness/readiness ne tuent pas le pod.
+          startupProbe:
+            httpGet:
+              path: /
+              port: 3000
+            failureThreshold: 30
+            periodSeconds: 10
           livenessProbe:
             httpGet:
               path: /
