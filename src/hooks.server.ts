@@ -24,7 +24,9 @@ export const handle: Handle = async ({ event, resolve }) => {
 				id: user.id,
 				displayName: user.displayName,
 				email: user.email,
-				themePref: user.themePref
+				themePref: user.themePref,
+				accentMode: user.accentMode,
+				accentColor: user.accentColor
 			};
 
 			const memberships = await listMembershipsForUser(user.id);

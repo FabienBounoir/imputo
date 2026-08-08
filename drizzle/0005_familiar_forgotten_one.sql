@@ -1,0 +1,2 @@
+ALTER TABLE "workspace" ADD COLUMN "ppr_ratio" numeric(3, 2) DEFAULT '0.90' NOT NULL;--> statement-breakpoint
+ALTER TABLE "workspace" ADD COLUMN "imputation_step" numeric(3, 2) DEFAULT '0.25' NOT NULL;

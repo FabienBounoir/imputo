@@ -1,56 +1,126 @@
 <script lang="ts">
-	import { dayName, dayNum, parseISODate, toISODate } from '$lib/utils/date';
-	import { onMount, tick } from 'svelte';
+	import {
+		dayName,
+		dayNum,
+		parseISODate,
+		isPublicHolidayFR,
+		todayInParis,
+		isoWeek,
+		GRANULARITIES,
+		GRANULARITY_LABELS,
+		type Granularity,
+		type PeriodMode
+	} from '$lib/utils/date';
+	import { tick } from 'svelte';
 	import { goto, afterNavigate } from '$app/navigation';
 	import ExportModal from '$lib/components/ExportModal.svelte';
+	import TargetPicker from '$lib/components/TargetPicker.svelte';
+	import { ABSENCE_TYPE_COLORS, ABSENCE_TYPE_LABELS, ABSENCE_PERIOD_LABELS } from '$lib/absenceTypes';
 
 	let { data } = $props();
 
 	type Row = {
 		rowKey: string;
-		targetType: 'TICKET' | 'CATEGORY';
+		targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE';
 		targetId: string;
 		activityId: string | null;
 		label: string;
 		sublabel: string;
 		emoji: string | null;
 		nonProductive: boolean;
+		sprintName: string | null;
+		versionName: string | null;
+		raeReal: number | null;
 		amounts: Record<string, number>;
 	};
 
-	const CYCLE = [0, 0.25, 0.5, 0.75, 1];
+	const TASK_COL_W = 320;
+	const RAE_COL_W = 74;
+	const DAY_COL_W = 68;
+	const SUM_COL_W = 72;
 
-	let rows = $state<Row[]>([]);
-	let currentMonday = $state('');
-
-	// (Re)synchronise les lignes quand la semaine change.
-	$effect(() => {
-		if (data.week.mondayISO !== currentMonday) {
-			currentMonday = data.week.mondayISO;
-			rows = data.week.rows.map((r) => ({ ...r, amounts: { ...r.amounts } }));
-		}
-	});
-
-	const today = toISODate(new Date());
-
-	let dayTotals = $derived.by(() => {
-		const t: Record<string, number> = Object.fromEntries(data.week.days.map((d) => [d, 0]));
-		for (const r of rows) for (const d of data.week.days) t[d] = round(t[d] + (r.amounts[d] ?? 0));
-		return t;
-	});
-	let weekTotal = $derived(round(Object.values(dayTotals).reduce((a, b) => a + b, 0)));
-	let productive = $derived.by(() => {
-		let s = 0;
-		for (const r of rows) if (!r.nonProductive) for (const d of data.week.days) s += r.amounts[d] ?? 0;
-		return round(s);
-	});
-
+	// Pas de saisie (§7 admin) : ex. 0.25 → [0, .25, .5, .75, 1] ; 0.5 → [0, .5, 1]. Jamais
+	// figé sur .25, sinon un espace qui règle un autre pas ne change rien à la saisie réelle.
 	function round(n: number) {
 		return Math.round((n + Number.EPSILON) * 100) / 100;
 	}
+	let CYCLE = $derived.by(() => {
+		const step = data.imputationStep > 0 ? data.imputationStep : 0.25;
+		const n = Math.max(1, Math.round(1 / step));
+		return Array.from({ length: n + 1 }, (_, i) => round(i * step));
+	});
+	let KEYMAP = $derived.by(() => {
+		const map: Record<string, number> = { '0': 0 };
+		CYCLE.filter((v) => v > 0).forEach((v, i) => {
+			if (i < 9) map[String(i + 1)] = v;
+		});
+		return map;
+	});
+
+	let rows = $state<Row[]>([]);
+	let currentKey = $state('');
+
+	// (Re)synchronise les lignes quand la plage affichée — ou le membre consulté — change. Le
+	// membre fait partie de la clé : `?u=` conserve l'ancre, sans lui on garderait à l'écran les
+	// lignes de la personne précédente avec les totaux de la nouvelle.
+	const sheetKey = $derived(`${data.period.rangeKey}|${data.viewedId}`);
+	$effect(() => {
+		if (sheetKey !== currentKey) {
+			currentKey = sheetKey;
+			rows = data.sheet.rows.map((r) => ({ ...r, amounts: { ...r.amounts } }));
+		}
+	});
+
+	// Clic sur le sprint/version d'une ligne ticket : va sur Tickets & chiffrage filtré sur ce
+	// sprint/version, avec le ticket d'origine mis en surbrillance dans la liste.
+	function goToTicketFilter(row: Row, kind: 'sprint' | 'version') {
+		const t = data.tickets.find((x) => x.id === row.targetId);
+		if (!t) return;
+		const id = kind === 'sprint' ? t.sprintId : t.versionId;
+		if (!id) return;
+		goto(`/tickets?${kind}=${id}&highlight=${encodeURIComponent(t.key)}`);
+	}
+
+	const today = todayInParis();
+	const days = $derived(data.period.days);
+
+	let dayTotals = $derived.by(() => {
+		const t: Record<string, number> = Object.fromEntries(days.map((d) => [d, 0]));
+		for (const r of rows) for (const d of days) t[d] = round(t[d] + (r.amounts[d] ?? 0));
+		return t;
+	});
+	let periodTotal = $derived(round(Object.values(dayTotals).reduce((a, b) => a + b, 0)));
+	// Capacité attendue = capacité/jour × jours ouvrés non fériés de la période (miroir de
+	// calc.ts:weeklyCapacity/capacityPct côté serveur — dupliqué ici car $lib/server n'est pas
+	// importable côté client, cf. le même motif pour totalEst/ecartExecution dans tickets/+page.svelte).
+	let periodWorkdays = $derived(days.filter((d) => !isPublicHolidayFR(d)).length);
+	let periodCapacity = $derived(round(data.capacity * periodWorkdays));
+	let capacityPct = $derived(periodCapacity > 0 ? round(periodTotal / periodCapacity) : 0);
+	let productive = $derived.by(() => {
+		let s = 0;
+		for (const r of rows) if (!r.nonProductive) for (const d of days) s += r.amounts[d] ?? 0;
+		return round(s);
+	});
+
+	// Détail par semaine : sur un mois, un total global à 100 % peut masquer une semaine à 60 % et
+	// une à 140 %. C'est ce découpage qui rend la vue longue actionnable.
+	let weekStats = $derived.by(() =>
+		data.period.weeks.map((w) => {
+			let total = 0;
+			for (const r of rows) for (const d of w.days) total += r.amounts[d] ?? 0;
+			const capacity = round(data.capacity * w.days.filter((d) => !isPublicHolidayFR(d)).length);
+			return { ...w, total: round(total), capacity, over: capacity > 0 && total > capacity };
+		})
+	);
+	let multiWeek = $derived(data.period.weeks.length > 1);
+	// En vue longue, l'alerte porte sur une semaine en dépassement, pas sur le cumul de la période.
+	let overCapacity = $derived(multiWeek ? weekStats.some((w) => w.over) : capacityPct > 1);
+	// Dernier jour de chaque semaine : sépare visuellement les blocs quand la période en couvre plusieurs.
+	let weekBoundaries = $derived(new Set(data.period.weeks.slice(0, -1).map((w) => w.days[w.days.length - 1])));
+
 	function fmt(n: number | undefined) {
 		if (!n) return '·';
-		return n === 1 ? '1' : String(n).replace(/^0/, '');
+		return String(n);
 	}
 
 	async function setAmount(row: Row, day: string, value: number) {
@@ -71,30 +141,81 @@
 	}
 
 	// --- Saisie clavier ---
-	const KEYMAP: Record<string, number> = { '1': 0.25, '2': 0.5, '3': 0.75, '4': 1, '0': 0 };
 	const MOVES: Record<string, [number, number]> = {
 		ArrowRight: [0, 1],
 		ArrowLeft: [0, -1],
 		ArrowDown: [1, 0],
 		ArrowUp: [-1, 0]
 	};
-	function focusCell(ri: number, di: number, preventScroll = false) {
-		if (ri < 0 || ri >= rows.length || di < 0 || di >= data.week.days.length) return;
-		document.querySelector<HTMLElement>(`[data-cell="${ri}-${di}"]`)?.focus({ preventScroll });
+	let scroller: HTMLDivElement | null = $state(null);
+	// Le RAE se saisit sur ses propres lignes : rien à afficher en consultation d'un autre membre.
+	const showRae = $derived(!data.readOnly);
+	const tableMinWidth = $derived(
+		TASK_COL_W + (showRae ? RAE_COL_W : 0) + days.length * DAY_COL_W + SUM_COL_W
+	);
+
+	/**
+	 * Ramène une cellule dans la zone réellement visible du défilement horizontal. Le scroll natif
+	 * de `focus()` ignore les colonnes figées et garerait volontiers la cellule *sous* le bloc
+	 * gauche (tâche + RAE) ou sous la colonne Σ — d'où `preventScroll` partout et ce calcul.
+	 */
+	function ensureCellVisibleX(el: HTMLElement) {
+		if (!scroller) return;
+		const leftFrozen = TASK_COL_W + (showRae ? RAE_COL_W : 0);
+		const rightFrozen = SUM_COL_W;
+		const min = el.offsetLeft + el.offsetWidth - (scroller.clientWidth - rightFrozen);
+		const max = el.offsetLeft - leftFrozen;
+		if (scroller.scrollLeft > max) scroller.scrollLeft = max;
+		else if (scroller.scrollLeft < min) scroller.scrollLeft = min;
 	}
 
-	// Au chargement, place le focus sur la colonne du jour courant pour activer
-	// la navigation aux flèches sans avoir à cliquer (sans faire défiler la page).
-	onMount(() => {
-		if (data.readOnly || rows.length === 0) return;
-		const di = data.week.days.indexOf(today);
-		focusCell(0, di >= 0 ? di : 0, true);
+	function focusCell(ri: number, di: number) {
+		if (ri < 0 || ri >= rows.length || di < 0 || di >= days.length) return;
+		const el = document.querySelector<HTMLElement>(`[data-cell="${ri}-${di}"]`);
+		if (!el) return;
+		el.focus({ preventScroll: true });
+		ensureCellVisibleX(el);
+	}
+
+	// Cadre la période sur aujourd'hui (ou sur sa fin si elle est passée) et pose le focus pour
+	// activer la navigation aux flèches sans clic. Dans un $effect, pas un onMount : le cadrage
+	// doit rejouer à chaque changement de période.
+	let framedKey = $state('');
+	$effect(() => {
+		const key = data.period.rangeKey;
+		// Garde sur la clé : l'ajout d'une ligne ne doit pas re-cadrer la table sous les doigts.
+		if (!scroller || framedKey === key) return;
+		framedKey = key;
+		const di = days.indexOf(today);
+		const cell = scroller.querySelector<HTMLElement>(`[data-day="${di >= 0 ? today : days[days.length - 1]}"]`);
+		if (cell) scroller.scrollLeft = Math.max(0, cell.offsetLeft - TASK_COL_W - (showRae ? RAE_COL_W : 0) - 40);
+		if (!data.readOnly && rows.length > 0 && !pendingFocus) focusCell(0, di >= 0 ? di : 0);
 	});
 
-	// Préserve le membre consulté (?u=) lors de la navigation entre semaines.
-	const uSuffix = $derived(data.readOnly ? `&u=${data.viewedId}` : '');
+	function periodHref(anchor: string, over: { g?: string; mode?: string } = {}) {
+		const p = new URLSearchParams({
+			w: anchor,
+			g: over.g ?? data.period.granularity,
+			mode: over.mode ?? data.period.mode
+		});
+		if (data.readOnly) p.set('u', data.viewedId);
+		return `?${p}`;
+	}
 	function viewMember(id: string) {
-		goto(id === data.selfId ? `?w=${data.week.mondayISO}` : `?w=${data.week.mondayISO}&u=${id}`);
+		const p = new URLSearchParams({
+			w: data.period.anchorISO,
+			g: data.period.granularity,
+			mode: data.period.mode
+		});
+		if (id !== data.selfId) p.set('u', id);
+		goto(`?${p}`);
+	}
+	// Changement de granularité/mode : on reste sur aujourd'hui s'il est dans la période, sinon on
+	// garde son point d'entrée — sans quoi passer en « mois » depuis une semaine de fin de mois
+	// n'atterrirait pas sur le mois attendu.
+	function setPeriod(over: { g?: string; mode?: string }) {
+		const anchor = days.includes(today) ? today : data.period.firstDay;
+		goto(periodHref(anchor, over), { noScroll: true });
 	}
 	function onCellKey(e: KeyboardEvent, ri: number, di: number, row: Row, day: string) {
 		if (e.key in KEYMAP) {
@@ -105,10 +226,10 @@
 			setAmount(row, day, 0);
 		} else if (e.key === 'ArrowLeft' && di === 0) {
 			e.preventDefault();
-			changeWeek('prev', ri);
-		} else if (e.key === 'ArrowRight' && di === data.week.days.length - 1) {
+			changePeriod('prev', ri);
+		} else if (e.key === 'ArrowRight' && di === days.length - 1) {
 			e.preventDefault();
-			changeWeek('next', ri);
+			changePeriod('next', ri);
 		} else if (e.key in MOVES) {
 			e.preventDefault();
 			const [dr, dc] = MOVES[e.key];
@@ -116,12 +237,12 @@
 		}
 	}
 
-	// Navigation clavier entre semaines : on garde la ligne et on vise le bord opposé.
+	// Navigation clavier entre périodes : on garde la ligne et on vise le bord opposé.
 	let pendingFocus: { ri: number; side: 'first' | 'last' } | null = null;
-	function changeWeek(dir: 'prev' | 'next', ri: number) {
+	function changePeriod(dir: 'prev' | 'next', ri: number) {
 		pendingFocus = { ri, side: dir === 'prev' ? 'last' : 'first' };
-		const w = dir === 'prev' ? data.prevWeek : data.nextWeek;
-		goto(`?w=${w}${uSuffix}`, { keepFocus: true, noScroll: true });
+		const anchor = dir === 'prev' ? data.period.prevAnchor : data.period.nextAnchor;
+		goto(periodHref(anchor), { keepFocus: true, noScroll: true });
 	}
 	afterNavigate(async () => {
 		if (!pendingFocus) return;
@@ -129,49 +250,147 @@
 		pendingFocus = null;
 		await tick(); // attendre la resynchro des lignes + le rendu
 		if (rows.length === 0) return;
-		const di = side === 'last' ? data.week.days.length - 1 : 0;
-		focusCell(Math.min(Math.max(0, ri), rows.length - 1), di, true);
+		const di = side === 'last' ? days.length - 1 : 0;
+		focusCell(Math.min(Math.max(0, ri), rows.length - 1), di);
 	});
 
 	// --- Ajout de ligne ---
 	let pickTarget = $state('');
 	let pickActivity = $state('');
+	let confirmDelete = $state<Row | null>(null);
+
+	async function doDeleteRow() {
+		const row = confirmDelete;
+		if (!row) return;
+		confirmDelete = null;
+		rows = rows.filter((r) => r.rowKey !== row.rowKey); // optimiste
+		const body = new FormData();
+		body.set('targetType', row.targetType);
+		body.set('targetId', row.targetId);
+		if (row.activityId) body.set('activityId', row.activityId);
+		// Le serveur reconstruit la plage depuis ces trois champs : `fetch('?/…')` perd la query string.
+		body.set('anchor', data.period.anchorISO);
+		body.set('g', data.period.granularity);
+		body.set('mode', data.period.mode);
+		await fetch('?/deleteRow', { method: 'POST', body });
+	}
+
+	// Anti-rafale pour le champ RAE (spinner/molette) : chaque pas déclenche un onchange, donc sans
+	// ça une ligne d'historique par pas — on attend que ça se stabilise avant d'enregistrer (même
+	// principe que l'onglet « Tickets & chiffrage »).
+	const pendingRaeSaves = new Map<string, ReturnType<typeof setTimeout>>();
+
+	/** RAE d'une ligne ticket + activité — même endpoint que l'onglet « Tickets & chiffrage ». */
+	async function saveRae(row: Row, value: number) {
+		if (!row.activityId) return;
+		row.raeReal = value; // optimiste
+		const key = `${row.targetId}-${row.activityId}`;
+		clearTimeout(pendingRaeSaves.get(key));
+		pendingRaeSaves.set(
+			key,
+			setTimeout(async () => {
+				pendingRaeSaves.delete(key);
+				await fetch(`/api/tickets/${row.targetId}/activity-rae`, {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ activityId: row.activityId, field: 'raeReal', value })
+				});
+			}, 600)
+		);
+	}
+
+	function buildRow(targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE', targetId: string, activityId: string | null): Row {
+		const rowKey = `${targetType}:${targetId}:${activityId ?? ''}`;
+		let label = '';
+		let sublabel = '';
+		let emoji = '🎫';
+		let nonProductive = false;
+		let sprintName: string | null = null;
+		if (targetType === 'TICKET') {
+			const t = data.tickets.find((x) => x.id === targetId);
+			label = t?.title ?? '—';
+			sublabel = t?.key ?? '';
+			sprintName = t?.sprintName ?? null;
+		} else if (targetType === 'CATEGORY') {
+			const c = data.categories.find((x) => x.id === targetId);
+			label = c?.label ?? '—';
+			nonProductive = c?.kind === 'NON_PRODUCTIVE';
+			emoji = nonProductive ? '🌴' : '🛟';
+			sublabel = 'Catégorie';
+		} else {
+			const o = data.weeklyObjectives.find((x) => x.id === targetId);
+			label = o?.label ?? '—';
+			emoji = '📝';
+			sublabel = 'Tâche assignée';
+		}
+		const act = data.activities.find((a) => a.id === activityId);
+		if (act) sublabel += ` · ${act.label}`;
+		// versionName / raeReal ne sont pas connus côté client : la ligne n'existe pas encore en base,
+		// ils se peupleront au prochain chargement (le RAE part vide et la première saisie l'écrit).
+		return {
+			rowKey,
+			targetType,
+			targetId,
+			activityId,
+			label,
+			sublabel,
+			emoji,
+			nonProductive,
+			sprintName,
+			versionName: null,
+			raeReal: targetType === 'TICKET' && activityId ? 0 : null,
+			amounts: {}
+		};
+	}
 
 	function addRow() {
 		if (!pickTarget) return;
-		const [targetType, targetId] = pickTarget.split('::') as ['TICKET' | 'CATEGORY', string];
+		const [targetType, targetId] = pickTarget.split('::') as ['TICKET' | 'CATEGORY' | 'OBJECTIVE', string];
 		const activityId = pickActivity || null;
 		const rowKey = `${targetType}:${targetId}:${activityId ?? ''}`;
 		if (rows.some((r) => r.rowKey === rowKey)) {
 			pickTarget = '';
 			return;
 		}
-		let label = '';
-		let sublabel = '';
-		let emoji = '🎫';
-		let nonProductive = false;
-		if (targetType === 'TICKET') {
-			const t = data.tickets.find((x) => x.id === targetId);
-			label = t?.title ?? '—';
-			sublabel = t?.key ?? '';
-		} else {
-			const c = data.categories.find((x) => x.id === targetId);
-			label = c?.label ?? '—';
-			nonProductive = c?.kind === 'NON_PRODUCTIVE';
-			emoji = nonProductive ? '🌴' : '🛟';
-			sublabel = 'Catégorie';
-		}
-		const act = data.activities.find((a) => a.id === activityId);
-		if (act) sublabel += ` · ${act.label}`;
-		rows = [...rows, { rowKey, targetType, targetId, activityId, label, sublabel, emoji, nonProductive, amounts: {} }];
+		rows = [...rows, buildRow(targetType, targetId, activityId)];
 		pickTarget = '';
 		pickActivity = '';
+	}
+
+	// Ajout en un clic depuis le bandeau de rappel (contourne le picker).
+	function quickAddObjective(o: (typeof data.weeklyObjectives)[number]) {
+		const targetType: 'TICKET' | 'OBJECTIVE' = o.kind === 'TICKET' ? 'TICKET' : 'OBJECTIVE';
+		const targetId = o.kind === 'TICKET' ? (o.ticketId ?? '') : o.id;
+		if (!targetId || rows.some((r) => r.targetType === targetType && r.targetId === targetId)) return;
+		rows = [...rows, buildRow(targetType, targetId, o.activityId ?? null)];
 	}
 </script>
 
 <div class="topbar">
-	<h1>{data.readOnly ? 'Imputation' : 'Mon imputation'}<small>Semaine {data.weekNumber} · {data.weekLabel}</small></h1>
+	<h1>{data.readOnly ? 'Imputation' : 'Mon imputation'}<small>{data.period.label}</small></h1>
+	{#if data.vacationWeeks.length > 0}
+		<span class="vac-badge">
+			🏖 En vacances
+			{#if multiWeek && data.vacationWeeks.length < data.period.weeks.length}
+				{data.vacationWeeks.map((w) => `S${isoWeek(parseISODate(w))}`).join(', ')}
+			{/if}
+		</span>
+	{/if}
 	<div class="spacer"></div>
+	<div class="periodpick">
+		<div class="seg">
+			{#each GRANULARITIES as g (g)}
+				<button class:on={data.period.granularity === g} onclick={() => setPeriod({ g })}>{GRANULARITY_LABELS[g]}</button>
+			{/each}
+		</div>
+		{#if data.period.granularity !== 'WEEK'}
+			<div class="seg">
+				{#each [['FIXED', 'Fixe'], ['ROLLING', 'Glissant']] as [m, lab] (m)}
+					<button class:on={data.period.mode === m} onclick={() => setPeriod({ mode: m })}>{lab}</button>
+				{/each}
+			</div>
+		{/if}
+	</div>
 	{#if data.isAdmin}
 		<select class="member-pick" value={data.viewedId} onchange={(e) => viewMember(e.currentTarget.value)} aria-label="Voir l'imputation de">
 			<option value={data.selfId}>Mon imputation</option>
@@ -182,11 +401,11 @@
 		<ExportModal label="Exporter Excel" buttonClass="btn btn-ghost" />
 	{/if}
 	<div class="wknav">
-		<a class="wkbtn" href="?w={data.prevWeek}{uSuffix}" aria-label="Semaine précédente">
+		<a class="wkbtn" href={periodHref(data.period.prevAnchor)} aria-label="Période précédente">
 			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m15 18-6-6 6-6"/></svg>
 		</a>
-		<span class="cur">S{data.weekNumber}</span>
-		<a class="wkbtn" href="?w={data.nextWeek}{uSuffix}" aria-label="Semaine suivante">
+		<span class="cur">{data.period.shortLabel}</span>
+		<a class="wkbtn" href={periodHref(data.period.nextAnchor)} aria-label="Période suivante">
 			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m9 18 6-6-6-6"/></svg>
 		</a>
 	</div>
@@ -198,8 +417,8 @@
 	{/if}
 	<div class="summary">
 		<div class="card stat">
-			<div class="k">Saisi cette semaine</div>
-			<div class="v tabnum">{weekTotal} <small>j</small></div>
+			<div class="k">Saisi · {data.period.shortLabel}</div>
+			<div class="v tabnum">{periodTotal} <small>j</small></div>
 		</div>
 		<div class="card stat">
 			<div class="k">Productif (projet)</div>
@@ -209,22 +428,95 @@
 			<div class="k">Capacité / jour</div>
 			<div class="v tabnum">{data.capacity} <small>j</small></div>
 		</div>
+		<div class="card stat" class:warn-stat={overCapacity}>
+			<div class="k">% de capacité ({GRANULARITY_LABELS[data.period.granularity].toLowerCase()})</div>
+			<div class="v tabnum">{Math.round(capacityPct * 100)} <small>%</small></div>
+			<div class="cap-sub tabnum">{periodTotal} / {periodCapacity} j</div>
+			{#if overCapacity}
+				<div class="cap-warn">⚠ {multiWeek ? 'Une semaine en dépassement' : 'Dépassement — reste possible'}</div>
+			{/if}
+		</div>
 	</div>
 
+	{#if multiWeek}
+		<div class="wkstrip">
+			{#each weekStats as w (w.mondayISO)}
+				<span class="wkchip" class:over={w.over}>
+					<b>S{w.weekNumber}</b> <span class="tabnum">{w.total}</span> / {w.capacity} j{w.over ? ' ⚠' : ''}
+				</span>
+			{/each}
+		</div>
+	{/if}
+
+	{#if data.weeklyObjectives.length > 0}
+		<div class="card reminder-card">
+			<div class="reminder-head">🎯 Attribué sur cette période</div>
+			<div class="reminder-list">
+				{#each data.weeklyObjectives as o, i (o.id)}
+					{@const targetType = o.kind === 'TICKET' ? 'TICKET' : 'OBJECTIVE'}
+					{@const targetId = o.kind === 'TICKET' ? o.ticketId : o.id}
+					{@const already = rows.some((r) => r.targetType === targetType && r.targetId === targetId)}
+					{#if multiWeek && o.weekMonday !== data.weeklyObjectives[i - 1]?.weekMonday}
+						<div class="reminder-week">S{isoWeek(parseISODate(o.weekMonday))}</div>
+					{/if}
+					<div class="reminder-item" class:done={already}>
+						<span class="reminder-label">
+							{o.kind === 'TICKET' ? '🎫' : '📝'}
+							{o.kind === 'TICKET' ? `${o.ticketKey} — ${o.ticketTitle}` : o.label}
+							{#if o.activityLabel}<span class="tag-activity">{o.activityLabel}</span>{/if}
+						</span>
+						{#if !data.readOnly}
+							{#if already}
+								<span class="reminder-ok">✓ ajouté</span>
+							{:else}
+								<button class="btn btn-ghost reminder-add" onclick={() => quickAddObjective(o)}>+ Ajouter</button>
+							{/if}
+						{/if}
+					</div>
+				{/each}
+			</div>
+		</div>
+	{/if}
+
 	<div class="card grid-card">
-		<table class="imp">
+		<div class="table-scroll" bind:this={scroller}>
+		<table class="imp" class:no-rae={!showRae} style="--imp-min-w: {tableMinWidth}px; --task-w: {TASK_COL_W}px;">
 			<colgroup>
-				<col />
-				{#each data.week.days as d (d)}<col class="col-day" />{/each}
+				<col class="col-task" />
+				{#if showRae}<col class="col-rae" />{/if}
+				{#each days as d (d)}<col class="col-day" />{/each}
 				<col class="col-sum" />
 			</colgroup>
 			<thead>
-				<tr>
+				{#if multiWeek}
+					<tr class="wk-head">
+						<th class="task-h"></th>
+						{#if showRae}<th class="rae-h"></th>{/if}
+						{#each data.period.weeks as w (w.mondayISO)}<th colspan={w.days.length}>S{w.weekNumber}</th>{/each}
+						<th class="sum-h"></th>
+					</tr>
+				{/if}
+				<tr class="day-head" class:below-group={multiWeek}>
 					<th class="task-h">Tâche / catégorie</th>
-					{#each data.week.days as d (d)}
-						<th class:today={d === today}>{dayName(parseISODate(d))}<span class="dnum">{dayNum(parseISODate(d))}</span></th>
+					{#if showRae}<th class="rae-h" title="Reste à engager de la paire ticket + activité">RAE</th>{/if}
+					{#each days as d (d)}
+						{@const abs = data.absences[d]}
+						<th
+							data-day={d}
+							class:today={d === today}
+							class:holiday={isPublicHolidayFR(d)}
+							class:wk-end={weekBoundaries.has(d)}
+							class:absent={!!abs}
+							style={abs ? `--absence-color:${ABSENCE_TYPE_COLORS[abs.type]}` : undefined}
+							title={[
+								isPublicHolidayFR(d) ? 'Jour férié' : '',
+								abs ? `${ABSENCE_TYPE_LABELS[abs.type]}${abs.period !== 'FULL' ? ' — ' + ABSENCE_PERIOD_LABELS[abs.period] : ''}` : ''
+							]
+								.filter(Boolean)
+								.join(' · ')}
+						>{dayName(parseISODate(d))}<span class="dnum">{dayNum(parseISODate(d))}</span></th>
 					{/each}
-					<th>Σ</th>
+					<th class="sum-h">Σ</th>
 				</tr>
 			</thead>
 			<tbody>
@@ -233,11 +525,59 @@
 						<td class="task">
 							<div class="task-cell">
 								<span class="pill">{row.emoji}</span>
-								<div class="tt"><b>{row.label}</b><span>{row.sublabel}</span></div>
+								<div class="tt">
+									<b>{row.label}</b>
+									<span class="sub">
+										{row.sublabel}
+										{#if row.sprintName}
+											<button
+												type="button"
+												class="tag-activity tag-link"
+												onclick={() => goToTicketFilter(row, 'sprint')}
+												title="Voir les tickets du sprint {row.sprintName}"
+											>{row.sprintName}</button>
+										{/if}
+										{#if row.versionName}
+											<button
+												type="button"
+												class="tag-activity tag-link"
+												onclick={() => goToTicketFilter(row, 'version')}
+												title="Voir les tickets de la version {row.versionName}"
+											>{row.versionName}</button>
+										{/if}
+									</span>
+								</div>
+								{#if !data.readOnly}
+									<button class="row-del" onclick={() => (confirmDelete = row)} aria-label="Supprimer la ligne">
+										<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg>
+									</button>
+								{/if}
 							</div>
 						</td>
-						{#each data.week.days as d, di (d)}
-							<td class="day" class:today={d === today}>
+						{#if showRae}
+							<td class="rae">
+								{#if row.targetType === 'TICKET' && row.activityId}
+									<input
+										class="rae-input tabnum"
+										type="number"
+										step="0.25"
+										min="0"
+										value={row.raeReal ?? 0}
+										aria-label="RAE"
+										onchange={(e) => saveRae(row, Number(e.currentTarget.value) || 0)}
+									/>
+								{:else}
+									<span
+										class="rae-na"
+										title={row.targetType === 'TICKET'
+											? 'Sélectionnez une activité sur cette ligne pour saisir le RAE.'
+											: 'Le RAE ne concerne que les tickets.'}
+									>—</span>
+								{/if}
+							</td>
+						{/if}
+						{#each days as d, di (d)}
+							<td class="day" class:today={d === today} class:wk-end={weekBoundaries.has(d)}>
 								{#if data.readOnly}
 									<span class="cell ro" class:val={(row.amounts[d] ?? 0) > 0} class:empty={!(row.amounts[d] ?? 0)}>{fmt(row.amounts[d])}</span>
 								{:else}
@@ -252,36 +592,37 @@
 								{/if}
 							</td>
 						{/each}
-						<td class="sum tabnum">{round(data.week.days.reduce((a, d) => a + (row.amounts[d] ?? 0), 0))}</td>
+						<td class="sum tabnum">{round(days.reduce((a, d) => a + (row.amounts[d] ?? 0), 0))}</td>
 					</tr>
 				{/each}
 				{#if rows.length === 0}
-					<tr><td colspan={data.week.days.length + 2} class="empty-row">{data.readOnly ? 'Aucune imputation cette semaine.' : 'Aucune ligne — ajoutez un ticket ou une catégorie ci-dessous.'}</td></tr>
+					<tr><td colspan={days.length + (showRae ? 3 : 2)} class="empty-row">{data.readOnly ? 'Aucune imputation sur cette période.' : 'Aucune ligne — ajoutez un ticket ou une catégorie ci-dessous.'}</td></tr>
 				{/if}
 			</tbody>
 			<tfoot>
 				<tr>
 					<td class="task foot-lab">Total / jour</td>
-					{#each data.week.days as d (d)}
-						<td><span class="day-tot tabnum" class:over={dayTotals[d] > data.capacity} class:ok={dayTotals[d] > 0 && dayTotals[d] <= data.capacity}>{fmt(dayTotals[d])}</span></td>
+					{#if showRae}<td class="rae"></td>{/if}
+					{#each days as d (d)}
+						<td class:wk-end={weekBoundaries.has(d)}><span class="day-tot tabnum" class:over={dayTotals[d] > data.capacity} class:ok={dayTotals[d] > 0 && dayTotals[d] <= data.capacity}>{fmt(dayTotals[d])}</span></td>
 					{/each}
-					<td class="sum tabnum">{weekTotal}</td>
+					<td class="sum tabnum">{periodTotal}</td>
 				</tr>
 			</tfoot>
 		</table>
+		</div>
 
 		{#if !data.readOnly}
 		<div class="addrow">
 			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-			<select bind:value={pickTarget} aria-label="Choisir une cible">
-				<option value="">Ajouter un ticket ou une catégorie…</option>
-				<optgroup label="Tickets">
-					{#each data.tickets as t (t.id)}<option value="TICKET::{t.id}">{t.key} — {t.title}</option>{/each}
-				</optgroup>
-				<optgroup label="Catégories">
-					{#each data.categories as c (c.id)}<option value="CATEGORY::{c.id}">{c.label}</option>{/each}
-				</optgroup>
-			</select>
+			<TargetPicker
+				bind:value={pickTarget}
+				tickets={data.tickets}
+				categories={data.categories}
+				recentTicketIds={data.recentTicketIds}
+				versions={data.versions}
+				objectives={data.weeklyObjectives}
+			/>
 			<select bind:value={pickActivity} aria-label="Activité (optionnel)">
 				<option value="">Activité (option)</option>
 				{#each data.activities as a (a.id)}<option value={a.id}>{a.label}</option>{/each}
@@ -293,21 +634,52 @@
 
 	<div class="legend">
 		{#if !data.readOnly}
-			<span class="kbd">Clique pour faire défiler <b>·</b> → .25 → .5 → .75 → 1</span>
-			<span class="kbd">Clavier : <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> → .25 / .5 / .75 / 1 · <kbd>0</kbd>/<kbd>Suppr</kbd> vide · <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> naviguer · <kbd>←</kbd>/<kbd>→</kbd> en bord = semaine ±</span>
+			{@const keyEntries = Object.entries(KEYMAP).filter(([k]) => k !== '0')}
+			<span class="kbd">Clique pour faire défiler <b>·</b> → {CYCLE.slice(1).map((v) => fmt(v)).join(' → ')}</span>
+			<span class="kbd">Clavier : {#each keyEntries as [k] (k)}<kbd>{k}</kbd> {/each}→ {keyEntries.map(([, v]) => fmt(v)).join(' / ')} · <kbd>0</kbd>/<kbd>Suppr</kbd> vide · <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> naviguer · <kbd>←</kbd>/<kbd>→</kbd> en bord = période ±</span>
 		{/if}
 	</div>
 </div>
 
+<svelte:window onkeydown={(e) => e.key === 'Escape' && (confirmDelete = null)} />
+
+{#if confirmDelete}
+	{@const row = confirmDelete}
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="modal-backdrop" onclick={() => (confirmDelete = null)}>
+		<div class="modal" onclick={(e) => e.stopPropagation()}>
+			<h3>Supprimer cette ligne ?</h3>
+			<p class="hint">
+				{row.emoji} <b>{row.label}</b>{row.sublabel ? ` — ${row.sublabel}` : ''} — toutes les heures saisies sur
+				<b>{data.period.label}</b> ({data.period.firstDay} → {data.period.lastDay}) pour cette ligne seront supprimées.
+			</p>
+			<div class="modal-actions">
+				<button class="btn btn-ghost" onclick={() => (confirmDelete = null)}>Annuler</button>
+				<button class="btn btn-danger" onclick={doDeleteRow}>🗑 Supprimer</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
 <style>
 	.summary {
 		display: grid;
-		grid-template-columns: repeat(3, 1fr);
+		grid-template-columns: repeat(4, 1fr);
 		gap: 14px;
 		margin-bottom: 18px;
 	}
 	.stat {
 		padding: 16px 18px;
+	}
+	.warn-stat {
+		border-color: #c0392b;
+	}
+	.cap-warn {
+		margin-top: 4px;
+		font-size: 11px;
+		font-weight: 600;
+		color: #c0392b;
 	}
 	.stat .k {
 		font-size: 12px;
@@ -341,6 +713,79 @@
 	.member-pick:focus {
 		outline: none;
 		border-color: var(--accent);
+	}
+	.vac-badge {
+		font-size: 11.5px;
+		font-weight: 600;
+		color: var(--accent-ink);
+		background: var(--accent-tint);
+		padding: 4px 10px;
+		border-radius: 20px;
+		white-space: nowrap;
+	}
+	.reminder-card {
+		padding: 14px 18px;
+		margin-bottom: 16px;
+	}
+	.reminder-head {
+		font-size: 12px;
+		font-weight: 600;
+		color: var(--text-mute);
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		margin-bottom: 10px;
+	}
+	.reminder-list {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+	.reminder-item {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		padding: 6px 4px;
+	}
+	.reminder-item.done {
+		opacity: 0.55;
+	}
+	.reminder-label {
+		font-size: 13.5px;
+		display: flex;
+		align-items: baseline;
+		gap: 7px;
+		min-width: 0;
+	}
+	.tag-activity {
+		display: inline-block;
+		font-size: 11px;
+		font-weight: 600;
+		color: var(--text-soft);
+		background: var(--surface-sunk);
+		padding: 2px 8px;
+		border-radius: 20px;
+		white-space: nowrap;
+	}
+	button.tag-link {
+		font: inherit;
+		border: none;
+		cursor: pointer;
+	}
+	button.tag-link:hover {
+		color: var(--accent-ink);
+		background: color-mix(in srgb, var(--accent) 18%, var(--surface-sunk));
+	}
+	.reminder-ok {
+		font-size: 12px;
+		font-weight: 600;
+		color: var(--accent-ink);
+		flex-shrink: 0;
+	}
+	.reminder-add {
+		flex-shrink: 0;
+		padding: 5px 11px;
+		font-size: 12px;
 	}
 	.ro-banner {
 		display: flex;
@@ -385,19 +830,190 @@
 
 	.grid-card {
 		padding: 6px;
-		overflow: hidden;
+		/* `clip` et non `hidden` : on garde le rognage sur le rayon de la card sans créer de
+		   conteneur de défilement — les cellules sticky doivent se résoudre contre .table-scroll. */
+		overflow: clip;
+	}
+	/* Pas de hauteur bornée : le scroll vertical doit rester porté par .main (la page), pas par ce
+	   conteneur — sinon un tableau chargé affiche sa propre barre verticale en plus de celle de la
+	   page. Seul le défilement horizontal (colonnes jours) reste local à la table. */
+	.table-scroll {
+		overflow-x: auto;
+		overflow-y: visible;
 	}
 	table.imp {
 		width: 100%;
+		min-width: var(--imp-min-w);
 		border-collapse: separate;
 		border-spacing: 0;
 		table-layout: fixed; /* largeurs de colonnes fixes : les chiffres ne décalent plus rien */
+	}
+	.col-task {
+		width: var(--task-w);
+	}
+	.col-rae {
+		width: 74px;
 	}
 	.col-day {
 		width: 68px;
 	}
 	.col-sum {
 		width: 72px;
+	}
+
+	/* --- Colonnes / lignes figées ---
+	   Une cellule sticky peint son propre fond : sans `background` opaque elle laisserait défiler
+	   les cellules jour dessous, et le fond de survol posé sur le <tr> ne la traverse pas (d'où
+	   les règles de hover dupliquées par cellule plus bas). */
+	.imp th.task-h,
+	.imp td.task {
+		position: sticky;
+		left: 0;
+		z-index: 2;
+		background: var(--surface);
+	}
+	.imp th.rae-h,
+	.imp td.rae {
+		position: sticky;
+		left: var(--task-w);
+		z-index: 2;
+		background: var(--surface);
+		border-right: 1px solid var(--border);
+		box-shadow: 6px 0 8px -6px rgba(0, 0, 0, 0.12);
+	}
+	/* Sans colonne RAE, l'affordance de défilement revient à la colonne tâche. */
+	.imp.no-rae th.task-h,
+	.imp.no-rae td.task {
+		border-right: 1px solid var(--border);
+		box-shadow: 6px 0 8px -6px rgba(0, 0, 0, 0.12);
+	}
+	.imp th.sum-h,
+	.imp td.sum {
+		position: sticky;
+		right: 0;
+		z-index: 2;
+		background: var(--surface);
+		box-shadow: -6px 0 8px -6px rgba(0, 0, 0, 0.12);
+	}
+	.imp thead th {
+		position: sticky;
+		z-index: 3;
+		background: var(--surface);
+	}
+	.imp thead tr.wk-head th {
+		top: 0;
+		height: 24px;
+		padding: 4px 8px;
+		font-size: 10.5px;
+		color: var(--text-mute);
+		border-bottom: 1px solid var(--border);
+	}
+	.imp thead tr.day-head th {
+		top: 0;
+	}
+	.imp thead tr.day-head.below-group th {
+		top: 24px;
+	}
+	.imp tfoot td {
+		position: sticky;
+		bottom: 0;
+		z-index: 3;
+		background: var(--surface);
+	}
+	/* Les quatre coins doivent passer au-dessus des deux axes à la fois. */
+	.imp thead th.task-h,
+	.imp thead th.rae-h,
+	.imp thead th.sum-h,
+	.imp tfoot td.task,
+	.imp tfoot td.sum {
+		z-index: 4;
+	}
+	/* Séparateur entre deux semaines d'une même période. */
+	.imp th.wk-end,
+	.imp td.wk-end {
+		border-right: 2px solid var(--border-strong);
+	}
+
+	.rae-input {
+		width: 58px;
+		padding: 5px 6px;
+		border-radius: 8px;
+		border: 1px solid var(--border);
+		background: var(--surface-2);
+		color: var(--text);
+		font-size: 13px;
+		text-align: center;
+	}
+	.rae-input:focus {
+		outline: none;
+		border-color: var(--accent);
+	}
+	.imp td.rae {
+		text-align: center;
+		border-top: 1px solid var(--border);
+	}
+	.rae-na {
+		color: var(--text-mute);
+		opacity: 0.5;
+		font-size: 13px;
+	}
+
+	.periodpick {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+	.seg {
+		display: flex;
+		background: var(--surface-sunk);
+		border-radius: var(--r-md);
+		padding: 3px;
+	}
+	.seg button {
+		padding: 5px 11px;
+		border-radius: 7px;
+		font-size: 12.5px;
+		font-weight: 600;
+		color: var(--text-mute);
+		transition: background 0.15s, color 0.15s;
+	}
+	.seg button.on {
+		background: var(--surface);
+		color: var(--text);
+		box-shadow: var(--shadow-sm);
+	}
+
+	.wkstrip {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+		margin: -6px 2px 16px;
+	}
+	.wkchip {
+		font-size: 11.5px;
+		color: var(--text-mute);
+		background: var(--surface-sunk);
+		padding: 3px 10px;
+		border-radius: 20px;
+	}
+	.wkchip b {
+		color: var(--text-soft);
+	}
+	.wkchip.over {
+		color: var(--warn);
+		background: var(--warn-tint);
+	}
+	.cap-sub {
+		margin-top: 2px;
+		font-size: 11.5px;
+		color: var(--text-mute);
+	}
+	.reminder-week {
+		font-size: 10.5px;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		color: var(--text-mute);
+		margin-top: 6px;
 	}
 	.imp thead th {
 		font-size: 11px;
@@ -424,7 +1040,36 @@
 	.imp thead th.today .dnum {
 		color: var(--accent);
 	}
-	.imp tbody tr:hover {
+	.imp thead th.holiday,
+	.imp thead th.holiday .dnum {
+		color: var(--danger, #c0392b);
+	}
+	.imp thead th.holiday::after {
+		content: '';
+		display: inline-block;
+		width: 5px;
+		height: 5px;
+		border-radius: 50%;
+		background: var(--danger, #c0392b);
+		margin-left: 4px;
+		vertical-align: middle;
+	}
+	/* Absence (congé/formation/hors-projet) remontée depuis la page Absences — couleur par type. */
+	.imp thead th.absent,
+	.imp thead th.absent .dnum {
+		color: var(--absence-color);
+	}
+	.imp thead th.absent::after {
+		content: '';
+		display: inline-block;
+		width: 5px;
+		height: 5px;
+		border-radius: 50%;
+		background: var(--absence-color);
+		margin-left: 4px;
+		vertical-align: middle;
+	}
+	.imp tbody tr:hover td {
 		background: var(--surface-2);
 	}
 	.imp td.task {
@@ -439,16 +1084,48 @@
 		align-items: center;
 		gap: 11px;
 	}
+	.task-cell .tt {
+		flex: 1;
+		min-width: 0;
+	}
 	.task-cell .tt b {
 		font-size: 14px;
 		font-weight: 600;
 		display: block;
 		letter-spacing: -0.01em;
 	}
-	.task-cell .tt span {
+	.task-cell .tt .sub {
+		display: flex;
+		align-items: baseline;
+		gap: 6px;
 		font-size: 11.5px;
 		color: var(--text-mute);
 		font-variant-numeric: tabular-nums;
+		min-width: 0;
+	}
+	.task-cell .tt .sub .tag-activity {
+		font-size: 10px;
+		padding: 1px 7px;
+		flex-shrink: 0;
+	}
+	.row-del {
+		flex-shrink: 0;
+		width: 26px;
+		height: 26px;
+		display: grid;
+		place-items: center;
+		border-radius: 7px;
+		color: var(--text-mute);
+		opacity: 0;
+		transition: opacity 0.15s, background 0.15s, color 0.15s;
+	}
+	.imp tbody tr:hover .row-del {
+		opacity: 1;
+	}
+	.row-del:hover,
+	.row-del:focus-visible {
+		background: color-mix(in srgb, var(--danger, #c0392b) 12%, transparent);
+		color: var(--danger, #c0392b);
 	}
 	.imp td.day {
 		border-top: 1px solid var(--border);
@@ -586,5 +1263,48 @@
 		font-weight: 600;
 		line-height: 1.4;
 		text-align: center;
+	}
+
+	.modal-backdrop {
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.45);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 20px;
+		z-index: 50;
+	}
+	.modal {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: var(--r-lg, 16px);
+		box-shadow: var(--shadow-lg, 0 20px 50px rgba(0, 0, 0, 0.3));
+		padding: 24px;
+		width: 100%;
+		max-width: 420px;
+	}
+	.modal h3 {
+		font-family: var(--font-display);
+		font-size: 19px;
+		font-weight: 600;
+		margin-bottom: 10px;
+	}
+	.modal .hint {
+		color: var(--text-mute);
+		font-size: 13px;
+	}
+	.modal-actions {
+		display: flex;
+		justify-content: flex-end;
+		gap: 10px;
+		margin-top: 20px;
+	}
+	.btn-danger {
+		background: var(--danger, #c0392b);
+		color: #fff;
+	}
+	.btn-danger:hover {
+		background: color-mix(in srgb, var(--danger, #c0392b) 88%, black);
 	}
 </style>

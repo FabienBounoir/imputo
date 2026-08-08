@@ -4,6 +4,7 @@ import { db, workspace } from '$lib/server/db';
 import { createWorkspaceWithOwner } from './workspaces';
 import { listTickets, createTicket } from './tickets';
 import { setCell, getWeek } from './imputation';
+import { addObjective } from './weeklyObjectives';
 
 // Test d'isolation multi-espaces : un espace ne doit JAMAIS voir les données d'un autre.
 const rnd = Math.random().toString(36).slice(2, 8);
@@ -72,5 +73,53 @@ describe('isolation multi-espaces', () => {
 		// Sa feuille reste vide.
 		const week = await getWeek(b.workspaceId, b.userId, '2026-06-22');
 		expect(week.rows.length).toBe(0);
+	});
+
+	it('un objectif custom est imputable par son destinataire mais pas par un autre espace', async () => {
+		const a = await createWorkspaceWithOwner({
+			displayName: 'A3',
+			email: `a3-${rnd}@acme.test`,
+			password: 'password123',
+			workspaceName: 'Espace A3'
+		});
+		const b = await createWorkspaceWithOwner({
+			displayName: 'B3',
+			email: `b3-${rnd}@beta.test`,
+			password: 'password123',
+			workspaceName: 'Espace B3'
+		});
+		wsIds.push(a.workspaceId, b.workspaceId);
+
+		await addObjective(a.workspaceId, a.userId, {
+			userId: a.userId,
+			weekMondayISO: '2026-06-22',
+			kind: 'CUSTOM',
+			label: 'Rédiger la doc du connecteur X'
+		});
+		const [objective] = await db.query.weeklyObjective.findMany({
+			where: (t, { eq }) => eq(t.userId, a.userId)
+		});
+
+		// La destinataire peut imputer dessus, et la ligne porte bien son libellé.
+		await setCell(a.workspaceId, a.userId, {
+			targetType: 'OBJECTIVE',
+			targetId: objective.id,
+			activityId: null,
+			day: '2026-06-22',
+			amount: 0.5
+		});
+		const weekA = await getWeek(a.workspaceId, a.userId, '2026-06-22');
+		expect(weekA.rows.find((r) => r.targetId === objective.id)?.label).toBe('Rédiger la doc du connecteur X');
+
+		// Un utilisateur d'un autre espace ne peut pas imputer sur cet objectif.
+		await expect(
+			setCell(b.workspaceId, b.userId, {
+				targetType: 'OBJECTIVE',
+				targetId: objective.id,
+				activityId: null,
+				day: '2026-06-22',
+				amount: 1
+			})
+		).rejects.toThrow();
 	});
 });

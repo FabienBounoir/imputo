@@ -1,0 +1,2 @@
+ALTER TABLE "weekly_objective" ADD COLUMN "activity_id" uuid;--> statement-breakpoint
+ALTER TABLE "weekly_objective" ADD CONSTRAINT "weekly_objective_activity_id_activity_id_fk" FOREIGN KEY ("activity_id") REFERENCES "public"."activity"("id") ON DELETE set null ON UPDATE no action;

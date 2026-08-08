@@ -3,7 +3,7 @@ import { db, project, sprint, ticket } from '$lib/server/db';
 
 export type RefType = 'project' | 'sprint' | 'version';
 
-export type RefItem = { id: string; name: string; archived: boolean; usage: number };
+export type RefItem = { id: string; name: string; archived: boolean; usage: number; createdAt: Date };
 
 const sprintKind = (type: RefType) => (type === 'version' ? 'VERSION' : 'SPRINT');
 
@@ -16,14 +16,15 @@ export async function listRefs(workspaceId: string, type: RefType): Promise<RefI
 				id: project.id,
 				name: project.name,
 				archivedAt: project.archivedAt,
+				createdAt: project.createdAt,
 				usage: count(ticket.id)
 			})
 			.from(project)
 			.leftJoin(ticket, and(eq(ticket.projectId, project.id), isNull(ticket.archivedAt)))
 			.where(eq(project.workspaceId, workspaceId))
-			.groupBy(project.id, project.name, project.archivedAt)
+			.groupBy(project.id, project.name, project.archivedAt, project.createdAt)
 			.orderBy(project.name);
-		return rows.map((r) => ({ id: r.id, name: r.name, archived: r.archivedAt !== null, usage: r.usage }));
+		return rows.map((r) => ({ id: r.id, name: r.name, archived: r.archivedAt !== null, usage: r.usage, createdAt: r.createdAt }));
 	}
 	const refCol = type === 'version' ? ticket.versionId : ticket.sprintId;
 	const rows = await db
@@ -31,15 +32,16 @@ export async function listRefs(workspaceId: string, type: RefType): Promise<RefI
 			id: sprint.id,
 			name: sprint.name,
 			archivedAt: sprint.archivedAt,
+			createdAt: sprint.createdAt,
 			sortOrder: sprint.sortOrder,
 			usage: count(ticket.id)
 		})
 		.from(sprint)
 		.leftJoin(ticket, and(eq(refCol, sprint.id), isNull(ticket.archivedAt)))
 		.where(and(eq(sprint.workspaceId, workspaceId), eq(sprint.kind, sprintKind(type))))
-		.groupBy(sprint.id, sprint.name, sprint.archivedAt, sprint.sortOrder)
+		.groupBy(sprint.id, sprint.name, sprint.archivedAt, sprint.createdAt, sprint.sortOrder)
 		.orderBy(sprint.sortOrder, sprint.name);
-	return rows.map((r) => ({ id: r.id, name: r.name, archived: r.archivedAt !== null, usage: r.usage }));
+	return rows.map((r) => ({ id: r.id, name: r.name, archived: r.archivedAt !== null, usage: r.usage, createdAt: r.createdAt }));
 }
 
 /** Vérifie qu'aucun élément actif de même nom (insensible à la casse) n'existe déjà. */

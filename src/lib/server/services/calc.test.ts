@@ -5,9 +5,14 @@ import {
 	round,
 	totalEstimation,
 	totalRae,
-	ecart,
+	ecartExecution,
+	tnfBudget,
+	resolvedRae,
 	raeSuggested,
-	avancement
+	avancement,
+	ppr,
+	weeklyCapacity,
+	capacityPct
 } from './calc';
 
 describe('calc', () => {
@@ -38,14 +43,43 @@ describe('calc', () => {
 		expect(totalRae('2', '1', false)).toBe(2);
 	});
 
-	it('ecart: consommé − estimation (positif = dépassement)', () => {
-		expect(ecart(10, 8)).toBe(2);
-		expect(ecart(5, 8)).toBe(-3);
+	it('ecartExecution: RAE réel + consommé − estimation réelle (positif = dépassement projeté)', () => {
+		expect(ecartExecution(2, 10, 8)).toBe(4);
+		expect(ecartExecution(0, 5, 8)).toBe(-3);
+	});
+
+	it('tnfBudget: enveloppe − consommé + RAE réel (+ RAE test si phase active)', () => {
+		expect(tnfBudget(20, 10, 2, 1)).toBe(13);
+		expect(tnfBudget(20, 10, 2, 1, false)).toBe(12);
 	});
 
 	it('raeSuggested: max(0, estimation − consommé)', () => {
 		expect(raeSuggested(8, 3)).toBe(5);
 		expect(raeSuggested(8, 10)).toBe(0);
+	});
+
+	it('resolvedRae: fallback ticket.raeReal/raeTest si aucune ligne par activité', () => {
+		expect(resolvedRae('5', '2', [])).toEqual({ real: 5, test: 2 });
+	});
+
+	it('resolvedRae: somme des lignes par activité quand elles existent (ignore le fallback)', () => {
+		expect(
+			resolvedRae('5', '2', [
+				{ raeReal: '1', raeTest: '0' },
+				{ raeReal: '2.5', raeTest: '1' }
+			])
+		).toEqual({ real: 3.5, test: 1 });
+	});
+
+	it('weeklyCapacity / capacityPct: capacité hebdo et % utilisé (garde-fou division par zéro)', () => {
+		expect(weeklyCapacity('0.8', 5)).toBe(4);
+		expect(capacityPct(5, 4)).toBe(1.25);
+		expect(capacityPct(5, 0)).toBe(0);
+	});
+
+	it('ppr: estimation réelle × ratio d\'espace', () => {
+		expect(ppr('10', '0.9')).toBe(9);
+		expect(ppr(null, '0.9')).toBe(0);
 	});
 
 	it('avancement: borné 0–1, garde-fou division par zéro', () => {

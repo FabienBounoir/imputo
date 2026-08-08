@@ -1,5 +1,6 @@
-# Postgres pour le développement local.
-# Démarrer : docker compose up -d
+# Stack complète (DB + front) pour le développement local.
+# Démarrer : docker compose up -d --build
+# Reconstruire après un changement de code : docker compose up -d --build app
 services:
   db:
     image: postgres:16-alpine
@@ -18,6 +19,44 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  app:
+    build: .
+    container_name: imputo-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Réseau interne compose — pas localhost, "db" est le nom du service.
+      DATABASE_URL: postgres://imputo:imputo@db:5432/imputo
+      SESSION_SECRET: ${SESSION_SECRET:-change-me-in-production-please}
+      MAGIC_LINK_TTL: ${MAGIC_LINK_TTL:-7d}
+      ARCHIVE_RETENTION: ${ARCHIVE_RETENTION:-30d}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:3000}
+      CRON_SECRET: ${CRON_SECRET:-change-me-cron-secret}
+      # Origine publique réelle (protocole + domaine/IP + port si non standard) — sans ça,
+      # adapter-node ne connaît que son adresse interne et rejette tout POST ("Cross-site
+      # POST form submissions are forbidden") dès qu'on accède au VPS depuis l'extérieur.
+      ORIGIN: ${ORIGIN:-http://localhost:3000}
+    ports:
+      - '3000:3000'
+
+  # Scripts ponctuels ayant besoin des devDependencies (tsx, drizzle-kit) — jamais démarré par
+  # `docker compose up`. Ex. : docker compose run --rm tools npm run db:seed
+  #                            docker compose run --rm tools npm run db:unseed
+  #                            docker compose run --rm tools npm run db:studio
+  tools:
+    build:
+      context: .
+      target: build
+    profiles: ['tools']
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://imputo:imputo@db:5432/imputo
+    command: ['true'] # no-op par défaut ; toujours lancé via `run` avec une commande explicite
 
 volumes:
   imputo-pgdata:
