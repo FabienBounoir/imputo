@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import PasswordField from '$lib/components/PasswordField.svelte';
 	let { data, form } = $props();
 </script>
 
@@ -17,14 +18,15 @@
 			{#if form?.error}<div class="flash error">{form.error}</div>{/if}
 
 			<form method="POST" use:enhance>
-				<div class="field">
-					<label for="pw">Mot de passe</label>
-					<input id="pw" name="password" type="password" placeholder="8 caractères minimum" required />
-				</div>
-				<div class="field">
-					<label for="cf">Confirmer</label>
-					<input id="cf" name="confirm" type="password" required />
-				</div>
+				<PasswordField
+					id="pw"
+					name="password"
+					label="Mot de passe"
+					placeholder="8 caractères minimum"
+					autocomplete="new-password"
+					required
+				/>
+				<PasswordField id="cf" name="confirm" label="Confirmer" autocomplete="new-password" required />
 				<button class="btn btn-primary" type="submit">Activer mon compte</button>
 			</form>
 		{/if}

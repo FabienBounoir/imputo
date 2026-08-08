@@ -5,7 +5,8 @@ import type { Actions, PageServerLoad } from './$types';
 import { db, user } from '$lib/server/db';
 import { config } from '$lib/server/config';
 import { parseNotifPrefs } from '$lib/server/services/notifications';
-import { setAccentPref } from '$lib/server/services/accounts';
+import { setAccentPref, changePassword } from '$lib/server/services/accounts';
+import { changePasswordSchema } from '$lib/server/validation/auth';
 
 const accentPrefSchema = z.object({
 	mode: z.enum(['WORKSPACE', 'CUSTOM', 'RGB']),
@@ -34,5 +35,14 @@ export const actions: Actions = {
 		if (!parsed.success) return fail(400, { error: parsed.error.issues[0].message });
 		await setAccentPref(locals.user.id, parsed.data.mode, parsed.data.color);
 		return { accentPrefOk: true };
+	},
+
+	changePassword: async ({ request, locals }) => {
+		if (!locals.user) return fail(401);
+		const parsed = changePasswordSchema.safeParse(Object.fromEntries(await request.formData()));
+		if (!parsed.success) return fail(400, { pwError: parsed.error.issues[0].message });
+		const ok = await changePassword(locals.user.id, parsed.data.currentPassword, parsed.data.password);
+		if (!ok) return fail(400, { pwError: 'Mot de passe actuel incorrect.' });
+		return { pwOk: true };
 	}
 };

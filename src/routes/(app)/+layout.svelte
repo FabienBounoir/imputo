@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { beep } from '$lib/sound';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	let { children, data } = $props();
 
 	let wsMenuOpen = $state(false);
@@ -206,3 +207,5 @@
 		{@render children()}
 	</main>
 </div>
+
+<ConfirmDialog />

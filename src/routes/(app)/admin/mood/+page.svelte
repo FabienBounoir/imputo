@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { Confetti } from 'svelte-confetti';
+	import { confirmDialog } from '$lib/confirm.svelte';
 
 	let { data, form } = $props();
 
@@ -36,9 +37,10 @@
 		new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short' }).format(new Date(iso + 'T00:00:00Z'));
 
 	function confirmReset(voteCount: number) {
-		return confirm(
-			`Réinitialiser la plage en cours ? ${voteCount} vote${voteCount > 1 ? 's' : ''} seront supprimés définitivement (impossible à annuler, et l'anonymat empêche toute restauration ciblée).`
-		);
+		return confirmDialog({
+			message: `Réinitialiser la plage en cours ? ${voteCount} vote${voteCount > 1 ? 's' : ''} seront supprimés définitivement (impossible à annuler, et l'anonymat empêche toute restauration ciblée).`,
+			confirmLabel: 'Réinitialiser'
+		});
 	}
 
 	// Plage en cours dépliée par défaut (c'est celle qu'on vient consulter/réinitialiser le plus
@@ -213,8 +215,8 @@
 									method="POST"
 									action="?/resetCurrentPeriod"
 									class="prow-reset"
-									use:enhance={({ cancel }) => {
-										if (!confirmReset(p.voteCount)) cancel();
+									use:enhance={async ({ cancel }) => {
+										if (!(await confirmReset(p.voteCount))) cancel();
 									}}
 								>
 									<button class="btn btn-ghost danger btn-sm" type="submit">Réinitialiser</button>
