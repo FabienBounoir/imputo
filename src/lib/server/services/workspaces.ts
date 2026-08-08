@@ -95,9 +95,14 @@ export type MembershipInfo = {
 	workspaceId: string;
 	workspaceName: string;
 	accentColor: string;
+	accentRgb: boolean;
 	testPhase: boolean;
+	pprRatio: string;
+	imputationStep: string;
 	allowedDomain: string;
+	moodEnabled: boolean;
 	role: Role;
+	createdByUserId: string | null;
 };
 
 /** Liste les espaces actifs d'un utilisateur. */
@@ -107,9 +112,14 @@ export async function listMembershipsForUser(userId: string): Promise<Membership
 			workspaceId: workspace.id,
 			workspaceName: workspace.name,
 			accentColor: workspace.accentColor,
+			accentRgb: workspace.accentRgb,
 			testPhase: workspace.testPhase,
+			pprRatio: workspace.pprRatio,
+			imputationStep: workspace.imputationStep,
 			allowedDomain: workspace.allowedDomain,
-			role: membership.role
+			moodEnabled: workspace.moodEnabled,
+			role: membership.role,
+			createdByUserId: workspace.createdByUserId
 		})
 		.from(membership)
 		.innerJoin(workspace, eq(membership.workspaceId, workspace.id))
@@ -156,4 +166,11 @@ export async function getMembership(
 			)
 		);
 	return rows[0] ?? null;
+}
+
+// Couvre aujourd'hui deux usages qui partagent la même règle (ADMIN ou MANAGER) : l'accès à
+// « Objectifs de la semaine » et la visibilité/édition des champs budget ticket. À séparer en deux
+// prédicats si ces deux permissions divergent un jour.
+export function isManagerOrAdmin(role: Role | null): boolean {
+	return role === 'ADMIN' || role === 'MANAGER';
 }

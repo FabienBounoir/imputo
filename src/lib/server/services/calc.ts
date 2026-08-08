@@ -34,9 +34,58 @@ export function totalRae(raeReal: string | null, raeTest: string | null, testPha
 	return round(num(raeReal) + (testPhase ? num(raeTest) : 0));
 }
 
-/** Écart = consommé − estimation totale (positif = dépassement). */
-export function ecart(consumed: number, totalEst: number): number {
-	return round(consumed - totalEst);
+/** PPR = Estimation Réelle × ratio d'espace (paramétrable, 0.90 par défaut). Calculé à la volée, non stocké. */
+export function ppr(estimationReal: string | number | null, pprRatio: string | number | null): number {
+	return round(num(estimationReal) * num(pprRatio));
+}
+
+/**
+ * Écart d'exécution — Réel uniquement, jamais Test (même si la phase Test de l'espace est active).
+ * Positif = le RAE déclaré + le consommé dépassent l'estimation réelle (dépassement projeté).
+ */
+export function ecartExecution(raeReal: number, consumed: number, estimationReal: number): number {
+	return round(raeReal + consumed - estimationReal);
+}
+
+/**
+ * TNF budget — distinct de l'écart d'exécution (ne pas fusionner dans l'UI). Aligné sur le
+ * comportement de totalRae : applique la phase Test par défaut.
+ */
+export function tnfBudget(
+	enveloppeTotale: number,
+	consumed: number,
+	raeReal: number,
+	raeTest: number,
+	testPhase = true
+): number {
+	return round(enveloppeTotale - consumed + raeReal + (testPhase ? raeTest : 0));
+}
+
+/**
+ * RAE résolu d'un ticket : somme des lignes ticket_activity_rae si présentes, sinon fallback
+ * ticket.raeReal/raeTest. Le RAE global du ticket = somme des RAE par activité (§2.3).
+ */
+export function resolvedRae(
+	ticketRaeReal: string | null,
+	ticketRaeTest: string | null,
+	activityRows: Array<{ raeReal: string | null; raeTest: string | null }>
+): { real: number; test: number } {
+	if (activityRows.length === 0) return { real: num(ticketRaeReal), test: num(ticketRaeTest) };
+	return {
+		real: sum(activityRows.map((r) => r.raeReal)),
+		test: sum(activityRows.map((r) => r.raeTest))
+	};
+}
+
+/** Capacité attendue d'une semaine = capacité/jour × nb de jours ouvrés non fériés de la semaine. */
+export function weeklyCapacity(capacityPerDay: string | number | null, workdays: number): number {
+	return round(num(capacityPerDay) * workdays);
+}
+
+/** % de capacité hebdo utilisée. 0 si capacité nulle (garde-fou division par zéro). Jamais bloquant. */
+export function capacityPct(totalImputed: number, weeklyCap: number): number {
+	if (weeklyCap <= 0) return 0;
+	return round(totalImputed / weeklyCap);
 }
 
 /** RAE suggéré = max(0, estimation − consommé). */
