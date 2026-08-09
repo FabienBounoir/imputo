@@ -1,0 +1,33 @@
+# BuildConfig annexe : construit l'image "outils" (Dockerfile.tools, devDependencies + source
+# complet) utilisée uniquement pour lancer `npm run db:seed` en preprod (voir seed-job.yaml).
+# Jamais utilisée en production. Sort sur le même ImageStream que le build principal, tag
+# différent ("tools" vs "latest") — pas besoin d'un ImageStream séparé.
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: imputo-tools
+  labels:
+    app: imputo
+spec:
+  source:
+    type: Git
+    git:
+      uri: https://github.com/FabienBounoir/imputo.git
+      ref: main
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Dockerfile.tools
+  resources:
+    requests:
+      cpu: 500m
+      memory: 768Mi
+    limits:
+      cpu: 1000m
+      memory: 1.5Gi
+  output:
+    to:
+      kind: ImageStreamTag
+      name: imputo:tools
+  triggers:
+    - type: ConfigChange

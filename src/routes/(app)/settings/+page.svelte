@@ -11,6 +11,8 @@
 		type NotifPrefs
 	} from '$lib/push';
 	import { setTheme, storedTheme, type ThemePref } from '$lib/theme';
+	import { seasonalState, setSeasonalEnabled, setForcedEffect, activeSeasonalEffects, SEASONAL_EFFECTS } from '$lib/seasonal.svelte';
+	import { konamiState } from '$lib/konami.svelte';
 	import AccentPicker from '$lib/components/AccentPicker.svelte';
 	import PasswordField from '$lib/components/PasswordField.svelte';
 
@@ -27,12 +29,17 @@
 	let accentOverride = $state(data.accentMode !== 'WORKSPACE');
 	let accentRgb = $state(data.accentMode === 'RGB');
 	let accentColor = $state(data.accentColor ?? data.workspace?.accentColor ?? PRESETS[0]);
+	const activeSeasonal = $derived(activeSeasonalEffects());
 
 	const TYPES: { key: keyof NotifPrefs; label: string }[] = [
 		{ key: 'eveningMissing', label: "Soir : imputation du jour non saisie" },
 		{ key: 'morningYesterday', label: 'Matin : la veille n’a pas été renseignée' },
 		{ key: 'raeStale', label: 'RAE périmé sur mes tickets' },
-		{ key: 'weeklyRecap', label: 'Récap du vendredi (semaine incomplète)' }
+		{ key: 'weeklyRecap', label: 'Récap du vendredi (semaine incomplète)' },
+		{ key: 'moodDeadline', label: 'Team mood : dernier jour pour voter' },
+		...(data.role === 'ADMIN'
+			? [{ key: 'moodRecap' as const, label: 'Team mood : baisse nette de la moyenne (admin)' }]
+			: [])
 	];
 
 	onMount(async () => {
@@ -183,6 +190,34 @@
 				<button class="btn btn-primary" type="submit" style="margin-top:14px;">Enregistrer</button>
 			</form>
 		</section>
+
+		<section class="card block">
+			<h3>Effets saisonniers</h3>
+			<p class="hint">Petites surprises visuelles liées aux périodes de l'année (ex. neige à Noël). Désactivable si tu préfères une interface sobre.</p>
+			<div class="row">
+				<div>
+					<b>{activeSeasonal.length ? activeSeasonal.map((e) => e.label).join(' + ') : 'Aucun effet actif en ce moment'}</b>
+					<span class="sub">{seasonalState.enabled ? 'Activés' : 'Désactivés'} sur cet appareil</span>
+				</div>
+				{#if seasonalState.enabled}
+					<button class="btn btn-ghost" onclick={() => setSeasonalEnabled(false)}>Désactiver</button>
+				{:else}
+					<button class="btn btn-primary" onclick={() => setSeasonalEnabled(true)}>Activer</button>
+				{/if}
+			</div>
+
+			{#if konamiState.unlocked}
+				<div class="konami-force">
+					<p class="hint" style="margin:16px 0 8px;">🕹️ Mode forcé — débloqué par le code Konami. Outrepasse la détection par date, pratique pour tester (ou juste pour le fun).</p>
+					<div class="seg seg-wrap">
+						<button type="button" class:on={!seasonalState.forced} onclick={() => setForcedEffect(null)}>Auto (date)</button>
+						{#each SEASONAL_EFFECTS as e (e.id)}
+							<button type="button" class:on={seasonalState.forced === e.id} onclick={() => setForcedEffect(e.id)}>{e.label}</button>
+						{/each}
+					</div>
+				</div>
+			{/if}
+		</section>
 	{/if}
 </div>
 
@@ -299,5 +334,14 @@
 		background: var(--surface);
 		color: var(--text);
 		box-shadow: var(--shadow-sm);
+	}
+	/* Le sélecteur d'effet forcé (mode konami) a trop d'options à labels longs pour tenir sur
+	   une ligne façon "segmented control" : on le laisse retomber en chips sur plusieurs lignes. */
+	.seg-wrap {
+		flex-wrap: wrap;
+		border-radius: 14px;
+	}
+	.seg-wrap button {
+		border-radius: 20px;
 	}
 </style>

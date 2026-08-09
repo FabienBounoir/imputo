@@ -6,6 +6,8 @@ export type NotifPrefs = {
 	morningYesterday: boolean;
 	raeStale: boolean;
 	weeklyRecap: boolean;
+	moodDeadline: boolean;
+	moodRecap: boolean;
 };
 
 export function pushSupported(): boolean {

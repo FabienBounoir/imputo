@@ -388,4 +388,22 @@
 			grid-template-columns: 1fr;
 		}
 	}
+
+	/* < 640px : le sélecteur de personne + le bouton vacances, et la recherche de ticket + le
+	   select d'activité + le bouton, ne rentrent plus sur une ligne sans wrap -> ça débordait. */
+	@media (max-width: 640px) {
+		.person-row {
+			flex-wrap: wrap;
+		}
+		.add-ticket {
+			flex-wrap: wrap;
+		}
+		.add-ticket :global(.tp-root) {
+			flex-basis: 100%;
+		}
+		.activity-pick {
+			flex: 1;
+			max-width: none;
+		}
+	}
 </style>

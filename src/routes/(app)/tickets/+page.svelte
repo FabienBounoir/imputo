@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import { formatDateTime } from '$lib/utils/date';
 	import { TICKET_FIELD_LABELS } from '$lib/changeLogLabels';
 	let { data, form } = $props();
@@ -8,6 +9,14 @@
 	let showCreate = $state(false);
 	let savedFlash = $state(false);
 	let flashTimer: ReturnType<typeof setTimeout>;
+
+	// Ouverture directe du formulaire depuis la palette de commandes (?new=1).
+	$effect(() => {
+		if (page.url.searchParams.get('new') === '1') showCreate = true;
+	});
+	function autofocus(node: HTMLInputElement) {
+		node.focus();
+	}
 
 	// Anti-rafale pour les champs numériques à spinner (flèches/molette) : chaque clic déclenche un
 	// onchange, donc sans ça une simple ligne d'historique par champ devient une ligne par pas — on
@@ -329,7 +338,7 @@
 		<div class="card create">
 			<form method="POST" action="?/create" use:enhance={() => async ({ update }) => { await update(); showCreate = false; }}>
 				<div class="grid2">
-					<div class="field"><label for="key">Clé</label><input id="key" name="key" placeholder="BLM-1234" required /></div>
+					<div class="field"><label for="key">Clé</label><input id="key" name="key" placeholder="BLM-1234" use:autofocus required /></div>
 					<div class="field"><label for="title">Titre</label><input id="title" name="title" placeholder="Intitulé du ticket" required /></div>
 				</div>
 				<div class="grid4">
@@ -403,6 +412,7 @@
 
 	{#if data.view === 'table'}
 	<div class="card tk-card">
+	<div class="tk-scroll">
 		<table class="tk">
 			<thead>
 				<tr>
@@ -517,6 +527,7 @@
 				{/if}
 			</tbody>
 		</table>
+	</div>
 		{#if data.pageCount > 1}
 			<div class="pager">
 				<button class="btn btn-ghost" disabled={data.page <= 1} onclick={() => navigateWith({ page: String(data.page - 1) })}>← Précédent</button>
@@ -692,6 +703,12 @@
 		grid-template-columns: repeat(4, 1fr);
 		gap: 14px;
 	}
+	@media (max-width: 640px) {
+		.grid2,
+		.grid4 {
+			grid-template-columns: 1fr;
+		}
+	}
 	.actions-row {
 		display: flex;
 		justify-content: flex-end;
@@ -768,8 +785,38 @@
 	.tk thead th:last-child {
 		border-top-right-radius: var(--r-lg);
 	}
+	/* `clip`, pas de scroll ici : le rognage suit le rayon de la card sans créer de 2e ancêtre
+	   scrollable, qui casserait le sticky du thead ci-dessous (vise .main). Le scroll horizontal
+	   reste local à .tk-scroll (overflow-y:visible, même raison). */
+	.tk-card {
+		overflow: clip;
+		position: relative;
+	}
+	.tk-scroll {
+		overflow-x: auto;
+		overflow-y: visible;
+	}
+	/* < 900px : le tableau dépasse toujours (colonnes fixes) — dégradé indiquant qu'on peut swiper
+	   à droite, sinon rien ne le montre (coupé net au bord de l'écran). */
+	.tk-card::after {
+		content: '';
+		display: none;
+		position: absolute;
+		top: 0;
+		right: 0;
+		bottom: 0;
+		width: 28px;
+		pointer-events: none;
+		background: linear-gradient(to right, transparent, var(--surface) 70%);
+	}
+	@media (max-width: 900px) {
+		.tk-card::after {
+			display: block;
+		}
+	}
 	table.tk {
 		width: 100%;
+		min-width: 820px;
 		border-collapse: separate;
 		border-spacing: 0;
 	}

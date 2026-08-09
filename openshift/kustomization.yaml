@@ -8,5 +8,6 @@ resources:
   - deployment.yaml
   - service.yaml
   - route.yaml
+  - db-secret.yaml
   - db-statefulset.yaml
   - cronjobs.yaml
