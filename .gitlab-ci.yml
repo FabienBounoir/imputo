@@ -80,7 +80,7 @@ deploy:preprod:
     - oc start-build imputo-tools --follow
     - oc delete job/imputo-seed --ignore-not-found
     - sed "s#CHANGEME-namespace#${NS}#" openshift/seed-job.yaml | oc apply -f -
-    - oc wait --for=condition=complete job/imputo-seed --timeout=180s
+    - oc wait --for=condition=complete job/imputo-seed --timeout=320s
 
 deploy:production:
   extends: .oc_base
