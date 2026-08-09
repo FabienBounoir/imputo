@@ -12,9 +12,10 @@ spec:
   source:
     type: Git
     git:
-      # À adapter si le dépôt Git réel diffère.
-      uri: https://github.com/FabienBounoir/imputo.git
+      uri: https://innersource.soprasteria.com/fabien.bounoir/imputo-clone.git
       ref: main
+    sourceSecret:
+      name: gitlab-innersource-imputo
   strategy:
     type: Docker
     dockerStrategy:
