@@ -20,6 +20,11 @@ export default defineConfig({
 	// @ts-expect-error `test` est ajouté par vitest (qui réutilise la config vite).
 	test: {
 		include: ['src/**/*.{test,spec}.ts'],
-		setupFiles: ['./vitest-setup.ts']
+		setupFiles: ['./vitest-setup.ts'],
+		// Tests d'intégration sur une seule vraie DB partagée : certains services (ex. le cron de
+		// notifications) opèrent sur TOUS les workspaces sans filtrage, donc les faire tourner en
+		// parallèle sur plusieurs fichiers fait planter ceux qui suppriment/créent des workspaces
+		// pendant qu'un autre les parcourt globalement (FK violation). Plus lent, mais fiable.
+		fileParallelism: false
 	}
 });
