@@ -19,6 +19,10 @@ spec:
     type: Docker
     dockerStrategy:
       dockerfilePath: Dockerfile
+      # Allowlist requis par OpenShift pour qu'un `--build-arg` passé à `oc start-build`
+      # soit accepté (voir .gitlab-ci.yml : injecte le tag/SHA comme version affichée).
+      buildArgs:
+        - name: APP_VERSION
   # Sans ce bloc, le pod de build hérite du défaut du namespace (100m CPU / 512Mi) et
   # rampe pendant `npm install`/`vite build` (constaté : ~25min pour un build qui devrait
   # prendre quelques minutes avec plus de CPU). Plafonné à 1000m pour rester sous le

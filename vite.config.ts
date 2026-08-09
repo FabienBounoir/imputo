@@ -7,6 +7,11 @@ import { defineConfig } from 'vite';
 const adapter = process.env.BUILD_ADAPTER === 'vercel' ? adapterVercel() : adapterNode();
 
 export default defineConfig({
+	define: {
+		// Tag Git / short SHA injecté au build par le Dockerfile (voir ARG APP_VERSION),
+		// affiché dans l'UI pour identifier la version déployée.
+		__APP_VERSION__: JSON.stringify(process.env.APP_VERSION ?? 'dev')
+	},
 	plugins: [
 		sveltekit({
 			compilerOptions: {

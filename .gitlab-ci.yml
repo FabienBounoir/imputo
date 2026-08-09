@@ -75,7 +75,7 @@ deploy:preprod:
     # POST form submissions are forbidden", voir openshift/README.md).
     - HOST=$(oc get route imputo -o jsonpath='{.spec.host}')
     - oc patch configmap imputo-config --type merge -p "{\"data\":{\"PUBLIC_BASE_URL\":\"https://${HOST}\",\"ORIGIN\":\"https://${HOST}\"}}"
-    - oc start-build imputo --follow
+    - oc start-build imputo --build-arg=APP_VERSION="v$CI_COMMIT_SHORT_SHA" --follow
     - oc rollout status deployment/imputo --timeout=5m
     - oc start-build imputo-tools --follow
     - oc delete job/imputo-seed --ignore-not-found
@@ -91,5 +91,5 @@ deploy:production:
     - NS="${OPENSHIFT_NAMESPACE_PROD:-imputo}"
     - oc project "$NS"
     - *apply_base_manifests
-    - oc start-build imputo --commit="$CI_COMMIT_TAG" --follow
+    - oc start-build imputo --commit="$CI_COMMIT_TAG" --build-arg=APP_VERSION="$CI_COMMIT_TAG" --follow
     - oc rollout status deployment/imputo --timeout=5m
