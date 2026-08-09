@@ -1,10 +1,32 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
+	import { browser } from '$app/environment';
 	import { page } from '$app/state';
 	import { beep } from '$lib/sound';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+	import CommandPalette from '$lib/components/CommandPalette.svelte';
+	import Snow from '$lib/components/Snow.svelte';
+	import Hearts from '$lib/components/Hearts.svelte';
+	import Garland from '$lib/components/Garland.svelte';
+	import SeasonalBanner from '$lib/components/SeasonalBanner.svelte';
+	import Fireworks from '$lib/components/Fireworks.svelte';
+	import HalloweenCorner from '$lib/components/HalloweenCorner.svelte';
+	import { seasonalState, initSeasonal, activeSeasonalEffects } from '$lib/seasonal.svelte';
 	let { children, data } = $props();
+	let commandPalette: CommandPalette | undefined = $state();
+
+	onMount(initSeasonal);
+	const seasonalIds = $derived(new Set(activeSeasonalEffects().map((e) => e.id)));
+	const seasonalVisible = $derived(browser && (seasonalState.enabled || seasonalState.forced));
 
 	let wsMenuOpen = $state(false);
+	let sidebarOpen = $state(false);
+
+	// Ferme le tiroir mobile dès qu'on navigue (sans effet sur desktop, où .sidebar reste statique).
+	$effect(() => {
+		page.url.pathname;
+		sidebarOpen = false;
+	});
 
 	const initials = (name: string) =>
 		name
@@ -57,22 +79,44 @@
 </script>
 
 <div class="app">
-	<aside class="sidebar">
+	<div class="mobile-topbar">
+		<button class="icon-btn" aria-label="Ouvrir le menu" onclick={() => (sidebarOpen = true)}>
+			<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+		</button>
+		<span class="brand-name">Imputo</span>
+	</div>
+	{#if sidebarOpen}
+		<button class="sidebar-backdrop" aria-label="Fermer le menu" onclick={() => (sidebarOpen = false)}></button>
+	{/if}
+	<aside class="sidebar" class:open={sidebarOpen}>
+		<button class="sidebar-close" aria-label="Fermer le menu" onclick={() => (sidebarOpen = false)}>✕</button>
+		{#if seasonalVisible && seasonalIds.has('christmas')}<Garland />{/if}
 		<div class="brand">
 			<div
 				class="mark"
 				class:alive={logoAlive}
+				class:upside-down={seasonalVisible && seasonalIds.has('april-fools')}
+				class:bastille={seasonalVisible && seasonalIds.has('bastille-day')}
+				class:halloween={seasonalVisible && seasonalIds.has('halloween')}
 				role="button"
 				tabindex="0"
+				title={seasonalVisible && seasonalIds.has('april-fools') ? "Tout va bien, c'est le 1er avril 🙃" : undefined}
 				onclick={clickLogo}
 				onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && clickLogo()}
 				onanimationend={() => (logoAlive = false)}
 			>
+				{#if seasonalVisible && seasonalIds.has('christmas')}<span class="santa-hat" aria-hidden="true">🎅</span>{/if}
+				{#if seasonalVisible && seasonalIds.has('halloween')}<span class="pumpkin-hat" aria-hidden="true">🎃</span>{/if}
+				{#if seasonalVisible && seasonalIds.has('april-fools')}<span class="fish-sticker" aria-hidden="true">🐟</span>{/if}
 				<svg viewBox="108 84 296 296" fill="#fff" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
 					<rect x="132" y="284" width="64" height="96" rx="30" />
 					<rect x="224" y="230" width="64" height="150" rx="30" />
 					<rect x="316" y="170" width="64" height="210" rx="30" />
-					<circle cx="348" cy="116" r="32" />
+					{#if seasonalVisible && seasonalIds.has('valentine')}
+						<path transform="translate(348 116) scale(3.2) translate(-12 -12.17)" d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+					{:else}
+						<circle cx="348" cy="116" r="32" />
+					{/if}
 				</svg>
 			</div>
 			<div class="name">Imputo<small>suivi & chiffrage</small></div>
@@ -204,8 +248,19 @@
 	</aside>
 
 	<main class="main">
+		{#if seasonalVisible && seasonalIds.has('christmas')}
+			<SeasonalBanner id="christmas" message="🎄 Joyeuses fêtes de la part de l'équipe Imputo !" />
+		{/if}
+		{#if seasonalVisible && seasonalIds.has('april-fools')}
+			<SeasonalBanner id="april-fools" message="🐟 Poisson d'avril ! Tout va bien, c'est juste le 1er avril." />
+		{/if}
 		{@render children()}
 	</main>
 </div>
 
 <ConfirmDialog />
+<CommandPalette bind:this={commandPalette} {data} />
+{#if seasonalVisible && seasonalIds.has('christmas')}<Snow />{/if}
+{#if seasonalVisible && seasonalIds.has('valentine')}<Hearts />{/if}
+{#if seasonalVisible && (seasonalIds.has('new-year') || seasonalIds.has('bastille-day'))}<Fireworks />{/if}
+{#if seasonalVisible && seasonalIds.has('halloween')}<HalloweenCorner />{/if}

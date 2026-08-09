@@ -27,7 +27,9 @@ export const notificationKindEnum = pgEnum('notification_kind', [
 	'EVENING_MISSING',
 	'MORNING_YESTERDAY',
 	'RAE_STALE',
-	'WEEKLY_RECAP'
+	'WEEKLY_RECAP',
+	'MOOD_DEADLINE',
+	'MOOD_RECAP'
 ]);
 export const moodPeriodKindEnum = pgEnum('mood_period_kind', ['WEEK_1', 'WEEK_2', 'WEEK_3', 'MONTH']);
 export const absenceTypeEnum = pgEnum('absence_type', [
@@ -96,7 +98,12 @@ export const membership = pgTable(
 		active: boolean('active').notNull().default(true),
 		createdAt: createdAt()
 	},
-	(t) => [uniqueIndex('membership_ws_user_uq').on(t.workspaceId, t.userId)]
+	(t) => [
+		uniqueIndex('membership_ws_user_uq').on(t.workspaceId, t.userId),
+		// listMembershipsForUser (hooks.server.ts, à chaque requête authentifiée) filtre sur userId
+		// seul — l'index unique ci-dessus a workspaceId en tête, inutilisable pour ce filtre.
+		index('membership_user_idx').on(t.userId)
+	]
 );
 
 export const session = pgTable(
@@ -543,9 +550,11 @@ export const notificationLog = pgTable(
 			.references(() => workspace.id, { onDelete: 'cascade' }),
 		kind: notificationKindEnum('kind').notNull(),
 		refDate: date('ref_date').notNull(),
+		// Distingue les relances multiples le même jour (ex: 09h00/09h15/09h30) ; '' = envoi unique historique.
+		slot: text('slot').notNull().default(''),
 		sentAt: createdAt()
 	},
-	(t) => [uniqueIndex('notif_log_uq').on(t.userId, t.workspaceId, t.kind, t.refDate)]
+	(t) => [uniqueIndex('notif_log_uq').on(t.userId, t.workspaceId, t.kind, t.refDate, t.slot)]
 );
 
 // ---------- Relations ----------

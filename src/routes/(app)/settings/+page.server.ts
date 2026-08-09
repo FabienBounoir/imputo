@@ -24,7 +24,8 @@ export const load: PageServerLoad = async ({ locals }) => {
 		vapidPublicKey: config.vapidPublic,
 		prefs: parseNotifPrefs(u?.notifPrefs ?? null),
 		accentMode: locals.user.accentMode,
-		accentColor: locals.user.accentColor
+		accentColor: locals.user.accentColor,
+		role: locals.role
 	};
 };
 

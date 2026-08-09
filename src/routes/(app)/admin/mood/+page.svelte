@@ -647,4 +647,17 @@
 		font-size: 13.5px;
 		white-space: pre-wrap;
 	}
+
+	/* < 640px : la date+pills passe sur sa propre ligne (au lieu de déborder sur la stackbar,
+	   .prow-date étant en white-space:nowrap ci-dessus). */
+	@media (max-width: 900px) {
+		.prow-main {
+			grid-template-columns: 1fr auto auto 14px;
+			row-gap: 8px;
+		}
+		.prow-date {
+			grid-column: 1 / -1;
+			white-space: normal;
+		}
+	}
 </style>

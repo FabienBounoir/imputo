@@ -1,0 +1,57 @@
+# Déploiement OpenShift : preprod auto sur push main (avec seed de démo), prod auto sur tag.
+# Voir openshift/README.md pour le bootstrap requis avant le premier run (namespaces + secrets).
+#
+# Variables CI/CD à définir (Settings > CI/CD > Variables) :
+#   OPENSHIFT_SERVER              URL de l'API du cluster (https://api.xxx:6443)
+#   OPENSHIFT_TOKEN                token d'un ServiceAccount avec accès edit sur les 2 namespaces
+#   OPENSHIFT_NAMESPACE_PREPROD    (optionnel, défaut imputo-preprod)
+#   OPENSHIFT_NAMESPACE_PROD       (optionnel, défaut imputo)
+
+stages:
+  - deploy
+
+.oc_base:
+  image: quay.io/openshift/origin-cli:latest
+  before_script:
+    - oc login --token="$OPENSHIFT_TOKEN" --server="$OPENSHIFT_SERVER"
+
+# Manifestes communs aux deux environnements — jamais secret.yaml / db-secret.yaml (vraies
+# valeurs uniquement sur le cluster, voir openshift/README.md).
+.apply_base_manifests: &apply_base_manifests
+  - oc apply -f openshift/imagestream.yaml -f openshift/buildconfig.yaml -f openshift/configmap.yaml
+    -f openshift/deployment.yaml -f openshift/service.yaml -f openshift/route.yaml
+    -f openshift/db-statefulset.yaml -f openshift/cronjobs.yaml
+
+deploy:preprod:
+  extends: .oc_base
+  stage: deploy
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  script:
+    - NS="${OPENSHIFT_NAMESPACE_PREPROD:-imputo-preprod}"
+    - oc project "$NS"
+    - *apply_base_manifests
+    - oc apply -f openshift/buildconfig-tools.yaml
+    # Route hébergée sur un host auto-généré différent du prod : on corrige le ConfigMap avant
+    # le rollout pour que l'app démarre avec la bonne PUBLIC_BASE_URL/ORIGIN (sinon "Cross-site
+    # POST form submissions are forbidden", voir openshift/README.md).
+    - HOST=$(oc get route imputo -o jsonpath='{.spec.host}')
+    - oc patch configmap imputo-config --type merge -p "{\"data\":{\"PUBLIC_BASE_URL\":\"https://${HOST}\",\"ORIGIN\":\"https://${HOST}\"}}"
+    - oc start-build imputo --follow
+    - oc rollout status deployment/imputo --timeout=5m
+    - oc start-build imputo-tools --follow
+    - oc delete job/imputo-seed --ignore-not-found
+    - sed "s#CHANGEME-namespace#${NS}#" openshift/seed-job.yaml | oc apply -f -
+    - oc wait --for=condition=complete job/imputo-seed --timeout=180s
+
+deploy:production:
+  extends: .oc_base
+  stage: deploy
+  rules:
+    - if: '$CI_COMMIT_TAG'
+  script:
+    - NS="${OPENSHIFT_NAMESPACE_PROD:-imputo}"
+    - oc project "$NS"
+    - *apply_base_manifests
+    - oc start-build imputo --commit="$CI_COMMIT_TAG" --follow
+    - oc rollout status deployment/imputo --timeout=5m

@@ -10,7 +10,9 @@ export const config = {
 	vapidPublic: env.VAPID_PUBLIC_KEY ?? '',
 	vapidPrivate: env.VAPID_PRIVATE_KEY ?? '',
 	vapidSubject: env.VAPID_SUBJECT ?? 'mailto:admin@imputo.app',
-	raeStaleDays: Number(env.NOTIF_RAE_STALE_DAYS ?? '7') || 7
+	raeStaleDays: Number(env.NOTIF_RAE_STALE_DAYS ?? '7') || 7,
+	// Chute d'humeur moyenne (sur 5) entre deux plages Team mood consécutives déclenchant le récap admin.
+	moodDropThreshold: Number(env.NOTIF_MOOD_DROP_THRESHOLD ?? '0.5') || 0.5
 };
 
 export function emailDomain(email: string): string {

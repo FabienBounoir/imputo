@@ -765,6 +765,16 @@
 	.abs-created {
 		white-space: nowrap;
 	}
+	/* < 640px : la ligne (nom/plage + pills + date + bouton) ne rentre plus sur une seule ligne
+	   sans wrap -> elle débordait de la card au lieu de passer à la ligne. */
+	@media (max-width: 640px) {
+		.abs-item {
+			flex-wrap: wrap;
+		}
+		.abs-range {
+			flex-basis: 100%;
+		}
+	}
 	.ref-btn {
 		font-size: 12px;
 		font-weight: 600;

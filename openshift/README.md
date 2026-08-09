@@ -21,12 +21,13 @@ Choix retenus :
    - `secret.yaml` : `DATABASE_URL`, `SESSION_SECRET`, `CRON_SECRET`, et éventuellement les
      clés VAPID (`npx web-push generate-vapid-keys`). Voir les commandes `oc create secret`
      suggérées en commentaire dans le fichier.
-   - `db-statefulset.yaml` : mot de passe Postgres (`imputo-db-secret`) — doit correspondre à
+   - `db-secret.yaml` : mot de passe Postgres (`imputo-db-secret`) — doit correspondre à
      `DATABASE_URL` ci-dessus.
    - `deployment.yaml` : le namespace dans `spec.template.spec.containers[0].image` (valeur de
      départ seulement, réécrite ensuite automatiquement par le trigger d'image).
 4. Ne jamais committer ces fichiers une fois remplis avec de vraies valeurs — préférer les
-   éditer directement sur le cluster (`oc create secret ...` / `oc edit secret ...`).
+   éditer directement sur le cluster (`oc create secret ...` / `oc edit secret ...`). C'est
+   aussi pour ça que la CI (voir plus bas) n'applique jamais `secret.yaml` ni `db-secret.yaml`.
 
 ## Déploiement
 
@@ -55,6 +56,41 @@ webhook GitHub avec l'URL renvoyée par :
 ```sh
 oc describe buildconfig imputo | grep -A1 webhook
 ```
+
+Inutile si vous utilisez la CI GitLab ci-dessous : c'est elle qui déclenche les builds.
+
+## CI/CD GitLab
+
+`.gitlab-ci.yml` (racine du dépôt) gère deux environnements :
+
+- **preprod** — à chaque push sur `main` : build, rollout, puis seed automatique (`npm run
+  db:seed`, données de démo) via un Job dédié (`imputo-tools` + `seed-job.yaml`).
+- **production** — à chaque tag : build de l'image à partir du commit du tag
+  (`oc start-build --commit=<tag>`), rollout. Pas de seed.
+
+### Bootstrap requis avant le premier run CI
+
+1. Deux projets OpenShift : celui de prod (déjà en place, `imputo` dans les exemples ci-dessus)
+   et un nouveau pour la preprod, ex. `oc new-project imputo-preprod`.
+2. Dans chacun : les secrets `imputo-secrets` et `imputo-db-secret` créés à la main (voir
+   §"Avant le premier déploiement" ci-dessus) — la CI ne les touche jamais.
+3. Un ServiceAccount avec le rôle `edit` sur les deux namespaces, pour fournir un token à la CI :
+   ```sh
+   oc create serviceaccount gitlab-ci -n imputo-preprod
+   oc policy add-role-to-user edit -z gitlab-ci -n imputo-preprod
+   oc policy add-role-to-user edit -z gitlab-ci -n imputo
+   oc create token gitlab-ci -n imputo-preprod --duration=8760h
+   ```
+4. Variables CI/CD GitLab (Settings > CI/CD > Variables, masquées/protégées) :
+   - `OPENSHIFT_SERVER` : URL de l'API du cluster (`oc whoami --show-server`).
+   - `OPENSHIFT_TOKEN` : le token généré ci-dessus.
+   - `OPENSHIFT_NAMESPACE_PREPROD` / `OPENSHIFT_NAMESPACE_PROD` : optionnelles, défauts
+     `imputo-preprod` / `imputo`.
+
+La preprod n'a pas de host de Route connu à l'avance : le job `deploy:preprod` lit
+`oc get route imputo` après le premier `apply` et corrige lui-même `PUBLIC_BASE_URL`/`ORIGIN`
+dans le ConfigMap avant de builder — pas de manip manuelle à refaire à chaque fois, contrairement
+à la prod (§ précédente, host déjà figé dans `configmap.yaml`).
 
 ## Jobs planifiés
 

@@ -87,6 +87,8 @@
 				👑 Le <b>créateur de l'espace</b> a les mêmes droits qu'un admin, mais ne peut être ni rétrogradé ni
 				désactivé par personne d'autre. Il peut transmettre ce statut à un autre membre actif.
 			</p>
+			<div class="members-wrap">
+			<div class="members-scroll">
 			<table class="members">
 				<tbody>
 					{#each data.members as m (m.id)}
@@ -173,6 +175,8 @@
 					{/each}
 				</tbody>
 			</table>
+			</div>
+			</div>
 		</section>
 	{/if}
 
@@ -610,6 +614,14 @@
 	.invite-row button {
 		height: 42px;
 	}
+	@media (max-width: 640px) {
+		.invite-row {
+			grid-template-columns: 1fr;
+		}
+		.invite-row button {
+			height: auto;
+		}
+	}
 	.invite-msg {
 		margin-top: 16px;
 		border: 1px solid var(--border);
@@ -638,8 +650,35 @@
 		border-top: 1px solid var(--border);
 		background: var(--surface-2);
 	}
+	/* `clip` (pas de scroll ici) pour ne rogner qu'au rayon de la card ; le scroll horizontal reste
+	   local à .members-scroll, comme .tk-card/.tk-scroll dans tickets/+page.svelte. */
+	.members-wrap {
+		position: relative;
+		overflow: clip;
+	}
+	.members-scroll {
+		overflow-x: auto;
+		overflow-y: visible;
+	}
+	.members-wrap::after {
+		content: '';
+		display: none;
+		position: absolute;
+		top: 0;
+		right: 0;
+		bottom: 0;
+		width: 28px;
+		pointer-events: none;
+		background: linear-gradient(to right, transparent, var(--surface) 70%);
+	}
+	@media (max-width: 900px) {
+		.members-wrap::after {
+			display: block;
+		}
+	}
 	table.members {
 		width: 100%;
+		min-width: 640px;
 		border-collapse: collapse;
 	}
 	.members td {

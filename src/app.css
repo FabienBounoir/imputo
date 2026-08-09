@@ -1,5 +1,5 @@
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Hanken+Grotesk:wght@400;500;600;700&display=swap');
-
+/* Polices chargées via <link> dans app.html (preconnect + stylesheet), pas @import ici — voir
+   le commentaire dans app.html pour le pourquoi. */
 :root {
 	--accent: #16a34a;
 	/* dérivé automatiquement de --accent (mis à jour quand l'admin change la couleur) */
@@ -93,6 +93,10 @@ select {
 	display: grid;
 	grid-template-columns: 256px 1fr;
 	height: 100vh;
+	/* 100vh sur mobile = hauteur max (barre d'adresse repliée) : au chargement, le contenu est
+	   sizé plus grand que le viewport visible réel -> la page elle-même devient scrollable en plus
+	   du scroll interne de .main ("double scroll"). 100dvh suit le viewport visible actuel. */
+	height: 100dvh;
 }
 .sidebar {
 	display: flex;
@@ -102,6 +106,82 @@ select {
 	border-right: 1px solid var(--border);
 	background: color-mix(in srgb, var(--surface) 55%, transparent);
 	backdrop-filter: blur(14px);
+	overflow-y: auto;
+}
+.mobile-topbar {
+	display: none;
+}
+.sidebar-backdrop {
+	display: none;
+}
+.sidebar-close {
+	display: none;
+}
+/* < 900px : la sidebar devient un tiroir plein écran ouvert par le bouton du mobile-topbar,
+   au lieu de rester une colonne fixe de 256px (inutilisable sur un écran de téléphone). */
+@media (max-width: 900px) {
+	.app {
+		display: flex;
+		flex-direction: column;
+		height: 100vh;
+		height: 100dvh;
+	}
+	.mobile-topbar {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 10px 16px;
+		border-bottom: 1px solid var(--border);
+		background: var(--surface);
+		flex-shrink: 0;
+	}
+	.mobile-topbar .brand-name {
+		font-family: var(--font-display);
+		font-weight: 600;
+		font-size: 16px;
+	}
+	.sidebar {
+		position: fixed;
+		top: 0;
+		left: 0;
+		bottom: 0;
+		width: 280px;
+		max-width: 85vw;
+		z-index: 80;
+		background: var(--surface);
+		backdrop-filter: none;
+		transform: translateX(-100%);
+		transition: transform 0.25s ease;
+		box-shadow: var(--shadow-lg);
+	}
+	.sidebar.open {
+		transform: translateX(0);
+	}
+	.sidebar-close {
+		display: grid;
+		place-items: center;
+		position: absolute;
+		top: 14px;
+		right: 14px;
+		width: 30px;
+		height: 30px;
+		border-radius: 8px;
+		background: var(--surface-2);
+		border: 1px solid var(--border);
+	}
+	.sidebar-backdrop {
+		display: block;
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.4);
+		z-index: 70;
+		border: none;
+		padding: 0;
+	}
+	.main {
+		flex: 1;
+		min-height: 0;
+	}
 }
 .brand {
 	display: flex;
@@ -110,6 +190,7 @@ select {
 	padding: 6px 8px 14px;
 }
 .brand .mark {
+	position: relative;
 	width: 38px;
 	height: 38px;
 	border-radius: 12px;
@@ -124,6 +205,58 @@ select {
 	font-size: 20px;
 	transform: rotate(-4deg);
 	cursor: pointer;
+	transition: transform 0.4s ease;
+}
+/* Easter egg saisonnier : bonnet de Père Noël sur le logo (déc. – 6 jan.). */
+.brand .mark .santa-hat {
+	position: absolute;
+	top: -9px;
+	left: -7px;
+	font-size: 16px;
+	transform: rotate(-20deg);
+	text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+	pointer-events: none;
+}
+/* Easter egg saisonnier : logo la tête en bas le 1er avril. */
+.brand .mark.upside-down {
+	transform: rotate(180deg);
+}
+/* Easter egg saisonnier : logo aux couleurs du drapeau le 14 juillet. */
+.brand .mark.bastille {
+	background: linear-gradient(90deg, #0055a4 0%, #0055a4 33%, #fff 33%, #fff 66%, #ef4135 66%, #ef4135 100%);
+}
+/* Contour sombre sur les barres/le point : sinon invisibles (blanc sur la bande blanche). */
+.brand .mark.bastille svg rect,
+.brand .mark.bastille svg circle,
+.brand .mark.bastille svg path {
+	stroke: #1e293b;
+	stroke-width: 6;
+}
+/* Easter egg saisonnier : logo citrouille le soir d'Halloween (20 – 31 oct.). */
+.brand .mark.halloween {
+	background: linear-gradient(150deg, #f97316, #1e1b2e);
+}
+.brand .mark .pumpkin-hat {
+	position: absolute;
+	top: -9px;
+	right: -8px;
+	font-size: 16px;
+	transform: rotate(15deg);
+	text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+	pointer-events: none;
+}
+/* Easter egg saisonnier : poisson d'avril collé sur le logo (1er avril), comme le vrai
+   poisson en papier qu'on scotche dans le dos de quelqu'un. Il est dans .mark, donc hérite
+   déjà du rotate(180deg) de .upside-down (comme les barres/le point du logo) : ce tilt local
+   n'est qu'un petit angle "posé", le retournement vient du parent. */
+.brand .mark .fish-sticker {
+	position: absolute;
+	bottom: -8px;
+	right: -10px;
+	font-size: 16px;
+	transform: rotate(15deg);
+	text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+	pointer-events: none;
 }
 /* Easter egg : 10 clics rapides sur le logo (routes/(app)/+layout.svelte). */
 .brand .mark.alive {
@@ -474,6 +607,17 @@ select {
 .content {
 	padding: 8px 30px 50px;
 }
+@media (max-width: 640px) {
+	.topbar {
+		padding: 16px 16px 10px;
+	}
+	.topbar h1 {
+		font-size: 22px;
+	}
+	.content {
+		padding: 6px 16px 40px;
+	}
+}
 
 .btn {
 	display: inline-flex;
@@ -615,6 +759,7 @@ select {
 /* ---------- Auth screens ---------- */
 .auth-wrap {
 	min-height: 100vh;
+	min-height: 100dvh;
 	display: grid;
 	place-items: center;
 	padding: 24px;
@@ -627,6 +772,15 @@ select {
 	border-radius: 24px;
 	box-shadow: var(--shadow-lg);
 	padding: 38px 36px;
+}
+@media (max-width: 480px) {
+	.auth-wrap {
+		padding: 16px;
+	}
+	.auth-card {
+		padding: 28px 22px;
+		border-radius: 18px;
+	}
 }
 .auth-card .mark {
 	width: 50px;
