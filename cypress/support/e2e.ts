@@ -9,22 +9,22 @@ Cypress.Commands.add('typeReliably', (selector: string, text: string) => {
 	cy.get(selector).should('have.value', text);
 });
 
-// Même famille de piège que typeReliably, mais pour les clics : juste après un cy.visit() (ou une
-// première interaction sur une page qui vient de s'afficher), Svelte peut ne pas avoir fini
-// d'attacher ses listeners onclick — le clic atterrit dans le vide. On reclique si l'effet attendu
-// (apparition de expectSelector) ne s'est pas produit.
+// Cypress vérifie qu'un élément est actionnable (visible, pas animé, reçoit les events) avant de
+// cliquer, mais ça ne garantit PAS que le listener Svelte est déjà attaché : sur une page qui
+// vient de se charger, l'hydratation peut prendre jusqu'à ~1-2s (mesuré sur /tickets, page assez
+// lourde) avant qu'un clic ait un effet. Un simple clic + should('exist') échoue donc si le clic
+// est parti pendant cette fenêtre. On laisse une vraie marge avant de juger que rien ne s'est
+// passé — une marge trop courte (300ms, testé) reclique alors qu'un rendu juste un peu lent était
+// en fait en train d'aboutir, et un reclic sur un bouton toggle referme ce qu'il vient d'ouvrir.
 Cypress.Commands.add('clickReliably', (find: () => Cypress.Chainable, expectSelector: string) => {
 	find().click();
-	// Laisse une vraie fenêtre de temps s'écouler avant de vérifier — un check synchrone juste
-	// après le clic voit toujours "pas encore là" (le re-rendu Svelte n'est pas instantané) et
-	// déclenchait un second clic qui annulait le premier sur un bouton toggle.
-	cy.wait(300);
+	cy.wait(2000);
 	cy.get('body').then(($body) => {
 		if ($body.find(expectSelector).length === 0) find().click();
 	});
 	// `exist` et non `be.visible` : le résultat peut être sous le pli d'une zone scrollable, ce
 	// que .type()/.click() gèrent déjà tout seuls (auto-scroll) sans qu'on ait à s'en soucier ici.
-	cy.get(expectSelector).should('exist');
+	cy.get(expectSelector, { timeout: 4000 }).should('exist');
 });
 
 Cypress.Commands.add('registerAndLogin', (overrides = {}) => {
