@@ -119,7 +119,14 @@
 					{/if}
 				</svg>
 			</div>
-			<div class="name">Imputo<small title="Version déployée">{__APP_VERSION__}</small></div>
+			<div class="name">Imputo<small
+					><a
+						href="https://github.com/FabienBounoir/imputo"
+						target="_blank"
+						rel="noopener noreferrer"
+						title="Version déployée — voir sur GitHub">{__APP_VERSION__}</a
+					></small
+				></div>
 		</div>
 
 		<div style="position:relative;">
