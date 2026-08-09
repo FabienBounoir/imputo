@@ -8,6 +8,10 @@ ENV BUILD_ADAPTER=node
 # Jamais utilisée pour une vraie connexion (le client postgres est lazy) — seulement pour que
 # l'analyse des routes au build ne plante pas sur `DATABASE_URL is not set`.
 ENV DATABASE_URL=postgres://build:build@localhost:5432/build
+# Tag Git (prod) ou short SHA (preprod) injecté par .gitlab-ci.yml via --build-arg, repris
+# par vite.config.ts (define) pour afficher la version déployée dans l'UI.
+ARG APP_VERSION=dev
+ENV APP_VERSION=$APP_VERSION
 RUN npm run build
 # Stage "build" gardé tel quel (devDependencies + source complets) : cible réutilisable pour les
 # scripts ponctuels (db:seed, db:unseed, db:studio…) qui ont besoin de tsx/drizzle-kit — voir le

@@ -7,6 +7,11 @@ import { defineConfig } from 'vite';
 const adapter = process.env.BUILD_ADAPTER === 'vercel' ? adapterVercel() : adapterNode();
 
 export default defineConfig({
+	define: {
+		// Tag Git / short SHA injecté au build par le Dockerfile (voir ARG APP_VERSION),
+		// affiché dans l'UI pour identifier la version déployée.
+		__APP_VERSION__: JSON.stringify(process.env.APP_VERSION ?? 'dev')
+	},
 	plugins: [
 		sveltekit({
 			compilerOptions: {
@@ -20,6 +25,11 @@ export default defineConfig({
 	// @ts-expect-error `test` est ajouté par vitest (qui réutilise la config vite).
 	test: {
 		include: ['src/**/*.{test,spec}.ts'],
-		setupFiles: ['./vitest-setup.ts']
+		setupFiles: ['./vitest-setup.ts'],
+		// Tests d'intégration sur une seule vraie DB partagée : certains services (ex. le cron de
+		// notifications) opèrent sur TOUS les workspaces sans filtrage, donc les faire tourner en
+		// parallèle sur plusieurs fichiers fait planter ceux qui suppriment/créent des workspaces
+		// pendant qu'un autre les parcourt globalement (FK violation). Plus lent, mais fiable.
+		fileParallelism: false
 	}
 });

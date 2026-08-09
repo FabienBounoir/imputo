@@ -1,4 +1,6 @@
-# Déploiement OpenShift : preprod auto sur push main (avec seed de démo), prod auto sur tag.
+# Tests (tout push + tag) puis déploiement OpenShift : preprod auto sur push main (avec seed de
+# démo), prod auto sur tag. Le stage `test` précède `deploy` : GitLab n'enchaîne un stage que si
+# le précédent est vert, donc un tag dont les tests échouent ne déclenche jamais deploy:production.
 # Voir openshift/README.md pour le bootstrap requis avant le premier run (namespaces + secrets).
 #
 # Variables CI/CD à définir (Settings > CI/CD > Variables) :
@@ -8,7 +10,43 @@
 #   OPENSHIFT_NAMESPACE_PROD       (optionnel, défaut imputo)
 
 stages:
+  - test
   - deploy
+
+# DB jetable pour les tests d'intégration (vraie DB, pas de mock — voir vitest-setup.ts).
+variables:
+  POSTGRES_DB: imputo
+  POSTGRES_USER: imputo
+  POSTGRES_PASSWORD: imputo
+  DATABASE_URL: postgres://imputo:imputo@postgres:5432/imputo
+  SESSION_SECRET: ci-session-secret
+  CRON_SECRET: ci-cron-secret
+
+.test_base:
+  stage: test
+  services:
+    - postgres:16-alpine
+  before_script:
+    - npm ci
+    - node scripts/migrate.js
+
+test:unit:
+  extends: .test_base
+  image: node:22-alpine
+  script:
+    - npm test
+
+# fileParallelism est désactivé côté vitest.config (voir vite.config.ts) : certains services
+# (cron notifications) parcourent tous les workspaces de la DB sans filtrage, donc des fichiers de
+# test en parallèle qui créent/suppriment des workspaces se marchent dessus. La suite tourne donc
+# séquentiellement, ~1min.
+test:e2e:
+  extends: .test_base
+  image: cypress/included:15.20.0
+  script:
+    - npm run dev &
+    - node -e "const t=Date.now();(async()=>{while(Date.now()-t<60000){try{if((await fetch('http://localhost:5173/login')).ok)process.exit(0)}catch{}await new Promise(r=>setTimeout(r,1000))}process.exit(1)})()"
+    - npx cypress run
 
 .oc_base:
   image: quay.io/openshift/origin-cli:latest
@@ -37,12 +75,12 @@ deploy:preprod:
     # POST form submissions are forbidden", voir openshift/README.md).
     - HOST=$(oc get route imputo -o jsonpath='{.spec.host}')
     - oc patch configmap imputo-config --type merge -p "{\"data\":{\"PUBLIC_BASE_URL\":\"https://${HOST}\",\"ORIGIN\":\"https://${HOST}\"}}"
-    - oc start-build imputo --follow
+    - oc start-build imputo --build-arg=APP_VERSION="v$CI_COMMIT_SHORT_SHA" --follow
     - oc rollout status deployment/imputo --timeout=5m
     - oc start-build imputo-tools --follow
     - oc delete job/imputo-seed --ignore-not-found
     - sed "s#CHANGEME-namespace#${NS}#" openshift/seed-job.yaml | oc apply -f -
-    - oc wait --for=condition=complete job/imputo-seed --timeout=180s
+    - oc wait --for=condition=complete job/imputo-seed --timeout=320s
 
 deploy:production:
   extends: .oc_base
@@ -53,5 +91,5 @@ deploy:production:
     - NS="${OPENSHIFT_NAMESPACE_PROD:-imputo}"
     - oc project "$NS"
     - *apply_base_manifests
-    - oc start-build imputo --commit="$CI_COMMIT_TAG" --follow
+    - oc start-build imputo --commit="$CI_COMMIT_TAG" --build-arg=APP_VERSION="$CI_COMMIT_TAG" --follow
     - oc rollout status deployment/imputo --timeout=5m

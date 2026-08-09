@@ -119,7 +119,7 @@
 					{/if}
 				</svg>
 			</div>
-			<div class="name">Imputo<small>suivi & chiffrage</small></div>
+			<div class="name">Imputo<small title="Version déployée">{__APP_VERSION__}</small></div>
 		</div>
 
 		<div style="position:relative;">

@@ -2,6 +2,9 @@ import type { Role } from '$lib/server/db';
 import type { MembershipInfo } from '$lib/server/services/workspaces';
 
 declare global {
+	// Injectée par vite.config.ts (define) depuis ARG APP_VERSION du Dockerfile.
+	const __APP_VERSION__: string;
+
 	namespace App {
 		interface Locals {
 			user: {
