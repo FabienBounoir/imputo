@@ -2,6 +2,8 @@
 	import { enhance } from '$app/forms';
 	import PasswordField from '$lib/components/PasswordField.svelte';
 	let { form } = $props();
+	let workspaceName = $state(form?.values?.workspaceName ?? '');
+	let displayName = $state(form?.values?.displayName ?? '');
 	let email = $state(form?.values?.email ?? '');
 </script>
 
@@ -23,11 +25,11 @@
 		<form method="POST" use:enhance>
 			<div class="field">
 				<label for="ws">Nom de l'espace</label>
-				<input id="ws" name="workspaceName" value={form?.values?.workspaceName ?? ''} placeholder="Appli Mobile" required />
+				<input id="ws" name="workspaceName" bind:value={workspaceName} placeholder="Appli Mobile" required />
 			</div>
 			<div class="field">
 				<label for="dn">Votre nom</label>
-				<input id="dn" name="displayName" value={form?.values?.displayName ?? ''} placeholder="Fabien B." required />
+				<input id="dn" name="displayName" bind:value={displayName} placeholder="Fabien B." required />
 			</div>
 			<div class="field">
 				<label for="em">Email professionnel</label>

@@ -17,7 +17,9 @@
 		"db:seed": "tsx src/lib/server/db/seed.ts",
 		"db:unseed": "tsx src/lib/server/db/unseed.ts",
 		"test": "vitest run",
-		"test:watch": "vitest"
+		"test:watch": "vitest",
+		"test:e2e": "cypress run",
+		"test:e2e:open": "cypress open"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-auto": "^7.0.1",
@@ -27,6 +29,7 @@
 		"@sveltejs/vite-plugin-svelte": "^7.1.2",
 		"@types/node": "^26.0.1",
 		"@types/web-push": "^3.6.4",
+		"cypress": "^15.20.0",
 		"drizzle-kit": "^0.31.5",
 		"svelte": "^5.56.1",
 		"svelte-check": "^4.6.0",
