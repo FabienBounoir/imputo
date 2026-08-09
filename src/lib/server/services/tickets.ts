@@ -321,6 +321,28 @@ export async function listTickets(workspaceId: string, testPhase = true, isAdmin
 	return enrichTickets(workspaceId, testPhase, isAdmin, tickets);
 }
 
+/**
+ * Version allégée de listTickets pour les sélecteurs (ex. "Ajouter un ticket" sur Mon imputation) :
+ * juste id/clé/titre/sprint/version, sans l'enrichissement consommé/RAE/contributeurs/groupes
+ * (4 requêtes GROUP BY en plus, inutiles pour peupler un <select>).
+ */
+export async function listTicketSummaries(
+	workspaceId: string
+): Promise<{ id: string; key: string; title: string; sprintId: string | null; versionId: string | null; sprintName: string | null }[]> {
+	return db
+		.select({
+			id: ticket.id,
+			key: ticket.key,
+			title: ticket.title,
+			sprintId: ticket.sprintId,
+			versionId: ticket.versionId,
+			sprintName: sprint.name
+		})
+		.from(ticket)
+		.leftJoin(sprint, eq(ticket.sprintId, sprint.id))
+		.where(and(eq(ticket.workspaceId, workspaceId), isNull(ticket.archivedAt)));
+}
+
 export type TicketFilters = {
 	query?: string;
 	stateId?: string;

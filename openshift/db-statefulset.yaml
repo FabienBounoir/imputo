@@ -5,20 +5,7 @@
 # ou l'UID "postgres" propriétaire du volume.
 # Si registry.redhat.io n'est pas accessible depuis votre cluster, utiliser en repli :
 #   quay.io/sclorg/postgresql-16-c9s
-apiVersion: v1
-kind: Secret
-metadata:
-  name: imputo-db-secret
-  labels:
-    app: imputo-db
-type: Opaque
-stringData:
-  # Remplacer avant déploiement — doit correspondre à la valeur DATABASE_URL du secret
-  # imputo-secrets (postgres://<user>:<password>@imputo-db:5432/<db>).
-  POSTGRESQL_USER: imputo
-  POSTGRESQL_PASSWORD: 'CHANGEME-generate-a-random-password'
-  POSTGRESQL_DATABASE: imputo
----
+# Secret imputo-db-secret : voir db-secret.yaml (séparé pour ne jamais être écrasé par la CI).
 apiVersion: v1
 kind: Service
 metadata:

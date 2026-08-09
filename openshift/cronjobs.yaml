@@ -7,6 +7,7 @@ metadata:
   labels:
     app: imputo
 spec:
+  timeZone: Europe/Paris
   schedule: '0 3 * * *'
   jobTemplate:
     spec:
@@ -40,6 +41,7 @@ metadata:
   labels:
     app: imputo
 spec:
+  timeZone: Europe/Paris
   schedule: '0 2 * * *'
   jobTemplate:
     spec:
@@ -66,14 +68,16 @@ spec:
                       name: imputo-secrets
                       key: CRON_SECRET
 ---
+# Relances du matin : chacune ne renotifie que ceux encore en défaut (verrou par slot en base).
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: imputo-cron-notify-morning
+  name: imputo-cron-notify-morning-0900
   labels:
     app: imputo
 spec:
-  schedule: '0 8 * * *'
+  timeZone: Europe/Paris
+  schedule: '0 9 * * *'
   jobTemplate:
     spec:
       activeDeadlineSeconds: 60
@@ -91,7 +95,7 @@ spec:
                 - POST
                 - -H
                 - 'Authorization: Bearer $(CRON_SECRET)'
-                - 'http://imputo:3000/api/jobs/notify?kind=morning'
+                - 'http://imputo:3000/api/jobs/notify?kind=morning&slot=0900'
               env:
                 - name: CRON_SECRET
                   valueFrom:
@@ -102,10 +106,148 @@ spec:
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: imputo-cron-notify-evening
+  name: imputo-cron-notify-morning-0915
   labels:
     app: imputo
 spec:
+  timeZone: Europe/Paris
+  schedule: '15 9 * * *'
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 60
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: curl
+              image: curlimages/curl:latest
+              args:
+                - -fsS
+                - --max-time
+                - '30'
+                - -X
+                - POST
+                - -H
+                - 'Authorization: Bearer $(CRON_SECRET)'
+                - 'http://imputo:3000/api/jobs/notify?kind=morning&slot=0915'
+              env:
+                - name: CRON_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: imputo-secrets
+                      key: CRON_SECRET
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: imputo-cron-notify-morning-0930
+  labels:
+    app: imputo
+spec:
+  timeZone: Europe/Paris
+  schedule: '30 9 * * *'
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 60
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: curl
+              image: curlimages/curl:latest
+              args:
+                - -fsS
+                - --max-time
+                - '30'
+                - -X
+                - POST
+                - -H
+                - 'Authorization: Bearer $(CRON_SECRET)'
+                - 'http://imputo:3000/api/jobs/notify?kind=morning&slot=0930'
+              env:
+                - name: CRON_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: imputo-secrets
+                      key: CRON_SECRET
+---
+# Relances du soir : idem, une seule notif tant que l'imputation du jour manque.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: imputo-cron-notify-evening-1700
+  labels:
+    app: imputo
+spec:
+  timeZone: Europe/Paris
+  schedule: '0 17 * * *'
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 60
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: curl
+              image: curlimages/curl:latest
+              args:
+                - -fsS
+                - --max-time
+                - '30'
+                - -X
+                - POST
+                - -H
+                - 'Authorization: Bearer $(CRON_SECRET)'
+                - 'http://imputo:3000/api/jobs/notify?kind=evening&slot=1700'
+              env:
+                - name: CRON_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: imputo-secrets
+                      key: CRON_SECRET
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: imputo-cron-notify-evening-1715
+  labels:
+    app: imputo
+spec:
+  timeZone: Europe/Paris
+  schedule: '15 17 * * *'
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 60
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: curl
+              image: curlimages/curl:latest
+              args:
+                - -fsS
+                - --max-time
+                - '30'
+                - -X
+                - POST
+                - -H
+                - 'Authorization: Bearer $(CRON_SECRET)'
+                - 'http://imputo:3000/api/jobs/notify?kind=evening&slot=1715'
+              env:
+                - name: CRON_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: imputo-secrets
+                      key: CRON_SECRET
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: imputo-cron-notify-evening-1800
+  labels:
+    app: imputo
+spec:
+  timeZone: Europe/Paris
   schedule: '0 18 * * *'
   jobTemplate:
     spec:
@@ -124,7 +266,43 @@ spec:
                 - POST
                 - -H
                 - 'Authorization: Bearer $(CRON_SECRET)'
-                - 'http://imputo:3000/api/jobs/notify?kind=evening'
+                - 'http://imputo:3000/api/jobs/notify?kind=evening&slot=1800'
+              env:
+                - name: CRON_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: imputo-secrets
+                      key: CRON_SECRET
+---
+# Team mood : dernier jour de la plage, relance ceux qui n'ont pas encore voté. Pas de slot :
+# un seul appel/jour, la condition (period.end === today) ne matche qu'un jour par plage.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: imputo-cron-notify-mood-deadline
+  labels:
+    app: imputo
+spec:
+  timeZone: Europe/Paris
+  schedule: '0 10 * * *'
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 60
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: curl
+              image: curlimages/curl:latest
+              args:
+                - -fsS
+                - --max-time
+                - '30'
+                - -X
+                - POST
+                - -H
+                - 'Authorization: Bearer $(CRON_SECRET)'
+                - 'http://imputo:3000/api/jobs/notify?kind=mood-deadline'
               env:
                 - name: CRON_SECRET
                   valueFrom:
@@ -139,5 +317,6 @@ spec:
 # metadata:
 #   name: imputo-cron-notify-weekly
 # spec:
+#   timeZone: Europe/Paris
 #   schedule: '0 8 * * 1'
 #   ...

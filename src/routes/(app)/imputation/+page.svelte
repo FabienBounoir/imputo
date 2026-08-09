@@ -833,6 +833,25 @@
 		/* `clip` et non `hidden` : on garde le rognage sur le rayon de la card sans créer de
 		   conteneur de défilement — les cellules sticky doivent se résoudre contre .table-scroll. */
 		overflow: clip;
+		position: relative;
+	}
+	/* < 900px : la grille dépasse toujours (colonnes jours fixes) — ce dégradé indique qu'on peut
+	   swiper à droite, sinon rien ne le montre (le tableau est juste rogné à l'écran). */
+	.grid-card::after {
+		content: '';
+		display: none;
+		position: absolute;
+		top: 6px;
+		right: 6px;
+		bottom: 6px;
+		width: 28px;
+		pointer-events: none;
+		background: linear-gradient(to right, transparent, var(--surface) 70%);
+	}
+	@media (max-width: 900px) {
+		.grid-card::after {
+			display: block;
+		}
 	}
 	/* Pas de hauteur bornée : le scroll vertical doit rester porté par .main (la page), pas par ce
 	   conteneur — sinon un tableau chargé affiche sa propre barre verticale en plus de celle de la
@@ -1236,6 +1255,19 @@
 	.addrow select:first-of-type {
 		flex: 1;
 	}
+	/* < 640px : icône + recherche de ticket + select d'activité + bouton ne rentrent plus sur une
+	   ligne sans wrap -> ça débordait (même souci que .add-ticket dans admin/objectifs). */
+	@media (max-width: 640px) {
+		.addrow {
+			flex-wrap: wrap;
+		}
+		.addrow svg {
+			display: none;
+		}
+		.addrow :global(.tp-root) {
+			flex-basis: 100%;
+		}
+	}
 
 	.legend {
 		display: flex;
@@ -1306,5 +1338,16 @@
 	}
 	.btn-danger:hover {
 		background: color-mix(in srgb, var(--danger, #c0392b) 88%, black);
+	}
+
+	@media (max-width: 720px) {
+		.summary {
+			grid-template-columns: repeat(2, 1fr);
+		}
+	}
+	@media (max-width: 420px) {
+		.summary {
+			grid-template-columns: 1fr;
+		}
 	}
 </style>
