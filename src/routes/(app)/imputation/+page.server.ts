@@ -1,7 +1,7 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { getTimesheet, setCell, deleteRow, getRecentTicketIds } from '$lib/server/services/imputation';
-import { getRefData, listTickets } from '$lib/server/services/tickets';
+import { getRefData, listTicketSummaries } from '$lib/server/services/tickets';
 import { getMembership } from '$lib/server/services/workspaces';
 import { listObjectivesForUserWeeks, vacationWeeks } from '$lib/server/services/weeklyObjectives';
 import { listAbsencesForRange, buildAbsenceGrid } from '$lib/server/services/absences';
@@ -43,7 +43,7 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 
 	const [sheet, tickets, membership, recentTicketIds, weeklyObjectives, vacations, periodAbsences] = await Promise.all([
 		getTimesheet(ws.workspaceId, viewedId, period.days),
-		listTickets(ws.workspaceId),
+		listTicketSummaries(ws.workspaceId),
 		getMembership(ws.workspaceId, viewedId),
 		getRecentTicketIds(ws.workspaceId, viewedId),
 		listObjectivesForUserWeeks(ws.workspaceId, viewedId, weekMondays),
@@ -63,14 +63,7 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 		activities: ref.activities,
 		categories: ref.categories,
 		versions: ref.versions,
-		tickets: tickets.map((t) => ({
-			id: t.id,
-			key: t.key,
-			title: t.title,
-			sprintId: t.sprintId,
-			versionId: t.versionId,
-			sprintName: t.sprintName
-		})),
+		tickets,
 		recentTicketIds,
 		weeklyObjectives,
 		vacationWeeks: vacations,

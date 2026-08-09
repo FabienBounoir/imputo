@@ -4,6 +4,7 @@
 	import { applyTheme, storedTheme, type ThemePref } from '$lib/theme';
 	import { hslToHex } from '$lib/color';
 	import { beep } from '$lib/sound';
+	import { trackKonamiKey, initKonami } from '$lib/konami.svelte';
 	import { Confetti } from 'svelte-confetti';
 
 	let { children, data } = $props();
@@ -71,8 +72,8 @@
 	});
 
 	// Easter egg : Konami code -> confettis + petit jingle + accent qui s'emballe 2s.
-	const KONAMI = ['ArrowUp','ArrowUp','ArrowDown','ArrowDown','ArrowLeft','ArrowRight','ArrowLeft','ArrowRight','b','a'];
-	let konamiProgress = 0;
+	// La détection est partagée (voir $lib/konami.svelte) : une fois débloqué, ça ouvre
+	// aussi un réglage caché dans Réglages -> Apparence (forcer un thème de période).
 	let confettiTrigger = $state(0);
 
 	// Petit jingle "power-up" synthétisé, pas besoin d'un fichier audio.
@@ -97,21 +98,15 @@
 	}
 
 	function handleKonamiKey(e: KeyboardEvent) {
-		const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-		if (key === KONAMI[konamiProgress]) {
-			konamiProgress++;
-			if (konamiProgress === KONAMI.length) {
-				konamiProgress = 0;
-				if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) confettiTrigger++;
-				playKonamiSound();
-				accentFrenzy();
-			}
-		} else {
-			konamiProgress = key === KONAMI[0] ? 1 : 0;
+		if (trackKonamiKey(e)) {
+			if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) confettiTrigger++;
+			playKonamiSound();
+			accentFrenzy();
 		}
 	}
 
 	$effect(() => {
+		initKonami();
 		window.addEventListener('keydown', handleKonamiKey);
 		return () => window.removeEventListener('keydown', handleKonamiKey);
 	});

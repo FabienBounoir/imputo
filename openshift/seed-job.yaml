@@ -1,0 +1,24 @@
+# Job ponctuel pour peupler l'environnement de preprod avec des données de démo
+# (`npm run db:seed`, voir src/lib/server/db/seed.ts). Jamais appliqué en production.
+# `CHANGEME-namespace` est substitué par la CI (sed) avant `oc apply`, comme pour l'image de
+# deployment.yaml — les Jobs n'ont pas de trigger ImageStream, donc pas de réécriture auto ici.
+# Recréé à chaque run (`oc delete --ignore-not-found` puis `oc apply`), un Job est immuable.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: imputo-seed
+  labels:
+    app: imputo
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: seed
+          image: 'image-registry.openshift-image-registry.svc:5000/CHANGEME-namespace/imputo:tools'
+          command: ['npm', 'run', 'db:seed']
+          envFrom:
+            - secretRef:
+                name: imputo-secrets

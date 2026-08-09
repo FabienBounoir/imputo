@@ -5,6 +5,15 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="text-scale" content="scale" />
 
+		<!-- Polices : <link> plutôt que @import dans app.css — le navigateur les découvre dès le
+		     parsing du HTML au lieu d'attendre le CSS, donc moins de flash de police par défaut. -->
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
+		<link
+			rel="stylesheet"
+			href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Hanken+Grotesk:wght@400;500;600;700&display=swap"
+		/>
+
 		<!-- Identité / favicon -->
 		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 		<link rel="alternate icon" type="image/png" href="/icons/favicon-32.png" />
@@ -12,7 +21,11 @@
 
 		<!-- PWA -->
 		<link rel="manifest" href="/manifest.webmanifest" />
-		<meta name="theme-color" content="#16a34a" />
+		<!-- Couleur de la barre du navigateur mobile, alignée sur --bg clair/sombre (app.css) —
+		     sans ça elle reste au vert accent, y compris en thème sombre. -->
+		<meta name="theme-color" content="#f4f2ec" media="(prefers-color-scheme: light)" />
+		<meta name="theme-color" content="#131419" media="(prefers-color-scheme: dark)" />
+		<meta name="color-scheme" content="light dark" />
 		<meta
 			name="description"
 			content="Suivi de chiffrage & d'imputation : tickets, feuille de temps et reporting au même endroit."
