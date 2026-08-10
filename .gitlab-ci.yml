@@ -4,8 +4,11 @@
 # Voir openshift/README.md pour le bootstrap requis avant le premier run (namespaces + secrets).
 #
 # Variables CI/CD à définir (Settings > CI/CD > Variables) :
-#   OPENSHIFT_SERVER              URL de l'API du cluster (https://api.xxx:6443)
-#   OPENSHIFT_TOKEN                token d'un ServiceAccount avec accès edit sur les 2 namespaces
+#   OPENSHIFT_SERVER               URL de l'API du cluster (https://api.xxx:6443)
+#   OPENSHIFT_TOKEN_PREPROD        token d'un ServiceAccount avec accès edit sur imputo-preprod
+#   OPENSHIFT_TOKEN_PROD           token d'un ServiceAccount avec accès edit sur imputo (namespace
+#                                  séparé du token preprod — moindre privilège, chaque SA n'a accès
+#                                  qu'à son propre namespace)
 #   OPENSHIFT_NAMESPACE_PREPROD    (optionnel, défaut imputo-preprod)
 #   OPENSHIFT_NAMESPACE_PROD       (optionnel, défaut imputo)
 
@@ -65,6 +68,8 @@ deploy:preprod:
   stage: deploy
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
+  variables:
+    OPENSHIFT_TOKEN: $OPENSHIFT_TOKEN_PREPROD
   script:
     - NS="${OPENSHIFT_NAMESPACE_PREPROD:-imputo-preprod}"
     - oc project "$NS"
@@ -87,6 +92,8 @@ deploy:production:
   stage: deploy
   rules:
     - if: '$CI_COMMIT_TAG'
+  variables:
+    OPENSHIFT_TOKEN: $OPENSHIFT_TOKEN_PROD
   script:
     - NS="${OPENSHIFT_NAMESPACE_PROD:-imputo}"
     - oc project "$NS"

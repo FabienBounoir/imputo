@@ -74,16 +74,21 @@ Inutile si vous utilisez la CI GitLab ci-dessous : c'est elle qui déclenche les
    et un nouveau pour la preprod, ex. `oc new-project imputo-preprod`.
 2. Dans chacun : les secrets `imputo-secrets` et `imputo-db-secret` créés à la main (voir
    §"Avant le premier déploiement" ci-dessus) — la CI ne les touche jamais.
-3. Un ServiceAccount avec le rôle `edit` sur les deux namespaces, pour fournir un token à la CI :
+3. Un ServiceAccount `gitlab-ci` par namespace (rôle `edit` local, pas de SA partagé
+   cross-namespace — moindre privilège) :
    ```sh
    oc create serviceaccount gitlab-ci -n imputo-preprod
    oc policy add-role-to-user edit -z gitlab-ci -n imputo-preprod
-   oc policy add-role-to-user edit -z gitlab-ci -n imputo
    oc create token gitlab-ci -n imputo-preprod --duration=8760h
+
+   oc create serviceaccount gitlab-ci -n imputo
+   oc policy add-role-to-user edit -z gitlab-ci -n imputo
+   oc create token gitlab-ci -n imputo --duration=8760h
    ```
 4. Variables CI/CD GitLab (Settings > CI/CD > Variables, masquées/protégées) :
    - `OPENSHIFT_SERVER` : URL de l'API du cluster (`oc whoami --show-server`).
-   - `OPENSHIFT_TOKEN` : le token généré ci-dessus.
+   - `OPENSHIFT_TOKEN_PREPROD` : token du SA `imputo-preprod/gitlab-ci`.
+   - `OPENSHIFT_TOKEN_PROD` : token du SA `imputo/gitlab-ci`.
    - `OPENSHIFT_NAMESPACE_PREPROD` / `OPENSHIFT_NAMESPACE_PROD` : optionnelles, défauts
      `imputo-preprod` / `imputo`.
 
