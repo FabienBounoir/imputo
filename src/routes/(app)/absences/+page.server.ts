@@ -2,6 +2,7 @@ import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { getRefData } from '$lib/server/services/tickets';
 import { isManagerOrAdmin } from '$lib/server/services/workspaces';
+import { notifyAbsencePending, notifyAbsenceValidated } from '$lib/server/services/notifications';
 import {
 	listAbsencesForUser,
 	listAbsencesForRange,
@@ -99,7 +100,11 @@ export const actions: Actions = {
 				: { userId: locals.user.id };
 
 		try {
-			await createAbsenceFor(ws.workspaceId, subject, { startDate, endDate, type, period });
+			const absenceId = await createAbsenceFor(ws.workspaceId, subject, { startDate, endDate, type, period });
+			// Prévisionnel = en attente de validation : les admins doivent en être notifiés pour aller le traiter.
+			if (type === 'CONGE_PREVISIONNEL') {
+				await notifyAbsencePending(ws.workspaceId, ws.workspaceName, locals.user.id, locals.user.displayName, absenceId);
+			}
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
@@ -137,7 +142,11 @@ export const actions: Actions = {
 		const id = String(f.get('id') ?? '');
 		if (!id) return fail(400, { error: 'Données invalides.' });
 		try {
-			await validateAbsence(ws.workspaceId, id, locals.user.id);
+			const validated = await validateAbsence(ws.workspaceId, id, locals.user.id);
+			// Membre externe : personne à notifier (pas de compte réel).
+			if (validated.userId) {
+				await notifyAbsenceValidated(ws.workspaceId, ws.workspaceName, validated.userId, validated.startDate, validated.endDate, id);
+			}
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}

@@ -747,6 +747,7 @@
 		padding: 1px 6px;
 		border-radius: 20px;
 		vertical-align: middle;
+		margin-left: 6px;
 	}
 	.role-sel {
 		padding: 5px 9px;

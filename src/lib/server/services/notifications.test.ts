@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterAll } from 'vitest';
 import { eq, and } from 'drizzle-orm';
-import { db, workspace, category, timeEntry, moodVote } from '$lib/server/db';
+import { db, workspace, category, timeEntry, moodVote, user, membership } from '$lib/server/db';
 import { createWorkspaceWithOwner } from './workspaces';
 import { todayInParis, parseISODate, toISODate, addDays } from '$lib/utils/date';
 
@@ -20,7 +20,7 @@ vi.mock('$lib/utils/date', async (importOriginal) => {
 	return { ...actual, isWorkday: () => true };
 });
 
-const { runNotifications } = await import('./notifications');
+const { runNotifications, notifyAbsencePending, notifyAbsenceValidated } = await import('./notifications');
 
 const rnd = Math.random().toString(36).slice(2, 8);
 const wsIds: string[] = [];
@@ -162,5 +162,52 @@ describe('runNotifications - Team mood', () => {
 		await runNotifications('morning', '0900');
 		expect(sentTo(dropped.userId, 'MOOD_RECAP')).toBe(true);
 		expect(sentTo(stable.userId, 'MOOD_RECAP')).toBe(false);
+	});
+});
+
+describe('notifyAbsencePending', () => {
+	it('notifie les autres admins mais pas le demandeur, et dédup un second appel pour le même congé', async () => {
+		const admin = await createWorkspaceWithOwner({
+			displayName: 'Admin Congés',
+			email: `abs-a-${rnd}@acme.test`,
+			password: 'password123',
+			workspaceName: 'Espace Congés'
+		});
+		wsIds.push(admin.workspaceId);
+
+		const [requester] = await db
+			.insert(user)
+			.values({ displayName: 'Demandeur', email: `abs-b-${rnd}@acme.test`, passwordHash: 'x' })
+			.returning();
+		await db.insert(membership).values({ workspaceId: admin.workspaceId, userId: requester.id, role: 'USER' });
+
+		sendCalls.length = 0;
+		await notifyAbsencePending(admin.workspaceId, 'Espace Congés', requester.id, 'Demandeur', 'absence-1');
+		expect(sentTo(admin.userId, 'ABSENCE_PENDING')).toBe(true);
+		expect(sentTo(requester.id)).toBe(false); // le demandeur n'est pas admin de toute façon, mais surtout jamais notifié de sa propre demande
+
+		sendCalls.length = 0;
+		await notifyAbsencePending(admin.workspaceId, 'Espace Congés', requester.id, 'Demandeur', 'absence-1');
+		expect(sentTo(admin.userId)).toBe(false); // même congé → dédupliqué
+	});
+});
+
+describe('notifyAbsenceValidated', () => {
+	it('notifie le demandeur et dédup un second appel pour le même congé', async () => {
+		const { userId, workspaceId } = await createWorkspaceWithOwner({
+			displayName: 'Congé Validé',
+			email: `abs-c-${rnd}@acme.test`,
+			password: 'password123',
+			workspaceName: 'Espace Validation'
+		});
+		wsIds.push(workspaceId);
+
+		sendCalls.length = 0;
+		await notifyAbsenceValidated(workspaceId, 'Espace Validation', userId, '2026-08-10', '2026-08-12', 'absence-2');
+		expect(sentTo(userId, 'ABSENCE_VALIDATED')).toBe(true);
+
+		sendCalls.length = 0;
+		await notifyAbsenceValidated(workspaceId, 'Espace Validation', userId, '2026-08-10', '2026-08-12', 'absence-2');
+		expect(sentTo(userId)).toBe(false); // même congé → dédupliqué
 	});
 });

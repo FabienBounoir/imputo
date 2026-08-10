@@ -107,15 +107,19 @@ export async function createAbsenceFor(
 		throw new Error("Un membre externe ne peut avoir qu'un congé validé (pas de congé prévisionnel).");
 	// La demi-journée n'a de sens que pour une plage d'un seul jour.
 	const period = input.startDate === input.endDate ? input.period : 'FULL';
-	await db.insert(absence).values({
-		workspaceId,
-		userId: 'userId' in subject ? subject.userId : null,
-		externalMemberId: 'externalMemberId' in subject ? subject.externalMemberId : null,
-		startDate: input.startDate,
-		endDate: input.endDate,
-		type: input.type,
-		period
-	});
+	const [inserted] = await db
+		.insert(absence)
+		.values({
+			workspaceId,
+			userId: 'userId' in subject ? subject.userId : null,
+			externalMemberId: 'externalMemberId' in subject ? subject.externalMemberId : null,
+			startDate: input.startDate,
+			endDate: input.endDate,
+			type: input.type,
+			period
+		})
+		.returning({ id: absence.id });
+	return inserted.id;
 }
 
 /** Supprime une absence — son auteur (réel), ou un admin/manager (`canManageOthers`, seul moyen pour un membre externe). */
@@ -211,8 +215,9 @@ export async function validateAbsence(workspaceId: string, id: string, validated
 		.update(absence)
 		.set({ type: 'CONGE_VALIDE', validatedById, validatedAt: now, updatedAt: now })
 		.where(and(eq(absence.workspaceId, workspaceId), eq(absence.id, id), eq(absence.type, 'CONGE_PREVISIONNEL')))
-		.returning({ id: absence.id });
+		.returning({ id: absence.id, userId: absence.userId, startDate: absence.startDate, endDate: absence.endDate });
 	if (updated.length === 0) throw new Error('Absence introuvable ou déjà traitée.');
+	return updated[0];
 }
 
 /** Une cellule de la grille porte toute l'absence (pas juste type/période) pour permettre l'édition en un clic. */

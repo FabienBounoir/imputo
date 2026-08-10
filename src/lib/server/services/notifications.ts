@@ -34,7 +34,9 @@ type NotifKind =
 	| 'RAE_STALE'
 	| 'WEEKLY_RECAP'
 	| 'MOOD_DEADLINE'
-	| 'MOOD_RECAP';
+	| 'MOOD_RECAP'
+	| 'ABSENCE_PENDING'
+	| 'ABSENCE_VALIDATED';
 
 type Prefs = {
 	enabled: boolean;
@@ -44,6 +46,8 @@ type Prefs = {
 	weeklyRecap: boolean;
 	moodDeadline: boolean;
 	moodRecap: boolean;
+	absencePending: boolean;
+	absenceValidated: boolean;
 };
 const DEFAULT_PREFS: Prefs = {
 	enabled: true,
@@ -52,7 +56,9 @@ const DEFAULT_PREFS: Prefs = {
 	raeStale: true,
 	weeklyRecap: true,
 	moodDeadline: true,
-	moodRecap: true
+	moodRecap: true,
+	absencePending: true,
+	absenceValidated: true
 };
 export function parseNotifPrefs(raw: string | null): Prefs {
 	if (!raw) return DEFAULT_PREFS;
@@ -69,7 +75,9 @@ const PREF_KEY: Record<NotifKind, keyof Prefs> = {
 	RAE_STALE: 'raeStale',
 	WEEKLY_RECAP: 'weeklyRecap',
 	MOOD_DEADLINE: 'moodDeadline',
-	MOOD_RECAP: 'moodRecap'
+	MOOD_RECAP: 'moodRecap',
+	ABSENCE_PENDING: 'absencePending',
+	ABSENCE_VALIDATED: 'absenceValidated'
 };
 
 type Member = {
@@ -396,6 +404,66 @@ async function moodRecap(today: string): Promise<number> {
 		}
 	}
 	return sent;
+}
+
+/**
+ * Notifie les admins d'un espace qu'un congé prévisionnel attend leur validation. Contrairement
+ * aux autres notifs (relances planifiées via le cron), celle-ci est déclenchée en direct par
+ * l'action de dépôt du congé — le dédup `notificationLog` (clé = absenceId) protège juste contre
+ * un double envoi si le formulaire est soumis deux fois.
+ */
+export async function notifyAbsencePending(
+	workspaceId: string,
+	workspaceName: string,
+	requesterId: string,
+	requesterName: string,
+	absenceId: string
+): Promise<number> {
+	let sent = 0;
+	for (const admin of await membersOf(workspaceId, 'ADMIN')) {
+		if (admin.userId === requesterId) continue; // pas de notif à soi-même
+		sent += await maybeNotify(
+			{ workspaceId, workspaceName, userId: admin.userId, capacity: 0, prefsRaw: admin.prefsRaw },
+			'ABSENCE_PENDING',
+			todayInParis(), // refDate = colonne `date` ; le dédup par congé se fait via `slot` (texte libre) ci-dessous
+			{
+				title: 'Congé à valider',
+				body: `${workspaceName} : ${requesterName} a demandé un congé.`,
+				url: '/absences',
+				tag: `ABSENCE_PENDING:${absenceId}`
+			},
+			absenceId
+		);
+	}
+	return sent;
+}
+
+/**
+ * Notifie le demandeur qu'un admin/manager a validé son congé. Déclenchée en direct par l'action
+ * de validation, même logique de dédup que `notifyAbsencePending` (clé = absenceId).
+ */
+export async function notifyAbsenceValidated(
+	workspaceId: string,
+	workspaceName: string,
+	userId: string,
+	startDate: string,
+	endDate: string,
+	absenceId: string
+): Promise<number> {
+	const [row] = await db.select({ prefsRaw: user.notifPrefs }).from(user).where(eq(user.id, userId));
+	const range = startDate === endDate ? startDate : `${startDate} → ${endDate}`;
+	return maybeNotify(
+		{ workspaceId, workspaceName, userId, capacity: 0, prefsRaw: row?.prefsRaw ?? null },
+		'ABSENCE_VALIDATED',
+		todayInParis(),
+		{
+			title: 'Congé validé',
+			body: `${workspaceName} : votre congé du ${range} a été validé.`,
+			url: '/absences',
+			tag: `ABSENCE_VALIDATED:${absenceId}`
+		},
+		absenceId
+	);
 }
 
 /**

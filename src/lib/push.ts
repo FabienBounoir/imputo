@@ -8,6 +8,8 @@ export type NotifPrefs = {
 	weeklyRecap: boolean;
 	moodDeadline: boolean;
 	moodRecap: boolean;
+	absencePending: boolean;
+	absenceValidated: boolean;
 };
 
 export function pushSupported(): boolean {

@@ -31,15 +31,34 @@
 	let accentColor = $state(data.accentColor ?? data.workspace?.accentColor ?? PRESETS[0]);
 	const activeSeasonal = $derived(activeSeasonalEffects());
 
-	const TYPES: { key: keyof NotifPrefs; label: string }[] = [
-		{ key: 'eveningMissing', label: "Soir : imputation du jour non saisie" },
-		{ key: 'morningYesterday', label: 'Matin : la veille n’a pas été renseignée' },
-		{ key: 'raeStale', label: 'RAE périmé sur mes tickets' },
-		{ key: 'weeklyRecap', label: 'Récap du vendredi (semaine incomplète)' },
-		{ key: 'moodDeadline', label: 'Team mood : dernier jour pour voter' },
-		...(data.role === 'ADMIN'
-			? [{ key: 'moodRecap' as const, label: 'Team mood : baisse nette de la moyenne (admin)' }]
-			: [])
+	const GROUPS: { label: string; items: { key: keyof NotifPrefs; label: string }[] }[] = [
+		{
+			label: 'Imputation',
+			items: [
+				{ key: 'eveningMissing', label: "Le soir, si aujourd'hui n'est pas saisi" },
+				{ key: 'morningYesterday', label: "Le matin, si hier n'a pas été renseigné" },
+				{ key: 'weeklyRecap', label: 'Le vendredi, si la semaine reste incomplète' },
+				{ key: 'raeStale', label: 'RAE périmé sur mes tickets' }
+			]
+		},
+		{
+			label: 'Congés',
+			items: [
+				{ key: 'absenceValidated', label: 'Mon congé a été validé' },
+				...(data.role === 'ADMIN'
+					? [{ key: 'absencePending' as const, label: 'Un congé attend ma validation' }]
+					: [])
+			]
+		},
+		{
+			label: 'Team mood',
+			items: [
+				{ key: 'moodDeadline', label: 'Dernier jour pour voter' },
+				...(data.role === 'ADMIN'
+					? [{ key: 'moodRecap' as const, label: 'Baisse nette de la moyenne' }]
+					: [])
+			]
+		}
 	];
 
 	onMount(async () => {
@@ -136,11 +155,16 @@
 							<input type="checkbox" bind:checked={prefs.enabled} onchange={savePref} />
 							<span>Activer les rappels</span>
 						</label>
-						{#each TYPES as t (t.key)}
-							<label class="pref" class:off={!prefs.enabled}>
-								<input type="checkbox" bind:checked={prefs[t.key]} onchange={savePref} disabled={!prefs.enabled} />
-								<span>{t.label}</span>
-							</label>
+						{#each GROUPS as g (g.label)}
+							<div class="pref-group" class:off={!prefs.enabled}>
+								<span class="pref-group-label">{g.label}</span>
+								{#each g.items as t (t.key)}
+									<label class="pref">
+										<input type="checkbox" bind:checked={prefs[t.key]} onchange={savePref} disabled={!prefs.enabled} />
+										<span>{t.label}</span>
+									</label>
+								{/each}
+							</div>
 						{/each}
 						<button class="btn btn-ghost test" onclick={test}>Envoyer une notification de test</button>
 					</div>
@@ -289,7 +313,22 @@
 		padding-top: 14px;
 		display: flex;
 		flex-direction: column;
-		gap: 10px;
+		gap: 16px;
+	}
+	.pref-group {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+	.pref-group.off {
+		opacity: 0.5;
+	}
+	.pref-group-label {
+		font-size: 11px;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		color: var(--text-mute);
 	}
 	.pref {
 		display: flex;
@@ -302,9 +341,7 @@
 	.pref.master {
 		font-weight: 600;
 		color: var(--text);
-	}
-	.pref.off {
-		opacity: 0.5;
+		margin-bottom: -2px;
 	}
 	.pref input {
 		width: 16px;
