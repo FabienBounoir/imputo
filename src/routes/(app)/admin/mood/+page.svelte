@@ -210,7 +210,7 @@
 
 					{#if isOpen}
 						<div class="expand">
-							{#if isCurrent}
+							{#if isCurrent && data.isAdmin}
 								<form
 									method="POST"
 									action="?/resetCurrentPeriod"

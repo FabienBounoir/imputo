@@ -209,7 +209,7 @@
 				Objectifs de la semaine
 			</a>
 		{/if}
-		{#if data.role === 'ADMIN' && data.workspace?.moodEnabled}
+		{#if (data.role === 'ADMIN' || data.canViewMoodResults) && data.workspace?.moodEnabled}
 			<a class="nav-item" class:active={isActive('/admin/mood')} href="/admin/mood">
 				<svg width="20" height="20" viewBox="0 0 24 24" fill="none">
 					<path d="M15.4754 9.51572C15.6898 10.3159 15.4311 11.0805 14.8977 11.2234C14.3642 11.3664 13.7579 10.8336 13.5435 10.0334C13.3291 9.23316 13.5877 8.4686 14.1212 8.32565C14.6547 8.18271 15.2609 8.71552 15.4754 9.51572Z" fill="currentColor"/>

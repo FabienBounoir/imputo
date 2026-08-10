@@ -26,3 +26,7 @@ vite.config.ts.timestamp-*
 /cypress/screenshots
 /cypress/videos
 /cypress/downloads
+
+# Fichiers bureautiques sensibles (chiffrage, imputation, etc.)
+*.xlsx
+*.xls

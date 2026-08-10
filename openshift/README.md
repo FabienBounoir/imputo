@@ -43,7 +43,7 @@ Une fois le pod `imputo` prêt et la Route créée :
 oc get route imputo -o jsonpath='{.spec.host}'
 ```
 
-Reporter ce host dans `PUBLIC_BASE_URL` et `ORIGIN` du `ConfigMap` (`configmap.yaml`, puis
+Reporter ce host dans `BASE_URL` et `ORIGIN` du `ConfigMap` (`configmap.yaml`, puis
 `oc apply -f openshift/configmap.yaml` et `oc rollout restart deployment/imputo`) — sans quoi
 les formulaires et les liens envoyés par l'application pointeront vers une URL incorrecte (voir
 le README principal, section « Déploiement portable »).
@@ -88,7 +88,7 @@ Inutile si vous utilisez la CI GitLab ci-dessous : c'est elle qui déclenche les
      `imputo-preprod` / `imputo`.
 
 La preprod n'a pas de host de Route connu à l'avance : le job `deploy:preprod` lit
-`oc get route imputo` après le premier `apply` et corrige lui-même `PUBLIC_BASE_URL`/`ORIGIN`
+`oc get route imputo` après le premier `apply` et corrige lui-même `BASE_URL`/`ORIGIN`
 dans le ConfigMap avant de builder — pas de manip manuelle à refaire à chaque fois, contrairement
 à la prod (§ précédente, host déjà figé dans `configmap.yaml`).
 

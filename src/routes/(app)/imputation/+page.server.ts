@@ -14,6 +14,9 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 	const ws = locals.workspace;
 	if (!ws) redirect(303, '/register');
 	const isAdmin = locals.role === 'ADMIN';
+	// canViewOthers : peut consulter la feuille d'un tiers via ?u= (admin, ou capacité de lecture
+	// accordée indépendamment du rôle) — n'accorde aucun droit d'édition, cf. resolveSubjectId.
+	const canViewOthers = isAdmin || locals.canViewImputations;
 
 	const { granularity, mode } = resolvePeriodPrefs(
 		cookies,
@@ -28,18 +31,20 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 
 	const ref = await getRefData(ws.workspaceId);
 
-	// Un admin peut consulter l'imputation d'un autre membre via ?u=<userId>.
+	// Un admin, ou une personne avec la capacité canViewImputations, peut consulter l'imputation
+	// d'un autre membre via ?u=<userId> — en lecture seule sauf pour l'admin (cf. resolveSubjectId).
 	const uParam = url.searchParams.get('u');
 	let viewedId = user.id;
 	let viewedName = user.displayName;
-	if (isAdmin && uParam && uParam !== user.id) {
+	if (canViewOthers && uParam && uParam !== user.id) {
 		const m = ref.members.find((x) => x.id === uParam);
 		if (m) {
 			viewedId = m.id;
 			viewedName = m.displayName;
 		}
 	}
-	const readOnly = viewedId !== user.id;
+	const viewingOther = viewedId !== user.id;
+	const readOnly = viewingOther && !isAdmin;
 
 	const [sheet, tickets, membership, recentTicketIds, weeklyObjectives, vacations, periodAbsences] = await Promise.all([
 		getTimesheet(ws.workspaceId, viewedId, period.days),
@@ -71,13 +76,32 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 		capacity: num(membership?.capacityPerDay ?? '1'),
 		imputationStep: num(ws.imputationStep),
 		isAdmin,
-		members: isAdmin ? ref.members : [],
+		canViewOthers,
+		members: canViewOthers ? ref.members : [],
 		selfId: user.id,
 		viewedId,
 		viewedName,
+		viewingOther,
 		readOnly
 	};
 };
+
+/**
+ * Utilisateur réellement visé par l'action : soi-même par défaut, ou un membre de l'espace si on
+ * est admin — jamais de confiance dans un `targetUserId` client sans revérifier le rôle ici, seul
+ * point de passage commun à `setCell` et `deleteRow`.
+ */
+async function resolveSubjectId(
+	workspaceId: string,
+	selfId: string,
+	role: string | null | undefined,
+	targetUserId: string
+): Promise<string | null> {
+	if (!targetUserId || targetUserId === selfId) return selfId;
+	if (role !== 'ADMIN') return null;
+	const m = await getMembership(workspaceId, targetUserId);
+	return m ? targetUserId : null;
+}
 
 export const actions: Actions = {
 	setCell: async ({ request, locals }) => {
@@ -93,8 +117,16 @@ export const actions: Actions = {
 		if (!['TICKET', 'CATEGORY', 'OBJECTIVE'].includes(targetType) || !targetId || !day)
 			return fail(400, { error: 'Données invalides.' });
 
+		const subjectId = await resolveSubjectId(
+			ws.workspaceId,
+			locals.user.id,
+			locals.role,
+			String(f.get('targetUserId') ?? '')
+		);
+		if (!subjectId) return fail(403, { error: 'Accès refusé.' });
+
 		try {
-			await setCell(ws.workspaceId, locals.user.id, {
+			await setCell(ws.workspaceId, subjectId, {
 				targetType,
 				targetId,
 				activityId,
@@ -119,6 +151,14 @@ export const actions: Actions = {
 		if (!['TICKET', 'CATEGORY', 'OBJECTIVE'].includes(targetType) || !targetId || !anchor)
 			return fail(400, { error: 'Données invalides.' });
 
+		const subjectId = await resolveSubjectId(
+			ws.workspaceId,
+			locals.user.id,
+			locals.role,
+			String(f.get('targetUserId') ?? '')
+		);
+		if (!subjectId) return fail(403, { error: 'Accès refusé.' });
+
 		// La plage supprimée est recalculée ici : `fetch('?/deleteRow')` perd la query string, et
 		// accepter des bornes brutes du client laisserait effacer une période arbitraire.
 		const period = buildPeriod(
@@ -128,7 +168,7 @@ export const actions: Actions = {
 		);
 
 		try {
-			await deleteRow(ws.workspaceId, locals.user.id, {
+			await deleteRow(ws.workspaceId, subjectId, {
 				targetType,
 				targetId,
 				activityId,

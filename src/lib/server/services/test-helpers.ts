@@ -1,6 +1,6 @@
 import { afterAll } from 'vitest';
-import { eq } from 'drizzle-orm';
-import { db, workspace, user, type Role } from '$lib/server/db';
+import { and, eq } from 'drizzle-orm';
+import { db, workspace, user, membership, type Role } from '$lib/server/db';
 import { createWorkspaceWithOwner } from './workspaces';
 import { inviteMember } from './accounts';
 
@@ -39,4 +39,16 @@ export async function addMember(workspaceId: string, role: Role, prefix = 'membe
 	await inviteMember({ workspaceId, email, displayName: prefix, role });
 	const [u] = await db.select({ id: user.id }).from(user).where(eq(user.email, email));
 	return { userId: u.id, email };
+}
+
+/** Accorde une capacité de lecture indépendante du rôle (cf. schema.ts membership.canView*). */
+export async function grantCapability(
+	workspaceId: string,
+	userId: string,
+	field: 'canViewImputations' | 'canViewMoodResults'
+) {
+	await db
+		.update(membership)
+		.set({ [field]: true })
+		.where(and(eq(membership.workspaceId, workspaceId), eq(membership.userId, userId)));
 }

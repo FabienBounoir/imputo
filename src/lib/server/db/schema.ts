@@ -96,6 +96,10 @@ export const membership = pgTable(
 		role: roleEnum('role').notNull().default('USER'),
 		capacityPerDay: numeric('capacity_per_day', { precision: 3, scale: 2 }).notNull().default('1'),
 		active: boolean('active').notNull().default(true),
+		// Capacités de lecture accordables indépendamment du rôle (ex : un USER qui doit voir
+		// l'imputation de tous sans devenir MANAGER/ADMIN et sans aucun droit d'écriture).
+		canViewImputations: boolean('can_view_imputations').notNull().default(false),
+		canViewMoodResults: boolean('can_view_mood_results').notNull().default(false),
 		createdAt: createdAt()
 	},
 	(t) => [

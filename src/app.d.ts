@@ -19,6 +19,8 @@ declare global {
 			memberships: MembershipInfo[];
 			workspace: MembershipInfo | null;
 			role: Role | null;
+			canViewImputations: boolean;
+			canViewMoodResults: boolean;
 			deactivatedWorkspace: { workspaceId: string; workspaceName: string; accentColor: string } | null;
 		}
 		// interface Error {}

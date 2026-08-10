@@ -57,17 +57,37 @@
 		return map;
 	});
 
-	let rows = $state<Row[]>([]);
-	let currentKey = $state('');
+	// Lignes de la feuille + tâches attribuées absentes du tableau, fusionnées : appelée dès l'état
+	// initial (pas seulement dans l'$effect) pour que le premier rendu ait déjà les lignes attribuées
+	// et que le bandeau de rappel ne clignote pas avant de disparaître.
+	function syncedRows(): Row[] {
+		const next: Row[] = data.sheet.rows.map((r) => ({ ...r, amounts: { ...r.amounts } }));
+		if (!data.readOnly) {
+			for (const o of data.weeklyObjectives) {
+				const targetType: 'TICKET' | 'OBJECTIVE' = o.kind === 'TICKET' ? 'TICKET' : 'OBJECTIVE';
+				const targetId = o.kind === 'TICKET' ? (o.ticketId ?? '') : o.id;
+				if (!targetId || next.some((r) => r.targetType === targetType && r.targetId === targetId)) continue;
+				next.push(buildRow(targetType, targetId, o.activityId ?? null));
+			}
+		}
+		return next;
+	}
 
 	// (Re)synchronise les lignes quand la plage affichée — ou le membre consulté — change. Le
 	// membre fait partie de la clé : `?u=` conserve l'ancre, sans lui on garderait à l'écran les
 	// lignes de la personne précédente avec les totaux de la nouvelle.
 	const sheetKey = $derived(`${data.period.rangeKey}|${data.viewedId}`);
+	let rows = $state<Row[]>(syncedRows());
+	let currentKey = $state(`${data.period.rangeKey}|${data.viewedId}`);
+
 	$effect(() => {
 		if (sheetKey !== currentKey) {
 			currentKey = sheetKey;
-			rows = data.sheet.rows.map((r) => ({ ...r, amounts: { ...r.amounts } }));
+			// Les tâches attribuées apparaissent directement dans le tableau : plus besoin de cliquer
+			// "+ Ajouter". Si l'utilisateur supprime ensuite une de ces lignes, elle ne revient pas ici
+			// (l'effet ne se redéclenche pas tant que la période/le membre ne change pas) — elle réapparaît
+			// alors dans le bandeau de rappel pour un ajout manuel.
+			rows = syncedRows();
 		}
 	});
 
@@ -131,6 +151,7 @@
 		if (row.activityId) body.set('activityId', row.activityId);
 		body.set('day', day);
 		body.set('amount', String(value));
+		body.set('targetUserId', data.viewedId);
 		await fetch('?/setCell', { method: 'POST', body });
 	}
 
@@ -148,8 +169,9 @@
 		ArrowUp: [-1, 0]
 	};
 	let scroller: HTMLDivElement | null = $state(null);
-	// Le RAE se saisit sur ses propres lignes : rien à afficher en consultation d'un autre membre.
-	const showRae = $derived(!data.readOnly);
+	// Le RAE se saisit sur ses propres lignes : même un admin qui édite l'imputation d'un autre
+	// membre ne doit pas voir cette colonne, sinon `saveRae` écrirait le RAE sous son propre nom.
+	const showRae = $derived(!data.viewingOther);
 	const tableMinWidth = $derived(
 		TASK_COL_W + (showRae ? RAE_COL_W : 0) + days.length * DAY_COL_W + SUM_COL_W
 	);
@@ -198,7 +220,7 @@
 			g: over.g ?? data.period.granularity,
 			mode: over.mode ?? data.period.mode
 		});
-		if (data.readOnly) p.set('u', data.viewedId);
+		if (data.viewingOther) p.set('u', data.viewedId);
 		return `?${p}`;
 	}
 	function viewMember(id: string) {
@@ -272,6 +294,7 @@
 		body.set('anchor', data.period.anchorISO);
 		body.set('g', data.period.granularity);
 		body.set('mode', data.period.mode);
+		body.set('targetUserId', data.viewedId);
 		await fetch('?/deleteRow', { method: 'POST', body });
 	}
 
@@ -364,10 +387,20 @@
 		if (!targetId || rows.some((r) => r.targetType === targetType && r.targetId === targetId)) return;
 		rows = [...rows, buildRow(targetType, targetId, o.activityId ?? null)];
 	}
+
+	// Tâches attribuées auto-ajoutées au chargement mais absentes du tableau (supprimées depuis) :
+	// c'est elles seules que le bandeau de rappel doit remonter.
+	let missingObjectives = $derived(
+		data.weeklyObjectives.filter((o) => {
+			const targetType = o.kind === 'TICKET' ? 'TICKET' : 'OBJECTIVE';
+			const targetId = o.kind === 'TICKET' ? o.ticketId : o.id;
+			return !rows.some((r) => r.targetType === targetType && r.targetId === targetId);
+		})
+	);
 </script>
 
 <div class="topbar">
-	<h1>{data.readOnly ? 'Imputation' : 'Mon imputation'}<small>{data.period.label}</small></h1>
+	<h1>{data.viewingOther ? `Imputation de ${data.viewedName}` : 'Mon imputation'}<small>{data.period.label}</small></h1>
 	{#if data.vacationWeeks.length > 0}
 		<span class="vac-badge">
 			🏖 En vacances
@@ -391,13 +424,15 @@
 			</div>
 		{/if}
 	</div>
-	{#if data.isAdmin}
+	{#if data.canViewOthers}
 		<select class="member-pick" value={data.viewedId} onchange={(e) => viewMember(e.currentTarget.value)} aria-label="Voir l'imputation de">
 			<option value={data.selfId}>Mon imputation</option>
 			{#each data.members.filter((m) => m.id !== data.selfId) as m (m.id)}
 				<option value={m.id}>{m.displayName}</option>
 			{/each}
 		</select>
+	{/if}
+	{#if data.isAdmin}
 		<ExportModal label="Exporter Excel" buttonClass="btn btn-ghost" />
 	{/if}
 	<div class="wknav">
@@ -412,8 +447,14 @@
 </div>
 
 <div class="content">
-	{#if data.readOnly}
-		<div class="ro-banner">👁 Imputation de <b>{data.viewedName}</b> — lecture seule</div>
+	{#if data.viewingOther}
+		<div class="ro-banner" class:editing={!data.readOnly}>
+			{#if data.readOnly}
+				👁 Imputation de <b>{data.viewedName}</b> — lecture seule
+			{:else}
+				✏️ Vous modifiez l'imputation de <b>{data.viewedName}</b>
+			{/if}
+		</div>
 	{/if}
 	<div class="summary">
 		<div class="card stat">
@@ -448,30 +489,21 @@
 		</div>
 	{/if}
 
-	{#if data.weeklyObjectives.length > 0}
+	{#if !data.readOnly && missingObjectives.length > 0}
 		<div class="card reminder-card">
-			<div class="reminder-head">🎯 Attribué sur cette période</div>
+			<div class="reminder-head">🎯 Attribué sur cette période — à rajouter</div>
 			<div class="reminder-list">
-				{#each data.weeklyObjectives as o, i (o.id)}
-					{@const targetType = o.kind === 'TICKET' ? 'TICKET' : 'OBJECTIVE'}
-					{@const targetId = o.kind === 'TICKET' ? o.ticketId : o.id}
-					{@const already = rows.some((r) => r.targetType === targetType && r.targetId === targetId)}
-					{#if multiWeek && o.weekMonday !== data.weeklyObjectives[i - 1]?.weekMonday}
+				{#each missingObjectives as o, i (o.id)}
+					{#if multiWeek && o.weekMonday !== missingObjectives[i - 1]?.weekMonday}
 						<div class="reminder-week">S{isoWeek(parseISODate(o.weekMonday))}</div>
 					{/if}
-					<div class="reminder-item" class:done={already}>
+					<div class="reminder-item">
 						<span class="reminder-label">
 							{o.kind === 'TICKET' ? '🎫' : '📝'}
 							{o.kind === 'TICKET' ? `${o.ticketKey} — ${o.ticketTitle}` : o.label}
 							{#if o.activityLabel}<span class="tag-activity">{o.activityLabel}</span>{/if}
 						</span>
-						{#if !data.readOnly}
-							{#if already}
-								<span class="reminder-ok">✓ ajouté</span>
-							{:else}
-								<button class="btn btn-ghost reminder-add" onclick={() => quickAddObjective(o)}>+ Ajouter</button>
-							{/if}
-						{/if}
+						<button class="btn btn-ghost reminder-add" onclick={() => quickAddObjective(o)}>+ Ajouter</button>
 					</div>
 				{/each}
 			</div>
@@ -747,9 +779,6 @@
 		gap: 12px;
 		padding: 6px 4px;
 	}
-	.reminder-item.done {
-		opacity: 0.55;
-	}
 	.reminder-label {
 		font-size: 13.5px;
 		display: flex;
@@ -776,12 +805,6 @@
 		color: var(--accent-ink);
 		background: color-mix(in srgb, var(--accent) 18%, var(--surface-sunk));
 	}
-	.reminder-ok {
-		font-size: 12px;
-		font-weight: 600;
-		color: var(--accent-ink);
-		flex-shrink: 0;
-	}
 	.reminder-add {
 		flex-shrink: 0;
 		padding: 5px 11px;
@@ -798,6 +821,10 @@
 		color: var(--accent-ink);
 		font-size: 13.5px;
 		font-weight: 500;
+	}
+	.ro-banner.editing {
+		background: var(--warn-tint);
+		color: var(--warn);
 	}
 
 	.wknav {

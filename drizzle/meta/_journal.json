@@ -176,6 +176,13 @@
       "when": 1786220994515,
       "tag": "0024_cool_omega_sentinel",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1786356361868,
+      "tag": "0025_sudden_lake",
+      "breakpoints": true
     }
   ]
 }
