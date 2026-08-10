@@ -10,7 +10,7 @@ export default defineConfig({
 	define: {
 		// Tag Git / short SHA injecté au build par le Dockerfile (voir ARG APP_VERSION),
 		// affiché dans l'UI pour identifier la version déployée.
-		__APP_VERSION__: JSON.stringify(process.env.APP_VERSION ?? 'dev')
+		__APP_VERSION__: JSON.stringify(process.env.APP_VERSION ?? 'development')
 	},
 	plugins: [
 		sveltekit({

@@ -321,6 +321,19 @@ export async function listTickets(workspaceId: string, testPhase = true, isAdmin
 	return enrichTickets(workspaceId, testPhase, isAdmin, tickets);
 }
 
+/** Un ticket enrichi (consommé, RAE, groupes...) — pour l'éditer depuis n'importe quelle page (ex. Mon imputation). */
+export async function getTicketById(
+	workspaceId: string,
+	ticketId: string,
+	testPhase: boolean,
+	isAdmin: boolean
+): Promise<TicketRow | null> {
+	const tickets = await fetchBaseTickets(and(eq(ticket.workspaceId, workspaceId), eq(ticket.id, ticketId)));
+	if (tickets.length === 0) return null;
+	const [row] = await enrichTickets(workspaceId, testPhase, isAdmin, tickets);
+	return row;
+}
+
 /**
  * Version allégée de listTickets pour les sélecteurs (ex. "Ajouter un ticket" sur Mon imputation) :
  * juste id/clé/titre/sprint/version, sans l'enrichissement consommé/RAE/contributeurs/groupes

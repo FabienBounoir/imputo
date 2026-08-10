@@ -2,7 +2,7 @@ import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { getTimesheet, setCell, deleteRow, getRecentTicketIds } from '$lib/server/services/imputation';
 import { getRefData, listTicketSummaries } from '$lib/server/services/tickets';
-import { getMembership } from '$lib/server/services/workspaces';
+import { getMembership, isManagerOrAdmin } from '$lib/server/services/workspaces';
 import { listObjectivesForUserWeeks, vacationWeeks } from '$lib/server/services/weeklyObjectives';
 import { listAbsencesForRange, buildAbsenceGrid } from '$lib/server/services/absences';
 import { resolvePeriodPrefs } from '$lib/server/services/imputationPrefs';
@@ -68,6 +68,14 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 		activities: ref.activities,
 		categories: ref.categories,
 		versions: ref.versions,
+		// Nécessaires pour la modal d'édition de ticket (même modal que Tickets & chiffrage,
+		// cf. TicketEditModal.svelte) : `ref` est déjà chargé ci-dessus, ceci n'ajoute aucune requête.
+		states: ref.states,
+		projects: ref.projects,
+		sprints: ref.sprints,
+		ticketGroups: ref.ticketGroups,
+		testPhase: ws.testPhase,
+		canEditEstimation: isManagerOrAdmin(locals.role),
 		tickets,
 		recentTicketIds,
 		weeklyObjectives,

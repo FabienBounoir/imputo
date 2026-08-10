@@ -15,6 +15,7 @@
 	import { goto, afterNavigate } from '$app/navigation';
 	import ExportModal from '$lib/components/ExportModal.svelte';
 	import TargetPicker from '$lib/components/TargetPicker.svelte';
+	import TicketEditModal from '$lib/components/TicketEditModal.svelte';
 	import { ABSENCE_TYPE_COLORS, ABSENCE_TYPE_LABELS, ABSENCE_PERIOD_LABELS } from '$lib/absenceTypes';
 
 	let { data } = $props();
@@ -280,6 +281,21 @@
 	let pickTarget = $state('');
 	let pickActivity = $state('');
 	let confirmDelete = $state<Row | null>(null);
+	// Édition d'un ticket depuis sa ligne d'imputation — même modal que Tickets & chiffrage. Patch
+	// direct de la ligne à chaque sauvegarde (titre/sprint/version) plutôt qu'un invalidateAll : plus
+	// rapide, et ça ne touche pas row.amounts/raeReal (indépendants d'une édition de ticket).
+	let editTicketId = $state<string | null>(null);
+	function onTicketSaved(ticket: { id: string; title: string; sprintId: string | null; versionId: string | null }) {
+		const sprintName = data.sprints.find((s) => s.id === ticket.sprintId)?.name ?? null;
+		const versionName = data.versions.find((v) => v.id === ticket.versionId)?.name ?? null;
+		for (const row of rows) {
+			if (row.targetType === 'TICKET' && row.targetId === ticket.id) {
+				row.label = ticket.title;
+				row.sprintName = sprintName;
+				row.versionName = versionName;
+			}
+		}
+	}
 
 	async function doDeleteRow() {
 		const row = confirmDelete;
@@ -579,6 +595,11 @@
 										{/if}
 									</span>
 								</div>
+								{#if row.targetType === 'TICKET'}
+									<button class="row-edit" onclick={() => (editTicketId = row.targetId)} aria-label="Modifier le ticket">
+										<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+									</button>
+								{/if}
 								{#if !data.readOnly}
 									<button class="row-del" onclick={() => (confirmDelete = row)} aria-label="Supprimer la ligne">
 										<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg>
@@ -693,6 +714,20 @@
 		</div>
 	</div>
 {/if}
+
+<TicketEditModal
+	ticketId={editTicketId}
+	states={data.states}
+	projects={data.projects}
+	sprints={data.sprints}
+	versions={data.versions}
+	ticketGroups={data.ticketGroups}
+	testPhase={data.testPhase}
+	canEditEstimation={data.canEditEstimation}
+	isAdmin={data.isAdmin}
+	onClose={() => (editTicketId = null)}
+	onSaved={onTicketSaved}
+/>
 
 <style>
 	.summary {
@@ -1154,7 +1189,8 @@
 		padding: 1px 7px;
 		flex-shrink: 0;
 	}
-	.row-del {
+	.row-del,
+	.row-edit {
 		flex-shrink: 0;
 		width: 26px;
 		height: 26px;
@@ -1165,13 +1201,19 @@
 		opacity: 0;
 		transition: opacity 0.15s, background 0.15s, color 0.15s;
 	}
-	.imp tbody tr:hover .row-del {
+	.imp tbody tr:hover .row-del,
+	.imp tbody tr:hover .row-edit {
 		opacity: 1;
 	}
 	.row-del:hover,
 	.row-del:focus-visible {
 		background: color-mix(in srgb, var(--danger, #c0392b) 12%, transparent);
 		color: var(--danger, #c0392b);
+	}
+	.row-edit:hover,
+	.row-edit:focus-visible {
+		background: var(--accent-tint-2);
+		color: var(--accent);
 	}
 	.imp td.day {
 		border-top: 1px solid var(--border);
