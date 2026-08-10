@@ -71,10 +71,10 @@ deploy:preprod:
     - *apply_base_manifests
     - oc apply -f openshift/buildconfig-tools.yaml
     # Route hébergée sur un host auto-généré différent du prod : on corrige le ConfigMap avant
-    # le rollout pour que l'app démarre avec la bonne PUBLIC_BASE_URL/ORIGIN (sinon "Cross-site
+    # le rollout pour que l'app démarre avec la bonne BASE_URL/ORIGIN (sinon "Cross-site
     # POST form submissions are forbidden", voir openshift/README.md).
     - HOST=$(oc get route imputo -o jsonpath='{.spec.host}')
-    - oc patch configmap imputo-config --type merge -p "{\"data\":{\"PUBLIC_BASE_URL\":\"https://${HOST}\",\"ORIGIN\":\"https://${HOST}\"}}"
+    - oc patch configmap imputo-config --type merge -p "{\"data\":{\"BASE_URL\":\"https://${HOST}\",\"ORIGIN\":\"https://${HOST}\"}}"
     - oc start-build imputo --build-arg=APP_VERSION="v$CI_COMMIT_SHORT_SHA" --follow
     - oc rollout status deployment/imputo --timeout=5m
     - oc start-build imputo-tools --follow

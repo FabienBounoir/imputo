@@ -318,7 +318,7 @@ Navigateur (Svelte) ──cookie session──► SvelteKit (Node)
   - `SESSION_SECRET` — secret de signature des sessions/tokens.
   - `MAGIC_LINK_TTL` (ex. `7d`) — durée de validité des liens d'invitation/reset.
   - `ARCHIVE_RETENTION` (ex. `30d`) — délai avant purge des éléments archivés.
-  - `PUBLIC_BASE_URL` — base d'URL utilisée pour construire les magic links.
+  - `BASE_URL` — base d'URL utilisée pour construire les magic links.
   - `CRON_SECRET` — jeton protégeant l'endpoint de jobs planifiés (`/api/jobs/*`).
   - `BUILD_ADAPTER` (`node` | `vercel`, défaut `node`) — choisit l'adapter au build.
 - **Structure de projet indicative** :

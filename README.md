@@ -31,13 +31,13 @@ docker compose up -d --build   # → http://localhost:3000
 Démarre Postgres, applique les migrations puis lance le front buildé (adapter Node), tout dans
 le réseau Docker de `docker-compose.yml`. Après un changement de code : `docker compose up -d --build app`.
 
-**Déploiement sur un serveur distant (VPS…)** : mettre à jour `ORIGIN` **et** `PUBLIC_BASE_URL`
+**Déploiement sur un serveur distant (VPS…)** : mettre à jour `ORIGIN` **et** `BASE_URL`
 dans `.env` avec l'URL publique réelle, identique pour les deux (ex. `https://imputo.mondomaine.fr`
 ou `http://12.34.56.78:3000`) :
 - `ORIGIN` manquant → tous les formulaires échouent avec `Cross-site POST form submissions are
   forbidden` (adapter-node ne connaît par défaut que son adresse interne au container et rejette
   les `POST` dont l'en-tête `Origin` du navigateur ne correspond pas).
-- `PUBLIC_BASE_URL` manquant → les liens envoyés (invitation membre, magic link) pointent vers
+- `BASE_URL` manquant → les liens envoyés (invitation membre, magic link) pointent vers
   `localhost` au lieu de l'URL publique.
 
 Puis `docker compose up -d --build`.
@@ -119,7 +119,7 @@ Jobs planifiés, tous protégés par `CRON_SECRET` (header `Authorization: Beare
 ## Variables d'environnement
 
 Voir [`.env.example`](./.env.example). Principales : `DATABASE_URL`, `SESSION_SECRET`,
-`MAGIC_LINK_TTL` (7d), `ARCHIVE_RETENTION` (30d), `PUBLIC_BASE_URL`, `CRON_SECRET`, `BUILD_ADAPTER`.
+`MAGIC_LINK_TTL` (7d), `ARCHIVE_RETENTION` (30d), `BASE_URL`, `CRON_SECRET`, `BUILD_ADAPTER`.
 
 ## État (Lot 1 livré)
 

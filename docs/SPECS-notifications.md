@@ -68,7 +68,7 @@ Cron → Backend (web-push, clé privée VAPID) → Service push du navigateur (
 - env (`config.ts` via `$env`) : `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` (mailto:), `NOTIF_RAE_STALE_DAYS` (def 7).
 - env public client : **`PUBLIC_VAPID_KEY`** (`$env/static/public`).
 - Génération des clés : `npx web-push generate-vapid-keys`.
-- Réutilise : `CRON_SECRET`, `PUBLIC_BASE_URL`.
+- Réutilise : `CRON_SECRET`, `BASE_URL`.
 
 ## 7. Détection (service `notifications.ts`)
 Helpers date (étendre `src/lib/utils/date.ts`) : `todayInParis()`, `previousWorkday(dateISO)`,

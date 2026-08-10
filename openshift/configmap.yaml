@@ -10,7 +10,7 @@ data:
   MAGIC_LINK_TTL: '7d'
   ARCHIVE_RETENTION: '30d'
   # À ajuster une fois le host de la Route connu (voir `oc get route imputo`).
-  PUBLIC_BASE_URL: 'https://imputo-imputo.apps.cicd.arcus.soprasteria.com'
+  BASE_URL: 'https://imputo-imputo.apps.cicd.arcus.soprasteria.com'
   ORIGIN: 'https://imputo-imputo.apps.cicd.arcus.soprasteria.com'
   VAPID_SUBJECT: 'mailto:admin@imputo.app'
   NOTIF_RAE_STALE_DAYS: '7'

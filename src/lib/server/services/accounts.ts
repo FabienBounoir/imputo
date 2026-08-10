@@ -209,6 +209,21 @@ export async function setMemberCapacity(workspaceId: string, userId: string, cap
 	if (!res[0]) throw new Error('Membre introuvable dans cet espace.');
 }
 
+/** Capacités de lecture accordables indépendamment du rôle (cf. schema.ts membership.canView*). */
+export async function setMemberCapability(
+	workspaceId: string,
+	userId: string,
+	field: 'canViewImputations' | 'canViewMoodResults',
+	value: boolean
+) {
+	const res = await db
+		.update(membership)
+		.set({ [field]: value })
+		.where(memberWhere(workspaceId, userId))
+		.returning({ id: membership.id });
+	if (!res[0]) throw new Error('Membre introuvable dans cet espace.');
+}
+
 /** Active ou désactive un membre (un membre inactif conserve son historique). Le créateur de l'espace ne peut être désactivé. */
 export async function setMemberActive(workspaceId: string, userId: string, active: boolean) {
 	if (!active && (await isWorkspaceOwner(workspaceId, userId)))

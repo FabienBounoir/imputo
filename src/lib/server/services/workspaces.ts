@@ -102,6 +102,8 @@ export type MembershipInfo = {
 	allowedDomain: string;
 	moodEnabled: boolean;
 	role: Role;
+	canViewImputations: boolean;
+	canViewMoodResults: boolean;
 	createdByUserId: string | null;
 };
 
@@ -119,6 +121,8 @@ export async function listMembershipsForUser(userId: string): Promise<Membership
 			allowedDomain: workspace.allowedDomain,
 			moodEnabled: workspace.moodEnabled,
 			role: membership.role,
+			canViewImputations: membership.canViewImputations,
+			canViewMoodResults: membership.canViewMoodResults,
 			createdByUserId: workspace.createdByUserId
 		})
 		.from(membership)

@@ -1,0 +1,2 @@
+ALTER TABLE "membership" ADD COLUMN "can_view_imputations" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "membership" ADD COLUMN "can_view_mood_results" boolean DEFAULT false NOT NULL;

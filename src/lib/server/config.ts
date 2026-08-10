@@ -4,7 +4,7 @@ import { parseDuration } from './auth/tokens';
 export const config = {
 	magicLinkTtlMs: parseDuration(env.MAGIC_LINK_TTL ?? '7d', 7 * 86400000),
 	archiveRetentionMs: parseDuration(env.ARCHIVE_RETENTION ?? '30d', 30 * 86400000),
-	publicBaseUrl: env.PUBLIC_BASE_URL ?? 'http://localhost:5173',
+	publicBaseUrl: env.BASE_URL ?? 'http://localhost:5173',
 	cronSecret: env.CRON_SECRET ?? '',
 	// Web Push (VAPID). La clé publique est transmise au client via le load de /settings.
 	vapidPublic: env.VAPID_PUBLIC_KEY ?? '',

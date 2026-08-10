@@ -13,6 +13,8 @@ export const handle: Handle = async ({ event, resolve }) => {
 	event.locals.memberships = [];
 	event.locals.workspace = null;
 	event.locals.role = null;
+	event.locals.canViewImputations = false;
+	event.locals.canViewMoodResults = false;
 	event.locals.deactivatedWorkspace = null;
 
 	const token = event.cookies.get(SESSION_COOKIE);
@@ -49,6 +51,8 @@ export const handle: Handle = async ({ event, resolve }) => {
 			}
 			event.locals.workspace = current;
 			event.locals.role = current?.role ?? null;
+			event.locals.canViewImputations = current?.canViewImputations ?? false;
+			event.locals.canViewMoodResults = current?.canViewMoodResults ?? false;
 		} else {
 			deleteSessionCookie(event.cookies);
 		}

@@ -14,6 +14,7 @@ import {
 	setMemberRole,
 	setMemberActive,
 	setMemberCapacity,
+	setMemberCapability,
 	regenerateInvite,
 	transferOwnership
 } from '$lib/server/services/accounts';
@@ -76,6 +77,8 @@ export const load: PageServerLoad = async ({ locals }) => {
 			role: membership.role,
 			active: membership.active,
 			capacity: membership.capacityPerDay,
+			canViewImputations: membership.canViewImputations,
+			canViewMoodResults: membership.canViewMoodResults,
 			pending: user.passwordHash
 		})
 		.from(membership)
@@ -258,6 +261,23 @@ export const actions: Actions = {
 		if (userId === locals.user!.id) return fail(400, { error: 'Vous ne pouvez pas changer votre propre rôle.' });
 		try {
 			await setMemberRole(ws.workspaceId, userId, role);
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { memberOk: true };
+	},
+
+	memberCapability: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const f = await request.formData();
+		const userId = String(f.get('userId'));
+		const field = f.get('field');
+		const value = f.get('value') === 'true';
+		if (field !== 'canViewImputations' && field !== 'canViewMoodResults')
+			return fail(400, { error: 'Capacité invalide.' });
+		try {
+			await setMemberCapability(ws.workspaceId, userId, field, value);
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}

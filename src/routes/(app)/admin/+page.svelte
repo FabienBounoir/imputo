@@ -2,8 +2,12 @@
 	import { enhance } from '$app/forms';
 	import ExportModal from '$lib/components/ExportModal.svelte';
 	import AccentPicker from '$lib/components/AccentPicker.svelte';
+	import MemberAccessModal from '$lib/components/MemberAccessModal.svelte';
 	import { confirmDialog } from '$lib/confirm.svelte';
 	let { data, form } = $props();
+
+	let accessModalFor = $state<string | null>(null);
+	const accessModalMember = $derived(data.members.find((m) => m.id === accessModalFor) ?? null);
 
 	const PRESETS = ['#16A34A', '#4F46E5', '#9333EA', '#0EA5E9', '#E11D48', '#EA580C', '#0D9488', '#CA8A04'];
 	let accent = $state(data.accentColor);
@@ -132,6 +136,14 @@
 									/>
 									<span class="cap-unit">%</span>
 								</form>
+							</td>
+							<td>
+								{#if m.role !== 'ADMIN'}
+									<button type="button" class="ref-btn" onclick={() => (accessModalFor = m.id)}>
+										⚙ Accès
+										{#if m.canViewImputations || m.canViewMoodResults}<span class="access-dot" title="Au moins une capacité de lecture accordée"></span>{/if}
+									</button>
+								{/if}
 							</td>
 							<td class="m-actions">
 								{#if m.pending}
@@ -539,6 +551,10 @@
 	{/if}
 </div>
 
+{#if accessModalMember}
+	<MemberAccessModal member={accessModalMember} onclose={() => (accessModalFor = null)} />
+{/if}
+
 <style>
 	.admin {
 		max-width: 1180px;
@@ -791,6 +807,14 @@
 	.cap-unit {
 		font-size: 11px;
 		color: var(--text-mute);
+	}
+	.access-dot {
+		display: inline-block;
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: var(--accent);
+		margin-left: 5px;
 	}
 
 	/* États du workflow */

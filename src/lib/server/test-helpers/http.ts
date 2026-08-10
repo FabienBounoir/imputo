@@ -20,6 +20,8 @@ export async function fakeLocals(userId: string, opts: { email?: string; display
 		memberships: membership ? [membership] : [],
 		workspace: membership ?? null,
 		role: membership?.role ?? null,
+		canViewImputations: membership?.canViewImputations ?? false,
+		canViewMoodResults: membership?.canViewMoodResults ?? false,
 		deactivatedWorkspace: null
 	};
 }

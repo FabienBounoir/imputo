@@ -33,6 +33,7 @@ export const load: LayoutServerLoad = async ({ locals }) => {
 		workspace: locals.workspace,
 		memberships: locals.memberships,
 		role: locals.role,
+		canViewMoodResults: locals.canViewMoodResults,
 		moodStatus,
 		moodTotalVotes,
 		pendingAbsencesCount
