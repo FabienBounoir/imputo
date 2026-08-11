@@ -376,6 +376,9 @@ export const weeklyObjective = pgTable(
 		ticketId: uuid('ticket_id').references(() => ticket.id, { onDelete: 'cascade' }), // requis si kind=TICKET
 		label: text('label'), // requis si kind=CUSTOM
 		activityId: uuid('activity_id').references(() => activity.id, { onDelete: 'set null' }), // type d'activité (optionnel)
+		// Ordre d'affichage au sein d'une (personne, semaine) — modifiable via Admin > Objectifs,
+		// même mécanique swap-voisin que state.sortOrder (cf. moveState/moveObjective).
+		sortOrder: integer('sort_order').notNull().default(0),
 		createdByUserId: uuid('created_by_user_id')
 			.notNull()
 			.references(() => user.id),

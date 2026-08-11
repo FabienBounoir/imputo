@@ -75,8 +75,21 @@
 			</div>
 
 			<div class="ref-list">
-				{#each data.objectives as o (o.id)}
+				{#each data.objectives as o, i (o.id)}
 					<div class="ref-item">
+						<span class="obj-order">
+							<form method="POST" action="?/moveObjective" use:enhance>
+								<input type="hidden" name="id" value={o.id} />
+								<input type="hidden" name="dir" value="up" />
+								<button class="obj-order-btn" type="submit" disabled={i === 0} aria-label="Monter">↑</button>
+							</form>
+							<span class="obj-order-num">{i + 1}</span>
+							<form method="POST" action="?/moveObjective" use:enhance>
+								<input type="hidden" name="id" value={o.id} />
+								<input type="hidden" name="dir" value="down" />
+								<button class="obj-order-btn" type="submit" disabled={i === data.objectives.length - 1} aria-label="Descendre">↓</button>
+							</form>
+						</span>
 						<span class="obj-label">
 							{#if o.kind === 'TICKET'}
 								<span class="pill-ico">🎫</span><b>{o.ticketKey}</b> {o.ticketTitle}
@@ -142,7 +155,21 @@
 			{#each data.members as m (m.id)}
 				{@const mine = data.globalObjectives.filter((o) => o.userId === m.id)}
 				{@const onVac = data.vacations.includes(m.id)}
-				<section class="card block person-card" class:on-vac={onVac}>
+				<section
+					class="card block person-card"
+					class:on-vac={onVac}
+					class:selected={m.id === data.selectedUserId}
+					role="button"
+					tabindex="0"
+					title="Sélectionner {m.displayName} dans « Attribuer pour la semaine »"
+					onclick={() => selectUser(m.id)}
+					onkeydown={(e) => {
+						if (e.key === 'Enter' || e.key === ' ') {
+							e.preventDefault();
+							selectUser(m.id);
+						}
+					}}
+				>
 					<div class="person-card-head">
 						<h3>{m.displayName}</h3>
 						{#if !onVac && mine.length > 0}<span class="obj-count">{mine.length}</span>{/if}
@@ -254,6 +281,37 @@
 		align-items: center;
 		gap: 8px;
 	}
+	.obj-order {
+		display: flex;
+		flex-direction: column;
+		flex-shrink: 0;
+	}
+	.obj-order-btn {
+		width: 20px;
+		height: 16px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 4px;
+		color: var(--text-mute);
+		font-size: 11px;
+		line-height: 1;
+	}
+	.obj-order-btn:hover:not(:disabled) {
+		background: var(--surface-sunk);
+		color: var(--text);
+	}
+	.obj-order-btn:disabled {
+		opacity: 0.25;
+		cursor: default;
+	}
+	.obj-order-num {
+		text-align: center;
+		font-size: 10.5px;
+		font-weight: 700;
+		color: var(--text-mute);
+		line-height: 1;
+	}
 	.obj-label {
 		flex: 1;
 		min-width: 0;
@@ -313,6 +371,23 @@
 	.person-card h3 {
 		font-size: 14px;
 		margin-bottom: 0;
+	}
+	.person-card {
+		cursor: pointer;
+		text-align: left;
+		width: 100%;
+		transition: border-color 0.15s, background 0.15s;
+	}
+	.person-card:hover {
+		border-color: var(--border-strong);
+	}
+	.person-card:focus-visible {
+		outline: 2px solid var(--accent);
+		outline-offset: 2px;
+	}
+	.person-card.selected {
+		border-color: var(--accent);
+		box-shadow: 0 0 0 1px var(--accent);
 	}
 	.person-card-head {
 		display: flex;

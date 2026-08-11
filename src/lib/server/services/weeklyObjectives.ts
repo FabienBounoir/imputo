@@ -1,4 +1,4 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { db, weeklyObjective, weeklyVacation, ticket, user, activity } from '$lib/server/db';
 
 export type ObjectiveKind = 'TICKET' | 'CUSTOM';
@@ -50,7 +50,7 @@ export async function listObjectivesForUser(
 				eq(weeklyObjective.weekMonday, weekMondayISO)
 			)
 		)
-		.orderBy(weeklyObjective.createdAt);
+		.orderBy(weeklyObjective.sortOrder, weeklyObjective.createdAt);
 }
 
 /**
@@ -75,7 +75,7 @@ export async function listObjectivesForUserWeeks(
 				inArray(weeklyObjective.weekMonday, weekMondayISOs)
 			)
 		)
-		.orderBy(weeklyObjective.weekMonday, weeklyObjective.createdAt);
+		.orderBy(weeklyObjective.weekMonday, weeklyObjective.sortOrder, weeklyObjective.createdAt);
 }
 
 /** Tous les objectifs de l'espace pour une semaine, avec le nom de la personne — vue globale admin. */
@@ -90,7 +90,7 @@ export async function listObjectivesForWorkspace(
 		.leftJoin(activity, eq(weeklyObjective.activityId, activity.id))
 		.innerJoin(user, eq(weeklyObjective.userId, user.id))
 		.where(and(eq(weeklyObjective.workspaceId, workspaceId), eq(weeklyObjective.weekMonday, weekMondayISO)))
-		.orderBy(user.displayName, weeklyObjective.createdAt);
+		.orderBy(user.displayName, weeklyObjective.sortOrder, weeklyObjective.createdAt);
 }
 
 export async function listVacationsForWeek(workspaceId: string, weekMondayISO: string): Promise<Set<string>> {
@@ -161,6 +161,17 @@ export async function addObjective(
 		throw new Error('Libellé requis.');
 	}
 
+	const [{ max }] = await db
+		.select({ max: sql<number>`coalesce(max(${weeklyObjective.sortOrder}), -1)` })
+		.from(weeklyObjective)
+		.where(
+			and(
+				eq(weeklyObjective.workspaceId, workspaceId),
+				eq(weeklyObjective.userId, input.userId),
+				eq(weeklyObjective.weekMonday, input.weekMondayISO)
+			)
+		);
+
 	await db.insert(weeklyObjective).values({
 		workspaceId,
 		userId: input.userId,
@@ -169,12 +180,44 @@ export async function addObjective(
 		ticketId: input.kind === 'TICKET' ? (input.ticketId ?? null) : null,
 		label: input.kind === 'CUSTOM' ? input.label!.trim() : null,
 		activityId: input.activityId || null,
+		sortOrder: Number(max) + 1,
 		createdByUserId
 	});
 }
 
 export async function removeObjective(workspaceId: string, id: string) {
 	await db.delete(weeklyObjective).where(and(eq(weeklyObjective.id, id), eq(weeklyObjective.workspaceId, workspaceId)));
+}
+
+/** Échange l'ordre d'un objectif avec son voisin (haut/bas), au sein de la même (personne, semaine) — même mécanique que moveState. */
+export async function moveObjective(workspaceId: string, id: string, dir: 'up' | 'down') {
+	const [target] = await db
+		.select({ userId: weeklyObjective.userId, weekMonday: weeklyObjective.weekMonday })
+		.from(weeklyObjective)
+		.where(and(eq(weeklyObjective.id, id), eq(weeklyObjective.workspaceId, workspaceId)));
+	if (!target) return;
+
+	const rows = await db
+		.select({ id: weeklyObjective.id, sortOrder: weeklyObjective.sortOrder })
+		.from(weeklyObjective)
+		.where(
+			and(
+				eq(weeklyObjective.workspaceId, workspaceId),
+				eq(weeklyObjective.userId, target.userId),
+				eq(weeklyObjective.weekMonday, target.weekMonday)
+			)
+		)
+		.orderBy(weeklyObjective.sortOrder, weeklyObjective.createdAt);
+
+	const idx = rows.findIndex((r) => r.id === id);
+	const swap = dir === 'up' ? idx - 1 : idx + 1;
+	if (idx < 0 || swap < 0 || swap >= rows.length) return;
+	const a = rows[idx];
+	const b = rows[swap];
+	await db.transaction(async (tx) => {
+		await tx.update(weeklyObjective).set({ sortOrder: b.sortOrder }).where(eq(weeklyObjective.id, a.id));
+		await tx.update(weeklyObjective).set({ sortOrder: a.sortOrder }).where(eq(weeklyObjective.id, b.id));
+	});
 }
 
 export async function setVacation(workspaceId: string, userId: string, weekMondayISO: string, onVacation: boolean) {
