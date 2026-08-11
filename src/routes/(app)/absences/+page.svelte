@@ -12,6 +12,7 @@
 		type AbsencePeriod
 	} from '$lib/absenceTypes';
 	import { parseISODate, formatDayRange, formatDateTime } from '$lib/utils/date';
+	import { SCHOOL_ZONES, SCHOOL_ZONE_LABELS, SCHOOL_ZONE_COLORS, isSchoolHoliday } from '$lib/schoolZones';
 	import { downloadSvgAsPng } from '$lib/utils/svgToPng';
 
 	let { data, form } = $props();
@@ -268,6 +269,17 @@
 								<th class:weekend={isWeekend(d)} class:today={d === data.todayISO}>{parseISODate(d).getUTCDate()}</th>
 							{/each}
 						</tr>
+						{#each SCHOOL_ZONES as zone (zone)}
+							<tr class="zone-row" title="{SCHOOL_ZONE_LABELS[zone]} (vacances scolaires)">
+								<th class="name-col zone-label">{zone}</th>
+								{#each data.days as d (d)}
+									<td
+										class="zone-cell"
+										style={isSchoolHoliday(d, zone, data.schoolHolidays) ? `background:${SCHOOL_ZONE_COLORS[zone]};` : ''}
+									></td>
+								{/each}
+							</tr>
+						{/each}
 					</thead>
 					<tbody>
 						{#each data.rows as m (m.id)}
@@ -299,10 +311,19 @@
 			</div>
 
 			<div class="legend">
-				{#each ABSENCE_TYPES as t (t)}
-					<span class="legend-item"><span class="swatch" style="background:{ABSENCE_TYPE_COLORS[t]};"></span>{ABSENCE_TYPE_LABELS[t]}</span>
-					<span class="legend-item"><span class="swatch" style="background:linear-gradient(135deg, transparent 0 50%, {ABSENCE_TYPE_COLORS[t]} 50% 100%);"></span>{ABSENCE_TYPE_LABELS[t]} (demi-journée)</span>
-				{/each}
+				<div class="legend-row">
+					<span class="legend-row-label">Absences</span>
+					{#each ABSENCE_TYPES as t (t)}
+						<span class="legend-item"><span class="swatch" style="background:{ABSENCE_TYPE_COLORS[t]};"></span>{ABSENCE_TYPE_LABELS[t]}</span>
+					{/each}
+					<span class="legend-item legend-note"><span class="swatch swatch-half"></span>Demi-journée</span>
+				</div>
+				<div class="legend-row">
+					<span class="legend-row-label">Vacances scolaires</span>
+					{#each SCHOOL_ZONES as zone (zone)}
+						<span class="legend-item"><span class="swatch swatch-bar" style="background:{SCHOOL_ZONE_COLORS[zone]};"></span>{SCHOOL_ZONE_LABELS[zone]}</span>
+					{/each}
+				</div>
 			</div>
 		{/if}
 	</section>
@@ -857,6 +878,11 @@
 		border: 1px solid var(--border);
 		flex-shrink: 0;
 	}
+	.swatch-bar {
+		height: 6px;
+		border-radius: 3px;
+		border: none;
+	}
 
 	.grid-wrap {
 		overflow-x: auto;
@@ -903,14 +929,44 @@
 		font-weight: 600;
 		position: sticky;
 	}
-	.grid thead tr:first-child th {
+	.grid thead tr:nth-child(1) th {
 		top: 0;
 	}
-	.grid thead tr:last-child th {
+	.grid thead tr:nth-child(2) th {
 		top: 27px;
+	}
+	/* Bandeaux vacances scolaires (zones A/B/C) : lignes fines empilées sous l'en-tête jours, elles
+	   aussi épinglées pour rester avec le reste de l'en-tête au scroll vertical de la page. */
+	.grid thead tr.zone-row th,
+	.grid thead tr.zone-row td {
+		position: sticky;
+	}
+	.grid thead tr:nth-child(3) th,
+	.grid thead tr:nth-child(3) td {
+		top: 54px;
+	}
+	.grid thead tr:nth-child(4) th,
+	.grid thead tr:nth-child(4) td {
+		top: 68px;
+	}
+	.grid thead tr:nth-child(5) th,
+	.grid thead tr:nth-child(5) td {
+		top: 82px;
 	}
 	.grid .month-hdr {
 		border-left-width: 2px;
+	}
+	.zone-row th,
+	.zone-row td {
+		height: 14px;
+	}
+	.zone-label {
+		font-size: 9px;
+		color: var(--text-mute);
+	}
+	.grid td.zone-cell {
+		background: var(--surface-sunk);
+		border-color: transparent;
 	}
 	.grid .name-col {
 		text-align: left;
@@ -958,17 +1014,41 @@
 
 	.legend {
 		display: flex;
-		flex-wrap: wrap;
-		gap: 6px 18px;
+		flex-direction: column;
+		gap: 8px;
 		margin-top: 14px;
 		font-size: 12.5px;
 		color: var(--text-soft);
+	}
+	.legend-row {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 6px 16px;
+	}
+	.legend-row + .legend-row {
+		padding-top: 8px;
+		border-top: 1px solid var(--border);
+	}
+	.legend-row-label {
+		font-size: 10.5px;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
+		color: var(--text-mute);
+		margin-right: 2px;
 	}
 	.legend-item {
 		display: flex;
 		align-items: center;
 		gap: 6px;
 		white-space: nowrap;
+	}
+	.legend-note {
+		color: var(--text-mute);
+	}
+	.swatch-half {
+		background: linear-gradient(135deg, transparent 0 50%, var(--text-mute) 50% 100%);
 	}
 
 	.modal-backdrop {

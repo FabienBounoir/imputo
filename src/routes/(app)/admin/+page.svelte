@@ -26,6 +26,16 @@
 	let moodPeriodKind = $state(data.mood.periodKind);
 	let moodStartWeekday = $state(data.mood.startWeekday);
 
+	const SUPPORT_CADENCES: { value: string; label: string }[] = [
+		{ value: 'DAY', label: 'Chaque jour' },
+		{ value: 'WEEK', label: 'Chaque semaine (lun.→ven.)' },
+		{ value: 'MONTH', label: 'Chaque mois' }
+	];
+	let newRotationUserId = $state('');
+	const rotationCandidates = $derived(
+		data.members.filter((m) => m.active && !data.supportMembers.some((rm) => rm.userId === m.id))
+	);
+
 	const initials = (n: string) => n.split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 
 	async function copyMessage() {
@@ -39,6 +49,7 @@
 		{ key: 'membres', label: 'Membres' },
 		{ key: 'referentiels', label: 'Référentiels' },
 		{ key: 'workflow', label: 'Workflow' },
+		{ key: 'support', label: 'Support' },
 		{ key: 'general', label: 'Général' }
 	] as const;
 	type Tab = (typeof TABS)[number]['key'];
@@ -438,6 +449,86 @@
 				<input class="state-emoji" name="emoji" maxlength="4" placeholder="🏷️" aria-label="Emoji" />
 				<input class="ref-input" name="label" placeholder="Nouvel état…" required />
 				<button class="btn btn-ghost" type="submit">+ Ajouter</button>
+			</form>
+		</section>
+	{/if}
+
+	{#if tab === 'support'}
+		<section class="card block">
+			<h3>Support</h3>
+			<p class="hint">
+				Désigne à tour de rôle qui suit les tickets du support, selon la cadence choisie. La page est visible dans
+				« Mon espace » une fois activée.
+			</p>
+			{#if form?.supportOk}<div class="flash ok">Réglage mis à jour ✓</div>{/if}
+
+			<form method="POST" action="?/supportEnabled" use:enhance>
+				<input type="hidden" name="enabled" value={String(!data.support.enabled)} />
+				<div style="display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:6px;">
+					<span>Support actuellement <b>{data.support.enabled ? 'activé' : 'désactivé'}</b></span>
+					<button class="btn {data.support.enabled ? 'btn-ghost' : 'btn-primary'}" type="submit">
+						{data.support.enabled ? 'Désactiver' : 'Activer'}
+					</button>
+				</div>
+			</form>
+
+			<form method="POST" action="?/supportCadence" use:enhance style="margin-top:14px;">
+				<div class="field">
+					<label for="support-cadence">Cadence de rotation</label>
+					<select
+						id="support-cadence"
+						name="cadence"
+						value={data.support.cadence}
+						onchange={(e) => e.currentTarget.form?.requestSubmit()}
+					>
+						{#each SUPPORT_CADENCES as c (c.value)}
+							<option value={c.value}>{c.label}</option>
+						{/each}
+					</select>
+				</div>
+			</form>
+		</section>
+
+		<section class="card block">
+			<h3>Ordre de rotation</h3>
+			<p class="hint">Réordonne avec ▲▼. La personne du jour/de la semaine/du mois tourne automatiquement dans cet ordre.</p>
+			<div class="state-list">
+				{#each data.supportMembers as m, i (m.id)}
+					<div class="state-row">
+						<div class="state-order">
+							<form method="POST" action="?/supportMemberMove" use:enhance>
+								<input type="hidden" name="id" value={m.id} />
+								<input type="hidden" name="dir" value="up" />
+								<button class="ord-btn" type="submit" disabled={i === 0} aria-label="Monter">▲</button>
+							</form>
+							<form method="POST" action="?/supportMemberMove" use:enhance>
+								<input type="hidden" name="id" value={m.id} />
+								<input type="hidden" name="dir" value="down" />
+								<button class="ord-btn" type="submit" disabled={i === data.supportMembers.length - 1} aria-label="Descendre">▼</button>
+							</form>
+						</div>
+						<span class="ref-name">{m.displayName}</span>
+						<form method="POST" action="?/supportMemberRemove" use:enhance>
+							<input type="hidden" name="id" value={m.id} />
+							<button class="ref-btn" type="submit">🗑 Retirer</button>
+						</form>
+					</div>
+				{/each}
+				{#if data.supportMembers.length === 0}<p class="hint" style="margin:0;">Personne dans la rotation.</p>{/if}
+			</div>
+			<form
+				class="state-add"
+				method="POST"
+				action="?/supportMemberAdd"
+				use:enhance={() => async ({ update }) => { newRotationUserId = ''; update(); }}
+			>
+				<select class="ref-input" name="userId" bind:value={newRotationUserId} required>
+					<option value="" disabled>Ajouter un membre…</option>
+					{#each rotationCandidates as m (m.id)}
+						<option value={m.id}>{m.displayName}</option>
+					{/each}
+				</select>
+				<button class="btn btn-ghost" type="submit" disabled={!newRotationUserId}>+ Ajouter</button>
 			</form>
 		</section>
 	{/if}

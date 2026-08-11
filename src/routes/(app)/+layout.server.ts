@@ -2,6 +2,7 @@ import { redirect } from '@sveltejs/kit';
 import type { LayoutServerLoad } from './$types';
 import { countVotes, getMoodConfig, getMyVote } from '$lib/server/services/mood';
 import { countPendingAbsences } from '$lib/server/services/absences';
+import { getCurrentDuty } from '$lib/server/services/support';
 import { currentMoodPeriod, todayInParis, parseISODate } from '$lib/utils/date';
 
 // En dessous de ce seuil de jours restants sur la plage active, on relance visuellement (blink)
@@ -28,6 +29,9 @@ export const load: LayoutServerLoad = async ({ locals }) => {
 	const canManageOthers = locals.role === 'ADMIN' || locals.role === 'MANAGER';
 	const pendingAbsencesCount = canManageOthers ? await countPendingAbsences(locals.workspace.workspaceId) : 0;
 
+	// Nom affiché dans le lien "Support" du menu, pour voir qui est de perm sans ouvrir la page.
+	const supportDuty = locals.workspace.supportEnabled ? await getCurrentDuty(locals.workspace.workspaceId) : null;
+
 	return {
 		user: locals.user,
 		workspace: locals.workspace,
@@ -36,6 +40,7 @@ export const load: LayoutServerLoad = async ({ locals }) => {
 		canViewMoodResults: locals.canViewMoodResults,
 		moodStatus,
 		moodTotalVotes,
-		pendingAbsencesCount
+		pendingAbsencesCount,
+		supportDuty
 	};
 };

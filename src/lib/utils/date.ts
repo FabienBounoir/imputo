@@ -253,6 +253,34 @@ export function previousMoodPeriodStart(kind: 'WEEK_1' | 'WEEK_2' | 'WEEK_3' | '
 	return toISODate(addDays(start, -MOOD_PERIOD_DAYS[kind]));
 }
 
+/** Plage de la période de perm support (DAY/WEEK/MONTH) contenant `todayISO`. WEEK = lundi→vendredi. */
+export function currentSupportPeriod(cadence: 'DAY' | 'WEEK' | 'MONTH', todayISO: string): { start: string; end: string } {
+	const today = parseISODate(todayISO);
+	if (cadence === 'MONTH') {
+		const start = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
+		const end = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 0));
+		return { start: toISODate(start), end: toISODate(end) };
+	}
+	if (cadence === 'WEEK') {
+		const start = mondayOf(today);
+		return { start: toISODate(start), end: toISODate(addDays(start, 4)) };
+	}
+	return { start: todayISO, end: todayISO };
+}
+
+// Ancrage arbitraire (lundi) pour numéroter les périodes de façon stable, sans stocker de date de
+// départ de rotation : deux workspaces avec la même cadence et le même ordre de membres tombent
+// naturellement d'accord, même après ajout/suppression d'un membre.
+const SUPPORT_EPOCH_MS = Date.UTC(2000, 0, 3);
+
+/** Index entier croissant de la période — sert à choisir `membres[index % nbMembres]`. */
+export function supportPeriodIndex(cadence: 'DAY' | 'WEEK' | 'MONTH', periodStartISO: string): number {
+	const start = parseISODate(periodStartISO);
+	if (cadence === 'MONTH') return start.getUTCFullYear() * 12 + start.getUTCMonth();
+	const diffDays = Math.round((start.getTime() - SUPPORT_EPOCH_MS) / 86400000);
+	return cadence === 'WEEK' ? Math.floor(diffDays / 7) : diffDays;
+}
+
 /** Plage de dates lisible : « 6 → 10 juil. 2026 », « 29 juin → 3 juil. 2026 », « 29 déc. 2025 → 2 janv. 2026 ». */
 export function formatDayRange(fromISO: string, toISO: string): string {
 	const from = parseISODate(fromISO);

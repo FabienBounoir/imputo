@@ -43,6 +43,7 @@ export const absenceTypeEnum = pgEnum('absence_type', [
 export const absencePeriodEnum = pgEnum('absence_period', ['FULL', 'AM', 'PM']);
 export const changeLogEntityEnum = pgEnum('change_log_entity', ['TICKET', 'ABSENCE']);
 export const changeLogActionEnum = pgEnum('change_log_action', ['UPDATE', 'DELETE']);
+export const supportCadenceEnum = pgEnum('support_cadence', ['DAY', 'WEEK', 'MONTH']);
 
 const id = () => uuid('id').primaryKey().defaultRandom();
 const createdAt = () => timestamp('created_at', { withTimezone: true }).defaultNow().notNull();
@@ -68,6 +69,12 @@ export const workspace = pgTable('workspace', {
 	moodPeriodKind: moodPeriodKindEnum('mood_period_kind').notNull().default('WEEK_1'),
 	// 0=lundi..6=dimanche ; ignoré si moodPeriodKind = MONTH (démarre toujours le 1er du mois).
 	moodStartWeekday: integer('mood_start_weekday').notNull().default(0),
+	// Perm support (qui regarde les tickets) : désactivée par défaut, activable par l'admin.
+	supportEnabled: boolean('support_enabled').notNull().default(false),
+	supportCadence: supportCadenceEnum('support_cadence').notNull().default('WEEK'),
+	// Incrémenté par "passer son tour" : décale toute la chaîne d'un cran, définitivement (contrairement
+	// à supportOverride qui ne change qu'une période précise sans toucher aux suivantes).
+	supportRotationOffset: integer('support_rotation_offset').notNull().default(0),
 	createdByUserId: uuid('created_by_user_id'),
 	createdAt: createdAt()
 });
@@ -534,6 +541,46 @@ export const moodVote = pgTable(
 	]
 );
 
+// ---------- Perm support (rotation "qui regarde les tickets") ----------
+// Ordre de passage dans la rotation ; le membre du jour/de la semaine/du mois est calculé à la
+// volée (supportPeriodIndex, cf. utils/date.ts) — pas de planning pré-généré à maintenir.
+export const supportRotationMember = pgTable(
+	'support_rotation_member',
+	{
+		id: id(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspace.id, { onDelete: 'cascade' }),
+		userId: uuid('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		sortOrder: integer('sort_order').notNull().default(0),
+		createdAt: createdAt()
+	},
+	(t) => [
+		uniqueIndex('support_rotation_member_ws_user_uq').on(t.workspaceId, t.userId),
+		index('support_rotation_member_ws_idx').on(t.workspaceId)
+	]
+);
+
+// Remplace ponctuellement la personne calculée pour une période donnée (ex : absence) sans
+// décaler la rotation : la période suivante retombe automatiquement sur l'ordre normal.
+export const supportOverride = pgTable(
+	'support_override',
+	{
+		id: id(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspace.id, { onDelete: 'cascade' }),
+		periodStart: date('period_start').notNull(),
+		userId: uuid('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		createdAt: createdAt()
+	},
+	(t) => [uniqueIndex('support_override_ws_period_uq').on(t.workspaceId, t.periodStart)]
+);
+
 // ---------- Notifications (Web Push) ----------
 export const pushSubscription = pgTable(
 	'push_subscription',
@@ -608,3 +655,6 @@ export type AbsencePeriod = (typeof absencePeriodEnum.enumValues)[number];
 export type MoodVote = typeof moodVote.$inferSelect;
 export type Role = (typeof roleEnum.enumValues)[number];
 export type MoodPeriodKind = (typeof moodPeriodKindEnum.enumValues)[number];
+export type SupportRotationMember = typeof supportRotationMember.$inferSelect;
+export type SupportOverride = typeof supportOverride.$inferSelect;
+export type SupportCadence = (typeof supportCadenceEnum.enumValues)[number];

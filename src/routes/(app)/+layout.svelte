@@ -171,6 +171,18 @@
 				<span class="badge" title="Congés en attente de validation">{data.pendingAbsencesCount}</span>
 			{/if}
 		</a>
+		{#if data.workspace?.supportEnabled}
+			<a
+				class="nav-item"
+				class:active={isActive('/support')}
+				class:blink={data.supportDuty?.userId === data.user?.id}
+				href="/support"
+			>
+				<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></svg>
+				Support
+				{#if data.supportDuty}<span class="badge">{data.supportDuty.displayName.split(' ')[0]}</span>{/if}
+			</a>
+		{/if}
 		{#if data.workspace?.moodEnabled}
 			<a
 				class="nav-item"
