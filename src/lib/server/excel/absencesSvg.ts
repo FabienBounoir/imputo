@@ -65,8 +65,10 @@ export async function buildAbsencesSvg(
 		...externalMembers.map((m) => ({ id: m.id, displayName: m.displayName, external: true }))
 	];
 	if (rowIds && rowIds.length > 0) {
-		const keep = new Set(rowIds);
-		rows = rows.filter((r) => keep.has(r.id));
+		// L'ordre de `rowIds` est celui choisi côté modal d'export — pas l'ordre canonique de
+		// `ref.members` — donc on réordonne au lieu de simplement filtrer.
+		const byId = new Map(rows.map((r) => [r.id, r]));
+		rows = rowIds.map((id) => byId.get(id)).filter((r) => r !== undefined);
 	}
 
 	const monthGroups = groupDaysByMonth(days);
