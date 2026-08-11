@@ -8,7 +8,8 @@ import {
 	activity,
 	sprint,
 	ticketActivityRae,
-	weeklyObjective
+	weeklyObjective,
+	user
 } from '$lib/server/db';
 import { num, round } from './calc';
 import { toISODate, workWeek, parseISODate } from '$lib/utils/date';
@@ -31,6 +32,8 @@ export type ImputationRow = {
 	 * le RAE est stocké par activité, il n'est alors ni affichable ni saisissable ici.
 	 */
 	raeReal: number | null;
+	/** Estimé de la paire (ticket, activité) — même granularité que raeReal, modifiable par tous. */
+	estimation: number | null;
 	amounts: Record<string, number>; // day ISO → amount
 	total: number;
 };
@@ -48,25 +51,43 @@ function rowKey(targetType: string, targetId: string, activityId: string | null)
 	return `${targetType}:${targetId}:${activityId ?? ''}`;
 }
 
-/**
- * Feuille de temps d'un utilisateur sur une liste de jours ouvrés ordonnée. Le découpage de la
- * période (semaine / quinzaine / mois, fixe ou glissant) est calculé par `buildPeriod` dans
- * `$lib/utils/date` — ce service ne connaît qu'une plage de jours.
- */
-export async function getTimesheet(
-	workspaceId: string,
-	userId: string,
-	days: string[]
-): Promise<TimesheetData> {
-	const firstDay = days[0];
-	const lastDay = days[days.length - 1];
+type RawEntry = {
+	userId: string;
+	userName: string;
+	targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE';
+	ticketId: string | null;
+	categoryId: string | null;
+	objectiveId: string | null;
+	activityId: string | null;
+	day: string;
+	amount: string | number | null;
+	ticketKey: string | null;
+	ticketTitle: string | null;
+	sprintName: string | null;
+	versionName: string | null;
+	categoryLabel: string | null;
+	categoryKind: string | null;
+	objectiveLabel: string | null;
+	activityLabel: string | null;
+};
 
+/**
+ * Imputations brutes d'un espace sur une plage de jours, un utilisateur en particulier ou toute
+ * l'équipe si `userId` est omis. Requête et jointures communes à `getTimesheet` et
+ * `getTeamTimesheet` — seule la clause `userId` change.
+ */
+async function queryEntries(workspaceId: string, firstDay: string, lastDay: string, userId?: string): Promise<RawEntry[]> {
 	// `version` et `sprint` vivent dans la même table, discriminés par `kind` : ticket.sprintId et
 	// ticket.versionId pointent tous deux dessus, d'où l'alias pour les joindre en même temps.
 	const versionSprint = alias(sprint, 'version_sprint');
 
-	const entries = await db
+	const conditions = [eq(timeEntry.workspaceId, workspaceId), gte(timeEntry.day, firstDay), lte(timeEntry.day, lastDay)];
+	if (userId) conditions.push(eq(timeEntry.userId, userId));
+
+	return db
 		.select({
+			userId: timeEntry.userId,
+			userName: user.displayName,
 			targetType: timeEntry.targetType,
 			ticketId: timeEntry.ticketId,
 			categoryId: timeEntry.categoryId,
@@ -84,20 +105,65 @@ export async function getTimesheet(
 			activityLabel: activity.label
 		})
 		.from(timeEntry)
+		.innerJoin(user, eq(timeEntry.userId, user.id))
 		.leftJoin(ticket, eq(timeEntry.ticketId, ticket.id))
 		.leftJoin(sprint, eq(ticket.sprintId, sprint.id))
 		.leftJoin(versionSprint, eq(ticket.versionId, versionSprint.id))
 		.leftJoin(category, eq(timeEntry.categoryId, category.id))
 		.leftJoin(weeklyObjective, eq(timeEntry.objectiveId, weeklyObjective.id))
 		.leftJoin(activity, eq(timeEntry.activityId, activity.id))
-		.where(
-			and(
-				eq(timeEntry.workspaceId, workspaceId),
-				eq(timeEntry.userId, userId),
-				gte(timeEntry.day, firstDay),
-				lte(timeEntry.day, lastDay)
-			)
-		);
+		.where(and(...conditions));
+}
+
+/** Squelette de ligne (sans montants) à partir d'une imputation brute — partagé par les deux vues. */
+function rowSkeleton(e: RawEntry, targetId: string, key: string): ImputationRow {
+	let label: string;
+	let sublabel: string;
+	let emoji: string;
+	if (e.targetType === 'TICKET') {
+		label = e.ticketTitle ?? '—';
+		sublabel = `${e.ticketKey ?? ''}${e.activityLabel ? ' · ' + e.activityLabel : ''}`;
+		emoji = '🎫';
+	} else if (e.targetType === 'CATEGORY') {
+		label = e.categoryLabel ?? '—';
+		sublabel = `Catégorie${e.activityLabel ? ' · ' + e.activityLabel : ''}`;
+		emoji = e.categoryKind === 'NON_PRODUCTIVE' ? '🌴' : '🛟';
+	} else {
+		label = e.objectiveLabel ?? '(tâche supprimée)';
+		sublabel = `Tâche assignée${e.activityLabel ? ' · ' + e.activityLabel : ''}`;
+		emoji = '📝';
+	}
+	return {
+		rowKey: key,
+		targetType: e.targetType,
+		targetId,
+		activityId: e.activityId,
+		label,
+		sublabel,
+		emoji,
+		nonProductive: e.targetType === 'CATEGORY' && e.categoryKind === 'NON_PRODUCTIVE',
+		sprintName: e.targetType === 'TICKET' ? e.sprintName : null,
+		versionName: e.targetType === 'TICKET' ? e.versionName : null,
+		raeReal: null,
+		estimation: null,
+		amounts: {},
+		total: 0
+	};
+}
+
+/**
+ * Feuille de temps d'un utilisateur sur une liste de jours ouvrés ordonnée. Le découpage de la
+ * période (semaine / quinzaine / mois, fixe ou glissant) est calculé par `buildPeriod` dans
+ * `$lib/utils/date` — ce service ne connaît qu'une plage de jours.
+ */
+export async function getTimesheet(
+	workspaceId: string,
+	userId: string,
+	days: string[]
+): Promise<TimesheetData> {
+	const firstDay = days[0];
+	const lastDay = days[days.length - 1];
+	const entries = await queryEntries(workspaceId, firstDay, lastDay, userId);
 
 	const rows = new Map<string, ImputationRow>();
 	const dayTotals: Record<string, number> = Object.fromEntries(days.map((d) => [d, 0]));
@@ -109,39 +175,7 @@ export async function getTimesheet(
 		const targetId =
 			(e.targetType === 'TICKET' ? e.ticketId : e.targetType === 'CATEGORY' ? e.categoryId : e.objectiveId) ?? '';
 		const key = rowKey(e.targetType, targetId, e.activityId);
-		if (!rows.has(key)) {
-			let label: string;
-			let sublabel: string;
-			let emoji: string;
-			if (e.targetType === 'TICKET') {
-				label = e.ticketTitle ?? '—';
-				sublabel = `${e.ticketKey ?? ''}${e.activityLabel ? ' · ' + e.activityLabel : ''}`;
-				emoji = '🎫';
-			} else if (e.targetType === 'CATEGORY') {
-				label = e.categoryLabel ?? '—';
-				sublabel = `Catégorie${e.activityLabel ? ' · ' + e.activityLabel : ''}`;
-				emoji = e.categoryKind === 'NON_PRODUCTIVE' ? '🌴' : '🛟';
-			} else {
-				label = e.objectiveLabel ?? '(tâche supprimée)';
-				sublabel = `Tâche assignée${e.activityLabel ? ' · ' + e.activityLabel : ''}`;
-				emoji = '📝';
-			}
-			rows.set(key, {
-				rowKey: key,
-				targetType: e.targetType,
-				targetId,
-				activityId: e.activityId,
-				label,
-				sublabel,
-				emoji,
-				nonProductive: e.targetType === 'CATEGORY' && e.categoryKind === 'NON_PRODUCTIVE',
-				sprintName: e.targetType === 'TICKET' ? e.sprintName : null,
-				versionName: e.targetType === 'TICKET' ? e.versionName : null,
-				raeReal: null,
-				amounts: {},
-				total: 0
-			});
-		}
+		if (!rows.has(key)) rows.set(key, rowSkeleton(e, targetId, key));
 		const r = rows.get(key)!;
 		const amount = num(e.amount);
 		r.amounts[e.day] = amount;
@@ -155,9 +189,70 @@ export async function getTimesheet(
 	return { days, firstDay, lastDay, rows: [...rows.values()], dayTotals, total };
 }
 
+export type TeamMemberSheet = {
+	userId: string;
+	name: string;
+	rows: ImputationRow[];
+	dayTotals: Record<string, number>;
+	total: number;
+};
+export type TeamTimesheetData = {
+	days: string[];
+	members: TeamMemberSheet[];
+	dayTotals: Record<string, number>;
+	total: number;
+};
+
 /**
- * Renseigne `raeReal` sur les lignes ticket portant une activité, depuis `ticket_activity_rae`.
- * Le RAE étant stocké par (ticket, activité), une ligne sans activité n'a pas de RAE adressable.
+ * Même principe que `getTimesheet`, mais pour toute l'équipe en une seule requête : un membre par
+ * ligne (`members`), chacun avec le détail de ses lignes ticket/catégorie/tâche — vue "Toute
+ * l'équipe" de Mon imputation. Pas de RAE/Estimé ici (lecture seule, jamais éditée depuis cette vue).
+ */
+export async function getTeamTimesheet(workspaceId: string, days: string[]): Promise<TeamTimesheetData> {
+	const firstDay = days[0];
+	const lastDay = days[days.length - 1];
+	const entries = await queryEntries(workspaceId, firstDay, lastDay);
+
+	const members = new Map<string, { userId: string; name: string; rows: Map<string, ImputationRow>; dayTotals: Record<string, number> }>();
+	const dayTotals: Record<string, number> = Object.fromEntries(days.map((d) => [d, 0]));
+
+	for (const e of entries) {
+		if (!(e.day in dayTotals)) continue;
+		let m = members.get(e.userId);
+		if (!m) {
+			m = { userId: e.userId, name: e.userName, rows: new Map(), dayTotals: Object.fromEntries(days.map((d) => [d, 0])) };
+			members.set(e.userId, m);
+		}
+		const targetId =
+			(e.targetType === 'TICKET' ? e.ticketId : e.targetType === 'CATEGORY' ? e.categoryId : e.objectiveId) ?? '';
+		const key = rowKey(e.targetType, targetId, e.activityId);
+		if (!m.rows.has(key)) m.rows.set(key, rowSkeleton(e, targetId, key));
+		const r = m.rows.get(key)!;
+		const amount = num(e.amount);
+		r.amounts[e.day] = amount;
+		r.total = round(r.total + amount);
+		m.dayTotals[e.day] = round(m.dayTotals[e.day] + amount);
+		dayTotals[e.day] = round(dayTotals[e.day] + amount);
+	}
+
+	const memberList = [...members.values()]
+		.map((m) => ({
+			userId: m.userId,
+			name: m.name,
+			rows: [...m.rows.values()],
+			dayTotals: m.dayTotals,
+			total: round(Object.values(m.dayTotals).reduce((a, b) => a + b, 0))
+		}))
+		.sort((a, b) => a.name.localeCompare(b.name));
+
+	const total = round(Object.values(dayTotals).reduce((a, b) => a + b, 0));
+	return { days, members: memberList, dayTotals, total };
+}
+
+/**
+ * Renseigne `raeReal`/`estimation` sur les lignes ticket portant une activité, depuis
+ * `ticket_activity_rae`. Ces valeurs étant stockées par (ticket, activité), une ligne sans
+ * activité n'a ni RAE ni Estimé adressable.
  */
 async function attachActivityRae(rows: ImputationRow[]) {
 	const targets = rows.filter((r) => r.targetType === 'TICKET' && r.activityId);
@@ -169,7 +264,8 @@ async function attachActivityRae(rows: ImputationRow[]) {
 		.select({
 			ticketId: ticketActivityRae.ticketId,
 			activityId: ticketActivityRae.activityId,
-			raeReal: ticketActivityRae.raeReal
+			raeReal: ticketActivityRae.raeReal,
+			estimation: ticketActivityRae.estimation
 		})
 		.from(ticketActivityRae)
 		.where(
@@ -179,8 +275,12 @@ async function attachActivityRae(rows: ImputationRow[]) {
 			)
 		);
 
-	const byPair = new Map(raeRows.map((r) => [`${r.ticketId}:${r.activityId}`, num(r.raeReal)]));
-	for (const r of targets) r.raeReal = byPair.get(`${r.targetId}:${r.activityId}`) ?? 0;
+	const byPair = new Map(raeRows.map((r) => [`${r.ticketId}:${r.activityId}`, r]));
+	for (const r of targets) {
+		const found = byPair.get(`${r.targetId}:${r.activityId}`);
+		r.raeReal = num(found?.raeReal ?? null);
+		r.estimation = num(found?.estimation ?? null);
+	}
 }
 
 /** Feuille de temps d'une semaine ouvrée (lun→ven) — raccourci autour de `getTimesheet`. */

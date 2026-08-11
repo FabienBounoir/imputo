@@ -40,25 +40,20 @@ export function ppr(estimationReal: string | number | null, pprRatio: string | n
 }
 
 /**
- * Écart d'exécution — Réel uniquement, jamais Test (même si la phase Test de l'espace est active).
- * Positif = le RAE déclaré + le consommé dépassent l'estimation réelle (dépassement projeté).
+ * Écart vs estimé — Réel uniquement, jamais Test (même si la phase Test de l'espace est active).
+ * Positif = le RAE déclaré + le consommé dépassent l'estimation résolue (dépassement projeté).
  */
-export function ecartExecution(raeReal: number, consumed: number, estimationReal: number): number {
-	return round(raeReal + consumed - estimationReal);
+export function ecartVsEstime(raeReal: number, consumed: number, estimationResolved: number): number {
+	return round(raeReal + consumed - estimationResolved);
 }
 
 /**
- * TNF budget — distinct de l'écart d'exécution (ne pas fusionner dans l'UI). Aligné sur le
- * comportement de totalRae : applique la phase Test par défaut.
+ * Écart vs budget — même forme que l'écart vs estimé (Réel uniquement, jamais Test), avec
+ * l'enveloppe totale du ticket comme référence au lieu de l'estimation. Le TNF (dashboard) est la
+ * somme de ces écarts sur un ensemble de tickets, pas une formule à part.
  */
-export function tnfBudget(
-	enveloppeTotale: number,
-	consumed: number,
-	raeReal: number,
-	raeTest: number,
-	testPhase = true
-): number {
-	return round(enveloppeTotale - consumed + raeReal + (testPhase ? raeTest : 0));
+export function ecartVsBudget(raeReal: number, consumed: number, enveloppeTotale: number): number {
+	return round(raeReal + consumed - enveloppeTotale);
 }
 
 /**
@@ -75,6 +70,19 @@ export function resolvedRae(
 		real: sum(activityRows.map((r) => r.raeReal)),
 		test: sum(activityRows.map((r) => r.raeTest))
 	};
+}
+
+/**
+ * Estimé résolu d'un ticket : somme des Estimés par activité si des lignes existent, sinon
+ * fallback ticket.estimationReal. Même mécanique que resolvedRae, mais un seul champ (pas de
+ * déclinaison Réel/Test au niveau activité).
+ */
+export function resolvedEstimation(
+	ticketEstimationReal: string | null,
+	activityRows: Array<{ estimation: string | null }>
+): number {
+	if (activityRows.length === 0) return num(ticketEstimationReal);
+	return sum(activityRows.map((r) => r.estimation));
 }
 
 /** Capacité attendue d'une semaine = capacité/jour × nb de jours ouvrés non fériés de la semaine. */

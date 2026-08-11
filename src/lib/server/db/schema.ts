@@ -275,8 +275,10 @@ export const ticket = pgTable(
 	]
 );
 
-// RAE par activité (sous-lignes) — le RAE ticket devient la somme de ces lignes quand il y en a
-// (fallback sur ticket.raeReal/raeTest sinon, cf. resolvedRae() dans calc.ts).
+// RAE + Estimé + Budget par activité (sous-lignes) — le RAE et l'Estimé du ticket deviennent la
+// somme de ces lignes quand il y en a (fallback sur ticket.raeReal/raeTest/estimationReal sinon,
+// cf. resolvedRae()/resolvedEstimation() dans calc.ts). Le budget par activité, lui, ne remonte
+// jamais sur le ticket (ticket.enveloppeTotale reste la valeur saisie à la création).
 export const ticketActivityRae = pgTable(
 	'ticket_activity_rae',
 	{
@@ -289,6 +291,10 @@ export const ticketActivityRae = pgTable(
 			.references(() => activity.id, { onDelete: 'restrict' }),
 		raeReal: numeric('rae_real', { precision: 7, scale: 2 }).notNull().default('0'),
 		raeTest: numeric('rae_test', { precision: 7, scale: 2 }).notNull().default('0'),
+		// Estimé par activité — champ unique (pas de déclinaison Réel/Test), modifiable par tout membre.
+		estimation: numeric('estimation', { precision: 7, scale: 2 }).notNull().default('0'),
+		// Budget par activité — indépendant du budget ticket (enveloppeTotale), ADMIN only.
+		budget: numeric('budget', { precision: 7, scale: 2 }).notNull().default('0'),
 		updatedAt: updatedAt()
 	},
 	(t) => [uniqueIndex('ticket_activity_rae_uq').on(t.ticketId, t.activityId)]

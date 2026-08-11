@@ -1,6 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { createTicket, listTickets, updateTicketField, setTicketFlag, parseFlags } from './tickets';
+import {
+	createTicket,
+	listTickets,
+	updateTicketField,
+	setTicketFlag,
+	parseFlags,
+	canEditActivityField
+} from './tickets';
 import { makeWorkspace, addMember } from './test-helpers';
+import { createActivity, listActivities } from './params';
 
 describe('parseFlags', () => {
 	it('renvoie les clés par défaut vides sur une valeur nulle ou corrompue', () => {
@@ -86,6 +94,38 @@ describe('updateTicketField — permissions par rôle', () => {
 		await expect(updateTicketField(workspaceId, t.id, 'notAField', 'x', 'ADMIN', userId)).rejects.toThrow(
 			'Champ non éditable.'
 		);
+	});
+});
+
+describe('canEditActivityField — budget par activité (ADMIN strict)', () => {
+	it('un MANAGER ne peut PAS éditer le budget par activité (contrairement au reste du chiffrage)', async () => {
+		const { workspaceId } = await makeWorkspace();
+		const { userId: managerId } = await addMember(workspaceId, 'MANAGER');
+		const t = await createTicket(workspaceId, { key: 'T-10', title: 'x' });
+		await createActivity(workspaceId, `Dev-${t.id}`);
+		const [act] = (await listActivities(workspaceId)).filter((a) => a.label === `Dev-${t.id}`);
+
+		expect(await canEditActivityField(workspaceId, managerId, 'MANAGER', t.id, act.id, 'budget')).toBe(false);
+	});
+
+	it('un ADMIN peut éditer le budget par activité', async () => {
+		const { workspaceId, userId: adminId } = await makeWorkspace();
+		const t = await createTicket(workspaceId, { key: 'T-11', title: 'x' });
+		await createActivity(workspaceId, `Dev-${t.id}`);
+		const [act] = (await listActivities(workspaceId)).filter((a) => a.label === `Dev-${t.id}`);
+
+		expect(await canEditActivityField(workspaceId, adminId, 'ADMIN', t.id, act.id, 'budget')).toBe(true);
+	});
+
+	it("l'Estimé par activité reste éditable par tout membre, contrairement au budget", async () => {
+		const { workspaceId } = await makeWorkspace();
+		const { userId: userId2 } = await addMember(workspaceId, 'USER');
+		const t = await createTicket(workspaceId, { key: 'T-12', title: 'x' });
+		await createActivity(workspaceId, `Dev-${t.id}`);
+		const [act] = (await listActivities(workspaceId)).filter((a) => a.label === `Dev-${t.id}`);
+
+		expect(await canEditActivityField(workspaceId, userId2, 'USER', t.id, act.id, 'estimation')).toBe(true);
+		expect(await canEditActivityField(workspaceId, userId2, 'USER', t.id, act.id, 'budget')).toBe(false);
 	});
 });
 

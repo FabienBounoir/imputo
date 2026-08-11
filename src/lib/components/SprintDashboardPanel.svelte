@@ -14,9 +14,11 @@
 			consumedTotal: number;
 			raeTotal: number;
 			avancement: number;
-			ecartExecutionTotal: number;
-			/** Admin only — null pour un USER standard. */
-			tnfBudgetTotal: number | null;
+			ecartVsEstimeTotal: number;
+			/** Admin only — null pour un USER standard. Libellé historique "TNF". */
+			ecartVsBudgetTotal: number | null;
+			/** Admin only — somme des enveloppeTotale du périmètre. */
+			budgetTotal: number | null;
 			ticketCount: number;
 		};
 		byActivity: { label: string; raeReal: number; raeTest: number }[];
@@ -29,10 +31,12 @@
 			stateLabel: string | null;
 			stateEmoji: string | null;
 			stateColor: string | null;
+			budget: number | null;
 			estTotal: number;
 			raeTotal: number;
 			consumed: number;
-			ecartExecution: number;
+			ecartVsEstime: number;
+			ecartVsBudget: number | null;
 			avancement: number;
 		}[];
 	};
@@ -150,21 +154,27 @@
 				<div class="sub">{dashboard.kpis.ticketCount} tickets</div>
 			</div>
 			<div class="card kpi">
-				<div class="k">Estimé / Consommé</div>
-				<div class="v tabnum">{dashboard.kpis.estTotal}<small>/ {dashboard.kpis.consumedTotal} j</small></div>
+				<div class="k">Consommé / Estimé</div>
+				<div class="v tabnum">{dashboard.kpis.consumedTotal}<small>/ {dashboard.kpis.estTotal} j</small></div>
 			</div>
+			{#if dashboard.kpis.budgetTotal !== null}
+				<div class="card kpi">
+					<div class="k">Consommé / Budget</div>
+					<div class="v tabnum">{dashboard.kpis.consumedTotal}<small>/ {dashboard.kpis.budgetTotal} j</small></div>
+				</div>
+			{/if}
 			<div class="card kpi">
 				<div class="k">RAE global</div>
 				<div class="v tabnum">{dashboard.kpis.raeTotal}<small>j</small></div>
 			</div>
-			<div class="card kpi" class:warn={dashboard.kpis.ecartExecutionTotal > 0}>
-				<div class="k">Écart d'exécution</div>
-				<div class="v tabnum">{dashboard.kpis.ecartExecutionTotal > 0 ? '+' : ''}{dashboard.kpis.ecartExecutionTotal}<small>j</small></div>
+			<div class="card kpi" class:warn={dashboard.kpis.ecartVsEstimeTotal > 0}>
+				<div class="k">Écart vs estimé</div>
+				<div class="v tabnum">{dashboard.kpis.ecartVsEstimeTotal > 0 ? '+' : ''}{dashboard.kpis.ecartVsEstimeTotal}<small>j</small></div>
 			</div>
-			{#if dashboard.kpis.tnfBudgetTotal !== null}
-				<div class="card kpi" class:warn={dashboard.kpis.tnfBudgetTotal < 0}>
-					<div class="k">TNF budget</div>
-					<div class="v tabnum">{dashboard.kpis.tnfBudgetTotal}<small>j</small></div>
+			{#if dashboard.kpis.ecartVsBudgetTotal !== null}
+				<div class="card kpi" class:warn={dashboard.kpis.ecartVsBudgetTotal > 0}>
+					<div class="k">Écart vs budget (TNF)</div>
+					<div class="v tabnum">{dashboard.kpis.ecartVsBudgetTotal > 0 ? '+' : ''}{dashboard.kpis.ecartVsBudgetTotal}<small>j</small></div>
 				</div>
 			{/if}
 		</div>
@@ -250,8 +260,10 @@
 						<thead>
 							<tr>
 								<th>État</th><th>Ticket</th>
+								{#if dashboard.kpis.budgetTotal !== null}<th class="num">Budget</th>{/if}
 								<th class="num">Estimé</th><th class="num">RAE</th><th class="num">Consommé</th>
-								<th class="num">Écart d'exéc.</th><th class="num">Avancement</th>
+								{#if dashboard.kpis.ecartVsBudgetTotal !== null}<th class="num">Écart vs budget</th>{/if}
+								<th class="num">Écart vs estimé</th><th class="num">Avancement</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -275,10 +287,14 @@
 										<span class="key tabnum">{t.key}</span>
 										<span class="title">{t.title}</span>
 									</td>
+									{#if dashboard.kpis.budgetTotal !== null}<td class="num tabnum">{t.budget ?? '—'}</td>{/if}
 									<td class="num tabnum">{t.estTotal}</td>
 									<td class="num tabnum">{t.raeTotal}</td>
 									<td class="num tabnum">{t.consumed || '—'}</td>
-									<td class="num tabnum" class:over={t.ecartExecution > 0}>{t.ecartExecution > 0 ? '+' : ''}{t.ecartExecution || 0}</td>
+									{#if dashboard.kpis.ecartVsBudgetTotal !== null}
+										<td class="num tabnum" class:over={(t.ecartVsBudget ?? 0) > 0}>{(t.ecartVsBudget ?? 0) > 0 ? '+' : ''}{t.ecartVsBudget ?? 0}</td>
+									{/if}
+									<td class="num tabnum" class:over={t.ecartVsEstime > 0}>{t.ecartVsEstime > 0 ? '+' : ''}{t.ecartVsEstime || 0}</td>
 									<td>
 										<div class="prog">
 											<div class="bar"><i style="width:{pct(t.avancement)}%"></i></div>
@@ -362,8 +378,8 @@
 	}
 	.kpis {
 		display: grid;
-		/* auto-fit et non repeat(5) : la carte TNF budget est masquée hors ADMIN/MANAGER, une
-		   grille figée à 5 colonnes laisserait alors un trou. */
+		/* auto-fit et non repeat(N) : les cartes budget/écart vs budget sont masquées hors
+		   ADMIN/MANAGER, une grille figée laisserait alors un trou. */
 		grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 		gap: 14px;
 		margin-bottom: 18px;

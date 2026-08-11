@@ -84,9 +84,12 @@
 		</section>
 
 		<section class="card block">
-			<h3>Membres ({data.members.length})</h3>
+			<div class="block-head">
+				<h3>Membres ({data.members.length})</h3>
+			</div>
 			{#if form?.memberOk}<div class="flash ok">Membre mis à jour ✓</div>{/if}
 			{#if form?.ownerOk}<div class="flash ok">Propriété de l'espace transmise ✓</div>{/if}
+
 			<p class="hint" style="margin-bottom:0;">
 				👑 Le <b>créateur de l'espace</b> a les mêmes droits qu'un admin, mais ne peut être ni rétrogradé ni
 				désactivé par personne d'autre. Il peut transmettre ce statut à un autre membre actif.
@@ -691,6 +694,16 @@
 		.members-wrap::after {
 			display: block;
 		}
+	}
+	.block-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		margin-bottom: 10px;
+	}
+	.block-head h3 {
+		margin: 0;
 	}
 	table.members {
 		width: 100%;

@@ -16,6 +16,8 @@
 		"db:studio": "drizzle-kit studio",
 		"db:seed": "tsx src/lib/server/db/seed.ts",
 		"db:unseed": "tsx src/lib/server/db/unseed.ts",
+		"db:pull:prod": "./scripts/db-pull.sh prod",
+		"db:pull:preprod": "./scripts/db-pull.sh preprod",
 		"test": "vitest run",
 		"test:watch": "vitest",
 		"test:e2e": "cypress run",

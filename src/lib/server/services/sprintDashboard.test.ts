@@ -38,7 +38,7 @@ describe('getSprintDashboard', () => {
 		expect(dash.byPerson.find((p) => p.name === 'sprintdash owner')?.consumed).toBe(1);
 	});
 
-	it('scope sur une version (kind VERSION) et masque tnfBudgetTotal pour un non-admin', async () => {
+	it('scope sur une version (kind VERSION) et masque ecartVsBudgetTotal pour un non-admin', async () => {
 		const ws = await makeWorkspace('versiondash');
 		await createRef(ws.workspaceId, 'version', `Version ${ws.id}`);
 		const [version] = (await listRefs(ws.workspaceId, 'version')).filter((v) => v.name === `Version ${ws.id}`);
@@ -53,10 +53,10 @@ describe('getSprintDashboard', () => {
 		const asAdmin = await getSprintDashboard(ws.workspaceId, version.id, true, true);
 		expect(asAdmin.kind).toBe('VERSION');
 		expect(asAdmin.kpis.ticketCount).toBe(1);
-		expect(asAdmin.kpis.tnfBudgetTotal).not.toBeNull();
+		expect(asAdmin.kpis.ecartVsBudgetTotal).not.toBeNull();
 
 		const asUser = await getSprintDashboard(ws.workspaceId, version.id, true, false);
-		expect(asUser.kpis.tnfBudgetTotal).toBeNull();
+		expect(asUser.kpis.ecartVsBudgetTotal).toBeNull();
 	});
 
 	it('lève une erreur pour un sprint/version inexistant dans cet espace', async () => {

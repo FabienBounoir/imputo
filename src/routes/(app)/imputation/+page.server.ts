@@ -1,6 +1,6 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { getTimesheet, setCell, deleteRow, getRecentTicketIds } from '$lib/server/services/imputation';
+import { getTimesheet, getTeamTimesheet, setCell, deleteRow, getRecentTicketIds } from '$lib/server/services/imputation';
 import { getRefData, listTicketSummaries } from '$lib/server/services/tickets';
 import { getMembership, isManagerOrAdmin } from '$lib/server/services/workspaces';
 import { listObjectivesForUserWeeks, vacationWeeks } from '$lib/server/services/weeklyObjectives';
@@ -34,27 +34,30 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 	// Un admin, ou une personne avec la capacité canViewImputations, peut consulter l'imputation
 	// d'un autre membre via ?u=<userId> — en lecture seule sauf pour l'admin (cf. resolveSubjectId).
 	const uParam = url.searchParams.get('u');
+	const viewingTeam = canViewOthers && uParam === 'team';
 	let viewedId = user.id;
 	let viewedName = user.displayName;
-	if (canViewOthers && uParam && uParam !== user.id) {
+	if (canViewOthers && uParam && uParam !== user.id && uParam !== 'team') {
 		const m = ref.members.find((x) => x.id === uParam);
 		if (m) {
 			viewedId = m.id;
 			viewedName = m.displayName;
 		}
 	}
-	const viewingOther = viewedId !== user.id;
+	const viewingOther = !viewingTeam && viewedId !== user.id;
 	const readOnly = viewingOther && !isAdmin;
 
-	const [sheet, tickets, membership, recentTicketIds, weeklyObjectives, vacations, periodAbsences] = await Promise.all([
-		getTimesheet(ws.workspaceId, viewedId, period.days),
-		listTicketSummaries(ws.workspaceId),
-		getMembership(ws.workspaceId, viewedId),
-		getRecentTicketIds(ws.workspaceId, viewedId),
-		listObjectivesForUserWeeks(ws.workspaceId, viewedId, weekMondays),
-		vacationWeeks(ws.workspaceId, viewedId, weekMondays),
-		listAbsencesForRange(ws.workspaceId, period.firstDay, period.lastDay)
-	]);
+	const [sheet, tickets, membership, recentTicketIds, weeklyObjectives, vacations, periodAbsences, team] =
+		await Promise.all([
+			getTimesheet(ws.workspaceId, viewedId, period.days),
+			listTicketSummaries(ws.workspaceId),
+			getMembership(ws.workspaceId, viewedId),
+			getRecentTicketIds(ws.workspaceId, viewedId),
+			listObjectivesForUserWeeks(ws.workspaceId, viewedId, weekMondays),
+			vacationWeeks(ws.workspaceId, viewedId, weekMondays),
+			listAbsencesForRange(ws.workspaceId, period.firstDay, period.lastDay),
+			viewingTeam ? getTeamTimesheet(ws.workspaceId, period.days) : Promise.resolve(null)
+		]);
 	// Congés/formation/hors-projet du membre affiché sur la période — remonté depuis la page Absences
 	// pour voir d'un coup d'œil, sans y aller, pourquoi une case n'a pas d'imputation attendue.
 	const absences = buildAbsenceGrid(
@@ -90,6 +93,8 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 		viewedId,
 		viewedName,
 		viewingOther,
+		viewingTeam,
+		team,
 		readOnly
 	};
 };

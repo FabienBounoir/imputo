@@ -32,11 +32,13 @@
 		sprintName: string | null;
 		versionName: string | null;
 		raeReal: number | null;
+		estimation: number | null;
 		amounts: Record<string, number>;
 	};
 
 	const TASK_COL_W = 320;
 	const RAE_COL_W = 74;
+	const EST_COL_W = 74;
 	const DAY_COL_W = 68;
 	const SUM_COL_W = 72;
 
@@ -113,7 +115,7 @@
 	let periodTotal = $derived(round(Object.values(dayTotals).reduce((a, b) => a + b, 0)));
 	// Capacité attendue = capacité/jour × jours ouvrés non fériés de la période (miroir de
 	// calc.ts:weeklyCapacity/capacityPct côté serveur — dupliqué ici car $lib/server n'est pas
-	// importable côté client, cf. le même motif pour totalEst/ecartExecution dans tickets/+page.svelte).
+	// importable côté client, cf. le même motif pour totalEst/ecartVsEstime dans tickets/+page.svelte).
 	let periodWorkdays = $derived(days.filter((d) => !isPublicHolidayFR(d)).length);
 	let periodCapacity = $derived(round(data.capacity * periodWorkdays));
 	let capacityPct = $derived(periodCapacity > 0 ? round(periodTotal / periodCapacity) : 0);
@@ -156,9 +158,11 @@
 		await fetch('?/setCell', { method: 'POST', body });
 	}
 
-	function cycle(row: Row, day: string) {
+	/** Clic = avance dans CYCLE, Shift+clic = recule (pas de conflit avec le clic droit/molette). */
+	function cycle(row: Row, day: string, reverse = false) {
 		const cur = row.amounts[day] ?? 0;
-		const next = CYCLE[(CYCLE.indexOf(cur) + 1) % CYCLE.length];
+		const delta = reverse ? -1 : 1;
+		const next = CYCLE[(CYCLE.indexOf(cur) + delta + CYCLE.length) % CYCLE.length];
 		setAmount(row, day, next);
 	}
 
@@ -172,9 +176,17 @@
 	let scroller: HTMLDivElement | null = $state(null);
 	// Le RAE se saisit sur ses propres lignes : même un admin qui édite l'imputation d'un autre
 	// membre ne doit pas voir cette colonne, sinon `saveRae` écrirait le RAE sous son propre nom.
-	const showRae = $derived(!data.viewingOther);
+	const showRae = $derived(!data.viewingOther && !data.viewingTeam);
+	// Vue "Toute l'équipe" : une ligne par collaborateur, dépliable pour voir ses lignes détaillées.
+	let expandedMembers = $state<Set<string>>(new Set());
+	function toggleMember(userId: string) {
+		const next = new Set(expandedMembers);
+		if (next.has(userId)) next.delete(userId);
+		else next.add(userId);
+		expandedMembers = next;
+	}
 	const tableMinWidth = $derived(
-		TASK_COL_W + (showRae ? RAE_COL_W : 0) + days.length * DAY_COL_W + SUM_COL_W
+		TASK_COL_W + (showRae ? EST_COL_W + RAE_COL_W : 0) + days.length * DAY_COL_W + SUM_COL_W
 	);
 
 	/**
@@ -184,7 +196,7 @@
 	 */
 	function ensureCellVisibleX(el: HTMLElement) {
 		if (!scroller) return;
-		const leftFrozen = TASK_COL_W + (showRae ? RAE_COL_W : 0);
+		const leftFrozen = TASK_COL_W + (showRae ? EST_COL_W + RAE_COL_W : 0);
 		const rightFrozen = SUM_COL_W;
 		const min = el.offsetLeft + el.offsetWidth - (scroller.clientWidth - rightFrozen);
 		const max = el.offsetLeft - leftFrozen;
@@ -211,7 +223,7 @@
 		framedKey = key;
 		const di = days.indexOf(today);
 		const cell = scroller.querySelector<HTMLElement>(`[data-day="${di >= 0 ? today : days[days.length - 1]}"]`);
-		if (cell) scroller.scrollLeft = Math.max(0, cell.offsetLeft - TASK_COL_W - (showRae ? RAE_COL_W : 0) - 40);
+		if (cell) scroller.scrollLeft = Math.max(0, cell.offsetLeft - TASK_COL_W - (showRae ? EST_COL_W + RAE_COL_W : 0) - 40);
 		if (!data.readOnly && rows.length > 0 && !pendingFocus) focusCell(0, di >= 0 ? di : 0);
 	});
 
@@ -221,7 +233,8 @@
 			g: over.g ?? data.period.granularity,
 			mode: over.mode ?? data.period.mode
 		});
-		if (data.viewingOther) p.set('u', data.viewedId);
+		if (data.viewingTeam) p.set('u', 'team');
+		else if (data.viewingOther) p.set('u', data.viewedId);
 		return `?${p}`;
 	}
 	function viewMember(id: string) {
@@ -338,6 +351,28 @@
 		);
 	}
 
+	// Anti-rafale pour le champ Estimé — même principe que le RAE ci-dessus.
+	const pendingEstimationSaves = new Map<string, ReturnType<typeof setTimeout>>();
+
+	/** Estimé d'une ligne ticket + activité — modifiable par tout le monde, même endpoint que le RAE. */
+	async function saveEstimation(row: Row, value: number) {
+		if (!row.activityId) return;
+		row.estimation = value; // optimiste
+		const key = `${row.targetId}-${row.activityId}`;
+		clearTimeout(pendingEstimationSaves.get(key));
+		pendingEstimationSaves.set(
+			key,
+			setTimeout(async () => {
+				pendingEstimationSaves.delete(key);
+				await fetch(`/api/tickets/${row.targetId}/activity-rae`, {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ activityId: row.activityId, field: 'estimation', value })
+				});
+			}, 600)
+		);
+	}
+
 	function buildRow(targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE', targetId: string, activityId: string | null): Row {
 		const rowKey = `${targetType}:${targetId}:${activityId ?? ''}`;
 		let label = '';
@@ -378,6 +413,7 @@
 			sprintName,
 			versionName: null,
 			raeReal: targetType === 'TICKET' && activityId ? 0 : null,
+			estimation: targetType === 'TICKET' && activityId ? 0 : null,
 			amounts: {}
 		};
 	}
@@ -416,8 +452,8 @@
 </script>
 
 <div class="topbar">
-	<h1>{data.viewingOther ? `Imputation de ${data.viewedName}` : 'Mon imputation'}<small>{data.period.label}</small></h1>
-	{#if data.vacationWeeks.length > 0}
+	<h1>{data.viewingTeam ? "Imputation de l'équipe" : data.viewingOther ? `Imputation de ${data.viewedName}` : 'Mon imputation'}<small>{data.period.label}</small></h1>
+	{#if !data.viewingTeam && data.vacationWeeks.length > 0}
 		<span class="vac-badge">
 			🏖 En vacances
 			{#if multiWeek && data.vacationWeeks.length < data.period.weeks.length}
@@ -441,8 +477,14 @@
 		{/if}
 	</div>
 	{#if data.canViewOthers}
-		<select class="member-pick" value={data.viewedId} onchange={(e) => viewMember(e.currentTarget.value)} aria-label="Voir l'imputation de">
+		<select
+			class="member-pick"
+			value={data.viewingTeam ? 'team' : data.viewedId}
+			onchange={(e) => viewMember(e.currentTarget.value)}
+			aria-label="Voir l'imputation de"
+		>
 			<option value={data.selfId}>Mon imputation</option>
+			<option value="team">Toute l'équipe</option>
 			{#each data.members.filter((m) => m.id !== data.selfId) as m (m.id)}
 				<option value={m.id}>{m.displayName}</option>
 			{/each}
@@ -472,6 +514,91 @@
 			{/if}
 		</div>
 	{/if}
+	{#if data.viewingTeam}
+	{@const team = data.team}
+	<div class="card grid-card">
+		<div class="table-scroll">
+		<table class="imp no-rae" style="--imp-min-w: {tableMinWidth}px; --task-w: {TASK_COL_W}px;">
+			<colgroup>
+				<col class="col-task" />
+				{#each days as d (d)}<col class="col-day" />{/each}
+				<col class="col-sum" />
+			</colgroup>
+			<thead>
+				{#if multiWeek}
+					<tr class="wk-head">
+						<th class="task-h"></th>
+						{#each data.period.weeks as w (w.mondayISO)}<th colspan={w.days.length}>S{w.weekNumber}</th>{/each}
+						<th class="sum-h"></th>
+					</tr>
+				{/if}
+				<tr class="day-head" class:below-group={multiWeek}>
+					<th class="task-h">Collaborateur</th>
+					{#each days as d (d)}
+						<th data-day={d} class:today={d === today} class:holiday={isPublicHolidayFR(d)} class:wk-end={weekBoundaries.has(d)}>{dayName(parseISODate(d))}<span class="dnum">{dayNum(parseISODate(d))}</span></th>
+					{/each}
+					<th class="sum-h">Σ</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each team?.members ?? [] as m (m.userId)}
+					{@const isOpen = expandedMembers.has(m.userId)}
+					<tr class="team-member-row">
+						<td class="task">
+							<button type="button" class="team-toggle" onclick={() => toggleMember(m.userId)} aria-expanded={isOpen}>
+								<svg class="chev" class:open={isOpen} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 6 6-6 6" /></svg>
+								<b>{m.name}</b>
+							</button>
+						</td>
+						{#each days as d (d)}
+							<td class="day" class:today={d === today} class:wk-end={weekBoundaries.has(d)}>
+								<span class="cell ro" class:val={(m.dayTotals[d] ?? 0) > 0} class:empty={!(m.dayTotals[d] ?? 0)}>{fmt(m.dayTotals[d])}</span>
+							</td>
+						{/each}
+						<td class="sum tabnum">{m.total}</td>
+					</tr>
+					{#if isOpen}
+						{#each m.rows as row (row.rowKey)}
+							<tr class="team-detail-row">
+								<td class="task">
+									<div class="task-cell">
+										<span class="pill">{row.emoji}</span>
+										<div class="tt">
+											<b>{row.label}</b>
+											<span class="sub">{row.sublabel}</span>
+										</div>
+									</div>
+								</td>
+								{#each days as d (d)}
+									<td class="day" class:today={d === today} class:wk-end={weekBoundaries.has(d)}>
+										<span class="cell ro" class:val={(row.amounts[d] ?? 0) > 0} class:empty={!(row.amounts[d] ?? 0)}>{fmt(row.amounts[d])}</span>
+									</td>
+								{/each}
+								<td class="sum tabnum">{round(days.reduce((a, d) => a + (row.amounts[d] ?? 0), 0))}</td>
+							</tr>
+						{/each}
+						{#if m.rows.length === 0}
+							<tr class="team-detail-row"><td colspan={days.length + 2} class="empty-row">Aucune ligne sur cette période.</td></tr>
+						{/if}
+					{/if}
+				{/each}
+				{#if (team?.members.length ?? 0) === 0}
+					<tr><td colspan={days.length + 2} class="empty-row">Aucune imputation sur cette période.</td></tr>
+				{/if}
+			</tbody>
+			<tfoot>
+				<tr>
+					<td class="task foot-lab">Total / jour</td>
+					{#each days as d (d)}
+						<td class:wk-end={weekBoundaries.has(d)}><span class="day-tot tabnum">{fmt(team?.dayTotals[d] ?? 0)}</span></td>
+					{/each}
+					<td class="sum tabnum">{team?.total ?? 0}</td>
+				</tr>
+			</tfoot>
+		</table>
+		</div>
+	</div>
+	{:else}
 	<div class="summary">
 		<div class="card stat">
 			<div class="k">Saisi · {data.period.shortLabel}</div>
@@ -531,7 +658,7 @@
 		<table class="imp" class:no-rae={!showRae} style="--imp-min-w: {tableMinWidth}px; --task-w: {TASK_COL_W}px;">
 			<colgroup>
 				<col class="col-task" />
-				{#if showRae}<col class="col-rae" />{/if}
+				{#if showRae}<col class="col-estimation" /><col class="col-rae" />{/if}
 				{#each days as d (d)}<col class="col-day" />{/each}
 				<col class="col-sum" />
 			</colgroup>
@@ -539,14 +666,14 @@
 				{#if multiWeek}
 					<tr class="wk-head">
 						<th class="task-h"></th>
-						{#if showRae}<th class="rae-h"></th>{/if}
+						{#if showRae}<th class="est-h"></th><th class="rae-h"></th>{/if}
 						{#each data.period.weeks as w (w.mondayISO)}<th colspan={w.days.length}>S{w.weekNumber}</th>{/each}
 						<th class="sum-h"></th>
 					</tr>
 				{/if}
 				<tr class="day-head" class:below-group={multiWeek}>
 					<th class="task-h">Tâche / catégorie</th>
-					{#if showRae}<th class="rae-h" title="Reste à engager de la paire ticket + activité">RAE</th>{/if}
+					{#if showRae}<th class="est-h" title="Estimé de la paire ticket + activité — modifiable par tout le monde">Estimé</th><th class="rae-h" title="Reste à engager de la paire ticket + activité">RAE</th>{/if}
 					{#each days as d (d)}
 						{@const abs = data.absences[d]}
 						<th
@@ -608,6 +735,26 @@
 							</div>
 						</td>
 						{#if showRae}
+							<td class="estimation">
+								{#if row.targetType === 'TICKET' && row.activityId}
+									<input
+										class="rae-input tabnum"
+										type="number"
+										step="0.25"
+										min="0"
+										value={row.estimation ?? 0}
+										aria-label="Estimé"
+										onchange={(e) => saveEstimation(row, Number(e.currentTarget.value) || 0)}
+									/>
+								{:else}
+									<span
+										class="rae-na"
+										title={row.targetType === 'TICKET'
+											? 'Sélectionnez une activité sur cette ligne pour saisir l’Estimé.'
+											: 'L’Estimé ne concerne que les tickets.'}
+									>—</span>
+								{/if}
+							</td>
 							<td class="rae">
 								{#if row.targetType === 'TICKET' && row.activityId}
 									<input
@@ -639,7 +786,7 @@
 										class:val={(row.amounts[d] ?? 0) > 0}
 										class:empty={!(row.amounts[d] ?? 0)}
 										data-cell="{ri}-{di}"
-										onclick={() => cycle(row, d)}
+										onclick={(e) => cycle(row, d, e.shiftKey)}
 										onkeydown={(e) => onCellKey(e, ri, di, row, d)}
 									>{fmt(row.amounts[d])}</button>
 								{/if}
@@ -649,13 +796,13 @@
 					</tr>
 				{/each}
 				{#if rows.length === 0}
-					<tr><td colspan={days.length + (showRae ? 3 : 2)} class="empty-row">{data.readOnly ? 'Aucune imputation sur cette période.' : 'Aucune ligne — ajoutez un ticket ou une catégorie ci-dessous.'}</td></tr>
+					<tr><td colspan={days.length + (showRae ? 4 : 2)} class="empty-row">{data.readOnly ? 'Aucune imputation sur cette période.' : 'Aucune ligne — ajoutez un ticket ou une catégorie ci-dessous.'}</td></tr>
 				{/if}
 			</tbody>
 			<tfoot>
 				<tr>
 					<td class="task foot-lab">Total / jour</td>
-					{#if showRae}<td class="rae"></td>{/if}
+					{#if showRae}<td class="estimation"></td><td class="rae"></td>{/if}
 					{#each days as d (d)}
 						<td class:wk-end={weekBoundaries.has(d)}><span class="day-tot tabnum" class:over={dayTotals[d] > data.capacity} class:ok={dayTotals[d] > 0 && dayTotals[d] <= data.capacity}>{fmt(dayTotals[d])}</span></td>
 					{/each}
@@ -688,10 +835,11 @@
 	<div class="legend">
 		{#if !data.readOnly}
 			{@const keyEntries = Object.entries(KEYMAP).filter(([k]) => k !== '0')}
-			<span class="kbd">Clique pour faire défiler <b>·</b> → {CYCLE.slice(1).map((v) => fmt(v)).join(' → ')}</span>
+			<span class="kbd">Clique pour faire défiler <b>·</b> → {CYCLE.slice(1).map((v) => fmt(v)).join(' → ')} <b>·</b> <kbd>Shift</kbd>+clic pour reculer</span>
 			<span class="kbd">Clavier : {#each keyEntries as [k] (k)}<kbd>{k}</kbd> {/each}→ {keyEntries.map(([, v]) => fmt(v)).join(' / ')} · <kbd>0</kbd>/<kbd>Suppr</kbd> vide · <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> naviguer · <kbd>←</kbd>/<kbd>→</kbd> en bord = période ±</span>
 		{/if}
 	</div>
+	{/if}
 </div>
 
 <svelte:window onkeydown={(e) => e.key === 'Escape' && (confirmDelete = null)} />
@@ -932,6 +1080,9 @@
 	.col-task {
 		width: var(--task-w);
 	}
+	.col-estimation {
+		width: 74px;
+	}
 	.col-rae {
 		width: 74px;
 	}
@@ -953,10 +1104,17 @@
 		z-index: 2;
 		background: var(--surface);
 	}
+	.imp th.est-h,
+	.imp td.estimation {
+		position: sticky;
+		left: var(--task-w);
+		z-index: 2;
+		background: var(--surface);
+	}
 	.imp th.rae-h,
 	.imp td.rae {
 		position: sticky;
-		left: var(--task-w);
+		left: calc(var(--task-w) + 74px);
 		z-index: 2;
 		background: var(--surface);
 		border-right: 1px solid var(--border);
@@ -1001,8 +1159,9 @@
 		z-index: 3;
 		background: var(--surface);
 	}
-	/* Les quatre coins doivent passer au-dessus des deux axes à la fois. */
+	/* Les coins doivent passer au-dessus des deux axes à la fois. */
 	.imp thead th.task-h,
+	.imp thead th.est-h,
 	.imp thead th.rae-h,
 	.imp thead th.sum-h,
 	.imp tfoot td.task,
@@ -1029,7 +1188,8 @@
 		outline: none;
 		border-color: var(--accent);
 	}
-	.imp td.rae {
+	.imp td.rae,
+	.imp td.estimation {
 		text-align: center;
 		border-top: 1px solid var(--border);
 	}
@@ -1253,6 +1413,35 @@
 	}
 	.cell.ro {
 		cursor: default;
+	}
+	.team-toggle {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		font: inherit;
+		width: 100%;
+		text-align: left;
+	}
+	.team-toggle .chev {
+		flex-shrink: 0;
+		color: var(--text-mute);
+		transition: transform 0.15s;
+	}
+	.team-toggle .chev.open {
+		transform: rotate(90deg);
+	}
+	.team-member-row:hover td {
+		background: var(--surface-2);
+	}
+	.team-detail-row td.task {
+		padding-left: 40px;
+	}
+	.team-detail-row .task-cell .tt b {
+		font-size: 13px;
+		font-weight: 500;
+	}
+	.team-detail-row td {
+		background: var(--surface-sunk);
 	}
 	td.day.today {
 		background: color-mix(in srgb, var(--accent) 5%, transparent);

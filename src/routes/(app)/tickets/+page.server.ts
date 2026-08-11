@@ -71,6 +71,9 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		ref,
 		testPhase: ws.testPhase,
 		isAdmin,
+		// Budget par activité (sous-lignes) : ADMIN strict, contrairement au reste du chiffrage
+		// (isManagerOrAdmin) — cf. canEditActivityField côté service.
+		isStrictAdmin: locals.role === 'ADMIN',
 		/** Chiffrage global (estimations, prépa) : lecture seule pour un USER standard. */
 		canEditEstimation: isManagerOrAdmin(locals.role),
 		selfId: locals.user!.id

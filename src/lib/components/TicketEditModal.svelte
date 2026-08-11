@@ -53,6 +53,8 @@
 		sspCode: string | null;
 		estimationPrev: number | null;
 		enveloppeTotale: number | null;
+		hasActivityEstimation: boolean;
+		ecartVsBudget: number | null;
 		groupIds: string[];
 	};
 	type HistoryEntry = {
@@ -98,12 +100,17 @@
 	});
 
 	const estTitle = $derived(canEditEstimation ? '' : 'Estimation réservée aux profils Manager et Admin.');
+	const estRealTitle = $derived(
+		ticket?.hasActivityEstimation
+			? 'Estimé = compilation des Estimés par activité ci-dessous (non éditable ici)'
+			: estTitle
+	);
 
 	const n = (v: number | string | null) => (v == null || v === '' ? 0 : Number(v) || 0);
 	const round = (x: number) => Math.round((x + Number.EPSILON) * 100) / 100;
 	const totalEst = $derived(ticket ? round(n(ticket.estimationReal) + (testPhase ? n(ticket.estimationTest) : 0)) : 0);
 	const totalRae = $derived(ticket ? round(n(ticket.raeReal) + (testPhase ? n(ticket.raeTest) : 0)) : 0);
-	const ecartExecution = $derived(ticket ? round(n(ticket.raeReal) + ticket.consumed - n(ticket.estimationReal)) : 0);
+	const ecartVsEstime = $derived(ticket ? round(n(ticket.raeReal) + ticket.consumed - n(ticket.estimationReal)) : 0);
 	const avancement = $derived(totalEst > 0 ? Math.min(1, Math.max(0, (totalEst - totalRae) / totalEst)) : 0);
 	const pct = (x: number) => Math.round(x * 100);
 
@@ -205,7 +212,7 @@
 							<option value={null}>—</option>{#each versions as v (v.id)}<option value={v.id}>{v.name}</option>{/each}
 						</select>
 					</label>
-					<label class="dfield"><span>Est. Réal</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={ticket.estimationReal} disabled={!canEditEstimation} title={estTitle} onchange={() => debouncedSave(`est-${ticket!.id}-real`, () => saveEst('real'))} /></label>
+					<label class="dfield"><span>Estimé</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={ticket.estimationReal} disabled={!canEditEstimation || ticket.hasActivityEstimation} title={estRealTitle} onchange={() => debouncedSave(`est-${ticket!.id}-real`, () => saveEst('real'))} /></label>
 					<label class="dfield"><span>RAE Réal</span><input class="cell-input" type="number" step="0.25" min="0" value={ticket.raeReal} disabled title="Compilation des RAE par activité (voir le tableau)" /></label>
 					{#if testPhase}
 						<label class="dfield"><span>Est. Test</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={ticket.estimationTest} disabled={!canEditEstimation} title={estTitle} onchange={() => debouncedSave(`est-${ticket!.id}-test`, () => saveEst('test'))} /></label>
@@ -243,7 +250,10 @@
 				</div>
 				<div class="tk-foot">
 					<span>Consommé <b class="tabnum">{ticket.consumed || '—'}</b></span>
-					<span>Écart d'exécution <b class="tabnum" class:gap-pos={ecartExecution > 0}>{ecartExecution > 0 ? '+' : ''}{ecartExecution || 0}</b></span>
+					<span>Écart vs estimé <b class="tabnum" class:gap-pos={ecartVsEstime > 0}>{ecartVsEstime > 0 ? '+' : ''}{ecartVsEstime || 0}</b></span>
+					{#if ticket.ecartVsBudget !== null}
+						<span>Écart vs budget <b class="tabnum" class:gap-pos={ticket.ecartVsBudget > 0}>{ticket.ecartVsBudget > 0 ? '+' : ''}{ticket.ecartVsBudget || 0}</b></span>
+					{/if}
 					<span>Avancement <b class="tabnum">{pct(avancement)}%</b></span>
 				</div>
 				<div class="tk-history">
