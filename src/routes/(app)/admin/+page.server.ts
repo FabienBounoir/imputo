@@ -50,9 +50,32 @@ import {
 	setTicketGroupArchived
 } from '$lib/server/services/ticketGroups';
 import { getMoodConfig, setMoodEnabled, setMoodPeriodConfig, type MoodPeriodKind } from '$lib/server/services/mood';
+import { getWeeklySynthesis } from '$lib/server/services/weeklySynthesis';
+import { round } from '$lib/server/services/calc';
 
 function refType(v: FormDataEntryValue | null): RefType {
 	return v === 'sprint' || v === 'version' ? v : 'project';
+}
+
+// --- "Afficher l'équipe" (onglet Membres) : bornes du mois affiché, navigable via ?team=YYYY-MM. ---
+function currentMonthValue(): string {
+	const d = new Date();
+	return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+function shiftMonth(value: string, delta: number): string {
+	const [y, m] = value.split('-').map(Number);
+	const d = new Date(y, m - 1 + delta, 1);
+	return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+function monthRange(value: string): { from: string; to: string } {
+	const [y, m] = value.split('-').map(Number);
+	const last = new Date(y, m, 0).getDate();
+	return { from: `${value}-01`, to: `${value}-${String(last).padStart(2, '0')}` };
+}
+function monthLabel(value: string): string {
+	const [y, m] = value.split('-').map(Number);
+	const label = new Date(y, m - 1, 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+	return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
 const MOOD_PERIOD_KINDS: MoodPeriodKind[] = ['WEEK_1', 'WEEK_2', 'WEEK_3', 'MONTH'];
@@ -66,7 +89,7 @@ const accentSchema = z.object({
 });
 const ratioSchema = z.object({ value: z.coerce.number().gt(0).lte(1) });
 
-export const load: PageServerLoad = async ({ locals }) => {
+export const load: PageServerLoad = async ({ locals, url }) => {
 	if (locals.role !== 'ADMIN') redirect(303, '/imputation');
 	const ws = locals.workspace!;
 	const members = await db
@@ -85,16 +108,51 @@ export const load: PageServerLoad = async ({ locals }) => {
 		.innerJoin(user, eq(membership.userId, user.id))
 		.where(eq(membership.workspaceId, ws.workspaceId));
 
-	const [projects, sprints, versions, categories, activities, states, ticketGroups, mood] = await Promise.all([
-		listRefs(ws.workspaceId, 'project'),
-		listRefs(ws.workspaceId, 'sprint'),
-		listRefs(ws.workspaceId, 'version'),
-		listCategories(ws.workspaceId),
-		listActivities(ws.workspaceId),
-		listStates(ws.workspaceId),
-		listTicketGroups(ws.workspaceId),
-		getMoodConfig(ws.workspaceId)
-	]);
+	// "Afficher l'équipe" : total/jour + total par personne (dépliable) sur un mois navigable.
+	const teamParam = url.searchParams.get('team');
+	const teamMonth = teamParam && /^\d{4}-\d{2}$/.test(teamParam) ? teamParam : currentMonthValue();
+	const teamRange = monthRange(teamMonth);
+
+	const [projects, sprints, versions, categories, activities, states, ticketGroups, mood, weeklyRows] =
+		await Promise.all([
+			listRefs(ws.workspaceId, 'project'),
+			listRefs(ws.workspaceId, 'sprint'),
+			listRefs(ws.workspaceId, 'version'),
+			listCategories(ws.workspaceId),
+			listActivities(ws.workspaceId),
+			listStates(ws.workspaceId),
+			listTicketGroups(ws.workspaceId),
+			getMoodConfig(ws.workspaceId),
+			getWeeklySynthesis(ws.workspaceId, teamRange.from, teamRange.to)
+		]);
+
+	// getWeeklySynthesis groupe par (personne, semaine) — une semaine à cheval sur le mois peut
+	// porter des jours hors bornes ; on les exclut ici pour un total strictement mensuel.
+	const byPerson = new Map<string, { userId: string; name: string; days: Record<string, number> }>();
+	for (const w of weeklyRows) {
+		const p = byPerson.get(w.userId) ?? { userId: w.userId, name: w.name, days: {} };
+		for (const [day, amount] of Object.entries(w.days)) {
+			if (day < teamRange.from || day > teamRange.to) continue;
+			p.days[day] = round((p.days[day] ?? 0) + amount);
+		}
+		byPerson.set(w.userId, p);
+	}
+	const dayTotals: Record<string, number> = {};
+	const persons = [...byPerson.values()]
+		.map((p) => {
+			for (const [day, amount] of Object.entries(p.days)) dayTotals[day] = round((dayTotals[day] ?? 0) + amount);
+			return { ...p, total: round(Object.values(p.days).reduce((a, b) => a + b, 0)) };
+		})
+		.sort((a, b) => a.name.localeCompare(b.name));
+	const team = {
+		month: teamMonth,
+		monthLabel: monthLabel(teamMonth),
+		prevMonth: shiftMonth(teamMonth, -1),
+		nextMonth: shiftMonth(teamMonth, 1),
+		dayTotals,
+		total: round(Object.values(dayTotals).reduce((a, b) => a + b, 0)),
+		persons
+	};
 
 	return {
 		members: members.map((m) => ({ ...m, pending: m.pending === null, isOwner: m.id === ws.createdByUserId })),
@@ -113,7 +171,8 @@ export const load: PageServerLoad = async ({ locals }) => {
 		categories,
 		activities,
 		states,
-		ticketGroups
+		ticketGroups,
+		team
 	};
 };
 

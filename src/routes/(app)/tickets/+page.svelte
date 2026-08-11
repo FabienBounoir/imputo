@@ -87,6 +87,7 @@
 		sspCode: string | null;
 		estimationPrev: number | null;
 		enveloppeTotale: number | null;
+		hasActivityEstimation: boolean;
 		groupIds: string[];
 		activityBreakdown: ActivityBreakdownRow[];
 	};
@@ -96,6 +97,8 @@
 		label: string;
 		raeReal: number;
 		raeTest: number;
+		estimation: number;
+		budget: number;
 		contributors: { userId: string; displayName: string; consumed: number }[];
 	};
 
@@ -119,9 +122,14 @@
 		return data.canEditEstimation || ar.contributors.some((c) => c.userId === data.selfId);
 	}
 
-	// RAE par activité : lignes fines toujours visibles sous le ticket (plus de collapse/fetch à
-	// l'ouverture — data.tickets porte déjà le détail, chargé en une fois avec la liste).
-	async function saveActivityRae(row: Row, activityId: string, field: 'raeReal' | 'raeTest', value: number) {
+	// RAE/Estimé/Budget par activité : lignes fines toujours visibles sous le ticket (plus de
+	// collapse/fetch à l'ouverture — data.tickets porte déjà le détail, chargé en une fois avec la liste).
+	async function saveActivityField(
+		row: Row,
+		activityId: string,
+		field: 'raeReal' | 'raeTest' | 'estimation' | 'budget',
+		value: number
+	) {
 		const res = await fetch(`/api/tickets/${row.id}/activity-rae`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
@@ -129,10 +137,12 @@
 		});
 		if (!res.ok) return;
 		row.activityBreakdown = (await res.json()).rows;
-		// RAE Réal/Test global = compilation des activités (jamais saisi à la main).
+		// RAE Réal/Test et Estimé global = compilation des activités (jamais saisis à la main).
 		if (row.activityBreakdown.length > 0) {
 			row.raeReal = round(row.activityBreakdown.reduce((s, a) => s + a.raeReal, 0));
 			row.raeTest = round(row.activityBreakdown.reduce((s, a) => s + a.raeTest, 0));
+			row.estimationReal = round(row.activityBreakdown.reduce((s, a) => s + a.estimation, 0));
+			row.hasActivityEstimation = true;
 		}
 		flash();
 	}
@@ -158,6 +168,7 @@
 			sspCode: t.sspCode,
 			estimationPrev: t.estimationPrev,
 			enveloppeTotale: t.enveloppeTotale,
+			hasActivityEstimation: t.hasActivityEstimation,
 			groupIds: [...t.groupIds],
 			activityBreakdown: t.activityBreakdown.map((a) => ({ ...a, contributors: [...a.contributors] }))
 		}));
@@ -178,8 +189,9 @@
 	const round = (x: number) => Math.round((x + Number.EPSILON) * 100) / 100;
 	const totalEst = (r: Row) => round(n(r.estimationReal) + (data.testPhase ? n(r.estimationTest) : 0));
 	const totalRae = (r: Row) => round(n(r.raeReal) + (data.testPhase ? n(r.raeTest) : 0));
-	// Écart d'exécution : Réel uniquement, jamais Test (cf. calc.ts:ecartExecution côté serveur).
-	const ecartExecution = (r: Row) => round(n(r.raeReal) + r.consumed - n(r.estimationReal));
+	// Écarts : Réel uniquement, jamais Test (cf. calc.ts:ecartVsEstime/ecartVsBudget côté serveur).
+	const ecartVsEstime = (r: Row) => round(n(r.raeReal) + r.consumed - n(r.estimationReal));
+	const ecartVsBudget = (r: Row) => (r.enveloppeTotale == null ? null : round(n(r.raeReal) + r.consumed - r.enveloppeTotale));
 	const avancement = (r: Row) => {
 		const te = totalEst(r);
 		return te > 0 ? Math.min(1, Math.max(0, (te - totalRae(r)) / te)) : 0;
@@ -357,7 +369,7 @@
 				</div>
 				{#if data.canEditEstimation}
 					<div class="grid2">
-						<div class="field"><label for="er">Est. Réal</label><input id="er" name="estimationReal" type="number" step="0.25" min="0" /></div>
+						<div class="field"><label for="er">Estimé</label><input id="er" name="estimationReal" type="number" step="0.25" min="0" /></div>
 						{#if data.testPhase}<div class="field"><label for="et">Est. Test</label><input id="et" name="estimationTest" type="number" step="0.25" min="0" /></div>{/if}
 					</div>
 				{/if}
@@ -417,9 +429,11 @@
 			<thead>
 				<tr>
 					<th style="width:170px;">État</th><th>Ticket</th>
-					<th class="num">Est. Réal</th><th class="num">RAE Réal</th>
+					{#if data.isAdmin}<th class="num">Budget</th>{/if}
+					<th class="num">Estimé</th><th class="num">RAE Réal</th>
 					{#if data.testPhase}<th class="num">Est. Test</th><th class="num">RAE Test</th>{/if}<th class="num">Conso.</th>
-					<th class="num" title="Écart d'exécution : RAE Réel + consommé − Estimation Réelle">Écart d'exéc.</th><th class="num" style="width:130px;">Avancement</th>
+					{#if data.isAdmin}<th class="num" title="Écart vs budget : RAE Réel + consommé − Budget">Écart vs budget</th>{/if}
+					<th class="num" title="Écart vs estimé : RAE Réel + consommé − Estimé">Écart vs estimé</th><th class="num" style="width:130px;">Avancement</th>
 				</tr>
 			</thead>
 			<tbody>
@@ -448,7 +462,30 @@
 								</div>
 							</div>
 						</td>
-						<td class="num"><input class="cell-input num-input" type="number" step="0.25" min="0" bind:value={r.estimationReal} disabled={!data.canEditEstimation} title={estTitle} onchange={() => debouncedSave(`est-${r.id}-real`, () => saveEst(r, 'real'))} /></td>
+						{#if data.isAdmin}
+							<td class="num">
+								<input
+									class="cell-input num-input"
+									type="number"
+									step="0.25"
+									min="0"
+									bind:value={r.enveloppeTotale}
+									onchange={() => debouncedSave(`env-${r.id}`, () => save(r, 'enveloppeTotale', r.enveloppeTotale))}
+								/>
+							</td>
+						{/if}
+						<td class="num">
+							<input
+								class="cell-input num-input"
+								type="number"
+								step="0.25"
+								min="0"
+								bind:value={r.estimationReal}
+								disabled={!data.canEditEstimation || r.hasActivityEstimation}
+								title={r.hasActivityEstimation ? "Estimé = compilation des Estimés par activité ci-dessous (non éditable ici)" : estTitle}
+								onchange={() => debouncedSave(`est-${r.id}-real`, () => saveEst(r, 'real'))}
+							/>
+						</td>
 						<td class="num">
 							<input
 								class="cell-input num-input"
@@ -465,7 +502,10 @@
 							<td class="num"><input class="cell-input num-input" type="number" step="0.25" min="0" value={r.raeTest} disabled title="RAE Test = compilation des RAE par activité ci-dessous (non éditable ici)" /></td>
 						{/if}
 						<td class="num tabnum consumed">{r.consumed || '—'}</td>
-						<td class="num tabnum" class:gap-pos={ecartExecution(r) > 0}>{ecartExecution(r) > 0 ? '+' : ''}{ecartExecution(r) || 0}</td>
+						{#if data.isAdmin}
+							<td class="num tabnum" class:gap-pos={(ecartVsBudget(r) ?? 0) > 0}>{ecartVsBudget(r) == null ? '—' : `${ecartVsBudget(r)! > 0 ? '+' : ''}${ecartVsBudget(r) || 0}`}</td>
+						{/if}
+						<td class="num tabnum" class:gap-pos={ecartVsEstime(r) > 0}>{ecartVsEstime(r) > 0 ? '+' : ''}{ecartVsEstime(r) || 0}</td>
 						<td>
 							<div class="prog">
 								<div class="bar"><i style="width:{pct(avancement(r))}%"></i></div>
@@ -482,7 +522,36 @@
 									<span class="ar-contrib">{#each ar.contributors as c, i (c.userId)}{i > 0 ? ', ' : ''}{c.displayName} <b class="tabnum">{c.consumed}</b>j{/each}</span>
 								{/if}
 							</td>
-							<td></td>
+							{#if data.isAdmin}
+								<td class="num">
+									<input
+										class="cell-input num-input"
+										type="number"
+										step="0.25"
+										min="0"
+										value={ar.budget}
+										disabled={!data.isStrictAdmin}
+										title={data.isStrictAdmin ? '' : 'Budget par activité réservé aux administrateurs.'}
+										onchange={(e) => {
+											const value = Number(e.currentTarget.value) || 0;
+											debouncedSave(`ar-${r.id}-${ar.activityId}-budget`, () => saveActivityField(r, ar.activityId, 'budget', value));
+										}}
+									/>
+								</td>
+							{/if}
+							<td class="num">
+								<input
+									class="cell-input num-input"
+									type="number"
+									step="0.25"
+									min="0"
+									value={ar.estimation}
+									onchange={(e) => {
+										const value = Number(e.currentTarget.value) || 0;
+										debouncedSave(`ar-${r.id}-${ar.activityId}-estimation`, () => saveActivityField(r, ar.activityId, 'estimation', value));
+									}}
+								/>
+							</td>
 							<td class="num">
 								<input
 									class="cell-input num-input"
@@ -494,7 +563,7 @@
 									title={canRae ? '' : RAE_LOCKED}
 									onchange={(e) => {
 										const value = Number(e.currentTarget.value) || 0;
-										debouncedSave(`ar-${r.id}-${ar.activityId}-raeReal`, () => saveActivityRae(r, ar.activityId, 'raeReal', value));
+										debouncedSave(`ar-${r.id}-${ar.activityId}-raeReal`, () => saveActivityField(r, ar.activityId, 'raeReal', value));
 									}}
 								/>
 							</td>
@@ -511,19 +580,20 @@
 										title={canRae ? '' : RAE_LOCKED}
 										onchange={(e) => {
 										const value = Number(e.currentTarget.value) || 0;
-										debouncedSave(`ar-${r.id}-${ar.activityId}-raeTest`, () => saveActivityRae(r, ar.activityId, 'raeTest', value));
+										debouncedSave(`ar-${r.id}-${ar.activityId}-raeTest`, () => saveActivityField(r, ar.activityId, 'raeTest', value));
 									}}
 									/>
 								</td>
 							{/if}
 							<td class="num tabnum consumed">{round(ar.contributors.reduce((s, c) => s + c.consumed, 0)) || '—'}</td>
+							{#if data.isAdmin}<td></td>{/if}
 							<td></td>
 							<td></td>
 						</tr>
 					{/each}
 				{/each}
 				{#if rows.length === 0}
-					<tr><td colspan={data.testPhase ? 9 : 7} class="empty-row">Aucun ticket. Créez-en un pour démarrer.</td></tr>
+					<tr><td colspan={7 + (data.testPhase ? 2 : 0) + (data.isAdmin ? 2 : 0)} class="empty-row">Aucun ticket. Créez-en un pour démarrer.</td></tr>
 				{/if}
 			</tbody>
 		</table>
@@ -617,7 +687,7 @@
 						<option value={null}>—</option>{#each data.ref.versions as v (v.id)}<option value={v.id}>{v.name}</option>{/each}
 					</select>
 				</label>
-				<label class="dfield"><span>Est. Réal</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationReal} disabled={!data.canEditEstimation} title={estTitle} onchange={() => debouncedSave(`est-${editRow!.id}-real`, () => saveEst(editRow!, 'real'))} /></label>
+				<label class="dfield"><span>Estimé</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationReal} disabled={!data.canEditEstimation || editRow.hasActivityEstimation} title={editRow.hasActivityEstimation ? "Estimé = compilation des Estimés par activité ci-dessous (non éditable ici)" : estTitle} onchange={() => debouncedSave(`est-${editRow!.id}-real`, () => saveEst(editRow!, 'real'))} /></label>
 				<label class="dfield"><span>RAE Réal</span><input class="cell-input" type="number" step="0.25" min="0" value={editRow.raeReal} disabled title="Compilation des RAE par activité (voir le tableau)" /></label>
 				{#if data.testPhase}
 					<label class="dfield"><span>Est. Test</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationTest} disabled={!data.canEditEstimation} title={estTitle} onchange={() => debouncedSave(`est-${editRow!.id}-test`, () => saveEst(editRow!, 'test'))} /></label>
@@ -655,7 +725,10 @@
 			</div>
 			<div class="tk-foot">
 				<span>Consommé <b class="tabnum">{editRow.consumed || '—'}</b></span>
-				<span>Écart d'exécution <b class="tabnum" class:gap-pos={ecartExecution(editRow) > 0}>{ecartExecution(editRow) > 0 ? '+' : ''}{ecartExecution(editRow) || 0}</b></span>
+				<span>Écart vs estimé <b class="tabnum" class:gap-pos={ecartVsEstime(editRow) > 0}>{ecartVsEstime(editRow) > 0 ? '+' : ''}{ecartVsEstime(editRow) || 0}</b></span>
+				{#if ecartVsBudget(editRow) !== null}
+					<span>Écart vs budget <b class="tabnum" class:gap-pos={(ecartVsBudget(editRow) ?? 0) > 0}>{(ecartVsBudget(editRow) ?? 0) > 0 ? '+' : ''}{ecartVsBudget(editRow) || 0}</b></span>
+				{/if}
 				<span>Avancement <b class="tabnum">{pct(avancement(editRow))}%</b></span>
 			</div>
 			<div class="tk-history">

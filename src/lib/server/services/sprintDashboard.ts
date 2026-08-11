@@ -12,9 +12,13 @@ export type SprintDashboard = {
 		consumedTotal: number;
 		raeTotal: number;
 		avancement: number;
-		ecartExecutionTotal: number;
+		ecartVsEstimeTotal: number;
 		/** Admin only — null pour un USER standard (dérive de enveloppeTotale, invisible pour lui). */
+		ecartVsBudgetTotal: number | null;
+		/** Admin only — même valeur que ecartVsBudgetTotal, conservée sous son libellé historique "TNF". */
 		tnfBudgetTotal: number | null;
+		/** Admin only — somme des enveloppeTotale des tickets du périmètre. */
+		budgetTotal: number | null;
 		ticketCount: number;
 	};
 	byActivity: { label: string; raeReal: number; raeTest: number }[];
@@ -31,10 +35,13 @@ export type SprintDashboardTicket = {
 	stateLabel: string | null;
 	stateEmoji: string | null;
 	stateColor: string | null;
+	/** Admin only — null pour un USER standard. */
+	budget: number | null;
 	estTotal: number;
 	raeTotal: number;
 	consumed: number;
-	ecartExecution: number;
+	ecartVsEstime: number;
+	ecartVsBudget: number | null;
 	avancement: number;
 };
 
@@ -64,8 +71,9 @@ export async function getSprintDashboard(
 	let estTotal = 0;
 	let raeTotal = 0;
 	let consumedTotal = 0;
-	let ecartTotal = 0;
-	let tnfTotal = 0;
+	let ecartEstimeTotal = 0;
+	let ecartBudgetTotal = 0;
+	let budgetTotal = 0;
 	const ticketRows: SprintDashboardTicket[] = [];
 	for (const t of tickets) {
 		const tEst = totalEstimation(String(t.estimationReal), String(t.estimationTest), testPhase);
@@ -73,8 +81,9 @@ export async function getSprintDashboard(
 		estTotal += tEst;
 		raeTotal += tRae;
 		consumedTotal += t.consumed;
-		ecartTotal += t.ecartExecution;
-		tnfTotal += t.tnfBudget ?? 0;
+		ecartEstimeTotal += t.ecartVsEstime;
+		ecartBudgetTotal += t.ecartVsBudget ?? 0;
+		budgetTotal += t.enveloppeTotale ?? 0;
 		ticketRows.push({
 			id: t.id,
 			key: t.key,
@@ -82,18 +91,21 @@ export async function getSprintDashboard(
 			stateLabel: t.stateLabel,
 			stateEmoji: t.stateEmoji,
 			stateColor: t.stateColor,
+			budget: t.enveloppeTotale,
 			estTotal: round(tEst),
 			raeTotal: round(tRae),
 			consumed: t.consumed,
-			ecartExecution: t.ecartExecution,
+			ecartVsEstime: t.ecartVsEstime,
+			ecartVsBudget: t.ecartVsBudget,
 			avancement: t.avancement
 		});
 	}
 	estTotal = round(estTotal);
 	raeTotal = round(raeTotal);
 	consumedTotal = round(consumedTotal);
-	ecartTotal = round(ecartTotal);
-	tnfTotal = round(tnfTotal);
+	ecartEstimeTotal = round(ecartEstimeTotal);
+	ecartBudgetTotal = round(ecartBudgetTotal);
+	budgetTotal = round(budgetTotal);
 	// Tri naturel/numérique par clé (SBX-2 avant SBX-10) — plus lisible qu'un tri lexicographique brut.
 	ticketRows.sort((a, b) => a.key.localeCompare(b.key, undefined, { numeric: true }));
 
@@ -175,8 +187,10 @@ export async function getSprintDashboard(
 			consumedTotal,
 			raeTotal,
 			avancement: avancement(estTotal, raeTotal),
-			ecartExecutionTotal: ecartTotal,
-			tnfBudgetTotal: isAdmin ? tnfTotal : null,
+			ecartVsEstimeTotal: ecartEstimeTotal,
+			ecartVsBudgetTotal: isAdmin ? ecartBudgetTotal : null,
+			tnfBudgetTotal: isAdmin ? ecartBudgetTotal : null,
+			budgetTotal: isAdmin ? budgetTotal : null,
 			ticketCount: tickets.length
 		},
 		byActivity,

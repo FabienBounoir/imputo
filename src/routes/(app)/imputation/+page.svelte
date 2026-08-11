@@ -32,11 +32,13 @@
 		sprintName: string | null;
 		versionName: string | null;
 		raeReal: number | null;
+		estimation: number | null;
 		amounts: Record<string, number>;
 	};
 
 	const TASK_COL_W = 320;
 	const RAE_COL_W = 74;
+	const EST_COL_W = 74;
 	const DAY_COL_W = 68;
 	const SUM_COL_W = 72;
 
@@ -113,7 +115,7 @@
 	let periodTotal = $derived(round(Object.values(dayTotals).reduce((a, b) => a + b, 0)));
 	// Capacité attendue = capacité/jour × jours ouvrés non fériés de la période (miroir de
 	// calc.ts:weeklyCapacity/capacityPct côté serveur — dupliqué ici car $lib/server n'est pas
-	// importable côté client, cf. le même motif pour totalEst/ecartExecution dans tickets/+page.svelte).
+	// importable côté client, cf. le même motif pour totalEst/ecartVsEstime dans tickets/+page.svelte).
 	let periodWorkdays = $derived(days.filter((d) => !isPublicHolidayFR(d)).length);
 	let periodCapacity = $derived(round(data.capacity * periodWorkdays));
 	let capacityPct = $derived(periodCapacity > 0 ? round(periodTotal / periodCapacity) : 0);
@@ -174,7 +176,7 @@
 	// membre ne doit pas voir cette colonne, sinon `saveRae` écrirait le RAE sous son propre nom.
 	const showRae = $derived(!data.viewingOther);
 	const tableMinWidth = $derived(
-		TASK_COL_W + (showRae ? RAE_COL_W : 0) + days.length * DAY_COL_W + SUM_COL_W
+		TASK_COL_W + (showRae ? EST_COL_W + RAE_COL_W : 0) + days.length * DAY_COL_W + SUM_COL_W
 	);
 
 	/**
@@ -184,7 +186,7 @@
 	 */
 	function ensureCellVisibleX(el: HTMLElement) {
 		if (!scroller) return;
-		const leftFrozen = TASK_COL_W + (showRae ? RAE_COL_W : 0);
+		const leftFrozen = TASK_COL_W + (showRae ? EST_COL_W + RAE_COL_W : 0);
 		const rightFrozen = SUM_COL_W;
 		const min = el.offsetLeft + el.offsetWidth - (scroller.clientWidth - rightFrozen);
 		const max = el.offsetLeft - leftFrozen;
@@ -211,7 +213,7 @@
 		framedKey = key;
 		const di = days.indexOf(today);
 		const cell = scroller.querySelector<HTMLElement>(`[data-day="${di >= 0 ? today : days[days.length - 1]}"]`);
-		if (cell) scroller.scrollLeft = Math.max(0, cell.offsetLeft - TASK_COL_W - (showRae ? RAE_COL_W : 0) - 40);
+		if (cell) scroller.scrollLeft = Math.max(0, cell.offsetLeft - TASK_COL_W - (showRae ? EST_COL_W + RAE_COL_W : 0) - 40);
 		if (!data.readOnly && rows.length > 0 && !pendingFocus) focusCell(0, di >= 0 ? di : 0);
 	});
 
@@ -338,6 +340,28 @@
 		);
 	}
 
+	// Anti-rafale pour le champ Estimé — même principe que le RAE ci-dessus.
+	const pendingEstimationSaves = new Map<string, ReturnType<typeof setTimeout>>();
+
+	/** Estimé d'une ligne ticket + activité — modifiable par tout le monde, même endpoint que le RAE. */
+	async function saveEstimation(row: Row, value: number) {
+		if (!row.activityId) return;
+		row.estimation = value; // optimiste
+		const key = `${row.targetId}-${row.activityId}`;
+		clearTimeout(pendingEstimationSaves.get(key));
+		pendingEstimationSaves.set(
+			key,
+			setTimeout(async () => {
+				pendingEstimationSaves.delete(key);
+				await fetch(`/api/tickets/${row.targetId}/activity-rae`, {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ activityId: row.activityId, field: 'estimation', value })
+				});
+			}, 600)
+		);
+	}
+
 	function buildRow(targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE', targetId: string, activityId: string | null): Row {
 		const rowKey = `${targetType}:${targetId}:${activityId ?? ''}`;
 		let label = '';
@@ -378,6 +402,7 @@
 			sprintName,
 			versionName: null,
 			raeReal: targetType === 'TICKET' && activityId ? 0 : null,
+			estimation: targetType === 'TICKET' && activityId ? 0 : null,
 			amounts: {}
 		};
 	}
@@ -531,7 +556,7 @@
 		<table class="imp" class:no-rae={!showRae} style="--imp-min-w: {tableMinWidth}px; --task-w: {TASK_COL_W}px;">
 			<colgroup>
 				<col class="col-task" />
-				{#if showRae}<col class="col-rae" />{/if}
+				{#if showRae}<col class="col-estimation" /><col class="col-rae" />{/if}
 				{#each days as d (d)}<col class="col-day" />{/each}
 				<col class="col-sum" />
 			</colgroup>
@@ -539,14 +564,14 @@
 				{#if multiWeek}
 					<tr class="wk-head">
 						<th class="task-h"></th>
-						{#if showRae}<th class="rae-h"></th>{/if}
+						{#if showRae}<th class="est-h"></th><th class="rae-h"></th>{/if}
 						{#each data.period.weeks as w (w.mondayISO)}<th colspan={w.days.length}>S{w.weekNumber}</th>{/each}
 						<th class="sum-h"></th>
 					</tr>
 				{/if}
 				<tr class="day-head" class:below-group={multiWeek}>
 					<th class="task-h">Tâche / catégorie</th>
-					{#if showRae}<th class="rae-h" title="Reste à engager de la paire ticket + activité">RAE</th>{/if}
+					{#if showRae}<th class="est-h" title="Estimé de la paire ticket + activité — modifiable par tout le monde">Estimé</th><th class="rae-h" title="Reste à engager de la paire ticket + activité">RAE</th>{/if}
 					{#each days as d (d)}
 						{@const abs = data.absences[d]}
 						<th
@@ -608,6 +633,26 @@
 							</div>
 						</td>
 						{#if showRae}
+							<td class="estimation">
+								{#if row.targetType === 'TICKET' && row.activityId}
+									<input
+										class="rae-input tabnum"
+										type="number"
+										step="0.25"
+										min="0"
+										value={row.estimation ?? 0}
+										aria-label="Estimé"
+										onchange={(e) => saveEstimation(row, Number(e.currentTarget.value) || 0)}
+									/>
+								{:else}
+									<span
+										class="rae-na"
+										title={row.targetType === 'TICKET'
+											? 'Sélectionnez une activité sur cette ligne pour saisir l’Estimé.'
+											: 'L’Estimé ne concerne que les tickets.'}
+									>—</span>
+								{/if}
+							</td>
 							<td class="rae">
 								{#if row.targetType === 'TICKET' && row.activityId}
 									<input
@@ -649,13 +694,13 @@
 					</tr>
 				{/each}
 				{#if rows.length === 0}
-					<tr><td colspan={days.length + (showRae ? 3 : 2)} class="empty-row">{data.readOnly ? 'Aucune imputation sur cette période.' : 'Aucune ligne — ajoutez un ticket ou une catégorie ci-dessous.'}</td></tr>
+					<tr><td colspan={days.length + (showRae ? 4 : 2)} class="empty-row">{data.readOnly ? 'Aucune imputation sur cette période.' : 'Aucune ligne — ajoutez un ticket ou une catégorie ci-dessous.'}</td></tr>
 				{/if}
 			</tbody>
 			<tfoot>
 				<tr>
 					<td class="task foot-lab">Total / jour</td>
-					{#if showRae}<td class="rae"></td>{/if}
+					{#if showRae}<td class="estimation"></td><td class="rae"></td>{/if}
 					{#each days as d (d)}
 						<td class:wk-end={weekBoundaries.has(d)}><span class="day-tot tabnum" class:over={dayTotals[d] > data.capacity} class:ok={dayTotals[d] > 0 && dayTotals[d] <= data.capacity}>{fmt(dayTotals[d])}</span></td>
 					{/each}
@@ -932,6 +977,9 @@
 	.col-task {
 		width: var(--task-w);
 	}
+	.col-estimation {
+		width: 74px;
+	}
 	.col-rae {
 		width: 74px;
 	}
@@ -953,10 +1001,17 @@
 		z-index: 2;
 		background: var(--surface);
 	}
+	.imp th.est-h,
+	.imp td.estimation {
+		position: sticky;
+		left: var(--task-w);
+		z-index: 2;
+		background: var(--surface);
+	}
 	.imp th.rae-h,
 	.imp td.rae {
 		position: sticky;
-		left: var(--task-w);
+		left: calc(var(--task-w) + 74px);
 		z-index: 2;
 		background: var(--surface);
 		border-right: 1px solid var(--border);
@@ -1001,8 +1056,9 @@
 		z-index: 3;
 		background: var(--surface);
 	}
-	/* Les quatre coins doivent passer au-dessus des deux axes à la fois. */
+	/* Les coins doivent passer au-dessus des deux axes à la fois. */
 	.imp thead th.task-h,
+	.imp thead th.est-h,
 	.imp thead th.rae-h,
 	.imp thead th.sum-h,
 	.imp tfoot td.task,
@@ -1029,7 +1085,8 @@
 		outline: none;
 		border-color: var(--accent);
 	}
-	.imp td.rae {
+	.imp td.rae,
+	.imp td.estimation {
 		text-align: center;
 		border-top: 1px solid var(--border);
 	}

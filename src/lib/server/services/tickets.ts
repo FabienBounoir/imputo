@@ -22,11 +22,12 @@ import {
 	num,
 	round,
 	totalEstimation,
-	ecartExecution,
-	tnfBudget,
+	ecartVsEstime,
+	ecartVsBudget,
 	avancement,
 	raeSuggested,
-	resolvedRae
+	resolvedRae,
+	resolvedEstimation
 } from './calc';
 
 /** Champs budget/estimation tracés dans l'historique (changeLog) — pas le reste (titre, état, code SSP…). */
@@ -79,25 +80,29 @@ export type TicketRow = {
 	stateLabel: string | null;
 	stateEmoji: string | null;
 	stateColor: string | null;
+	/** Estimation résolue (somme des Estimés par activité si présents, sinon fallback ticket.estimationReal). */
 	estimationReal: number;
 	raeReal: number;
 	estimationTest: number;
 	raeTest: number;
 	consumed: number;
-	ecartExecution: number;
+	/** RAE + Conso − Estimé résolu. Réel uniquement, jamais Test. */
+	ecartVsEstime: number;
+	/** RAE + Conso − Enveloppe totale. Réel uniquement. null si enveloppeTotale non renseignée/invisible. */
+	ecartVsBudget: number | null;
 	avancement: number;
 	raeSuggested: number;
 	/** true si le RAE de ce ticket vient de la somme des lignes ticket_activity_rae (sinon fallback ticket.raeReal/raeTest). */
 	hasActivityRae: boolean;
-	/** RAE par activité + sous-lignes (activité, personne), toujours chargé (affiché en lignes fines sous le ticket). */
+	/** true si l'Estimé de ce ticket vient de la somme des lignes ticket_activity_rae.estimation (sinon fallback ticket.estimationReal). */
+	hasActivityEstimation: boolean;
+	/** RAE/Estimé/Budget par activité + sous-lignes (activité, personne), toujours chargé (affiché en lignes fines sous le ticket). */
 	activityBreakdown: TicketActivityBreakdownRow[];
 	groupIds: string[];
 	/** Admin only — redacted côté route pour un USER standard. */
 	estimationPrev: number | null;
 	/** Admin only — redacted côté route pour un USER standard. null si enveloppeTotale non renseignée. */
 	enveloppeTotale: number | null;
-	/** null si enveloppeTotale non renseignée (pas de TNF budget calculable). */
-	tnfBudget: number | null;
 	sspCode: string | null;
 };
 
@@ -177,7 +182,9 @@ async function enrichTickets(
 						ticketId: ticketActivityRae.ticketId,
 						activityId: ticketActivityRae.activityId,
 						raeReal: ticketActivityRae.raeReal,
-						raeTest: ticketActivityRae.raeTest
+						raeTest: ticketActivityRae.raeTest,
+						estimation: ticketActivityRae.estimation,
+						budget: ticketActivityRae.budget
 					})
 					.from(ticketActivityRae)
 					.where(inArray(ticketActivityRae.ticketId, ticketIds));
@@ -245,6 +252,8 @@ async function enrichTickets(
 					label: activityLabelMap.get(id) ?? '?',
 					raeReal: num(rae?.raeReal ?? null),
 					raeTest: num(rae?.raeTest ?? null),
+					estimation: num(rae?.estimation ?? null),
+					budget: num(rae?.budget ?? null),
 					contributors: (byActivity.get(id) ?? []).sort((a, b) => a.displayName.localeCompare(b.displayName))
 				};
 			})
@@ -265,10 +274,13 @@ async function enrichTickets(
 	}
 
 	return tickets.map((t) => {
-		const totalEst = totalEstimation(t.estimationReal, t.estimationTest, testPhase);
-		const resolved = resolvedRae(t.raeReal, t.raeTest, activityRaeMap.get(t.id) ?? []);
+		const activityRows = activityRaeMap.get(t.id) ?? [];
+		const resolved = resolvedRae(t.raeReal, t.raeTest, activityRows);
+		const estimationResolved = resolvedEstimation(t.estimationReal, activityRows);
+		const totalEst = round(estimationResolved + (testPhase ? num(t.estimationTest) : 0));
 		const rae = round(resolved.real + (testPhase ? resolved.test : 0));
 		const consumed = consumedMap.get(t.id) ?? 0;
+		const enveloppeTotale = !isAdmin || t.enveloppeTotale === null ? null : num(t.enveloppeTotale);
 		return {
 			id: t.id,
 			key: t.key,
@@ -286,26 +298,24 @@ async function enrichTickets(
 			stateLabel: t.stateLabel,
 			stateEmoji: t.stateEmoji,
 			stateColor: t.stateColor,
-			estimationReal: num(t.estimationReal),
+			estimationReal: estimationResolved,
 			raeReal: resolved.real,
 			estimationTest: num(t.estimationTest),
 			raeTest: resolved.test,
-			// estimationPrev/enveloppeTotale invisibles pour un USER ; tnfBudget en dérive
+			// estimationPrev/enveloppeTotale invisibles pour un USER ; ecartVsBudget en dérive
 			// (déductible via consumed/rae déjà visibles) donc masqué pareil.
 			estimationPrev: !isAdmin || t.estimationPrev === null ? null : num(t.estimationPrev),
-			enveloppeTotale: !isAdmin || t.enveloppeTotale === null ? null : num(t.enveloppeTotale),
+			enveloppeTotale,
 			sspCode: t.sspCode,
 			consumed,
-			ecartExecution: ecartExecution(resolved.real, consumed, num(t.estimationReal)),
+			ecartVsEstime: ecartVsEstime(resolved.real, consumed, estimationResolved),
+			ecartVsBudget: enveloppeTotale === null ? null : ecartVsBudget(resolved.real, consumed, enveloppeTotale),
 			avancement: avancement(totalEst, rae),
 			raeSuggested: raeSuggested(totalEst, consumed),
-			hasActivityRae: (activityRaeMap.get(t.id) ?? []).length > 0,
+			hasActivityRae: activityRows.length > 0,
+			hasActivityEstimation: activityRows.length > 0,
 			activityBreakdown: buildBreakdown(t.id),
-			groupIds: groupIdsMap.get(t.id) ?? [],
-			tnfBudget:
-				!isAdmin || t.enveloppeTotale === null
-					? null
-					: tnfBudget(num(t.enveloppeTotale), consumed, resolved.real, resolved.test, testPhase)
+			groupIds: groupIdsMap.get(t.id) ?? []
 		};
 	});
 }
@@ -591,6 +601,10 @@ export type TicketActivityBreakdownRow = {
 	label: string;
 	raeReal: number;
 	raeTest: number;
+	/** Estimé par activité — champ unique, modifiable par tout membre. */
+	estimation: number;
+	/** Budget par activité — indépendant du budget ticket, ADMIN only, 0 par défaut. */
+	budget: number;
 	contributors: { userId: string; displayName: string; consumed: number }[];
 };
 
@@ -613,7 +627,9 @@ export async function getTicketActivityBreakdown(
 			.select({
 				activityId: ticketActivityRae.activityId,
 				raeReal: ticketActivityRae.raeReal,
-				raeTest: ticketActivityRae.raeTest
+				raeTest: ticketActivityRae.raeTest,
+				estimation: ticketActivityRae.estimation,
+				budget: ticketActivityRae.budget
 			})
 			.from(ticketActivityRae)
 			.where(eq(ticketActivityRae.ticketId, ticketId)),
@@ -652,6 +668,8 @@ export async function getTicketActivityBreakdown(
 			label: labelMap.get(id) ?? '?',
 			raeReal: num(raeMap.get(id)?.raeReal ?? null),
 			raeTest: num(raeMap.get(id)?.raeTest ?? null),
+			estimation: num(raeMap.get(id)?.estimation ?? null),
+			budget: num(raeMap.get(id)?.budget ?? null),
 			contributors: (contribByActivity.get(id) ?? []).sort((a, b) => a.displayName.localeCompare(b.displayName))
 		}))
 		.sort((a, b) => a.label.localeCompare(b.label));
@@ -685,12 +703,33 @@ export async function canEditActivityRae(
 	return rows.length > 0;
 }
 
-/** Upsert du RAE (réel ou test) d'une activité sur un ticket. */
+export type TicketActivityField = 'raeReal' | 'raeTest' | 'estimation' | 'budget';
+
+/**
+ * Permission par champ pour une valeur d'activité sur un ticket :
+ * - RAE (réel/test) : cf. canEditActivityRae (contributeur ou manager/admin).
+ * - Estimé : tout membre de l'espace (déjà garanti par l'authentification de la route appelante).
+ * - Budget : ADMIN strict — pas manager, contrairement au reste du chiffrage.
+ */
+export async function canEditActivityField(
+	workspaceId: string,
+	userId: string,
+	role: Role | null,
+	ticketId: string,
+	activityId: string,
+	field: TicketActivityField
+): Promise<boolean> {
+	if (field === 'budget') return role === 'ADMIN';
+	if (field === 'estimation') return true;
+	return canEditActivityRae(workspaceId, userId, role, ticketId, activityId);
+}
+
+/** Upsert d'une valeur (RAE réel/test, Estimé ou Budget) d'une activité sur un ticket. */
 export async function upsertTicketActivityRae(
 	workspaceId: string,
 	ticketId: string,
 	activityId: string,
-	field: 'raeReal' | 'raeTest',
+	field: TicketActivityField,
 	value: number,
 	actorId: string | null = null
 ) {
@@ -719,9 +758,12 @@ export async function upsertTicketActivityRae(
 			target: [ticketActivityRae.ticketId, ticketActivityRae.activityId],
 			set: { [field]: String(value), updatedAt: new Date() }
 		});
-	// Trace la dernière mise à jour du RAE au niveau ticket aussi (rappels « RAE périmé »),
-	// même quand le RAE est suivi par activité et non plus sur le champ ticket directement.
-	await db.update(ticket).set({ raeUpdatedAt: new Date() }).where(eq(ticket.id, ticketId));
+	// Trace la dernière mise à jour du RAE au niveau ticket aussi (rappels « RAE périmé »), même
+	// quand le RAE est suivi par activité et non plus sur le champ ticket directement. Ne concerne
+	// que le RAE — un changement d'Estimé ou de Budget ne doit pas déclencher ce rappel.
+	if (field === 'raeReal' || field === 'raeTest') {
+		await db.update(ticket).set({ raeUpdatedAt: new Date() }).where(eq(ticket.id, ticketId));
+	}
 
 	if (String(oldValue ?? '0') !== String(value)) {
 		await logChange({

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { goto } from '$app/navigation';
 	import ExportModal from '$lib/components/ExportModal.svelte';
 	import AccentPicker from '$lib/components/AccentPicker.svelte';
 	import MemberAccessModal from '$lib/components/MemberAccessModal.svelte';
@@ -8,6 +9,24 @@
 
 	let accessModalFor = $state<string | null>(null);
 	const accessModalMember = $derived(data.members.find((m) => m.id === accessModalFor) ?? null);
+
+	// "Afficher l'équipe" : bascule la section Membres vers la vue total/jour + par personne.
+	let showTeam = $state(false);
+	let expandedPersons = $state<Set<string>>(new Set());
+	function togglePerson(userId: string) {
+		const next = new Set(expandedPersons);
+		if (next.has(userId)) next.delete(userId);
+		else next.add(userId);
+		expandedPersons = next;
+	}
+	function goToTeamMonth(month: string) {
+		goto(`?team=${month}`, { noScroll: true, keepFocus: true });
+	}
+	const teamDays = $derived(Object.keys(data.team.dayTotals).sort());
+	const fmtDay = (iso: string) => {
+		const [, m, d] = iso.split('-');
+		return `${d}/${m}`;
+	};
 
 	const PRESETS = ['#16A34A', '#4F46E5', '#9333EA', '#0EA5E9', '#E11D48', '#EA580C', '#0D9488', '#CA8A04'];
 	let accent = $state(data.accentColor);
@@ -84,9 +103,63 @@
 		</section>
 
 		<section class="card block">
-			<h3>Membres ({data.members.length})</h3>
+			<div class="block-head">
+				<h3>Membres ({data.members.length})</h3>
+				<button type="button" class="btn btn-ghost" onclick={() => (showTeam = !showTeam)}>
+					{showTeam ? '← Retour aux membres' : '👥 Afficher l’équipe'}
+				</button>
+			</div>
 			{#if form?.memberOk}<div class="flash ok">Membre mis à jour ✓</div>{/if}
 			{#if form?.ownerOk}<div class="flash ok">Propriété de l'espace transmise ✓</div>{/if}
+
+			{#if showTeam}
+				<div class="team-view">
+					<div class="team-nav">
+						<button type="button" class="wkbtn" onclick={() => goToTeamMonth(data.team.prevMonth)} aria-label="Mois précédent">‹</button>
+						<span class="team-month">{data.team.monthLabel}</span>
+						<button type="button" class="wkbtn" onclick={() => goToTeamMonth(data.team.nextMonth)} aria-label="Mois suivant">›</button>
+					</div>
+
+					<div class="team-total-strip">
+						<span class="team-total-lab">Total / jour</span>
+						<div class="team-total-days">
+							{#each teamDays as d (d)}
+								<span class="team-day-chip"><b>{fmtDay(d)}</b> {data.team.dayTotals[d]}j</span>
+							{/each}
+							{#if teamDays.length === 0}<span class="hint">Aucune imputation ce mois-ci.</span>{/if}
+						</div>
+						<span class="team-total-month">Total mois <b class="tabnum">{data.team.total}</b> j</span>
+					</div>
+
+					<div class="team-persons">
+						{#each data.team.persons as p (p.userId)}
+							{@const isOpen = expandedPersons.has(p.userId)}
+							{@const personDays = Object.keys(p.days).sort()}
+							<div class="team-prow">
+								<button type="button" class="team-prow-main clickable" onclick={() => togglePerson(p.userId)} aria-expanded={isOpen}>
+									<span class="team-prow-name">{p.name}</span>
+									<span class="team-prow-total tabnum">{p.total} j</span>
+									<svg class="chev" class:open={isOpen} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6" /></svg>
+								</button>
+								{#if isOpen}
+									<div class="team-expand">
+										{#if personDays.length === 0}
+											<p class="hint">Aucune imputation ce mois-ci.</p>
+										{:else}
+											<div class="team-total-days">
+												{#each personDays as d (d)}
+													<span class="team-day-chip"><b>{fmtDay(d)}</b> {p.days[d]}j</span>
+												{/each}
+											</div>
+										{/if}
+									</div>
+								{/if}
+							</div>
+						{/each}
+						{#if data.team.persons.length === 0}<p class="hint">Aucune imputation ce mois-ci.</p>{/if}
+					</div>
+				</div>
+			{:else}
 			<p class="hint" style="margin-bottom:0;">
 				👑 Le <b>créateur de l'espace</b> a les mêmes droits qu'un admin, mais ne peut être ni rétrogradé ni
 				désactivé par personne d'autre. Il peut transmettre ce statut à un autre membre actif.
@@ -189,6 +262,7 @@
 			</table>
 			</div>
 			</div>
+			{/if}
 		</section>
 	{/if}
 
@@ -691,6 +765,130 @@
 		.members-wrap::after {
 			display: block;
 		}
+	}
+	.block-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		margin-bottom: 10px;
+	}
+	.block-head h3 {
+		margin: 0;
+	}
+	.team-view {
+		display: flex;
+		flex-direction: column;
+		gap: 14px;
+	}
+	.team-nav {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+	}
+	.wkbtn {
+		width: 28px;
+		height: 28px;
+		border-radius: 8px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		color: var(--text-mute);
+		font-size: 16px;
+		transition: background 0.15s;
+	}
+	.wkbtn:hover {
+		background: var(--surface-2);
+		color: var(--text);
+	}
+	.team-month {
+		font-size: 13.5px;
+		font-weight: 600;
+	}
+	.team-total-strip {
+		display: flex;
+		align-items: center;
+		gap: 14px;
+		padding: 10px 14px;
+		border-radius: var(--r-md);
+		background: var(--surface-sunk);
+	}
+	.team-total-lab {
+		font-size: 11px;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--text-mute);
+		white-space: nowrap;
+	}
+	.team-total-days {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+		flex: 1;
+	}
+	.team-day-chip {
+		font-size: 12px;
+		padding: 3px 8px;
+		border-radius: 20px;
+		background: var(--surface);
+		border: 1px solid var(--border);
+		white-space: nowrap;
+	}
+	.team-day-chip b {
+		color: var(--text-mute);
+		font-weight: 600;
+		margin-right: 3px;
+	}
+	.team-total-month {
+		font-size: 12.5px;
+		color: var(--text-mute);
+		white-space: nowrap;
+	}
+	.team-persons {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+	.team-prow {
+		border: 1px solid var(--border);
+		border-radius: var(--r-md);
+		overflow: hidden;
+	}
+	.team-prow-main {
+		width: 100%;
+		display: flex;
+		align-items: center;
+		gap: 14px;
+		padding: 10px 14px;
+		text-align: left;
+		font: inherit;
+	}
+	.team-prow-main.clickable {
+		cursor: pointer;
+	}
+	.team-prow-main.clickable:hover {
+		background: var(--accent-tint-2);
+	}
+	.team-prow-name {
+		flex: 1;
+		font-size: 13.5px;
+		font-weight: 600;
+	}
+	.team-prow-total {
+		font-size: 13px;
+		color: var(--text-soft);
+	}
+	.chev {
+		color: var(--text-mute);
+		transition: transform 0.15s;
+	}
+	.chev.open {
+		transform: rotate(180deg);
+	}
+	.team-expand {
+		padding: 12px 14px 14px;
+		border-top: 1px solid var(--border);
 	}
 	table.members {
 		width: 100%;

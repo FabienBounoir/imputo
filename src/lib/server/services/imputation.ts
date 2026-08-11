@@ -31,6 +31,8 @@ export type ImputationRow = {
 	 * le RAE est stocké par activité, il n'est alors ni affichable ni saisissable ici.
 	 */
 	raeReal: number | null;
+	/** Estimé de la paire (ticket, activité) — même granularité que raeReal, modifiable par tous. */
+	estimation: number | null;
 	amounts: Record<string, number>; // day ISO → amount
 	total: number;
 };
@@ -138,6 +140,7 @@ export async function getTimesheet(
 				sprintName: e.targetType === 'TICKET' ? e.sprintName : null,
 				versionName: e.targetType === 'TICKET' ? e.versionName : null,
 				raeReal: null,
+				estimation: null,
 				amounts: {},
 				total: 0
 			});
@@ -156,8 +159,9 @@ export async function getTimesheet(
 }
 
 /**
- * Renseigne `raeReal` sur les lignes ticket portant une activité, depuis `ticket_activity_rae`.
- * Le RAE étant stocké par (ticket, activité), une ligne sans activité n'a pas de RAE adressable.
+ * Renseigne `raeReal`/`estimation` sur les lignes ticket portant une activité, depuis
+ * `ticket_activity_rae`. Ces valeurs étant stockées par (ticket, activité), une ligne sans
+ * activité n'a ni RAE ni Estimé adressable.
  */
 async function attachActivityRae(rows: ImputationRow[]) {
 	const targets = rows.filter((r) => r.targetType === 'TICKET' && r.activityId);
@@ -169,7 +173,8 @@ async function attachActivityRae(rows: ImputationRow[]) {
 		.select({
 			ticketId: ticketActivityRae.ticketId,
 			activityId: ticketActivityRae.activityId,
-			raeReal: ticketActivityRae.raeReal
+			raeReal: ticketActivityRae.raeReal,
+			estimation: ticketActivityRae.estimation
 		})
 		.from(ticketActivityRae)
 		.where(
@@ -179,8 +184,12 @@ async function attachActivityRae(rows: ImputationRow[]) {
 			)
 		);
 
-	const byPair = new Map(raeRows.map((r) => [`${r.ticketId}:${r.activityId}`, num(r.raeReal)]));
-	for (const r of targets) r.raeReal = byPair.get(`${r.targetId}:${r.activityId}`) ?? 0;
+	const byPair = new Map(raeRows.map((r) => [`${r.ticketId}:${r.activityId}`, r]));
+	for (const r of targets) {
+		const found = byPair.get(`${r.targetId}:${r.activityId}`);
+		r.raeReal = num(found?.raeReal ?? null);
+		r.estimation = num(found?.estimation ?? null);
+	}
 }
 
 /** Feuille de temps d'une semaine ouvrée (lun→ven) — raccourci autour de `getTimesheet`. */
