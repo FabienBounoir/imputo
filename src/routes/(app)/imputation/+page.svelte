@@ -182,9 +182,12 @@
 		ArrowUp: [-1, 0]
 	};
 	let scroller: HTMLDivElement | null = $state(null);
-	// Le RAE se saisit sur ses propres lignes : même un admin qui édite l'imputation d'un autre
-	// membre ne doit pas voir cette colonne, sinon `saveRae` écrirait le RAE sous son propre nom.
-	const showRae = $derived(!data.viewingOther && !data.viewingTeam);
+	// Un admin voit (et édite) Estimé/RAE même sur l'imputation d'un autre membre — ce sont des
+	// valeurs par ticket + activité (ticket_activity_rae), pas par personne, donc rien ne s'écrit
+	// "sous son nom" : même donnée que dans Tickets & chiffrage. Masqué seulement pour un non-admin
+	// qui consulte un tiers (canViewImputations, lecture seule) et pour la vue "Toute l'équipe"
+	// (agrégée, pas de colonnes par activité).
+	const showRae = $derived(data.isAdmin || (!data.viewingOther && !data.viewingTeam));
 	// Vue "Toute l'équipe" : une ligne par collaborateur, dépliable pour voir ses lignes détaillées.
 	let expandedMembers = $state<Set<string>>(new Set());
 	function toggleMember(userId: string) {
@@ -322,9 +325,18 @@
 		}
 	}
 
-	async function doDeleteRow() {
-		const row = confirmDelete;
-		if (!row) return;
+	function hasAmount(row: Row) {
+		return Object.values(row.amounts).some((a) => a > 0);
+	}
+
+	// Rien à perdre sur une ligne encore vide : on la supprime directement, la modale de confirmation
+	// ne sert qu'à éviter d'effacer des heures déjà saisies par erreur.
+	function requestDeleteRow(row: Row) {
+		if (hasAmount(row)) confirmDelete = row;
+		else doDeleteRow(row);
+	}
+
+	async function doDeleteRow(row: Row) {
 		confirmDelete = null;
 		rows = rows.filter((r) => r.rowKey !== row.rowKey); // optimiste
 		const body = new FormData();
@@ -807,7 +819,7 @@
 									</button>
 								{/if}
 								{#if !data.readOnly}
-									<button class="row-del" onclick={() => (confirmDelete = row)} aria-label="Supprimer la ligne">
+									<button class="row-del" onclick={() => requestDeleteRow(row)} aria-label="Supprimer la ligne">
 										<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg>
 									</button>
 								{/if}
@@ -938,7 +950,7 @@
 			</p>
 			<div class="modal-actions">
 				<button class="btn btn-ghost" onclick={() => (confirmDelete = null)}>Annuler</button>
-				<button class="btn btn-danger" onclick={doDeleteRow}>🗑 Supprimer</button>
+				<button class="btn btn-danger" onclick={() => doDeleteRow(row)}>🗑 Supprimer</button>
 			</div>
 		</div>
 	</div>
