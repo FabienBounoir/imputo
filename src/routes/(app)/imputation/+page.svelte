@@ -73,6 +73,13 @@
 				if (!targetId || next.some((r) => r.targetType === targetType && r.targetId === targetId)) continue;
 				next.push(buildRow(targetType, targetId, o.activityId ?? null));
 			}
+			// Lignes ajoutées via "+ Ajouter" mais jamais remplies (cf. pinRow) : sans ça elles
+			// disparaîtraient au prochain chargement faute d'imputation en base.
+			for (const p of data.pinnedRows) {
+				const rowKey = `${p.targetType}:${p.targetId}:${p.activityId ?? ''}`;
+				if (next.some((r) => r.rowKey === rowKey)) continue;
+				next.push(buildRow(p.targetType, p.targetId, p.activityId));
+			}
 		}
 		return next;
 	}
@@ -332,6 +339,36 @@
 		await fetch('?/deleteRow', { method: 'POST', body });
 	}
 
+	// Changement d'activité d'une ligne (clic sur son tag, ou sur "+ Activité" quand elle n'en a pas) —
+	// même principe optimiste que doDeleteRow : on ne recharge pas la page, on rejoue localement ce que
+	// le serveur va faire (fusion avec une ligne existante sur la nouvelle activité, sinon in-place).
+	let activityPickerRow = $state<Row | null>(null);
+	async function doReassignActivity(toActivityId: string | null) {
+		const row = activityPickerRow;
+		activityPickerRow = null;
+		if (!row || row.activityId === toActivityId) return;
+
+		const destKey = `${row.targetType}:${row.targetId}:${toActivityId ?? ''}`;
+		const dest = rows.find((r) => r.rowKey !== row.rowKey && r.rowKey === destKey);
+		if (dest) {
+			for (const d of days) dest.amounts[d] = round((dest.amounts[d] ?? 0) + (row.amounts[d] ?? 0));
+			rows = rows.filter((r) => r.rowKey !== row.rowKey);
+		} else {
+			rows = rows.map((r) => (r.rowKey === row.rowKey ? buildRow(row.targetType, row.targetId, toActivityId, r.amounts) : r));
+		}
+
+		const body = new FormData();
+		body.set('targetType', row.targetType);
+		body.set('targetId', row.targetId);
+		if (row.activityId) body.set('fromActivityId', row.activityId);
+		if (toActivityId) body.set('toActivityId', toActivityId);
+		body.set('anchor', data.period.anchorISO);
+		body.set('g', data.period.granularity);
+		body.set('mode', data.period.mode);
+		body.set('targetUserId', data.viewedId);
+		await fetch('?/reassignActivity', { method: 'POST', body });
+	}
+
 	// Anti-rafale pour le champ RAE (spinner/molette) : chaque pas déclenche un onchange, donc sans
 	// ça une ligne d'historique par pas — on attend que ça se stabilise avant d'enregistrer (même
 	// principe que l'onglet « Tickets & chiffrage »).
@@ -378,7 +415,12 @@
 		);
 	}
 
-	function buildRow(targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE', targetId: string, activityId: string | null): Row {
+	function buildRow(
+		targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE',
+		targetId: string,
+		activityId: string | null,
+		amounts: Record<string, number> = {}
+	): Row {
 		const rowKey = `${targetType}:${targetId}:${activityId ?? ''}`;
 		let label = '';
 		let sublabel = '';
@@ -402,8 +444,6 @@
 			emoji = '📝';
 			sublabel = 'Tâche assignée';
 		}
-		const act = data.activities.find((a) => a.id === activityId);
-		if (act) sublabel += ` · ${act.label}`;
 		// versionName / raeReal ne sont pas connus côté client : la ligne n'existe pas encore en base,
 		// ils se peupleront au prochain chargement (le RAE part vide et la première saisie l'écrit).
 		return {
@@ -419,11 +459,15 @@
 			versionName: null,
 			raeReal: targetType === 'TICKET' && activityId ? 0 : null,
 			estimation: targetType === 'TICKET' && activityId ? 0 : null,
-			amounts: {}
+			amounts
 		};
 	}
 
-	function addRow() {
+	function activityLabel(row: Row) {
+		return data.activities.find((a) => a.id === row.activityId)?.label ?? null;
+	}
+
+	async function addRow() {
 		if (!pickTarget) return;
 		const [targetType, targetId] = pickTarget.split('::') as ['TICKET' | 'CATEGORY' | 'OBJECTIVE', string];
 		const activityId = pickActivity || null;
@@ -435,6 +479,15 @@
 		rows = [...rows, buildRow(targetType, targetId, activityId)];
 		pickTarget = '';
 		pickActivity = '';
+
+		// Épinglée en base tout de suite : sans imputation dessus, la ligne ne survivrait pas
+		// au prochain chargement (cf. syncedRows/pinRow). Seule la poubelle la fait disparaître.
+		const body = new FormData();
+		body.set('targetType', targetType);
+		body.set('targetId', targetId);
+		if (activityId) body.set('activityId', activityId);
+		body.set('targetUserId', data.viewedId);
+		await fetch('?/pinRow', { method: 'POST', body });
 	}
 
 	// Ajout en un clic depuis le bandeau de rappel (contourne le picker).
@@ -711,6 +764,25 @@
 									<b>{row.label}</b>
 									<span class="sub">
 										{row.sublabel}
+										{#if !data.readOnly}
+											{#if activityLabel(row)}
+												<button
+													type="button"
+													class="tag-activity tag-link"
+													onclick={() => (activityPickerRow = row)}
+													title="Changer l'activité"
+												>{activityLabel(row)}</button>
+											{:else}
+												<button
+													type="button"
+													class="tag-activity tag-add"
+													onclick={() => (activityPickerRow = row)}
+													title="Associer une activité à cette ligne"
+												>+ Activité</button>
+											{/if}
+										{:else if activityLabel(row)}
+											<span class="tag-activity">{activityLabel(row)}</span>
+										{/if}
 										{#if row.sprintName}
 											<button
 												type="button"
@@ -849,7 +921,9 @@
 	{/if}
 </div>
 
-<svelte:window onkeydown={(e) => e.key === 'Escape' && (confirmDelete = null)} />
+<svelte:window
+	onkeydown={(e) => e.key === 'Escape' && ((confirmDelete = null), (activityPickerRow = null))}
+/>
 
 {#if confirmDelete}
 	{@const row = confirmDelete}
@@ -865,6 +939,33 @@
 			<div class="modal-actions">
 				<button class="btn btn-ghost" onclick={() => (confirmDelete = null)}>Annuler</button>
 				<button class="btn btn-danger" onclick={doDeleteRow}>🗑 Supprimer</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+{#if activityPickerRow}
+	{@const row = activityPickerRow}
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="modal-backdrop" onclick={() => (activityPickerRow = null)}>
+		<div class="modal" onclick={(e) => e.stopPropagation()}>
+			<h3>{row.emoji} {row.label}</h3>
+			<p class="hint">
+				Activité de cette ligne pour <b>{data.period.label}</b> ({data.period.firstDay} → {data.period.lastDay}).
+			</p>
+			<div class="activity-options">
+				<button type="button" class="activity-option" class:sel={!row.activityId} onclick={() => doReassignActivity(null)}>
+					Aucune activité
+				</button>
+				{#each data.activities as a (a.id)}
+					<button type="button" class="activity-option" class:sel={row.activityId === a.id} onclick={() => doReassignActivity(a.id)}>
+						{a.label}
+					</button>
+				{/each}
+			</div>
+			<div class="modal-actions">
+				<button class="btn btn-ghost" onclick={() => (activityPickerRow = null)}>Fermer</button>
 			</div>
 		</div>
 	</div>
@@ -994,6 +1095,40 @@
 	button.tag-link:hover {
 		color: var(--accent-ink);
 		background: color-mix(in srgb, var(--accent) 18%, var(--surface-sunk));
+	}
+	button.tag-activity.tag-add {
+		background: transparent;
+		border: 1px dashed var(--border-strong);
+		color: var(--text-mute);
+	}
+	button.tag-activity.tag-add:hover {
+		border-color: var(--accent);
+		color: var(--accent-ink);
+		background: color-mix(in srgb, var(--accent) 10%, transparent);
+	}
+	.activity-options {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		margin-top: 16px;
+		max-height: 320px;
+		overflow-y: auto;
+	}
+	.activity-option {
+		width: 100%;
+		text-align: left;
+		padding: 8px 10px;
+		border-radius: var(--r-md, 10px);
+		font-size: 13.5px;
+		font-weight: 600;
+		color: var(--text);
+	}
+	.activity-option:hover {
+		background: var(--surface-2);
+	}
+	.activity-option.sel {
+		background: var(--accent-tint-2, color-mix(in srgb, var(--accent) 14%, transparent));
+		color: var(--accent-ink);
 	}
 	.reminder-add {
 		flex-shrink: 0;

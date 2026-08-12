@@ -9,6 +9,7 @@ import {
 	sprint,
 	ticketActivityRae,
 	weeklyObjective,
+	imputationPin,
 	user
 } from '$lib/server/db';
 import { num, round } from './calc';
@@ -120,17 +121,18 @@ function rowSkeleton(e: RawEntry, targetId: string, key: string): ImputationRow 
 	let label: string;
 	let sublabel: string;
 	let emoji: string;
+	// L'activité s'affiche à part, en tag cliquable (cf. imputation/+page.svelte) — plus dans ce texte.
 	if (e.targetType === 'TICKET') {
 		label = e.ticketTitle ?? '—';
-		sublabel = `${e.ticketKey ?? ''}${e.activityLabel ? ' · ' + e.activityLabel : ''}`;
+		sublabel = e.ticketKey ?? '';
 		emoji = '🎫';
 	} else if (e.targetType === 'CATEGORY') {
 		label = e.categoryLabel ?? '—';
-		sublabel = `Catégorie${e.activityLabel ? ' · ' + e.activityLabel : ''}`;
+		sublabel = 'Catégorie';
 		emoji = e.categoryKind === 'NON_PRODUCTIVE' ? '🌴' : '🛟';
 	} else {
 		label = e.objectiveLabel ?? '(tâche supprimée)';
-		sublabel = `Tâche assignée${e.activityLabel ? ' · ' + e.activityLabel : ''}`;
+		sublabel = 'Tâche assignée';
 		emoji = '📝';
 	}
 	return {
@@ -410,6 +412,97 @@ export async function setCell(
 }
 
 /**
+ * Change l'activité de toutes les imputations d'une ligne sur la période affichée (clic sur le
+ * tag d'activité de "Mon imputation") — fusionne (amounts additionnés) avec une ligne déjà
+ * existante sur l'activité de destination au lieu de l'écraser. Mêmes bornes de période que
+ * deleteRow, jamais reçues brutes du client.
+ */
+export async function reassignActivity(
+	workspaceId: string,
+	userId: string,
+	input: {
+		targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE';
+		targetId: string;
+		fromActivityId: string | null;
+		toActivityId: string | null;
+		fromISO: string;
+		toISO: string;
+	}
+) {
+	if (input.fromActivityId === input.toActivityId) return;
+	await assertTargetInWorkspace(workspaceId, userId, input.targetType, input.targetId);
+	if (input.toActivityId) {
+		const [act] = await db
+			.select({ id: activity.id })
+			.from(activity)
+			.where(and(eq(activity.id, input.toActivityId), eq(activity.workspaceId, workspaceId)));
+		if (!act) throw new Error('Activité introuvable dans cet espace.');
+	}
+
+	const targetMatch =
+		input.targetType === 'TICKET'
+			? eq(timeEntry.ticketId, input.targetId)
+			: input.targetType === 'CATEGORY'
+				? eq(timeEntry.categoryId, input.targetId)
+				: eq(timeEntry.objectiveId, input.targetId);
+
+	// Si la ligne était épinglée (cf. pinRow) sur l'ancienne activité, l'épingle suit vers la
+	// nouvelle — sinon changer l'activité d'une ligne vide (jamais remplie) ne ferait rien du tout.
+	const wasPinned = await db
+		.select({ id: imputationPin.id })
+		.from(imputationPin)
+		.where(pinMatch(workspaceId, userId, { targetType: input.targetType, targetId: input.targetId, activityId: input.fromActivityId }));
+	if (wasPinned[0]) {
+		await unpinRow(workspaceId, userId, { targetType: input.targetType, targetId: input.targetId, activityId: input.fromActivityId });
+		await pinRow(workspaceId, userId, { targetType: input.targetType, targetId: input.targetId, activityId: input.toActivityId });
+	}
+
+	const rows = await db
+		.select({ id: timeEntry.id, day: timeEntry.day, amount: timeEntry.amount })
+		.from(timeEntry)
+		.where(
+			and(
+				eq(timeEntry.workspaceId, workspaceId),
+				eq(timeEntry.userId, userId),
+				gte(timeEntry.day, input.fromISO),
+				lte(timeEntry.day, input.toISO),
+				targetMatch,
+				input.fromActivityId ? eq(timeEntry.activityId, input.fromActivityId) : isNull(timeEntry.activityId)
+			)
+		);
+	if (rows.length === 0) return;
+
+	await db.transaction(async (tx) => {
+		for (const r of rows) {
+			const [dest] = await tx
+				.select({ id: timeEntry.id, amount: timeEntry.amount })
+				.from(timeEntry)
+				.where(
+					and(
+						eq(timeEntry.workspaceId, workspaceId),
+						eq(timeEntry.userId, userId),
+						eq(timeEntry.day, r.day),
+						targetMatch,
+						input.toActivityId ? eq(timeEntry.activityId, input.toActivityId) : isNull(timeEntry.activityId)
+					)
+				);
+			if (dest) {
+				await tx
+					.update(timeEntry)
+					.set({ amount: String(num(dest.amount) + num(r.amount)), updatedAt: new Date() })
+					.where(eq(timeEntry.id, dest.id));
+				await tx.delete(timeEntry).where(eq(timeEntry.id, r.id));
+			} else {
+				await tx
+					.update(timeEntry)
+					.set({ activityId: input.toActivityId, updatedAt: new Date() })
+					.where(eq(timeEntry.id, r.id));
+			}
+		}
+	});
+}
+
+/**
  * Supprime en un coup toutes les imputations de la période pour une ligne (cible + activité).
  * Les bornes viennent d'une période reconstruite côté serveur, jamais du client directement.
  */
@@ -445,4 +538,81 @@ export async function deleteRow(
 				input.activityId ? eq(timeEntry.activityId, input.activityId) : isNull(timeEntry.activityId)
 			)
 		);
+	// La poubelle est le seul moyen de faire disparaître une ligne épinglée (cf. pinRow) — sans ça,
+	// une ligne ajoutée mais jamais remplie reviendrait au prochain chargement malgré la suppression.
+	await unpinRow(workspaceId, userId, input);
+}
+
+function pinTargetColumns(targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE', targetId: string) {
+	return {
+		ticketId: targetType === 'TICKET' ? targetId : null,
+		categoryId: targetType === 'CATEGORY' ? targetId : null,
+		objectiveId: targetType === 'OBJECTIVE' ? targetId : null
+	};
+}
+
+function pinMatch(
+	workspaceId: string,
+	userId: string,
+	input: { targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE'; targetId: string; activityId: string | null }
+) {
+	const cols = pinTargetColumns(input.targetType, input.targetId);
+	return and(
+		eq(imputationPin.workspaceId, workspaceId),
+		eq(imputationPin.userId, userId),
+		eq(imputationPin.targetType, input.targetType),
+		cols.ticketId ? eq(imputationPin.ticketId, cols.ticketId) : isNull(imputationPin.ticketId),
+		cols.categoryId ? eq(imputationPin.categoryId, cols.categoryId) : isNull(imputationPin.categoryId),
+		cols.objectiveId ? eq(imputationPin.objectiveId, cols.objectiveId) : isNull(imputationPin.objectiveId),
+		input.activityId ? eq(imputationPin.activityId, input.activityId) : isNull(imputationPin.activityId)
+	);
+}
+
+export type PinnedRow = { targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE'; targetId: string; activityId: string | null };
+
+/** Lignes épinglées sur "Mon imputation" — visibles même sans aucune heure saisie (cf. imputationPin). */
+export async function listPinnedRows(workspaceId: string, userId: string): Promise<PinnedRow[]> {
+	const rows = await db
+		.select({
+			targetType: imputationPin.targetType,
+			ticketId: imputationPin.ticketId,
+			categoryId: imputationPin.categoryId,
+			objectiveId: imputationPin.objectiveId,
+			activityId: imputationPin.activityId
+		})
+		.from(imputationPin)
+		.where(and(eq(imputationPin.workspaceId, workspaceId), eq(imputationPin.userId, userId)));
+	return rows
+		.map((r) => ({
+			targetType: r.targetType,
+			targetId: r.ticketId ?? r.categoryId ?? r.objectiveId,
+			activityId: r.activityId
+		}))
+		.filter((r): r is PinnedRow => !!r.targetId);
+}
+
+/** Épingle une ligne (cible + activité) — reste affichée tant qu'aucun clic sur la poubelle. Idempotent. */
+export async function pinRow(
+	workspaceId: string,
+	userId: string,
+	input: { targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE'; targetId: string; activityId: string | null }
+) {
+	await assertTargetInWorkspace(workspaceId, userId, input.targetType, input.targetId);
+	const existing = await db.select({ id: imputationPin.id }).from(imputationPin).where(pinMatch(workspaceId, userId, input));
+	if (existing[0]) return;
+	await db.insert(imputationPin).values({
+		workspaceId,
+		userId,
+		targetType: input.targetType,
+		...pinTargetColumns(input.targetType, input.targetId),
+		activityId: input.activityId
+	});
+}
+
+export async function unpinRow(
+	workspaceId: string,
+	userId: string,
+	input: { targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE'; targetId: string; activityId: string | null }
+) {
+	await db.delete(imputationPin).where(pinMatch(workspaceId, userId, input));
 }

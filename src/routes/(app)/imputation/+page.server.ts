@@ -1,6 +1,15 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { getTimesheet, getTeamTimesheet, setCell, deleteRow, getRecentTicketIds } from '$lib/server/services/imputation';
+import {
+	getTimesheet,
+	getTeamTimesheet,
+	setCell,
+	deleteRow,
+	reassignActivity,
+	pinRow,
+	listPinnedRows,
+	getRecentTicketIds
+} from '$lib/server/services/imputation';
 import { getRefData, listTicketSummaries } from '$lib/server/services/tickets';
 import { getMembership, isManagerOrAdmin } from '$lib/server/services/workspaces';
 import { listObjectivesForUserWeeks, vacationWeeks } from '$lib/server/services/weeklyObjectives';
@@ -47,7 +56,7 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 	const viewingOther = !viewingTeam && viewedId !== user.id;
 	const readOnly = viewingOther && !isAdmin;
 
-	const [sheet, tickets, membership, recentTicketIds, weeklyObjectives, vacations, periodAbsences, team] =
+	const [sheet, tickets, membership, recentTicketIds, weeklyObjectives, vacations, periodAbsences, team, pinnedRows] =
 		await Promise.all([
 			getTimesheet(ws.workspaceId, viewedId, period.days),
 			listTicketSummaries(ws.workspaceId),
@@ -56,7 +65,8 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 			listObjectivesForUserWeeks(ws.workspaceId, viewedId, weekMondays),
 			vacationWeeks(ws.workspaceId, viewedId, weekMondays),
 			listAbsencesForRange(ws.workspaceId, period.firstDay, period.lastDay),
-			viewingTeam ? getTeamTimesheet(ws.workspaceId, period.days) : Promise.resolve(null)
+			viewingTeam ? getTeamTimesheet(ws.workspaceId, period.days) : Promise.resolve(null),
+			listPinnedRows(ws.workspaceId, viewedId)
 		]);
 	// Congés/formation/hors-projet du membre affiché sur la période — remonté depuis la page Absences
 	// pour voir d'un coup d'œil, sans y aller, pourquoi une case n'a pas d'imputation attendue.
@@ -81,6 +91,7 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 		canEditEstimation: isManagerOrAdmin(locals.role),
 		tickets,
 		recentTicketIds,
+		pinnedRows,
 		weeklyObjectives,
 		vacationWeeks: vacations,
 		absences,
@@ -185,6 +196,76 @@ export const actions: Actions = {
 				targetType,
 				targetId,
 				activityId,
+				fromISO: period.firstDay,
+				toISO: period.lastDay
+			});
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { ok: true };
+	},
+
+	pinRow: async ({ request, locals }) => {
+		const ws = locals.workspace;
+		if (!ws || !locals.user) return fail(401, { error: 'Non authentifié.' });
+		const f = await request.formData();
+		const targetType = String(f.get('targetType')) as 'TICKET' | 'CATEGORY' | 'OBJECTIVE';
+		const targetId = String(f.get('targetId'));
+		const activityId = (f.get('activityId') as string) || null;
+
+		if (!['TICKET', 'CATEGORY', 'OBJECTIVE'].includes(targetType) || !targetId)
+			return fail(400, { error: 'Données invalides.' });
+
+		const subjectId = await resolveSubjectId(
+			ws.workspaceId,
+			locals.user.id,
+			locals.role,
+			String(f.get('targetUserId') ?? '')
+		);
+		if (!subjectId) return fail(403, { error: 'Accès refusé.' });
+
+		try {
+			await pinRow(ws.workspaceId, subjectId, { targetType, targetId, activityId });
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { ok: true };
+	},
+
+	reassignActivity: async ({ request, locals }) => {
+		const ws = locals.workspace;
+		if (!ws || !locals.user) return fail(401, { error: 'Non authentifié.' });
+		const f = await request.formData();
+		const targetType = String(f.get('targetType')) as 'TICKET' | 'CATEGORY' | 'OBJECTIVE';
+		const targetId = String(f.get('targetId'));
+		const fromActivityId = (f.get('fromActivityId') as string) || null;
+		const toActivityId = (f.get('toActivityId') as string) || null;
+		const anchor = String(f.get('anchor') ?? '');
+
+		if (!['TICKET', 'CATEGORY', 'OBJECTIVE'].includes(targetType) || !targetId || !anchor)
+			return fail(400, { error: 'Données invalides.' });
+
+		const subjectId = await resolveSubjectId(
+			ws.workspaceId,
+			locals.user.id,
+			locals.role,
+			String(f.get('targetUserId') ?? '')
+		);
+		if (!subjectId) return fail(403, { error: 'Accès refusé.' });
+
+		// Mêmes bornes de période reconstruites côté serveur que deleteRow — jamais reçues du client.
+		const period = buildPeriod(
+			parseGranularity(f.get('g') as string) ?? 'WEEK',
+			parsePeriodMode(f.get('mode') as string) ?? 'FIXED',
+			anchor
+		);
+
+		try {
+			await reassignActivity(ws.workspaceId, subjectId, {
+				targetType,
+				targetId,
+				fromActivityId,
+				toActivityId,
 				fromISO: period.firstDay,
 				toISO: period.lastDay
 			});

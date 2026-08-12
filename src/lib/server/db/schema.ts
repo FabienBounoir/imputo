@@ -441,6 +441,30 @@ export const timeEntry = pgTable(
 	]
 );
 
+// Ligne ajoutée à "Mon imputation" (+ Ajouter) sans encore aucune heure saisie dessus : sans cette
+// table, la ligne n'a aucune trace en base et disparaît au prochain chargement/changement de
+// période (aucun time_entry associé). Retirée uniquement via la poubelle (unpinRow), jamais par
+// un simple retour à 0 des cases — contrairement à un time_entry, pas de notion de jour/montant.
+export const imputationPin = pgTable(
+	'imputation_pin',
+	{
+		id: id(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspace.id, { onDelete: 'cascade' }),
+		userId: uuid('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		targetType: targetTypeEnum('target_type').notNull(),
+		ticketId: uuid('ticket_id').references(() => ticket.id, { onDelete: 'cascade' }),
+		categoryId: uuid('category_id').references(() => category.id, { onDelete: 'cascade' }),
+		objectiveId: uuid('objective_id').references(() => weeklyObjective.id, { onDelete: 'cascade' }),
+		activityId: uuid('activity_id').references(() => activity.id, { onDelete: 'set null' }),
+		createdAt: createdAt()
+	},
+	(t) => [index('imputation_pin_ws_user_idx').on(t.workspaceId, t.userId)]
+);
+
 // ---------- Absences ----------
 // Personne suivie pour ses congés sans avoir de compte sur l'espace (client, prestataire…).
 // Gérée par un admin/manager — jamais de login, jamais dans les pickers de tickets/imputation.
@@ -648,6 +672,7 @@ export type State = typeof state.$inferSelect;
 export type Activity = typeof activity.$inferSelect;
 export type Sprint = typeof sprint.$inferSelect;
 export type TimeEntry = typeof timeEntry.$inferSelect;
+export type ImputationPin = typeof imputationPin.$inferSelect;
 export type WeeklyObjective = typeof weeklyObjective.$inferSelect;
 export type WeeklyVacation = typeof weeklyVacation.$inferSelect;
 export type Absence = typeof absence.$inferSelect;
