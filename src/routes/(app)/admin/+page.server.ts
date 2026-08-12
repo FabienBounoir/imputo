@@ -54,6 +54,7 @@ import {
 	getSupportConfig,
 	setSupportEnabled,
 	setSupportCadence,
+	setSupportIncludeSaturday,
 	listRotationMembers,
 	addRotationMember,
 	removeRotationMember,
@@ -215,6 +216,14 @@ export const actions: Actions = {
 		const cadence = (await request.formData()).get('cadence');
 		if (!SUPPORT_CADENCES.includes(cadence as SupportCadence)) return fail(400, { error: 'Cadence invalide.' });
 		await setSupportCadence(ws.workspaceId, cadence as SupportCadence);
+		return { supportOk: true };
+	},
+
+	supportIncludeSaturday: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const includeSaturday = (await request.formData()).get('includeSaturday') === 'true';
+		await setSupportIncludeSaturday(ws.workspaceId, includeSaturday);
 		return { supportOk: true };
 	},
 

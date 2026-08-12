@@ -6,9 +6,14 @@ export type { SupportCadence };
 
 export async function getSupportConfig(
 	workspaceId: string
-): Promise<{ enabled: boolean; cadence: SupportCadence; offset: number }> {
+): Promise<{ enabled: boolean; cadence: SupportCadence; offset: number; includeSaturday: boolean }> {
 	const rows = await db
-		.select({ enabled: workspace.supportEnabled, cadence: workspace.supportCadence, offset: workspace.supportRotationOffset })
+		.select({
+			enabled: workspace.supportEnabled,
+			cadence: workspace.supportCadence,
+			offset: workspace.supportRotationOffset,
+			includeSaturday: workspace.supportIncludeSaturday
+		})
 		.from(workspace)
 		.where(eq(workspace.id, workspaceId));
 	const row = rows[0];
@@ -22,6 +27,10 @@ export async function setSupportEnabled(workspaceId: string, enabled: boolean) {
 
 export async function setSupportCadence(workspaceId: string, cadence: SupportCadence) {
 	await db.update(workspace).set({ supportCadence: cadence }).where(eq(workspace.id, workspaceId));
+}
+
+export async function setSupportIncludeSaturday(workspaceId: string, includeSaturday: boolean) {
+	await db.update(workspace).set({ supportIncludeSaturday: includeSaturday }).where(eq(workspace.id, workspaceId));
 }
 
 export type RotationMemberItem = { id: string; userId: string; displayName: string; sortOrder: number };
@@ -91,8 +100,14 @@ export type SupportDuty = {
 	overridden: boolean;
 };
 
-function pickFromChain(cadence: SupportCadence, members: RotationMemberItem[], offset: number, periodStart: string) {
-	const index = supportPeriodIndex(cadence, periodStart) + offset;
+function pickFromChain(
+	cadence: SupportCadence,
+	members: RotationMemberItem[],
+	offset: number,
+	periodStart: string,
+	includeSaturday: boolean
+) {
+	const index = supportPeriodIndex(cadence, periodStart, includeSaturday) + offset;
 	return members[((index % members.length) + members.length) % members.length];
 }
 
@@ -102,6 +117,7 @@ async function pickDuty(
 	offset: number,
 	periodStart: string,
 	periodEnd: string,
+	includeSaturday: boolean,
 	workspaceId: string
 ): Promise<SupportDuty> {
 	const [ov] = await db
@@ -111,35 +127,42 @@ async function pickDuty(
 	const overridden = members.find((m) => m.userId === ov?.userId);
 	if (overridden) return { periodStart, periodEnd, userId: overridden.userId, displayName: overridden.displayName, overridden: true };
 
-	const picked = pickFromChain(cadence, members, offset, periodStart);
+	const picked = pickFromChain(cadence, members, offset, periodStart, includeSaturday);
 	return { periodStart, periodEnd, userId: picked.userId, displayName: picked.displayName, overridden: false };
 }
 
 /** Personne de perm pour la période courante (rotation normale, sauf override ponctuel). Null si aucun membre dans la rotation. */
 export async function getCurrentDuty(workspaceId: string, todayISO: string = todayInParis()): Promise<SupportDuty | null> {
-	const [{ cadence, offset }, members] = await Promise.all([getSupportConfig(workspaceId), listRotationMembers(workspaceId)]);
+	const [{ cadence, offset, includeSaturday }, members] = await Promise.all([
+		getSupportConfig(workspaceId),
+		listRotationMembers(workspaceId)
+	]);
 	if (members.length === 0) return null;
-	const { start, end } = currentSupportPeriod(cadence, todayISO);
-	return pickDuty(cadence, members, offset, start, end, workspaceId);
+	const { start, end } = currentSupportPeriod(cadence, todayISO, includeSaturday);
+	return pickDuty(cadence, members, offset, start, end, includeSaturday, workspaceId);
 }
 
 export type DutyDay = { date: string; userId: string; displayName: string; overridden: boolean };
 export type DutyWeek = { weekStart: string; days: DutyDay[] };
 
 /**
- * Grille jour par jour (lun→ven), `weekCount` semaines à partir de la semaine courante — pour un
- * calendrier "qui est de perm ce jour-là". Seule la période courante peut porter un override (cf.
- * setOverride) : les autres jours reflètent toujours la chaîne normale.
+ * Grille jour par jour (lun→ven, ou lun→sam si le samedi est inclus dans la perm), `weekCount`
+ * semaines à partir de la semaine courante — pour un calendrier "qui est de perm ce jour-là".
+ * Seule la période courante peut porter un override (cf. setOverride) : les autres jours
+ * reflètent toujours la chaîne normale.
  */
 export async function listDutyCalendar(
 	workspaceId: string,
 	weekCount: number,
 	todayISO: string = todayInParis()
 ): Promise<DutyWeek[]> {
-	const [{ cadence, offset }, members] = await Promise.all([getSupportConfig(workspaceId), listRotationMembers(workspaceId)]);
+	const [{ cadence, offset, includeSaturday }, members] = await Promise.all([
+		getSupportConfig(workspaceId),
+		listRotationMembers(workspaceId)
+	]);
 	if (members.length === 0) return [];
 
-	const currentPeriodStart = currentSupportPeriod(cadence, todayISO).start;
+	const currentPeriodStart = currentSupportPeriod(cadence, todayISO, includeSaturday).start;
 	const [ov] = await db
 		.select({ userId: supportOverride.userId })
 		.from(supportOverride)
@@ -147,15 +170,16 @@ export async function listDutyCalendar(
 	const overrideMember = members.find((m) => m.userId === ov?.userId);
 
 	const firstMonday = mondayOf(parseISODate(todayISO));
+	const dayCount = includeSaturday ? 6 : 5;
 	const weeks: DutyWeek[] = [];
 	for (let w = 0; w < weekCount; w++) {
 		const weekMonday = addDays(firstMonday, w * 7);
 		const days: DutyDay[] = [];
-		for (let d = 0; d < 5; d++) {
+		for (let d = 0; d < dayCount; d++) {
 			const date = toISODate(addDays(weekMonday, d));
-			const periodStart = currentSupportPeriod(cadence, date).start;
+			const periodStart = currentSupportPeriod(cadence, date, includeSaturday).start;
 			const isOverridden = Boolean(overrideMember) && periodStart === currentPeriodStart;
-			const picked = isOverridden ? overrideMember! : pickFromChain(cadence, members, offset, periodStart);
+			const picked = isOverridden ? overrideMember! : pickFromChain(cadence, members, offset, periodStart, includeSaturday);
 			days.push({ date, userId: picked.userId, displayName: picked.displayName, overridden: isOverridden });
 		}
 		weeks.push({ weekStart: toISODate(weekMonday), days });

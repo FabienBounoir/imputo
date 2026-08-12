@@ -75,6 +75,8 @@ export const workspace = pgTable('workspace', {
 	// Incrémenté par "passer son tour" : décale toute la chaîne d'un cran, définitivement (contrairement
 	// à supportOverride qui ne change qu'une période précise sans toucher aux suivantes).
 	supportRotationOffset: integer('support_rotation_offset').notNull().default(0),
+	// Le samedi compte-t-il comme un jour de perm (cadence DAY) ? Dimanche jamais inclus.
+	supportIncludeSaturday: boolean('support_include_saturday').notNull().default(false),
 	createdByUserId: uuid('created_by_user_id'),
 	createdAt: createdAt()
 });

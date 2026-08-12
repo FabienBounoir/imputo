@@ -7,7 +7,11 @@
 
 	let pickerOpen = $state(false);
 
-	const WEEKDAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven'];
+	// Le nombre de jours par semaine dans la grille reflète déjà le réglage "samedi inclus" (cf.
+	// listDutyCalendar côté serveur) — on en déduit l'entête plutôt que de dupliquer le réglage ici.
+	const WEEKDAYS = $derived(
+		(data.calendar[0]?.days.length ?? 5) === 6 ? ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'] : ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven']
+	);
 
 	const initials = (name: string) =>
 		name
@@ -102,7 +106,7 @@
 		<section class="card calendar-card">
 			<h3>Planning</h3>
 			<div class="cal-scroll">
-				<div class="cal-grid">
+				<div class="cal-grid" style="--cal-cols:{WEEKDAYS.length}">
 					{#each WEEKDAYS as w (w)}<div class="cal-head">{w}</div>{/each}
 					{#each data.calendar as week (week.weekStart)}
 						{#each week.days as day (day.date)}
@@ -308,9 +312,9 @@
 	}
 	.cal-grid {
 		display: grid;
-		grid-template-columns: repeat(5, minmax(96px, 1fr));
+		grid-template-columns: repeat(var(--cal-cols, 5), minmax(96px, 1fr));
 		gap: 10px;
-		min-width: 480px;
+		min-width: calc(var(--cal-cols, 5) * 96px);
 	}
 	.cal-head {
 		font-size: 11px;

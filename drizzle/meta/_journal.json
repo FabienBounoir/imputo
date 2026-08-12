@@ -225,6 +225,13 @@
       "when": 1786482955222,
       "tag": "0031_spooky_electro",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1786529584939,
+      "tag": "0032_flashy_king_cobra",
+      "breakpoints": true
     }
   ]
 }

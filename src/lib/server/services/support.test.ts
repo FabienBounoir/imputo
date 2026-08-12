@@ -3,6 +3,7 @@ import {
 	getSupportConfig,
 	setSupportEnabled,
 	setSupportCadence,
+	setSupportIncludeSaturday,
 	listRotationMembers,
 	addRotationMember,
 	removeRotationMember,
@@ -22,12 +23,18 @@ describe('getSupportConfig / setSupportEnabled / setSupportCadence', () => {
 	it('config par défaut désactivée en cadence hebdo, puis modifiable', async () => {
 		const { workspaceId } = await makeWorkspace();
 		const initial = await getSupportConfig(workspaceId);
-		expect(initial).toEqual({ enabled: false, cadence: 'WEEK', offset: 0 });
+		expect(initial).toEqual({ enabled: false, cadence: 'WEEK', offset: 0, includeSaturday: false });
 
 		await setSupportEnabled(workspaceId, true);
 		await setSupportCadence(workspaceId, 'MONTH');
+		await setSupportIncludeSaturday(workspaceId, true);
 
-		expect(await getSupportConfig(workspaceId)).toEqual({ enabled: true, cadence: 'MONTH', offset: 0 });
+		expect(await getSupportConfig(workspaceId)).toEqual({
+			enabled: true,
+			cadence: 'MONTH',
+			offset: 0,
+			includeSaturday: true
+		});
 	});
 });
 

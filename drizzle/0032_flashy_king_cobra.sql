@@ -1,0 +1,1 @@
+ALTER TABLE "workspace" ADD COLUMN "support_include_saturday" boolean DEFAULT false NOT NULL;

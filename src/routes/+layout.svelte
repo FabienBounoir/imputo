@@ -11,6 +11,15 @@
 
 	const SITE_DESC = 'Tickets, feuille de temps et reporting au même endroit.';
 
+	// Couleur effective (hors mode RGB, qui ne fait que défiler côté client — la favicon ne peut
+	// pas suivre ce tick sans la re-fetcher en boucle, voir routes/favicon.svg/+server.ts). Sert de
+	// clé de cache dans l'URL de la favicon ci-dessous : les navigateurs mettent en cache les
+	// favicons très agressivement, donc sans un href qui change, une nouvelle couleur d'accent ne
+	// serait jamais re-fetchée par l'onglet.
+	const accentColor = $derived(
+		(data.user?.accentMode === 'CUSTOM' ? data.user.accentColor : data.workspace?.accentColor) ?? 'default'
+	);
+
 	// Applique la couleur d'accent (fixe, ou défilante) + la met en cache pour l'anti-flash.
 	// La préférence personnelle (Réglages) prend le pas sur celle de l'espace si elle est activée.
 	// Vit ici (racine, toujours montée) pour continuer à défiler quelle que soit la page, et reprendre après un rechargement.
@@ -114,6 +123,7 @@
 
 <svelte:head>
 	<title>Imputo</title>
+	<link rel="icon" type="image/svg+xml" href="/favicon.svg?c={encodeURIComponent(accentColor)}" />
 	<meta property="og:type" content="website" />
 	<meta property="og:site_name" content="Imputo" />
 	<meta property="og:title" content="Imputo — Suivi de chiffrage & d'imputation" />

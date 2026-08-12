@@ -487,6 +487,19 @@
 					</select>
 				</div>
 			</form>
+
+			<form method="POST" action="?/supportIncludeSaturday" use:enhance style="margin-top:14px;">
+				<input type="hidden" name="includeSaturday" value={String(!data.support.includeSaturday)} />
+				<div style="display:flex;align-items:center;justify-content:space-between;gap:14px;">
+					<span
+						>Samedi <b>{data.support.includeSaturday ? 'inclus' : 'exclu'}</b> de la perm
+						<span class="hint" style="margin:2px 0 0;">En cadence « Chaque jour », détermine si le samedi compte comme un jour de rotation (le dimanche n'est jamais inclus).</span>
+					</span>
+					<button class="btn btn-ghost" type="submit">
+						{data.support.includeSaturday ? 'Exclure' : 'Inclure'}
+					</button>
+				</div>
+			</form>
 		</section>
 
 		<section class="card block">
