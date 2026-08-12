@@ -30,6 +30,11 @@ import {
 	resolvedEstimation
 } from './calc';
 
+// Bucket synthétique pour les imputations d'un ticket sans activité renseignée — jamais un vrai
+// id d'activité (ticket_activity_rae.activity_id est NOT NULL), donc son RAE/estimation/budget
+// restent toujours à 0 côté serveur ; l'UI (tickets/+page.svelte) le rend en lecture seule.
+export const NO_ACTIVITY_ID = '__no_activity__';
+
 /** Champs budget/estimation tracés dans l'historique (changeLog) — pas le reste (titre, état, code SSP…). */
 const TRACKED_FIELDS = new Set([
 	'estimationReal',
@@ -219,11 +224,14 @@ async function enrichTickets(
 					.groupBy(timeEntry.ticketId, timeEntry.activityId, timeEntry.userId, user.displayName);
 	const contribMap = new Map<string, Map<string, { userId: string; displayName: string; consumed: number }[]>>();
 	for (const c of contribRows) {
-		if (!c.activityId || !c.ticketId) continue; // imputation sans activité : hors périmètre des sous-lignes
+		if (!c.ticketId) continue;
+		// Imputation sans activité renseignée : regroupée sous le bucket "Autre" plutôt que perdue —
+		// sinon elle compte dans le "Consommé" du ticket sans jamais apparaître dans le détail par activité.
+		const activityId = c.activityId ?? NO_ACTIVITY_ID;
 		if (!contribMap.has(c.ticketId)) contribMap.set(c.ticketId, new Map());
 		const byActivity = contribMap.get(c.ticketId)!;
-		if (!byActivity.has(c.activityId)) byActivity.set(c.activityId, []);
-		byActivity.get(c.activityId)!.push({ userId: c.userId, displayName: c.displayName, consumed: num(c.total) });
+		if (!byActivity.has(activityId)) byActivity.set(activityId, []);
+		byActivity.get(activityId)!.push({ userId: c.userId, displayName: c.displayName, consumed: num(c.total) });
 	}
 
 	const involvedActivityIds = new Set<string>([
@@ -249,7 +257,7 @@ async function enrichTickets(
 				const rae = raeRows.find((r) => r.activityId === id);
 				return {
 					activityId: id,
-					label: activityLabelMap.get(id) ?? '?',
+					label: activityLabelMap.get(id) ?? (id === NO_ACTIVITY_ID ? 'Autre' : '?'),
 					raeReal: num(rae?.raeReal ?? null),
 					raeTest: num(rae?.raeTest ?? null),
 					estimation: num(rae?.estimation ?? null),
@@ -257,7 +265,12 @@ async function enrichTickets(
 					contributors: (byActivity.get(id) ?? []).sort((a, b) => a.displayName.localeCompare(b.displayName))
 				};
 			})
-			.sort((a, b) => a.label.localeCompare(b.label));
+			.sort((a, b) => {
+				// "Autre" toujours en dernier, quel que soit l'ordre alphabétique.
+				if (a.activityId === NO_ACTIVITY_ID) return 1;
+				if (b.activityId === NO_ACTIVITY_ID) return -1;
+				return a.label.localeCompare(b.label);
+			});
 	}
 
 	const groupMemberRows =
@@ -610,7 +623,8 @@ export type TicketActivityBreakdownRow = {
 
 /**
  * Détail RAE par activité + sous-lignes (activité, personne) d'un ticket, pour "Tickets & chiffrage".
- * Inclut chaque activité ayant une ligne ticket_activity_rae OU au moins une imputation sur ce ticket.
+ * Inclut chaque activité ayant une ligne ticket_activity_rae OU au moins une imputation sur ce ticket,
+ * plus un bucket "Autre" (NO_ACTIVITY_ID) pour les imputations sans activité renseignée.
  */
 export async function getTicketActivityBreakdown(
 	workspaceId: string,
@@ -649,30 +663,40 @@ export async function getTicketActivityBreakdown(
 	const raeMap = new Map(raeRows.map((r) => [r.activityId, r]));
 	const contribByActivity = new Map<string, { userId: string; displayName: string; consumed: number }[]>();
 	for (const c of contribRows) {
-		if (!c.activityId) continue; // imputation sans activité renseignée : hors périmètre des sous-lignes
-		if (!contribByActivity.has(c.activityId)) contribByActivity.set(c.activityId, []);
-		contribByActivity.get(c.activityId)!.push({ userId: c.userId, displayName: c.displayName, consumed: num(c.total) });
+		// Imputation sans activité renseignée : regroupée sous le bucket "Autre" plutôt que perdue.
+		const activityId = c.activityId ?? NO_ACTIVITY_ID;
+		if (!contribByActivity.has(activityId)) contribByActivity.set(activityId, []);
+		contribByActivity.get(activityId)!.push({ userId: c.userId, displayName: c.displayName, consumed: num(c.total) });
 	}
 
 	const activityIds = new Set<string>([...raeMap.keys(), ...contribByActivity.keys()]);
 	if (activityIds.size === 0) return [];
-	const activities = await db
-		.select({ id: activity.id, label: activity.label })
-		.from(activity)
-		.where(and(eq(activity.workspaceId, workspaceId), inArray(activity.id, [...activityIds])));
+	// NO_ACTIVITY_ID n'est jamais une vraie ligne activity (colonne uuid) : hors de la requête.
+	const realActivityIds = [...activityIds].filter((id) => id !== NO_ACTIVITY_ID);
+	const activities =
+		realActivityIds.length === 0
+			? []
+			: await db
+					.select({ id: activity.id, label: activity.label })
+					.from(activity)
+					.where(and(eq(activity.workspaceId, workspaceId), inArray(activity.id, realActivityIds)));
 	const labelMap = new Map(activities.map((a) => [a.id, a.label]));
 
 	return [...activityIds]
 		.map((id) => ({
 			activityId: id,
-			label: labelMap.get(id) ?? '?',
+			label: labelMap.get(id) ?? (id === NO_ACTIVITY_ID ? 'Autre' : '?'),
 			raeReal: num(raeMap.get(id)?.raeReal ?? null),
 			raeTest: num(raeMap.get(id)?.raeTest ?? null),
 			estimation: num(raeMap.get(id)?.estimation ?? null),
 			budget: num(raeMap.get(id)?.budget ?? null),
 			contributors: (contribByActivity.get(id) ?? []).sort((a, b) => a.displayName.localeCompare(b.displayName))
 		}))
-		.sort((a, b) => a.label.localeCompare(b.label));
+		.sort((a, b) => {
+			if (a.activityId === NO_ACTIVITY_ID) return 1;
+			if (b.activityId === NO_ACTIVITY_ID) return -1;
+			return a.label.localeCompare(b.label);
+		});
 }
 
 /**

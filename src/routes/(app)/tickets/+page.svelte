@@ -121,6 +121,10 @@
 		data.canEditEstimation ? '' : "Estimation réservée aux profils Manager et Admin."
 	);
 	const RAE_LOCKED = 'RAE réservé aux personnes ayant imputé sur cette activité.';
+	// Doit rester synchronisé avec NO_ACTIVITY_ID dans $lib/server/services/tickets.ts (pas de
+	// ticket_activity_rae possible pour ce bucket synthétique : rien à éditer ici, jamais un vrai id).
+	const NO_ACTIVITY_ID = '__no_activity__';
+	const NO_ACTIVITY_HINT = "Regroupe les imputations sans activité renseignée — pas d'activité réelle à éditer ici.";
 	function canEditRae(ar: { contributors: { userId: string }[] }) {
 		return data.canEditEstimation || ar.contributors.some((c) => c.userId === data.selfId);
 	}
@@ -523,6 +527,7 @@
 					</tr>
 					{#each r.activityBreakdown as ar (ar.activityId)}
 						{@const canRae = canEditRae(ar)}
+						{@const isOther = ar.activityId === NO_ACTIVITY_ID}
 						<tr class="activity-subrow">
 							<td></td>
 							<td class="ar-name">↳ {ar.label}
@@ -532,65 +537,81 @@
 							</td>
 							{#if data.isAdmin}
 								<td class="num">
+									{#if isOther}
+										<span class="cell-readonly" title={NO_ACTIVITY_HINT}>—</span>
+									{:else}
+										<input
+											class="cell-input num-input"
+											type="number"
+											step="0.25"
+											min="0"
+											value={ar.budget}
+											disabled={!data.isStrictAdmin}
+											title={data.isStrictAdmin ? '' : 'Budget par activité réservé aux administrateurs.'}
+											onchange={(e) => {
+												const value = Number(e.currentTarget.value) || 0;
+												debouncedSave(`ar-${r.id}-${ar.activityId}-budget`, () => saveActivityField(r, ar.activityId, 'budget', value));
+											}}
+										/>
+									{/if}
+								</td>
+							{/if}
+							<td class="num">
+								{#if isOther}
+									<span class="cell-readonly" title={NO_ACTIVITY_HINT}>—</span>
+								{:else}
 									<input
 										class="cell-input num-input"
 										type="number"
 										step="0.25"
 										min="0"
-										value={ar.budget}
-										disabled={!data.isStrictAdmin}
-										title={data.isStrictAdmin ? '' : 'Budget par activité réservé aux administrateurs.'}
+										value={ar.estimation}
 										onchange={(e) => {
 											const value = Number(e.currentTarget.value) || 0;
-											debouncedSave(`ar-${r.id}-${ar.activityId}-budget`, () => saveActivityField(r, ar.activityId, 'budget', value));
+											debouncedSave(`ar-${r.id}-${ar.activityId}-estimation`, () => saveActivityField(r, ar.activityId, 'estimation', value));
 										}}
 									/>
-								</td>
-							{/if}
-							<td class="num">
-								<input
-									class="cell-input num-input"
-									type="number"
-									step="0.25"
-									min="0"
-									value={ar.estimation}
-									onchange={(e) => {
-										const value = Number(e.currentTarget.value) || 0;
-										debouncedSave(`ar-${r.id}-${ar.activityId}-estimation`, () => saveActivityField(r, ar.activityId, 'estimation', value));
-									}}
-								/>
+								{/if}
 							</td>
 							<td class="num">
-								<input
-									class="cell-input num-input"
-									type="number"
-									step="0.25"
-									min="0"
-									value={ar.raeReal}
-									disabled={!canRae}
-									title={canRae ? '' : RAE_LOCKED}
-									onchange={(e) => {
-										const value = Number(e.currentTarget.value) || 0;
-										debouncedSave(`ar-${r.id}-${ar.activityId}-raeReal`, () => saveActivityField(r, ar.activityId, 'raeReal', value));
-									}}
-								/>
+								{#if isOther}
+									<span class="cell-readonly" title={NO_ACTIVITY_HINT}>—</span>
+								{:else}
+									<input
+										class="cell-input num-input"
+										type="number"
+										step="0.25"
+										min="0"
+										value={ar.raeReal}
+										disabled={!canRae}
+										title={canRae ? '' : RAE_LOCKED}
+										onchange={(e) => {
+											const value = Number(e.currentTarget.value) || 0;
+											debouncedSave(`ar-${r.id}-${ar.activityId}-raeReal`, () => saveActivityField(r, ar.activityId, 'raeReal', value));
+										}}
+									/>
+								{/if}
 							</td>
 							{#if data.testPhase}
 								<td></td>
 								<td class="num">
-									<input
-										class="cell-input num-input"
-										type="number"
-										step="0.25"
-										min="0"
-										value={ar.raeTest}
-										disabled={!canRae}
-										title={canRae ? '' : RAE_LOCKED}
-										onchange={(e) => {
-										const value = Number(e.currentTarget.value) || 0;
-										debouncedSave(`ar-${r.id}-${ar.activityId}-raeTest`, () => saveActivityField(r, ar.activityId, 'raeTest', value));
-									}}
-									/>
+									{#if isOther}
+										<span class="cell-readonly" title={NO_ACTIVITY_HINT}>—</span>
+									{:else}
+										<input
+											class="cell-input num-input"
+											type="number"
+											step="0.25"
+											min="0"
+											value={ar.raeTest}
+											disabled={!canRae}
+											title={canRae ? '' : RAE_LOCKED}
+											onchange={(e) => {
+											const value = Number(e.currentTarget.value) || 0;
+											debouncedSave(`ar-${r.id}-${ar.activityId}-raeTest`, () => saveActivityField(r, ar.activityId, 'raeTest', value));
+										}}
+										/>
+									{/if}
 								</td>
 							{/if}
 							<td class="num tabnum consumed">{round(ar.contributors.reduce((s, c) => s + c.consumed, 0)) || '—'}</td>
@@ -1114,6 +1135,16 @@
 		background: var(--surface);
 		box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
 		outline: none;
+	}
+	/* Bucket "Autre" (imputations sans activité) : rien à éditer, cf. NO_ACTIVITY_ID. */
+	.cell-readonly {
+		display: block;
+		width: 100%;
+		padding: 6px 7px;
+		font-size: 13.5px;
+		color: var(--text-mute);
+		text-align: center;
+		cursor: default;
 	}
 	.title-input {
 		font-weight: 500;
