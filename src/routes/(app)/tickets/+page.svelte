@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { goto } from '$app/navigation';
-	import { page } from '$app/state';
+	import { page, navigating } from '$app/state';
 	import { formatDateTime } from '$lib/utils/date';
 	import { TICKET_FIELD_LABELS } from '$lib/changeLogLabels';
 	let { data, form } = $props();
@@ -63,6 +63,9 @@
 	// exactKey : arrivée via un lien direct depuis un dashboard sprint/version (?ticket=…) — sans
 	// ça le bouton Réinitialiser reste invisible et on ne peut plus revenir à la liste complète.
 	const hasFilters = $derived(!!(data.filters.query || data.filters.stateId || data.filters.projectId || data.filters.sprintId || data.filters.versionId || data.filters.exactKey));
+	// Filtres/vue/pagination naviguent tous via goto() (rechargement serveur) : un fieldset désactive
+	// la barre d'un coup pendant le trajet, pour qu'on ne confonde jamais l'ancienne liste avec la nouvelle.
+	const isNavigating = $derived(!!navigating.to);
 	function resetFilters() {
 		navigateWith({ q: '', state: '', project: '', sprint: '', version: '' });
 	}
@@ -391,30 +394,35 @@
 	{/if}
 
 	<div class="filters">
-		<div class="seg2">
-			<button class:on={data.view === 'table'} onclick={() => navigateWith({ view: 'table' })}>Tableau</button>
-			<button class:on={data.view === 'kanban'} onclick={() => navigateWith({ view: 'kanban' })}>Kanban</button>
-		</div>
-		<select class="filter-sel" value={data.filters.stateId ?? ''} onchange={(e) => navigateWith({ state: e.currentTarget.value })} aria-label="Filtrer par état">
-			<option value="">Tous les états</option>
-			{#each data.ref.states as s (s.id)}<option value={s.id}>{s.emoji} {s.label}</option>{/each}
-		</select>
-		<select class="filter-sel" value={data.filters.projectId ?? ''} onchange={(e) => navigateWith({ project: e.currentTarget.value })} aria-label="Filtrer par projet">
-			<option value="">Tous les projets</option>
-			{#each data.ref.projects as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
-		</select>
-		<select class="filter-sel" value={data.filters.sprintId ?? ''} onchange={(e) => navigateWith({ sprint: e.currentTarget.value })} aria-label="Filtrer par sprint">
-			<option value="">Tous les sprints</option>
-			{#each data.ref.sprints as s (s.id)}<option value={s.id}>{s.name}</option>{/each}
-		</select>
-		<select class="filter-sel" value={data.filters.versionId ?? ''} onchange={(e) => navigateWith({ version: e.currentTarget.value })} aria-label="Filtrer par version">
-			<option value="">Toutes les versions</option>
-			{#each data.ref.versions as v (v.id)}<option value={v.id}>{v.name}</option>{/each}
-		</select>
-		{#if hasFilters}
-			<button class="reset-btn" onclick={resetFilters}>✕ Réinitialiser</button>
-			<span class="count">{data.total} résultat{data.total > 1 ? 's' : ''}</span>
-		{/if}
+		<!-- Recherche exclue du fieldset : elle reste tapable pendant qu'une frappe précédente
+		     est encore en vol (le goto suivant, debouncé, remplace l'ancien de toute façon). -->
+		<fieldset class="filter-fields" disabled={isNavigating}>
+			<div class="seg2">
+				<button class:on={data.view === 'table'} onclick={() => navigateWith({ view: 'table' })}>Tableau</button>
+				<button class:on={data.view === 'kanban'} onclick={() => navigateWith({ view: 'kanban' })}>Kanban</button>
+			</div>
+			<select class="filter-sel" value={data.filters.stateId ?? ''} onchange={(e) => navigateWith({ state: e.currentTarget.value })} aria-label="Filtrer par état">
+				<option value="">Tous les états</option>
+				{#each data.ref.states as s (s.id)}<option value={s.id}>{s.emoji} {s.label}</option>{/each}
+			</select>
+			<select class="filter-sel" value={data.filters.projectId ?? ''} onchange={(e) => navigateWith({ project: e.currentTarget.value })} aria-label="Filtrer par projet">
+				<option value="">Tous les projets</option>
+				{#each data.ref.projects as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
+			</select>
+			<select class="filter-sel" value={data.filters.sprintId ?? ''} onchange={(e) => navigateWith({ sprint: e.currentTarget.value })} aria-label="Filtrer par sprint">
+				<option value="">Tous les sprints</option>
+				{#each data.ref.sprints as s (s.id)}<option value={s.id}>{s.name}</option>{/each}
+			</select>
+			<select class="filter-sel" value={data.filters.versionId ?? ''} onchange={(e) => navigateWith({ version: e.currentTarget.value })} aria-label="Filtrer par version">
+				<option value="">Toutes les versions</option>
+				{#each data.ref.versions as v (v.id)}<option value={v.id}>{v.name}</option>{/each}
+			</select>
+			{#if hasFilters}
+				<button class="reset-btn" onclick={resetFilters}>✕ Réinitialiser</button>
+			{/if}
+		</fieldset>
+		{#if hasFilters}<span class="count">{data.total} résultat{data.total > 1 ? 's' : ''}</span>{/if}
+		{#if isNavigating}<span class="loading-hint">Chargement…</span>{/if}
 		<div class="search">
 			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
 			<!-- svelte-ignore a11y_autofocus -->
@@ -600,9 +608,9 @@
 	</div>
 		{#if data.pageCount > 1}
 			<div class="pager">
-				<button class="btn btn-ghost" disabled={data.page <= 1} onclick={() => navigateWith({ page: String(data.page - 1) })}>← Précédent</button>
+				<button class="btn btn-ghost" disabled={data.page <= 1 || isNavigating} onclick={() => navigateWith({ page: String(data.page - 1) })}>← Précédent</button>
 				<span class="pager-info">Page {data.page} / {data.pageCount} · {data.total} tickets</span>
-				<button class="btn btn-ghost" disabled={data.page >= data.pageCount} onclick={() => navigateWith({ page: String(data.page + 1) })}>Suivant →</button>
+				<button class="btn btn-ghost" disabled={data.page >= data.pageCount || isNavigating} onclick={() => navigateWith({ page: String(data.page + 1) })}>Suivant →</button>
 			</div>
 		{/if}
 	</div>
@@ -794,6 +802,27 @@
 		gap: 9px;
 		margin-bottom: 16px;
 		flex-wrap: wrap;
+	}
+	.filter-fields {
+		display: flex;
+		align-items: center;
+		gap: 9px;
+		margin: 0;
+		padding: 0;
+		border: 0;
+		min-width: 0;
+		flex-wrap: wrap;
+	}
+	.filter-fields:disabled {
+		opacity: 0.6;
+	}
+	.filter-fields:disabled .filter-sel,
+	.filter-fields:disabled .seg2 button {
+		cursor: wait;
+	}
+	.loading-hint {
+		font-size: 12.5px;
+		color: var(--text-mute);
 	}
 	.filter-sel {
 		padding: 7px 11px;

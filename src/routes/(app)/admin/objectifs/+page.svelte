@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { goto } from '$app/navigation';
+	import { navigating } from '$app/state';
 	import TargetPicker from '$lib/components/TargetPicker.svelte';
 	import { downloadSvgAsPng } from '$lib/utils/svgToPng';
 
@@ -20,6 +21,7 @@
 	function selectUser(id: string) {
 		goto(`?w=${data.weekMondayISO}&u=${id}`);
 	}
+	const isNavigating = $derived(!!navigating.to);
 
 	async function downloadObjectivesPng() {
 		imgBusy = true;
@@ -37,12 +39,13 @@
 <div class="topbar">
 	<h1>Objectifs de la semaine<small>Semaine {data.weekNumber} · {data.weekLabel}</small></h1>
 	<div class="spacer"></div>
-	<div class="wknav">
-		<a class="wkbtn" href="?w={data.prevWeek}&u={data.selectedUserId}" aria-label="Semaine précédente">
+	{#if isNavigating}<span class="loading-hint">Chargement…</span>{/if}
+	<div class="wknav" class:disabled={isNavigating}>
+		<a class="wkbtn" href="?w={data.prevWeek}&u={data.selectedUserId}" aria-label="Semaine précédente" aria-disabled={isNavigating} onclick={(e) => { if (isNavigating) e.preventDefault(); }}>
 			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m15 18-6-6 6-6"/></svg>
 		</a>
 		<span class="cur">S{data.weekNumber}</span>
-		<a class="wkbtn" href="?w={data.nextWeek}&u={data.selectedUserId}" aria-label="Semaine suivante">
+		<a class="wkbtn" href="?w={data.nextWeek}&u={data.selectedUserId}" aria-label="Semaine suivante" aria-disabled={isNavigating} onclick={(e) => { if (isNavigating) e.preventDefault(); }}>
 			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m9 18 6-6-6-6"/></svg>
 		</a>
 	</div>
@@ -59,7 +62,7 @@
 			{#if form?.objOk}<div class="flash ok">Mis à jour ✓</div>{/if}
 
 			<div class="person-row">
-				<select class="member-pick" value={data.selectedUserId} onchange={(e) => selectUser(e.currentTarget.value)} aria-label="Personne">
+				<select class="member-pick" value={data.selectedUserId} disabled={isNavigating} onchange={(e) => selectUser(e.currentTarget.value)} aria-label="Personne">
 					{#each data.members as m (m.id)}
 						<option value={m.id}>{m.displayName}</option>
 					{/each}
@@ -244,6 +247,14 @@
 	}
 	.wkbtn:hover {
 		background: var(--surface-sunk);
+	}
+	.wknav.disabled {
+		opacity: 0.6;
+		pointer-events: none;
+	}
+	.loading-hint {
+		font-size: 12.5px;
+		color: var(--text-mute);
 	}
 	.cur {
 		padding: 0 12px;

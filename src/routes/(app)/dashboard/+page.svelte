@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { navigating } from '$app/state';
 	import { parseISODate, toISODate, addDays, dayName, dayNum, formatRange, isPublicHolidayFR, mondayOf, isoWeek } from '$lib/utils/date';
 	let { data } = $props();
 
@@ -51,7 +52,14 @@
 <div class="topbar">
 	<h1>Synthèse<small>{isAll ? "Vue d'ensemble de l'espace" : 'Imputations du mois'}</small></h1>
 	<div class="spacer"></div>
-	<select class="periodsel" value={data.scope} onchange={(e) => goto(`?month=${e.currentTarget.value}`, { keepFocus: true })} aria-label="Période des statistiques">
+	{#if navigating.to}<span class="loading-hint">Chargement…</span>{/if}
+	<select
+		class="periodsel"
+		value={data.scope}
+		disabled={!!navigating.to}
+		onchange={(e) => goto(`?month=${e.currentTarget.value}`, { keepFocus: true })}
+		aria-label="Période des statistiques"
+	>
 		{#each data.months as m (m.value)}
 			<option value={m.value}>{m.label}</option>
 		{/each}
@@ -308,6 +316,14 @@
 		outline: none;
 		border-color: var(--accent);
 		box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+	}
+	.periodsel:disabled {
+		opacity: 0.6;
+		cursor: wait;
+	}
+	.loading-hint {
+		font-size: 12px;
+		color: var(--text-mute);
 	}
 
 	.kpis {

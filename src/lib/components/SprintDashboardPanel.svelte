@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { navigating } from '$app/state';
 
 	function round2(n: number) {
 		return Math.round((n + Number.EPSILON) * 100) / 100;
@@ -132,9 +133,11 @@
 	<h1>{title}{#if dashboard}<small>{dashboard.sprintName}</small>{/if}</h1>
 	<div class="spacer"></div>
 	{#if options.length > 0}
+		{#if navigating.to}<span class="loading-hint">Chargement…</span>{/if}
 		<select
 			class="periodsel"
 			value={selectedId}
+			disabled={!!navigating.to}
 			onchange={(e) => goto(`${baseHref}?id=${e.currentTarget.value}`, { keepFocus: true })}
 			aria-label="Sélectionner"
 		>
@@ -344,6 +347,14 @@
 		font-size: 13px;
 		font-weight: 600;
 		color: var(--text);
+	}
+	.periodsel:disabled {
+		opacity: 0.6;
+		cursor: wait;
+	}
+	.loading-hint {
+		font-size: 12px;
+		color: var(--text-mute);
 	}
 	.empty {
 		color: var(--text-mute);

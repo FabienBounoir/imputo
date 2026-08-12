@@ -13,6 +13,7 @@
 	} from '$lib/utils/date';
 	import { tick } from 'svelte';
 	import { goto, afterNavigate } from '$app/navigation';
+	import { navigating } from '$app/state';
 	import ExportModal from '$lib/components/ExportModal.svelte';
 	import TargetPicker from '$lib/components/TargetPicker.svelte';
 	import TicketEditModal from '$lib/components/TicketEditModal.svelte';
@@ -253,6 +254,10 @@
 		const anchor = days.includes(today) ? today : data.period.firstDay;
 		goto(periodHref(anchor, over), { noScroll: true });
 	}
+	// Granularité/mode/membre/période naviguent tous en rechargeant les données serveur : le
+	// dérivé sert à geler la barre le temps du trajet, pour ne pas confondre l'ancienne période
+	// affichée avec la nouvelle sélection pendant que le backend répond.
+	const isNavigating = $derived(!!navigating.to);
 	function onCellKey(e: KeyboardEvent, ri: number, di: number, row: Row, day: string) {
 		if (e.key in KEYMAP) {
 			e.preventDefault();
@@ -462,7 +467,8 @@
 		</span>
 	{/if}
 	<div class="spacer"></div>
-	<div class="periodpick">
+	{#if isNavigating}<span class="loading-hint">Chargement…</span>{/if}
+	<fieldset class="periodpick" disabled={isNavigating}>
 		<div class="seg">
 			{#each GRANULARITIES as g (g)}
 				<button class:on={data.period.granularity === g} onclick={() => setPeriod({ g })}>{GRANULARITY_LABELS[g]}</button>
@@ -475,11 +481,12 @@
 				{/each}
 			</div>
 		{/if}
-	</div>
+	</fieldset>
 	{#if data.canViewOthers}
 		<select
 			class="member-pick"
 			value={data.viewingTeam ? 'team' : data.viewedId}
+			disabled={isNavigating}
 			onchange={(e) => viewMember(e.currentTarget.value)}
 			aria-label="Voir l'imputation de"
 		>
@@ -493,12 +500,12 @@
 	{#if data.isAdmin}
 		<ExportModal label="Exporter Excel" buttonClass="btn btn-ghost" />
 	{/if}
-	<div class="wknav">
-		<a class="wkbtn" href={periodHref(data.period.prevAnchor)} aria-label="Période précédente">
+	<div class="wknav" class:disabled={isNavigating}>
+		<a class="wkbtn" href={periodHref(data.period.prevAnchor)} aria-label="Période précédente" aria-disabled={isNavigating} onclick={(e) => { if (isNavigating) e.preventDefault(); }}>
 			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m15 18-6-6 6-6"/></svg>
 		</a>
 		<span class="cur">{data.period.shortLabel}</span>
-		<a class="wkbtn" href={periodHref(data.period.nextAnchor)} aria-label="Période suivante">
+		<a class="wkbtn" href={periodHref(data.period.nextAnchor)} aria-label="Période suivante" aria-disabled={isNavigating} onclick={(e) => { if (isNavigating) e.preventDefault(); }}>
 			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m9 18 6-6-6-6"/></svg>
 		</a>
 	</div>
@@ -1032,6 +1039,14 @@
 	.wkbtn:hover {
 		background: var(--surface-sunk);
 	}
+	.wknav.disabled {
+		opacity: 0.6;
+		pointer-events: none;
+	}
+	.loading-hint {
+		font-size: 12.5px;
+		color: var(--text-mute);
+	}
 	.cur {
 		padding: 0 12px;
 		font-weight: 600;
@@ -1203,6 +1218,13 @@
 		display: flex;
 		align-items: center;
 		gap: 8px;
+		margin: 0;
+		padding: 0;
+		border: 0;
+		min-width: 0;
+	}
+	.periodpick:disabled {
+		opacity: 0.6;
 	}
 	.seg {
 		display: flex;

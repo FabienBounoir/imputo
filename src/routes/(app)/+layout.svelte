@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { browser } from '$app/environment';
-	import { page } from '$app/state';
+	import { page, navigating } from '$app/state';
 	import { beep } from '$lib/sound';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
@@ -43,6 +43,11 @@
 		return page.url.pathname === path || page.url.pathname.startsWith(path + '/');
 	}
 
+	// Barre de progression globale : uniquement pour un changement de PAGE (route différente), pas
+	// pour un rechargement de filtre en place (même route, ex. tickets/imputation) — ces cas-là ont
+	// déjà leur propre indicateur local, la doublonner serait redondant.
+	const isPageChange = $derived(!!navigating.to && navigating.to.route.id !== page.route.id);
+
 	const isOwner = $derived(!!data.user && data.user.id === data.workspace?.createdByUserId);
 	const roleLabel = $derived(data.role === 'ADMIN' ? 'Admin' : data.role === 'MANAGER' ? 'Manager' : 'Membre');
 
@@ -78,6 +83,7 @@
 	}
 </script>
 
+<div class="pageload-bar" class:on={isPageChange} aria-hidden="true"></div>
 <div class="app">
 	<div class="mobile-topbar">
 		<button class="icon-btn" aria-label="Ouvrir le menu" onclick={() => (sidebarOpen = true)}>
