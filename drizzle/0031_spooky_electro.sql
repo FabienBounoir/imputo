@@ -1,0 +1,1 @@
+ALTER TABLE "workspace" ADD COLUMN "support_rotation_offset" integer DEFAULT 0 NOT NULL;

@@ -16,7 +16,7 @@ import {
 	ticketActivityRae
 } from '$lib/server/db';
 import { parseFlags } from '$lib/server/services/tickets';
-import { num, totalEstimation, ecartExecution, avancement, round, resolvedRae } from '$lib/server/services/calc';
+import { num, ecartVsEstime, avancement, round, resolvedRae, resolvedEstimation } from '$lib/server/services/calc';
 import { getWeeklySynthesis } from '$lib/server/services/weeklySynthesis';
 import { countWorkdaysNonHoliday, parseISODate, addDays, dayNum, toISODate } from '$lib/utils/date';
 
@@ -307,7 +307,8 @@ export async function buildWorkbook(
 				ticketId: ticketActivityRae.ticketId,
 				activityId: ticketActivityRae.activityId,
 				raeReal: ticketActivityRae.raeReal,
-				raeTest: ticketActivityRae.raeTest
+				raeTest: ticketActivityRae.raeTest,
+				estimation: ticketActivityRae.estimation
 			})
 			.from(ticketActivityRae)
 			.innerJoin(ticket, eq(ticketActivityRae.ticketId, ticket.id))
@@ -348,8 +349,11 @@ export async function buildWorkbook(
 		activityRaeByTicket.get(r.ticketId)!.push(r);
 	}
 	const resolvedRaeByTicket = new Map<string, { real: number; test: number }>();
+	const resolvedEstimationByTicket = new Map<string, number>();
 	for (const t of tickets) {
-		resolvedRaeByTicket.set(t.id, resolvedRae(t.raeReal, t.raeTest, activityRaeByTicket.get(t.id) ?? []));
+		const activityRows = activityRaeByTicket.get(t.id) ?? [];
+		resolvedRaeByTicket.set(t.id, resolvedRae(t.raeReal, t.raeTest, activityRows));
+		resolvedEstimationByTicket.set(t.id, resolvedEstimation(t.estimationReal, activityRows));
 	}
 
 	// consommé par ticket par user (période)
@@ -393,7 +397,8 @@ export async function buildWorkbook(
 	let consumedTickets = 0;
 
 	for (const t of periodTickets) {
-		const est = totalEstimation(t.estimationReal, t.estimationTest, testPhase);
+		const estReal0 = resolvedEstimationByTicket.get(t.id) ?? 0;
+		const est = round(estReal0 + (testPhase ? num(t.estimationTest) : 0));
 		const resolved0 = resolvedRaeByTicket.get(t.id) ?? { real: 0, test: 0 };
 		const rae = round(resolved0.real + (testPhase ? resolved0.test : 0));
 		const consumed = ticketConsumed(t.id);
@@ -554,7 +559,8 @@ export async function buildWorkbook(
 
 	let totEr = 0, totRr = 0, totEt = 0, totPr = 0, totRt = 0, totTe = 0, totTr = 0, totCons = 0;
 	for (const t of periodTickets) {
-		const totalEst = totalEstimation(t.estimationReal, t.estimationTest, testPhase);
+		const estReal = resolvedEstimationByTicket.get(t.id) ?? 0;
+		const totalEst = round(estReal + (testPhase ? num(t.estimationTest) : 0));
 		const resolved = resolvedRaeByTicket.get(t.id) ?? { real: 0, test: 0 };
 		const rae = round(resolved.real + (testPhase ? resolved.test : 0));
 		const perUser = consumedByTicketUser.get(t.id) ?? new Map();
@@ -569,7 +575,7 @@ export async function buildWorkbook(
 			state: t.stateLabel ? `${t.stateEmoji ?? ''} ${t.stateLabel}`.trim() : '',
 			// Personnes distinctes ayant imputé sur ce ticket (période exportée), pas de détail par activité ici.
 			assignee: [...perUser.keys()].map((uid) => memberName.get(uid) ?? '?').sort().join(', '),
-			er: num(t.estimationReal),
+			er: estReal,
 			rr: resolved.real,
 			et: num(t.estimationTest),
 			pr: num(t.prepa),
@@ -578,7 +584,7 @@ export async function buildWorkbook(
 			tr: rae,
 			consumed,
 			// Réel uniquement, toujours (jamais Estimation/RAE Test même si la phase Test est active).
-			ecart: ecartExecution(resolved.real, consumed, num(t.estimationReal)),
+			ecart: ecartVsEstime(resolved.real, consumed, estReal),
 			pct: avancement(totalEst, rae),
 			cypress: fl.cypress,
 			docTech: fl.docTech,
@@ -586,14 +592,14 @@ export async function buildWorkbook(
 		};
 		for (const m of members) rowData[`u_${m.id}`] = perUser.get(m.id) ?? 0;
 		const row = s1.addRow(rowData);
-		if (num(t.estimationReal) > 0 && Number(rowData.ecart) > 0) row.getCell('ecart').font = { color: { argb: OVER_RED } };
+		if (estReal > 0 && Number(rowData.ecart) > 0) row.getCell('ecart').font = { color: { argb: OVER_RED } };
 		const stColor = stateColorByKey.get(String(rowData.state));
 		if (stColor) {
 			const bg = tintArgb(stColor, 0.78);
 			row.getCell('state').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
 			row.getCell('state').font = { color: { argb: pickInk(bg) } };
 		}
-		totEr += num(t.estimationReal); totRr += resolved.real; totEt += num(t.estimationTest);
+		totEr += estReal; totRr += resolved.real; totEt += num(t.estimationTest);
 		totPr += num(t.prepa); totRt += resolved.test; totTe += totalEst; totTr += rae; totCons += consumed;
 	}
 	styleHeader(s1.getRow(1), theme);

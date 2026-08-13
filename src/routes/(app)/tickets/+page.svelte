@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { goto } from '$app/navigation';
-	import { page } from '$app/state';
+	import { page, navigating } from '$app/state';
 	import { formatDateTime } from '$lib/utils/date';
 	import { TICKET_FIELD_LABELS } from '$lib/changeLogLabels';
 	let { data, form } = $props();
@@ -63,6 +63,9 @@
 	// exactKey : arrivée via un lien direct depuis un dashboard sprint/version (?ticket=…) — sans
 	// ça le bouton Réinitialiser reste invisible et on ne peut plus revenir à la liste complète.
 	const hasFilters = $derived(!!(data.filters.query || data.filters.stateId || data.filters.projectId || data.filters.sprintId || data.filters.versionId || data.filters.exactKey));
+	// Filtres/vue/pagination naviguent tous via goto() (rechargement serveur) : un fieldset désactive
+	// la barre d'un coup pendant le trajet, pour qu'on ne confonde jamais l'ancienne liste avec la nouvelle.
+	const isNavigating = $derived(!!navigating.to);
 	function resetFilters() {
 		navigateWith({ q: '', state: '', project: '', sprint: '', version: '' });
 	}
@@ -87,6 +90,7 @@
 		sspCode: string | null;
 		estimationPrev: number | null;
 		enveloppeTotale: number | null;
+		hasActivityEstimation: boolean;
 		groupIds: string[];
 		activityBreakdown: ActivityBreakdownRow[];
 	};
@@ -96,6 +100,8 @@
 		label: string;
 		raeReal: number;
 		raeTest: number;
+		estimation: number;
+		budget: number;
 		contributors: { userId: string; displayName: string; consumed: number }[];
 	};
 
@@ -115,13 +121,22 @@
 		data.canEditEstimation ? '' : "Estimation réservée aux profils Manager et Admin."
 	);
 	const RAE_LOCKED = 'RAE réservé aux personnes ayant imputé sur cette activité.';
+	// Doit rester synchronisé avec NO_ACTIVITY_ID dans $lib/server/services/tickets.ts (pas de
+	// ticket_activity_rae possible pour ce bucket synthétique : rien à éditer ici, jamais un vrai id).
+	const NO_ACTIVITY_ID = '__no_activity__';
+	const NO_ACTIVITY_HINT = "Regroupe les imputations sans activité renseignée — pas d'activité réelle à éditer ici.";
 	function canEditRae(ar: { contributors: { userId: string }[] }) {
 		return data.canEditEstimation || ar.contributors.some((c) => c.userId === data.selfId);
 	}
 
-	// RAE par activité : lignes fines toujours visibles sous le ticket (plus de collapse/fetch à
-	// l'ouverture — data.tickets porte déjà le détail, chargé en une fois avec la liste).
-	async function saveActivityRae(row: Row, activityId: string, field: 'raeReal' | 'raeTest', value: number) {
+	// RAE/Estimé/Budget par activité : lignes fines toujours visibles sous le ticket (plus de
+	// collapse/fetch à l'ouverture — data.tickets porte déjà le détail, chargé en une fois avec la liste).
+	async function saveActivityField(
+		row: Row,
+		activityId: string,
+		field: 'raeReal' | 'raeTest' | 'estimation' | 'budget',
+		value: number
+	) {
 		const res = await fetch(`/api/tickets/${row.id}/activity-rae`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
@@ -129,10 +144,12 @@
 		});
 		if (!res.ok) return;
 		row.activityBreakdown = (await res.json()).rows;
-		// RAE Réal/Test global = compilation des activités (jamais saisi à la main).
+		// RAE Réal/Test et Estimé global = compilation des activités (jamais saisis à la main).
 		if (row.activityBreakdown.length > 0) {
 			row.raeReal = round(row.activityBreakdown.reduce((s, a) => s + a.raeReal, 0));
 			row.raeTest = round(row.activityBreakdown.reduce((s, a) => s + a.raeTest, 0));
+			row.estimationReal = round(row.activityBreakdown.reduce((s, a) => s + a.estimation, 0));
+			row.hasActivityEstimation = true;
 		}
 		flash();
 	}
@@ -158,6 +175,7 @@
 			sspCode: t.sspCode,
 			estimationPrev: t.estimationPrev,
 			enveloppeTotale: t.enveloppeTotale,
+			hasActivityEstimation: t.hasActivityEstimation,
 			groupIds: [...t.groupIds],
 			activityBreakdown: t.activityBreakdown.map((a) => ({ ...a, contributors: [...a.contributors] }))
 		}));
@@ -178,8 +196,9 @@
 	const round = (x: number) => Math.round((x + Number.EPSILON) * 100) / 100;
 	const totalEst = (r: Row) => round(n(r.estimationReal) + (data.testPhase ? n(r.estimationTest) : 0));
 	const totalRae = (r: Row) => round(n(r.raeReal) + (data.testPhase ? n(r.raeTest) : 0));
-	// Écart d'exécution : Réel uniquement, jamais Test (cf. calc.ts:ecartExecution côté serveur).
-	const ecartExecution = (r: Row) => round(n(r.raeReal) + r.consumed - n(r.estimationReal));
+	// Écarts : Réel uniquement, jamais Test (cf. calc.ts:ecartVsEstime/ecartVsBudget côté serveur).
+	const ecartVsEstime = (r: Row) => round(n(r.raeReal) + r.consumed - n(r.estimationReal));
+	const ecartVsBudget = (r: Row) => (r.enveloppeTotale == null ? null : round(n(r.raeReal) + r.consumed - r.enveloppeTotale));
 	const avancement = (r: Row) => {
 		const te = totalEst(r);
 		return te > 0 ? Math.min(1, Math.max(0, (te - totalRae(r)) / te)) : 0;
@@ -357,7 +376,7 @@
 				</div>
 				{#if data.canEditEstimation}
 					<div class="grid2">
-						<div class="field"><label for="er">Est. Réal</label><input id="er" name="estimationReal" type="number" step="0.25" min="0" /></div>
+						<div class="field"><label for="er">Estimé</label><input id="er" name="estimationReal" type="number" step="0.25" min="0" /></div>
 						{#if data.testPhase}<div class="field"><label for="et">Est. Test</label><input id="et" name="estimationTest" type="number" step="0.25" min="0" /></div>{/if}
 					</div>
 				{/if}
@@ -379,30 +398,35 @@
 	{/if}
 
 	<div class="filters">
-		<div class="seg2">
-			<button class:on={data.view === 'table'} onclick={() => navigateWith({ view: 'table' })}>Tableau</button>
-			<button class:on={data.view === 'kanban'} onclick={() => navigateWith({ view: 'kanban' })}>Kanban</button>
-		</div>
-		<select class="filter-sel" value={data.filters.stateId ?? ''} onchange={(e) => navigateWith({ state: e.currentTarget.value })} aria-label="Filtrer par état">
-			<option value="">Tous les états</option>
-			{#each data.ref.states as s (s.id)}<option value={s.id}>{s.emoji} {s.label}</option>{/each}
-		</select>
-		<select class="filter-sel" value={data.filters.projectId ?? ''} onchange={(e) => navigateWith({ project: e.currentTarget.value })} aria-label="Filtrer par projet">
-			<option value="">Tous les projets</option>
-			{#each data.ref.projects as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
-		</select>
-		<select class="filter-sel" value={data.filters.sprintId ?? ''} onchange={(e) => navigateWith({ sprint: e.currentTarget.value })} aria-label="Filtrer par sprint">
-			<option value="">Tous les sprints</option>
-			{#each data.ref.sprints as s (s.id)}<option value={s.id}>{s.name}</option>{/each}
-		</select>
-		<select class="filter-sel" value={data.filters.versionId ?? ''} onchange={(e) => navigateWith({ version: e.currentTarget.value })} aria-label="Filtrer par version">
-			<option value="">Toutes les versions</option>
-			{#each data.ref.versions as v (v.id)}<option value={v.id}>{v.name}</option>{/each}
-		</select>
-		{#if hasFilters}
-			<button class="reset-btn" onclick={resetFilters}>✕ Réinitialiser</button>
-			<span class="count">{data.total} résultat{data.total > 1 ? 's' : ''}</span>
-		{/if}
+		<!-- Recherche exclue du fieldset : elle reste tapable pendant qu'une frappe précédente
+		     est encore en vol (le goto suivant, debouncé, remplace l'ancien de toute façon). -->
+		<fieldset class="filter-fields" disabled={isNavigating}>
+			<div class="seg2">
+				<button class:on={data.view === 'table'} onclick={() => navigateWith({ view: 'table' })}>Tableau</button>
+				<button class:on={data.view === 'kanban'} onclick={() => navigateWith({ view: 'kanban' })}>Kanban</button>
+			</div>
+			<select class="filter-sel" value={data.filters.stateId ?? ''} onchange={(e) => navigateWith({ state: e.currentTarget.value })} aria-label="Filtrer par état">
+				<option value="">Tous les états</option>
+				{#each data.ref.states as s (s.id)}<option value={s.id}>{s.emoji} {s.label}</option>{/each}
+			</select>
+			<select class="filter-sel" value={data.filters.projectId ?? ''} onchange={(e) => navigateWith({ project: e.currentTarget.value })} aria-label="Filtrer par projet">
+				<option value="">Tous les projets</option>
+				{#each data.ref.projects as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
+			</select>
+			<select class="filter-sel" value={data.filters.sprintId ?? ''} onchange={(e) => navigateWith({ sprint: e.currentTarget.value })} aria-label="Filtrer par sprint">
+				<option value="">Tous les sprints</option>
+				{#each data.ref.sprints as s (s.id)}<option value={s.id}>{s.name}</option>{/each}
+			</select>
+			<select class="filter-sel" value={data.filters.versionId ?? ''} onchange={(e) => navigateWith({ version: e.currentTarget.value })} aria-label="Filtrer par version">
+				<option value="">Toutes les versions</option>
+				{#each data.ref.versions as v (v.id)}<option value={v.id}>{v.name}</option>{/each}
+			</select>
+			{#if hasFilters}
+				<button class="reset-btn" onclick={resetFilters}>✕ Réinitialiser</button>
+			{/if}
+		</fieldset>
+		{#if hasFilters}<span class="count">{data.total} résultat{data.total > 1 ? 's' : ''}</span>{/if}
+		{#if isNavigating}<span class="loading-hint">Chargement…</span>{/if}
 		<div class="search">
 			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
 			<!-- svelte-ignore a11y_autofocus -->
@@ -417,9 +441,11 @@
 			<thead>
 				<tr>
 					<th style="width:170px;">État</th><th>Ticket</th>
-					<th class="num">Est. Réal</th><th class="num">RAE Réal</th>
+					{#if data.isAdmin}<th class="num">Budget</th>{/if}
+					<th class="num">Estimé</th><th class="num">RAE Réal</th>
 					{#if data.testPhase}<th class="num">Est. Test</th><th class="num">RAE Test</th>{/if}<th class="num">Conso.</th>
-					<th class="num" title="Écart d'exécution : RAE Réel + consommé − Estimation Réelle">Écart d'exéc.</th><th class="num" style="width:130px;">Avancement</th>
+					{#if data.isAdmin}<th class="num" title="Écart vs budget : RAE Réel + consommé − Budget">Écart vs budget</th>{/if}
+					<th class="num" title="Écart vs estimé : RAE Réel + consommé − Estimé">Écart vs estimé</th><th class="num" style="width:130px;">Avancement</th>
 				</tr>
 			</thead>
 			<tbody>
@@ -448,7 +474,30 @@
 								</div>
 							</div>
 						</td>
-						<td class="num"><input class="cell-input num-input" type="number" step="0.25" min="0" bind:value={r.estimationReal} disabled={!data.canEditEstimation} title={estTitle} onchange={() => debouncedSave(`est-${r.id}-real`, () => saveEst(r, 'real'))} /></td>
+						{#if data.isAdmin}
+							<td class="num">
+								<input
+									class="cell-input num-input"
+									type="number"
+									step="0.25"
+									min="0"
+									bind:value={r.enveloppeTotale}
+									onchange={() => debouncedSave(`env-${r.id}`, () => save(r, 'enveloppeTotale', r.enveloppeTotale))}
+								/>
+							</td>
+						{/if}
+						<td class="num">
+							<input
+								class="cell-input num-input"
+								type="number"
+								step="0.25"
+								min="0"
+								bind:value={r.estimationReal}
+								disabled={!data.canEditEstimation || r.hasActivityEstimation}
+								title={r.hasActivityEstimation ? "Estimé = compilation des Estimés par activité ci-dessous (non éditable ici)" : estTitle}
+								onchange={() => debouncedSave(`est-${r.id}-real`, () => saveEst(r, 'real'))}
+							/>
+						</td>
 						<td class="num">
 							<input
 								class="cell-input num-input"
@@ -465,7 +514,10 @@
 							<td class="num"><input class="cell-input num-input" type="number" step="0.25" min="0" value={r.raeTest} disabled title="RAE Test = compilation des RAE par activité ci-dessous (non éditable ici)" /></td>
 						{/if}
 						<td class="num tabnum consumed">{r.consumed || '—'}</td>
-						<td class="num tabnum" class:gap-pos={ecartExecution(r) > 0}>{ecartExecution(r) > 0 ? '+' : ''}{ecartExecution(r) || 0}</td>
+						{#if data.isAdmin}
+							<td class="num tabnum" class:gap-pos={(ecartVsBudget(r) ?? 0) > 0}>{ecartVsBudget(r) == null ? '—' : `${ecartVsBudget(r)! > 0 ? '+' : ''}${ecartVsBudget(r) || 0}`}</td>
+						{/if}
+						<td class="num tabnum" class:gap-pos={ecartVsEstime(r) > 0}>{ecartVsEstime(r) > 0 ? '+' : ''}{ecartVsEstime(r) || 0}</td>
 						<td>
 							<div class="prog">
 								<div class="bar"><i style="width:{pct(avancement(r))}%"></i></div>
@@ -475,6 +527,7 @@
 					</tr>
 					{#each r.activityBreakdown as ar (ar.activityId)}
 						{@const canRae = canEditRae(ar)}
+						{@const isOther = ar.activityId === NO_ACTIVITY_ID}
 						<tr class="activity-subrow">
 							<td></td>
 							<td class="ar-name">↳ {ar.label}
@@ -482,57 +535,103 @@
 									<span class="ar-contrib">{#each ar.contributors as c, i (c.userId)}{i > 0 ? ', ' : ''}{c.displayName} <b class="tabnum">{c.consumed}</b>j{/each}</span>
 								{/if}
 							</td>
-							<td></td>
-							<td class="num">
-								<input
-									class="cell-input num-input"
-									type="number"
-									step="0.25"
-									min="0"
-									value={ar.raeReal}
-									disabled={!canRae}
-									title={canRae ? '' : RAE_LOCKED}
-									onchange={(e) => {
-										const value = Number(e.currentTarget.value) || 0;
-										debouncedSave(`ar-${r.id}-${ar.activityId}-raeReal`, () => saveActivityRae(r, ar.activityId, 'raeReal', value));
-									}}
-								/>
-							</td>
-							{#if data.testPhase}
-								<td></td>
+							{#if data.isAdmin}
 								<td class="num">
+									{#if isOther}
+										<span class="cell-readonly" title={NO_ACTIVITY_HINT}>—</span>
+									{:else}
+										<input
+											class="cell-input num-input"
+											type="number"
+											step="0.25"
+											min="0"
+											value={ar.budget}
+											disabled={!data.isStrictAdmin}
+											title={data.isStrictAdmin ? '' : 'Budget par activité réservé aux administrateurs.'}
+											onchange={(e) => {
+												const value = Number(e.currentTarget.value) || 0;
+												debouncedSave(`ar-${r.id}-${ar.activityId}-budget`, () => saveActivityField(r, ar.activityId, 'budget', value));
+											}}
+										/>
+									{/if}
+								</td>
+							{/if}
+							<td class="num">
+								{#if isOther}
+									<span class="cell-readonly" title={NO_ACTIVITY_HINT}>—</span>
+								{:else}
 									<input
 										class="cell-input num-input"
 										type="number"
 										step="0.25"
 										min="0"
-										value={ar.raeTest}
+										value={ar.estimation}
+										onchange={(e) => {
+											const value = Number(e.currentTarget.value) || 0;
+											debouncedSave(`ar-${r.id}-${ar.activityId}-estimation`, () => saveActivityField(r, ar.activityId, 'estimation', value));
+										}}
+									/>
+								{/if}
+							</td>
+							<td class="num">
+								{#if isOther}
+									<span class="cell-readonly" title={NO_ACTIVITY_HINT}>—</span>
+								{:else}
+									<input
+										class="cell-input num-input"
+										type="number"
+										step="0.25"
+										min="0"
+										value={ar.raeReal}
 										disabled={!canRae}
 										title={canRae ? '' : RAE_LOCKED}
 										onchange={(e) => {
-										const value = Number(e.currentTarget.value) || 0;
-										debouncedSave(`ar-${r.id}-${ar.activityId}-raeTest`, () => saveActivityRae(r, ar.activityId, 'raeTest', value));
-									}}
+											const value = Number(e.currentTarget.value) || 0;
+											debouncedSave(`ar-${r.id}-${ar.activityId}-raeReal`, () => saveActivityField(r, ar.activityId, 'raeReal', value));
+										}}
 									/>
+								{/if}
+							</td>
+							{#if data.testPhase}
+								<td></td>
+								<td class="num">
+									{#if isOther}
+										<span class="cell-readonly" title={NO_ACTIVITY_HINT}>—</span>
+									{:else}
+										<input
+											class="cell-input num-input"
+											type="number"
+											step="0.25"
+											min="0"
+											value={ar.raeTest}
+											disabled={!canRae}
+											title={canRae ? '' : RAE_LOCKED}
+											onchange={(e) => {
+											const value = Number(e.currentTarget.value) || 0;
+											debouncedSave(`ar-${r.id}-${ar.activityId}-raeTest`, () => saveActivityField(r, ar.activityId, 'raeTest', value));
+										}}
+										/>
+									{/if}
 								</td>
 							{/if}
 							<td class="num tabnum consumed">{round(ar.contributors.reduce((s, c) => s + c.consumed, 0)) || '—'}</td>
+							{#if data.isAdmin}<td></td>{/if}
 							<td></td>
 							<td></td>
 						</tr>
 					{/each}
 				{/each}
 				{#if rows.length === 0}
-					<tr><td colspan={data.testPhase ? 9 : 7} class="empty-row">Aucun ticket. Créez-en un pour démarrer.</td></tr>
+					<tr><td colspan={7 + (data.testPhase ? 2 : 0) + (data.isAdmin ? 2 : 0)} class="empty-row">Aucun ticket. Créez-en un pour démarrer.</td></tr>
 				{/if}
 			</tbody>
 		</table>
 	</div>
 		{#if data.pageCount > 1}
 			<div class="pager">
-				<button class="btn btn-ghost" disabled={data.page <= 1} onclick={() => navigateWith({ page: String(data.page - 1) })}>← Précédent</button>
+				<button class="btn btn-ghost" disabled={data.page <= 1 || isNavigating} onclick={() => navigateWith({ page: String(data.page - 1) })}>← Précédent</button>
 				<span class="pager-info">Page {data.page} / {data.pageCount} · {data.total} tickets</span>
-				<button class="btn btn-ghost" disabled={data.page >= data.pageCount} onclick={() => navigateWith({ page: String(data.page + 1) })}>Suivant →</button>
+				<button class="btn btn-ghost" disabled={data.page >= data.pageCount || isNavigating} onclick={() => navigateWith({ page: String(data.page + 1) })}>Suivant →</button>
 			</div>
 		{/if}
 	</div>
@@ -617,7 +716,7 @@
 						<option value={null}>—</option>{#each data.ref.versions as v (v.id)}<option value={v.id}>{v.name}</option>{/each}
 					</select>
 				</label>
-				<label class="dfield"><span>Est. Réal</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationReal} disabled={!data.canEditEstimation} title={estTitle} onchange={() => debouncedSave(`est-${editRow!.id}-real`, () => saveEst(editRow!, 'real'))} /></label>
+				<label class="dfield"><span>Estimé</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationReal} disabled={!data.canEditEstimation || editRow.hasActivityEstimation} title={editRow.hasActivityEstimation ? "Estimé = compilation des Estimés par activité ci-dessous (non éditable ici)" : estTitle} onchange={() => debouncedSave(`est-${editRow!.id}-real`, () => saveEst(editRow!, 'real'))} /></label>
 				<label class="dfield"><span>RAE Réal</span><input class="cell-input" type="number" step="0.25" min="0" value={editRow.raeReal} disabled title="Compilation des RAE par activité (voir le tableau)" /></label>
 				{#if data.testPhase}
 					<label class="dfield"><span>Est. Test</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationTest} disabled={!data.canEditEstimation} title={estTitle} onchange={() => debouncedSave(`est-${editRow!.id}-test`, () => saveEst(editRow!, 'test'))} /></label>
@@ -655,7 +754,10 @@
 			</div>
 			<div class="tk-foot">
 				<span>Consommé <b class="tabnum">{editRow.consumed || '—'}</b></span>
-				<span>Écart d'exécution <b class="tabnum" class:gap-pos={ecartExecution(editRow) > 0}>{ecartExecution(editRow) > 0 ? '+' : ''}{ecartExecution(editRow) || 0}</b></span>
+				<span>Écart vs estimé <b class="tabnum" class:gap-pos={ecartVsEstime(editRow) > 0}>{ecartVsEstime(editRow) > 0 ? '+' : ''}{ecartVsEstime(editRow) || 0}</b></span>
+				{#if ecartVsBudget(editRow) !== null}
+					<span>Écart vs budget <b class="tabnum" class:gap-pos={(ecartVsBudget(editRow) ?? 0) > 0}>{(ecartVsBudget(editRow) ?? 0) > 0 ? '+' : ''}{ecartVsBudget(editRow) || 0}</b></span>
+				{/if}
 				<span>Avancement <b class="tabnum">{pct(avancement(editRow))}%</b></span>
 			</div>
 			<div class="tk-history">
@@ -721,6 +823,27 @@
 		gap: 9px;
 		margin-bottom: 16px;
 		flex-wrap: wrap;
+	}
+	.filter-fields {
+		display: flex;
+		align-items: center;
+		gap: 9px;
+		margin: 0;
+		padding: 0;
+		border: 0;
+		min-width: 0;
+		flex-wrap: wrap;
+	}
+	.filter-fields:disabled {
+		opacity: 0.6;
+	}
+	.filter-fields:disabled .filter-sel,
+	.filter-fields:disabled .seg2 button {
+		cursor: wait;
+	}
+	.loading-hint {
+		font-size: 12.5px;
+		color: var(--text-mute);
 	}
 	.filter-sel {
 		padding: 7px 11px;
@@ -1012,6 +1135,16 @@
 		background: var(--surface);
 		box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
 		outline: none;
+	}
+	/* Bucket "Autre" (imputations sans activité) : rien à éditer, cf. NO_ACTIVITY_ID. */
+	.cell-readonly {
+		display: block;
+		width: 100%;
+		padding: 6px 7px;
+		font-size: 13.5px;
+		color: var(--text-mute);
+		text-align: center;
+		cursor: default;
 	}
 	.title-input {
 		font-weight: 500;

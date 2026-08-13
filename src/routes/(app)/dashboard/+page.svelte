@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { parseISODate, toISODate, addDays, dayName, dayNum, formatRange, isPublicHolidayFR } from '$lib/utils/date';
+	import { navigating } from '$app/state';
+	import { parseISODate, toISODate, addDays, dayName, dayNum, formatRange, isPublicHolidayFR, mondayOf, isoWeek } from '$lib/utils/date';
 	let { data } = $props();
 
 	// Synthèse hebdo : bascule % de capacité (vue compacte) / détail jour par jour (5 jours ouvrés).
@@ -19,10 +20,17 @@
 	const prodTotal = $derived(d.productiveVsNot.productive + d.productiveVsNot.nonProductive);
 	const prodPct = $derived(prodTotal > 0 ? d.productiveVsNot.productive / prodTotal : 0);
 
-	// Synthèse hebdo par personne : pivot (semaine × personne) depuis la liste plate du serveur.
-	const weekCols = $derived(
-		[...new Map(data.weeklySynthesis.map((r) => [r.mondayISO, r.isoWeek])).entries()].sort((a, b) => a[0].localeCompare(b[0]))
-	);
+	// Synthèse hebdo par personne : pivot (semaine × personne). Colonnes = toutes les semaines de la
+	// période (même sans aucune saisie), pas seulement celles qui ont des lignes côté serveur —
+	// sinon une semaine à zéro imputation disparaît silencieusement du tableau.
+	const weekCols = $derived.by(() => {
+		const cols: [string, number][] = [];
+		const last = mondayOf(parseISODate(data.weekRange.to));
+		for (let m = mondayOf(parseISODate(data.weekRange.from)); m <= last; m = addDays(m, 7)) {
+			cols.push([toISODate(m), isoWeek(m)]);
+		}
+		return cols;
+	});
 	const weeklyPersons = $derived([...new Set(data.weeklySynthesis.map((r) => r.name))].sort((a, b) => a.localeCompare(b)));
 	const weeklyCell = $derived.by(() => {
 		const m = new Map<string, (typeof data.weeklySynthesis)[number]>();
@@ -44,7 +52,14 @@
 <div class="topbar">
 	<h1>Synthèse<small>{isAll ? "Vue d'ensemble de l'espace" : 'Imputations du mois'}</small></h1>
 	<div class="spacer"></div>
-	<select class="periodsel" value={data.scope} onchange={(e) => goto(`?month=${e.currentTarget.value}`, { keepFocus: true })} aria-label="Période des statistiques">
+	{#if navigating.to}<span class="loading-hint">Chargement…</span>{/if}
+	<select
+		class="periodsel"
+		value={data.scope}
+		disabled={!!navigating.to}
+		onchange={(e) => goto(`?month=${e.currentTarget.value}`, { keepFocus: true })}
+		aria-label="Période des statistiques"
+	>
 		{#each data.months as m (m.value)}
 			<option value={m.value}>{m.label}</option>
 		{/each}
@@ -301,6 +316,14 @@
 		outline: none;
 		border-color: var(--accent);
 		box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+	}
+	.periodsel:disabled {
+		opacity: 0.6;
+		cursor: wait;
+	}
+	.loading-hint {
+		font-size: 12px;
+		color: var(--text-mute);
 	}
 
 	.kpis {

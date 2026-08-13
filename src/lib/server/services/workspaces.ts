@@ -101,6 +101,7 @@ export type MembershipInfo = {
 	imputationStep: string;
 	allowedDomain: string;
 	moodEnabled: boolean;
+	supportEnabled: boolean;
 	role: Role;
 	canViewImputations: boolean;
 	canViewMoodResults: boolean;
@@ -120,6 +121,7 @@ export async function listMembershipsForUser(userId: string): Promise<Membership
 			imputationStep: workspace.imputationStep,
 			allowedDomain: workspace.allowedDomain,
 			moodEnabled: workspace.moodEnabled,
+			supportEnabled: workspace.supportEnabled,
 			role: membership.role,
 			canViewImputations: membership.canViewImputations,
 			canViewMoodResults: membership.canViewMoodResults,

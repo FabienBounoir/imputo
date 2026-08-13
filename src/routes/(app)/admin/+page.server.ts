@@ -50,12 +50,24 @@ import {
 	setTicketGroupArchived
 } from '$lib/server/services/ticketGroups';
 import { getMoodConfig, setMoodEnabled, setMoodPeriodConfig, type MoodPeriodKind } from '$lib/server/services/mood';
+import {
+	getSupportConfig,
+	setSupportEnabled,
+	setSupportCadence,
+	setSupportIncludeSaturday,
+	listRotationMembers,
+	addRotationMember,
+	removeRotationMember,
+	moveRotationMember,
+	type SupportCadence
+} from '$lib/server/services/support';
 
 function refType(v: FormDataEntryValue | null): RefType {
 	return v === 'sprint' || v === 'version' ? v : 'project';
 }
 
 const MOOD_PERIOD_KINDS: MoodPeriodKind[] = ['WEEK_1', 'WEEK_2', 'WEEK_3', 'MONTH'];
+const SUPPORT_CADENCES: SupportCadence[] = ['DAY', 'WEEK', 'MONTH'];
 
 const accentSchema = z.object({
 	color: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Couleur invalide (hex)'),
@@ -85,16 +97,19 @@ export const load: PageServerLoad = async ({ locals }) => {
 		.innerJoin(user, eq(membership.userId, user.id))
 		.where(eq(membership.workspaceId, ws.workspaceId));
 
-	const [projects, sprints, versions, categories, activities, states, ticketGroups, mood] = await Promise.all([
-		listRefs(ws.workspaceId, 'project'),
-		listRefs(ws.workspaceId, 'sprint'),
-		listRefs(ws.workspaceId, 'version'),
-		listCategories(ws.workspaceId),
-		listActivities(ws.workspaceId),
-		listStates(ws.workspaceId),
-		listTicketGroups(ws.workspaceId),
-		getMoodConfig(ws.workspaceId)
-	]);
+	const [projects, sprints, versions, categories, activities, states, ticketGroups, mood, support, supportMembers] =
+		await Promise.all([
+			listRefs(ws.workspaceId, 'project'),
+			listRefs(ws.workspaceId, 'sprint'),
+			listRefs(ws.workspaceId, 'version'),
+			listCategories(ws.workspaceId),
+			listActivities(ws.workspaceId),
+			listStates(ws.workspaceId),
+			listTicketGroups(ws.workspaceId),
+			getMoodConfig(ws.workspaceId),
+			getSupportConfig(ws.workspaceId),
+			listRotationMembers(ws.workspaceId)
+		]);
 
 	return {
 		members: members.map((m) => ({ ...m, pending: m.pending === null, isOwner: m.id === ws.createdByUserId })),
@@ -107,6 +122,8 @@ export const load: PageServerLoad = async ({ locals }) => {
 		pprRatio: ws.pprRatio,
 		imputationStep: ws.imputationStep,
 		mood,
+		support,
+		supportMembers,
 		projects,
 		sprints,
 		versions,
@@ -183,6 +200,59 @@ export const actions: Actions = {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { moodOk: true };
+	},
+
+	supportEnabled: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const enabled = (await request.formData()).get('enabled') === 'true';
+		await setSupportEnabled(ws.workspaceId, enabled);
+		return { supportOk: true };
+	},
+
+	supportCadence: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const cadence = (await request.formData()).get('cadence');
+		if (!SUPPORT_CADENCES.includes(cadence as SupportCadence)) return fail(400, { error: 'Cadence invalide.' });
+		await setSupportCadence(ws.workspaceId, cadence as SupportCadence);
+		return { supportOk: true };
+	},
+
+	supportIncludeSaturday: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const includeSaturday = (await request.formData()).get('includeSaturday') === 'true';
+		await setSupportIncludeSaturday(ws.workspaceId, includeSaturday);
+		return { supportOk: true };
+	},
+
+	supportMemberAdd: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const userId = String((await request.formData()).get('userId') ?? '');
+		try {
+			await addRotationMember(ws.workspaceId, userId);
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { supportOk: true };
+	},
+
+	supportMemberRemove: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const id = String((await request.formData()).get('id') ?? '');
+		await removeRotationMember(ws.workspaceId, id);
+		return { supportOk: true };
+	},
+
+	supportMemberMove: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const f = await request.formData();
+		await moveRotationMember(ws.workspaceId, String(f.get('id')), f.get('dir') === 'up' ? 'up' : 'down');
+		return { supportOk: true };
 	},
 
 	pprRatio: async ({ request, locals }) => {

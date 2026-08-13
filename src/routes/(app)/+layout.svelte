@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { browser } from '$app/environment';
-	import { page } from '$app/state';
+	import { page, navigating } from '$app/state';
 	import { beep } from '$lib/sound';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
@@ -43,6 +43,11 @@
 		return page.url.pathname === path || page.url.pathname.startsWith(path + '/');
 	}
 
+	// Barre de progression globale : uniquement pour un changement de PAGE (route différente), pas
+	// pour un rechargement de filtre en place (même route, ex. tickets/imputation) — ces cas-là ont
+	// déjà leur propre indicateur local, la doublonner serait redondant.
+	const isPageChange = $derived(!!navigating.to && navigating.to.route.id !== page.route.id);
+
 	const isOwner = $derived(!!data.user && data.user.id === data.workspace?.createdByUserId);
 	const roleLabel = $derived(data.role === 'ADMIN' ? 'Admin' : data.role === 'MANAGER' ? 'Manager' : 'Membre');
 
@@ -78,6 +83,7 @@
 	}
 </script>
 
+<div class="pageload-bar" class:on={isPageChange} aria-hidden="true"></div>
 <div class="app">
 	<div class="mobile-topbar">
 		<button class="icon-btn" aria-label="Ouvrir le menu" onclick={() => (sidebarOpen = true)}>
@@ -171,6 +177,18 @@
 				<span class="badge" title="Congés en attente de validation">{data.pendingAbsencesCount}</span>
 			{/if}
 		</a>
+		{#if data.workspace?.supportEnabled}
+			<a
+				class="nav-item"
+				class:active={isActive('/support')}
+				class:blink={data.supportDuty?.userId === data.user?.id}
+				href="/support"
+			>
+				<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></svg>
+				Support
+				{#if data.supportDuty}<span class="badge">{data.supportDuty.displayName.split(' ')[0]}</span>{/if}
+			</a>
+		{/if}
 		{#if data.workspace?.moodEnabled}
 			<a
 				class="nav-item"

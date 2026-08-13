@@ -67,7 +67,13 @@ deploy:preprod:
   extends: .oc_base
   stage: deploy
   rules:
+    # main : déploiement auto comme avant. Toute autre branche : job optionnel (bouton manuel dans
+    # l'UI GitLab), ne bloque jamais le pipeline (allow_failure) — permet de pousser une branche en
+    # preprod pour la tester sans devoir merger sur main.
     - if: '$CI_COMMIT_BRANCH == "main"'
+      when: on_success
+    - when: manual
+      allow_failure: true
   variables:
     OPENSHIFT_TOKEN: $OPENSHIFT_TOKEN_PREPROD
   script:

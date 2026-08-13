@@ -43,6 +43,7 @@ export const absenceTypeEnum = pgEnum('absence_type', [
 export const absencePeriodEnum = pgEnum('absence_period', ['FULL', 'AM', 'PM']);
 export const changeLogEntityEnum = pgEnum('change_log_entity', ['TICKET', 'ABSENCE']);
 export const changeLogActionEnum = pgEnum('change_log_action', ['UPDATE', 'DELETE']);
+export const supportCadenceEnum = pgEnum('support_cadence', ['DAY', 'WEEK', 'MONTH']);
 
 const id = () => uuid('id').primaryKey().defaultRandom();
 const createdAt = () => timestamp('created_at', { withTimezone: true }).defaultNow().notNull();
@@ -68,6 +69,14 @@ export const workspace = pgTable('workspace', {
 	moodPeriodKind: moodPeriodKindEnum('mood_period_kind').notNull().default('WEEK_1'),
 	// 0=lundi..6=dimanche ; ignoré si moodPeriodKind = MONTH (démarre toujours le 1er du mois).
 	moodStartWeekday: integer('mood_start_weekday').notNull().default(0),
+	// Perm support (qui regarde les tickets) : désactivée par défaut, activable par l'admin.
+	supportEnabled: boolean('support_enabled').notNull().default(false),
+	supportCadence: supportCadenceEnum('support_cadence').notNull().default('WEEK'),
+	// Incrémenté par "passer son tour" : décale toute la chaîne d'un cran, définitivement (contrairement
+	// à supportOverride qui ne change qu'une période précise sans toucher aux suivantes).
+	supportRotationOffset: integer('support_rotation_offset').notNull().default(0),
+	// Le samedi compte-t-il comme un jour de perm (cadence DAY) ? Dimanche jamais inclus.
+	supportIncludeSaturday: boolean('support_include_saturday').notNull().default(false),
 	createdByUserId: uuid('created_by_user_id'),
 	createdAt: createdAt()
 });
@@ -275,8 +284,10 @@ export const ticket = pgTable(
 	]
 );
 
-// RAE par activité (sous-lignes) — le RAE ticket devient la somme de ces lignes quand il y en a
-// (fallback sur ticket.raeReal/raeTest sinon, cf. resolvedRae() dans calc.ts).
+// RAE + Estimé + Budget par activité (sous-lignes) — le RAE et l'Estimé du ticket deviennent la
+// somme de ces lignes quand il y en a (fallback sur ticket.raeReal/raeTest/estimationReal sinon,
+// cf. resolvedRae()/resolvedEstimation() dans calc.ts). Le budget par activité, lui, ne remonte
+// jamais sur le ticket (ticket.enveloppeTotale reste la valeur saisie à la création).
 export const ticketActivityRae = pgTable(
 	'ticket_activity_rae',
 	{
@@ -289,6 +300,10 @@ export const ticketActivityRae = pgTable(
 			.references(() => activity.id, { onDelete: 'restrict' }),
 		raeReal: numeric('rae_real', { precision: 7, scale: 2 }).notNull().default('0'),
 		raeTest: numeric('rae_test', { precision: 7, scale: 2 }).notNull().default('0'),
+		// Estimé par activité — champ unique (pas de déclinaison Réel/Test), modifiable par tout membre.
+		estimation: numeric('estimation', { precision: 7, scale: 2 }).notNull().default('0'),
+		// Budget par activité — indépendant du budget ticket (enveloppeTotale), ADMIN only.
+		budget: numeric('budget', { precision: 7, scale: 2 }).notNull().default('0'),
 		updatedAt: updatedAt()
 	},
 	(t) => [uniqueIndex('ticket_activity_rae_uq').on(t.ticketId, t.activityId)]
@@ -370,6 +385,9 @@ export const weeklyObjective = pgTable(
 		ticketId: uuid('ticket_id').references(() => ticket.id, { onDelete: 'cascade' }), // requis si kind=TICKET
 		label: text('label'), // requis si kind=CUSTOM
 		activityId: uuid('activity_id').references(() => activity.id, { onDelete: 'set null' }), // type d'activité (optionnel)
+		// Ordre d'affichage au sein d'une (personne, semaine) — modifiable via Admin > Objectifs,
+		// même mécanique swap-voisin que state.sortOrder (cf. moveState/moveObjective).
+		sortOrder: integer('sort_order').notNull().default(0),
 		createdByUserId: uuid('created_by_user_id')
 			.notNull()
 			.references(() => user.id),
@@ -421,6 +439,30 @@ export const timeEntry = pgTable(
 		index('time_entry_ws_user_day_idx').on(t.workspaceId, t.userId, t.day),
 		index('time_entry_ticket_idx').on(t.ticketId)
 	]
+);
+
+// Ligne ajoutée à "Mon imputation" (+ Ajouter) sans encore aucune heure saisie dessus : sans cette
+// table, la ligne n'a aucune trace en base et disparaît au prochain chargement/changement de
+// période (aucun time_entry associé). Retirée uniquement via la poubelle (unpinRow), jamais par
+// un simple retour à 0 des cases — contrairement à un time_entry, pas de notion de jour/montant.
+export const imputationPin = pgTable(
+	'imputation_pin',
+	{
+		id: id(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspace.id, { onDelete: 'cascade' }),
+		userId: uuid('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		targetType: targetTypeEnum('target_type').notNull(),
+		ticketId: uuid('ticket_id').references(() => ticket.id, { onDelete: 'cascade' }),
+		categoryId: uuid('category_id').references(() => category.id, { onDelete: 'cascade' }),
+		objectiveId: uuid('objective_id').references(() => weeklyObjective.id, { onDelete: 'cascade' }),
+		activityId: uuid('activity_id').references(() => activity.id, { onDelete: 'set null' }),
+		createdAt: createdAt()
+	},
+	(t) => [index('imputation_pin_ws_user_idx').on(t.workspaceId, t.userId)]
 );
 
 // ---------- Absences ----------
@@ -525,6 +567,46 @@ export const moodVote = pgTable(
 	]
 );
 
+// ---------- Perm support (rotation "qui regarde les tickets") ----------
+// Ordre de passage dans la rotation ; le membre du jour/de la semaine/du mois est calculé à la
+// volée (supportPeriodIndex, cf. utils/date.ts) — pas de planning pré-généré à maintenir.
+export const supportRotationMember = pgTable(
+	'support_rotation_member',
+	{
+		id: id(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspace.id, { onDelete: 'cascade' }),
+		userId: uuid('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		sortOrder: integer('sort_order').notNull().default(0),
+		createdAt: createdAt()
+	},
+	(t) => [
+		uniqueIndex('support_rotation_member_ws_user_uq').on(t.workspaceId, t.userId),
+		index('support_rotation_member_ws_idx').on(t.workspaceId)
+	]
+);
+
+// Remplace ponctuellement la personne calculée pour une période donnée (ex : absence) sans
+// décaler la rotation : la période suivante retombe automatiquement sur l'ordre normal.
+export const supportOverride = pgTable(
+	'support_override',
+	{
+		id: id(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspace.id, { onDelete: 'cascade' }),
+		periodStart: date('period_start').notNull(),
+		userId: uuid('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		createdAt: createdAt()
+	},
+	(t) => [uniqueIndex('support_override_ws_period_uq').on(t.workspaceId, t.periodStart)]
+);
+
 // ---------- Notifications (Web Push) ----------
 export const pushSubscription = pgTable(
 	'push_subscription',
@@ -590,6 +672,7 @@ export type State = typeof state.$inferSelect;
 export type Activity = typeof activity.$inferSelect;
 export type Sprint = typeof sprint.$inferSelect;
 export type TimeEntry = typeof timeEntry.$inferSelect;
+export type ImputationPin = typeof imputationPin.$inferSelect;
 export type WeeklyObjective = typeof weeklyObjective.$inferSelect;
 export type WeeklyVacation = typeof weeklyVacation.$inferSelect;
 export type Absence = typeof absence.$inferSelect;
@@ -599,3 +682,6 @@ export type AbsencePeriod = (typeof absencePeriodEnum.enumValues)[number];
 export type MoodVote = typeof moodVote.$inferSelect;
 export type Role = (typeof roleEnum.enumValues)[number];
 export type MoodPeriodKind = (typeof moodPeriodKindEnum.enumValues)[number];
+export type SupportRotationMember = typeof supportRotationMember.$inferSelect;
+export type SupportOverride = typeof supportOverride.$inferSelect;
+export type SupportCadence = (typeof supportCadenceEnum.enumValues)[number];

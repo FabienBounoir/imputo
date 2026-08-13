@@ -11,6 +11,8 @@ import {
 	formatMonthLabel,
 	parseISODate,
 	currentMoodPeriod,
+	currentSupportPeriod,
+	supportPeriodIndex,
 	buildPeriod,
 	fortnightBounds,
 	monthBounds,
@@ -251,5 +253,38 @@ describe('buildPeriod', () => {
 				expect(buildPeriod(g, 'FIXED', next.prevAnchor).rangeKey).toBe(p.rangeKey);
 			}
 		}
+	});
+});
+
+describe('currentSupportPeriod / supportPeriodIndex (cadence DAY)', () => {
+	// 2026-08-14 = vendredi, 15 = samedi, 16 = dimanche, 17 = lundi.
+	it('sans samedi inclus, le week-end retombe sur le vendredi précédent', () => {
+		expect(currentSupportPeriod('DAY', '2026-08-15').start).toBe('2026-08-14');
+		expect(currentSupportPeriod('DAY', '2026-08-16').start).toBe('2026-08-14');
+		expect(currentSupportPeriod('DAY', '2026-08-17').start).toBe('2026-08-17');
+	});
+
+	it("l'index avance d'exactement 1 entre vendredi et le lundi suivant (régression : le week-end ne doit pas faire sauter 2 personnes dans la rotation)", () => {
+		const fri = supportPeriodIndex('DAY', '2026-08-14');
+		const mon = supportPeriodIndex('DAY', '2026-08-17');
+		expect(mon - fri).toBe(1);
+	});
+
+	it('samedi inclus : devient son propre jour actif, le dimanche retombe dessus, toujours +1 par jour actif', () => {
+		expect(currentSupportPeriod('DAY', '2026-08-15', true).start).toBe('2026-08-15');
+		expect(currentSupportPeriod('DAY', '2026-08-16', true).start).toBe('2026-08-15');
+
+		const thu = supportPeriodIndex('DAY', '2026-08-13', true);
+		const fri = supportPeriodIndex('DAY', '2026-08-14', true);
+		const sat = supportPeriodIndex('DAY', '2026-08-15', true);
+		const mon = supportPeriodIndex('DAY', '2026-08-17', true);
+		expect(fri - thu).toBe(1);
+		expect(sat - fri).toBe(1);
+		expect(mon - sat).toBe(1);
+	});
+
+	it("includeSaturday n'a aucun effet en cadence WEEK/MONTH (période entière, le détail des jours ne compte pas)", () => {
+		expect(supportPeriodIndex('WEEK', '2026-08-10', false)).toBe(supportPeriodIndex('WEEK', '2026-08-10', true));
+		expect(supportPeriodIndex('MONTH', '2026-08-01', false)).toBe(supportPeriodIndex('MONTH', '2026-08-01', true));
 	});
 });

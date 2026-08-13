@@ -8,7 +8,9 @@ import {
 	activity,
 	sprint,
 	ticketActivityRae,
-	weeklyObjective
+	weeklyObjective,
+	imputationPin,
+	user
 } from '$lib/server/db';
 import { num, round } from './calc';
 import { toISODate, workWeek, parseISODate } from '$lib/utils/date';
@@ -31,6 +33,8 @@ export type ImputationRow = {
 	 * le RAE est stocké par activité, il n'est alors ni affichable ni saisissable ici.
 	 */
 	raeReal: number | null;
+	/** Estimé de la paire (ticket, activité) — même granularité que raeReal, modifiable par tous. */
+	estimation: number | null;
 	amounts: Record<string, number>; // day ISO → amount
 	total: number;
 };
@@ -48,25 +52,43 @@ function rowKey(targetType: string, targetId: string, activityId: string | null)
 	return `${targetType}:${targetId}:${activityId ?? ''}`;
 }
 
-/**
- * Feuille de temps d'un utilisateur sur une liste de jours ouvrés ordonnée. Le découpage de la
- * période (semaine / quinzaine / mois, fixe ou glissant) est calculé par `buildPeriod` dans
- * `$lib/utils/date` — ce service ne connaît qu'une plage de jours.
- */
-export async function getTimesheet(
-	workspaceId: string,
-	userId: string,
-	days: string[]
-): Promise<TimesheetData> {
-	const firstDay = days[0];
-	const lastDay = days[days.length - 1];
+type RawEntry = {
+	userId: string;
+	userName: string;
+	targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE';
+	ticketId: string | null;
+	categoryId: string | null;
+	objectiveId: string | null;
+	activityId: string | null;
+	day: string;
+	amount: string | number | null;
+	ticketKey: string | null;
+	ticketTitle: string | null;
+	sprintName: string | null;
+	versionName: string | null;
+	categoryLabel: string | null;
+	categoryKind: string | null;
+	objectiveLabel: string | null;
+	activityLabel: string | null;
+};
 
+/**
+ * Imputations brutes d'un espace sur une plage de jours, un utilisateur en particulier ou toute
+ * l'équipe si `userId` est omis. Requête et jointures communes à `getTimesheet` et
+ * `getTeamTimesheet` — seule la clause `userId` change.
+ */
+async function queryEntries(workspaceId: string, firstDay: string, lastDay: string, userId?: string): Promise<RawEntry[]> {
 	// `version` et `sprint` vivent dans la même table, discriminés par `kind` : ticket.sprintId et
 	// ticket.versionId pointent tous deux dessus, d'où l'alias pour les joindre en même temps.
 	const versionSprint = alias(sprint, 'version_sprint');
 
-	const entries = await db
+	const conditions = [eq(timeEntry.workspaceId, workspaceId), gte(timeEntry.day, firstDay), lte(timeEntry.day, lastDay)];
+	if (userId) conditions.push(eq(timeEntry.userId, userId));
+
+	return db
 		.select({
+			userId: timeEntry.userId,
+			userName: user.displayName,
 			targetType: timeEntry.targetType,
 			ticketId: timeEntry.ticketId,
 			categoryId: timeEntry.categoryId,
@@ -84,20 +106,66 @@ export async function getTimesheet(
 			activityLabel: activity.label
 		})
 		.from(timeEntry)
+		.innerJoin(user, eq(timeEntry.userId, user.id))
 		.leftJoin(ticket, eq(timeEntry.ticketId, ticket.id))
 		.leftJoin(sprint, eq(ticket.sprintId, sprint.id))
 		.leftJoin(versionSprint, eq(ticket.versionId, versionSprint.id))
 		.leftJoin(category, eq(timeEntry.categoryId, category.id))
 		.leftJoin(weeklyObjective, eq(timeEntry.objectiveId, weeklyObjective.id))
 		.leftJoin(activity, eq(timeEntry.activityId, activity.id))
-		.where(
-			and(
-				eq(timeEntry.workspaceId, workspaceId),
-				eq(timeEntry.userId, userId),
-				gte(timeEntry.day, firstDay),
-				lte(timeEntry.day, lastDay)
-			)
-		);
+		.where(and(...conditions));
+}
+
+/** Squelette de ligne (sans montants) à partir d'une imputation brute — partagé par les deux vues. */
+function rowSkeleton(e: RawEntry, targetId: string, key: string): ImputationRow {
+	let label: string;
+	let sublabel: string;
+	let emoji: string;
+	// L'activité s'affiche à part, en tag cliquable (cf. imputation/+page.svelte) — plus dans ce texte.
+	if (e.targetType === 'TICKET') {
+		label = e.ticketTitle ?? '—';
+		sublabel = e.ticketKey ?? '';
+		emoji = '🎫';
+	} else if (e.targetType === 'CATEGORY') {
+		label = e.categoryLabel ?? '—';
+		sublabel = 'Catégorie';
+		emoji = e.categoryKind === 'NON_PRODUCTIVE' ? '🌴' : '🛟';
+	} else {
+		label = e.objectiveLabel ?? '(tâche supprimée)';
+		sublabel = 'Tâche assignée';
+		emoji = '📝';
+	}
+	return {
+		rowKey: key,
+		targetType: e.targetType,
+		targetId,
+		activityId: e.activityId,
+		label,
+		sublabel,
+		emoji,
+		nonProductive: e.targetType === 'CATEGORY' && e.categoryKind === 'NON_PRODUCTIVE',
+		sprintName: e.targetType === 'TICKET' ? e.sprintName : null,
+		versionName: e.targetType === 'TICKET' ? e.versionName : null,
+		raeReal: null,
+		estimation: null,
+		amounts: {},
+		total: 0
+	};
+}
+
+/**
+ * Feuille de temps d'un utilisateur sur une liste de jours ouvrés ordonnée. Le découpage de la
+ * période (semaine / quinzaine / mois, fixe ou glissant) est calculé par `buildPeriod` dans
+ * `$lib/utils/date` — ce service ne connaît qu'une plage de jours.
+ */
+export async function getTimesheet(
+	workspaceId: string,
+	userId: string,
+	days: string[]
+): Promise<TimesheetData> {
+	const firstDay = days[0];
+	const lastDay = days[days.length - 1];
+	const entries = await queryEntries(workspaceId, firstDay, lastDay, userId);
 
 	const rows = new Map<string, ImputationRow>();
 	const dayTotals: Record<string, number> = Object.fromEntries(days.map((d) => [d, 0]));
@@ -109,39 +177,7 @@ export async function getTimesheet(
 		const targetId =
 			(e.targetType === 'TICKET' ? e.ticketId : e.targetType === 'CATEGORY' ? e.categoryId : e.objectiveId) ?? '';
 		const key = rowKey(e.targetType, targetId, e.activityId);
-		if (!rows.has(key)) {
-			let label: string;
-			let sublabel: string;
-			let emoji: string;
-			if (e.targetType === 'TICKET') {
-				label = e.ticketTitle ?? '—';
-				sublabel = `${e.ticketKey ?? ''}${e.activityLabel ? ' · ' + e.activityLabel : ''}`;
-				emoji = '🎫';
-			} else if (e.targetType === 'CATEGORY') {
-				label = e.categoryLabel ?? '—';
-				sublabel = `Catégorie${e.activityLabel ? ' · ' + e.activityLabel : ''}`;
-				emoji = e.categoryKind === 'NON_PRODUCTIVE' ? '🌴' : '🛟';
-			} else {
-				label = e.objectiveLabel ?? '(tâche supprimée)';
-				sublabel = `Tâche assignée${e.activityLabel ? ' · ' + e.activityLabel : ''}`;
-				emoji = '📝';
-			}
-			rows.set(key, {
-				rowKey: key,
-				targetType: e.targetType,
-				targetId,
-				activityId: e.activityId,
-				label,
-				sublabel,
-				emoji,
-				nonProductive: e.targetType === 'CATEGORY' && e.categoryKind === 'NON_PRODUCTIVE',
-				sprintName: e.targetType === 'TICKET' ? e.sprintName : null,
-				versionName: e.targetType === 'TICKET' ? e.versionName : null,
-				raeReal: null,
-				amounts: {},
-				total: 0
-			});
-		}
+		if (!rows.has(key)) rows.set(key, rowSkeleton(e, targetId, key));
 		const r = rows.get(key)!;
 		const amount = num(e.amount);
 		r.amounts[e.day] = amount;
@@ -155,9 +191,70 @@ export async function getTimesheet(
 	return { days, firstDay, lastDay, rows: [...rows.values()], dayTotals, total };
 }
 
+export type TeamMemberSheet = {
+	userId: string;
+	name: string;
+	rows: ImputationRow[];
+	dayTotals: Record<string, number>;
+	total: number;
+};
+export type TeamTimesheetData = {
+	days: string[];
+	members: TeamMemberSheet[];
+	dayTotals: Record<string, number>;
+	total: number;
+};
+
 /**
- * Renseigne `raeReal` sur les lignes ticket portant une activité, depuis `ticket_activity_rae`.
- * Le RAE étant stocké par (ticket, activité), une ligne sans activité n'a pas de RAE adressable.
+ * Même principe que `getTimesheet`, mais pour toute l'équipe en une seule requête : un membre par
+ * ligne (`members`), chacun avec le détail de ses lignes ticket/catégorie/tâche — vue "Toute
+ * l'équipe" de Mon imputation. Pas de RAE/Estimé ici (lecture seule, jamais éditée depuis cette vue).
+ */
+export async function getTeamTimesheet(workspaceId: string, days: string[]): Promise<TeamTimesheetData> {
+	const firstDay = days[0];
+	const lastDay = days[days.length - 1];
+	const entries = await queryEntries(workspaceId, firstDay, lastDay);
+
+	const members = new Map<string, { userId: string; name: string; rows: Map<string, ImputationRow>; dayTotals: Record<string, number> }>();
+	const dayTotals: Record<string, number> = Object.fromEntries(days.map((d) => [d, 0]));
+
+	for (const e of entries) {
+		if (!(e.day in dayTotals)) continue;
+		let m = members.get(e.userId);
+		if (!m) {
+			m = { userId: e.userId, name: e.userName, rows: new Map(), dayTotals: Object.fromEntries(days.map((d) => [d, 0])) };
+			members.set(e.userId, m);
+		}
+		const targetId =
+			(e.targetType === 'TICKET' ? e.ticketId : e.targetType === 'CATEGORY' ? e.categoryId : e.objectiveId) ?? '';
+		const key = rowKey(e.targetType, targetId, e.activityId);
+		if (!m.rows.has(key)) m.rows.set(key, rowSkeleton(e, targetId, key));
+		const r = m.rows.get(key)!;
+		const amount = num(e.amount);
+		r.amounts[e.day] = amount;
+		r.total = round(r.total + amount);
+		m.dayTotals[e.day] = round(m.dayTotals[e.day] + amount);
+		dayTotals[e.day] = round(dayTotals[e.day] + amount);
+	}
+
+	const memberList = [...members.values()]
+		.map((m) => ({
+			userId: m.userId,
+			name: m.name,
+			rows: [...m.rows.values()],
+			dayTotals: m.dayTotals,
+			total: round(Object.values(m.dayTotals).reduce((a, b) => a + b, 0))
+		}))
+		.sort((a, b) => a.name.localeCompare(b.name));
+
+	const total = round(Object.values(dayTotals).reduce((a, b) => a + b, 0));
+	return { days, members: memberList, dayTotals, total };
+}
+
+/**
+ * Renseigne `raeReal`/`estimation` sur les lignes ticket portant une activité, depuis
+ * `ticket_activity_rae`. Ces valeurs étant stockées par (ticket, activité), une ligne sans
+ * activité n'a ni RAE ni Estimé adressable.
  */
 async function attachActivityRae(rows: ImputationRow[]) {
 	const targets = rows.filter((r) => r.targetType === 'TICKET' && r.activityId);
@@ -169,7 +266,8 @@ async function attachActivityRae(rows: ImputationRow[]) {
 		.select({
 			ticketId: ticketActivityRae.ticketId,
 			activityId: ticketActivityRae.activityId,
-			raeReal: ticketActivityRae.raeReal
+			raeReal: ticketActivityRae.raeReal,
+			estimation: ticketActivityRae.estimation
 		})
 		.from(ticketActivityRae)
 		.where(
@@ -179,8 +277,12 @@ async function attachActivityRae(rows: ImputationRow[]) {
 			)
 		);
 
-	const byPair = new Map(raeRows.map((r) => [`${r.ticketId}:${r.activityId}`, num(r.raeReal)]));
-	for (const r of targets) r.raeReal = byPair.get(`${r.targetId}:${r.activityId}`) ?? 0;
+	const byPair = new Map(raeRows.map((r) => [`${r.ticketId}:${r.activityId}`, r]));
+	for (const r of targets) {
+		const found = byPair.get(`${r.targetId}:${r.activityId}`);
+		r.raeReal = num(found?.raeReal ?? null);
+		r.estimation = num(found?.estimation ?? null);
+	}
 }
 
 /** Feuille de temps d'une semaine ouvrée (lun→ven) — raccourci autour de `getTimesheet`. */
@@ -310,6 +412,97 @@ export async function setCell(
 }
 
 /**
+ * Change l'activité de toutes les imputations d'une ligne sur la période affichée (clic sur le
+ * tag d'activité de "Mon imputation") — fusionne (amounts additionnés) avec une ligne déjà
+ * existante sur l'activité de destination au lieu de l'écraser. Mêmes bornes de période que
+ * deleteRow, jamais reçues brutes du client.
+ */
+export async function reassignActivity(
+	workspaceId: string,
+	userId: string,
+	input: {
+		targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE';
+		targetId: string;
+		fromActivityId: string | null;
+		toActivityId: string | null;
+		fromISO: string;
+		toISO: string;
+	}
+) {
+	if (input.fromActivityId === input.toActivityId) return;
+	await assertTargetInWorkspace(workspaceId, userId, input.targetType, input.targetId);
+	if (input.toActivityId) {
+		const [act] = await db
+			.select({ id: activity.id })
+			.from(activity)
+			.where(and(eq(activity.id, input.toActivityId), eq(activity.workspaceId, workspaceId)));
+		if (!act) throw new Error('Activité introuvable dans cet espace.');
+	}
+
+	const targetMatch =
+		input.targetType === 'TICKET'
+			? eq(timeEntry.ticketId, input.targetId)
+			: input.targetType === 'CATEGORY'
+				? eq(timeEntry.categoryId, input.targetId)
+				: eq(timeEntry.objectiveId, input.targetId);
+
+	// Si la ligne était épinglée (cf. pinRow) sur l'ancienne activité, l'épingle suit vers la
+	// nouvelle — sinon changer l'activité d'une ligne vide (jamais remplie) ne ferait rien du tout.
+	const wasPinned = await db
+		.select({ id: imputationPin.id })
+		.from(imputationPin)
+		.where(pinMatch(workspaceId, userId, { targetType: input.targetType, targetId: input.targetId, activityId: input.fromActivityId }));
+	if (wasPinned[0]) {
+		await unpinRow(workspaceId, userId, { targetType: input.targetType, targetId: input.targetId, activityId: input.fromActivityId });
+		await pinRow(workspaceId, userId, { targetType: input.targetType, targetId: input.targetId, activityId: input.toActivityId });
+	}
+
+	const rows = await db
+		.select({ id: timeEntry.id, day: timeEntry.day, amount: timeEntry.amount })
+		.from(timeEntry)
+		.where(
+			and(
+				eq(timeEntry.workspaceId, workspaceId),
+				eq(timeEntry.userId, userId),
+				gte(timeEntry.day, input.fromISO),
+				lte(timeEntry.day, input.toISO),
+				targetMatch,
+				input.fromActivityId ? eq(timeEntry.activityId, input.fromActivityId) : isNull(timeEntry.activityId)
+			)
+		);
+	if (rows.length === 0) return;
+
+	await db.transaction(async (tx) => {
+		for (const r of rows) {
+			const [dest] = await tx
+				.select({ id: timeEntry.id, amount: timeEntry.amount })
+				.from(timeEntry)
+				.where(
+					and(
+						eq(timeEntry.workspaceId, workspaceId),
+						eq(timeEntry.userId, userId),
+						eq(timeEntry.day, r.day),
+						targetMatch,
+						input.toActivityId ? eq(timeEntry.activityId, input.toActivityId) : isNull(timeEntry.activityId)
+					)
+				);
+			if (dest) {
+				await tx
+					.update(timeEntry)
+					.set({ amount: String(num(dest.amount) + num(r.amount)), updatedAt: new Date() })
+					.where(eq(timeEntry.id, dest.id));
+				await tx.delete(timeEntry).where(eq(timeEntry.id, r.id));
+			} else {
+				await tx
+					.update(timeEntry)
+					.set({ activityId: input.toActivityId, updatedAt: new Date() })
+					.where(eq(timeEntry.id, r.id));
+			}
+		}
+	});
+}
+
+/**
  * Supprime en un coup toutes les imputations de la période pour une ligne (cible + activité).
  * Les bornes viennent d'une période reconstruite côté serveur, jamais du client directement.
  */
@@ -345,4 +538,81 @@ export async function deleteRow(
 				input.activityId ? eq(timeEntry.activityId, input.activityId) : isNull(timeEntry.activityId)
 			)
 		);
+	// La poubelle est le seul moyen de faire disparaître une ligne épinglée (cf. pinRow) — sans ça,
+	// une ligne ajoutée mais jamais remplie reviendrait au prochain chargement malgré la suppression.
+	await unpinRow(workspaceId, userId, input);
+}
+
+function pinTargetColumns(targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE', targetId: string) {
+	return {
+		ticketId: targetType === 'TICKET' ? targetId : null,
+		categoryId: targetType === 'CATEGORY' ? targetId : null,
+		objectiveId: targetType === 'OBJECTIVE' ? targetId : null
+	};
+}
+
+function pinMatch(
+	workspaceId: string,
+	userId: string,
+	input: { targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE'; targetId: string; activityId: string | null }
+) {
+	const cols = pinTargetColumns(input.targetType, input.targetId);
+	return and(
+		eq(imputationPin.workspaceId, workspaceId),
+		eq(imputationPin.userId, userId),
+		eq(imputationPin.targetType, input.targetType),
+		cols.ticketId ? eq(imputationPin.ticketId, cols.ticketId) : isNull(imputationPin.ticketId),
+		cols.categoryId ? eq(imputationPin.categoryId, cols.categoryId) : isNull(imputationPin.categoryId),
+		cols.objectiveId ? eq(imputationPin.objectiveId, cols.objectiveId) : isNull(imputationPin.objectiveId),
+		input.activityId ? eq(imputationPin.activityId, input.activityId) : isNull(imputationPin.activityId)
+	);
+}
+
+export type PinnedRow = { targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE'; targetId: string; activityId: string | null };
+
+/** Lignes épinglées sur "Mon imputation" — visibles même sans aucune heure saisie (cf. imputationPin). */
+export async function listPinnedRows(workspaceId: string, userId: string): Promise<PinnedRow[]> {
+	const rows = await db
+		.select({
+			targetType: imputationPin.targetType,
+			ticketId: imputationPin.ticketId,
+			categoryId: imputationPin.categoryId,
+			objectiveId: imputationPin.objectiveId,
+			activityId: imputationPin.activityId
+		})
+		.from(imputationPin)
+		.where(and(eq(imputationPin.workspaceId, workspaceId), eq(imputationPin.userId, userId)));
+	return rows
+		.map((r) => ({
+			targetType: r.targetType,
+			targetId: r.ticketId ?? r.categoryId ?? r.objectiveId,
+			activityId: r.activityId
+		}))
+		.filter((r): r is PinnedRow => !!r.targetId);
+}
+
+/** Épingle une ligne (cible + activité) — reste affichée tant qu'aucun clic sur la poubelle. Idempotent. */
+export async function pinRow(
+	workspaceId: string,
+	userId: string,
+	input: { targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE'; targetId: string; activityId: string | null }
+) {
+	await assertTargetInWorkspace(workspaceId, userId, input.targetType, input.targetId);
+	const existing = await db.select({ id: imputationPin.id }).from(imputationPin).where(pinMatch(workspaceId, userId, input));
+	if (existing[0]) return;
+	await db.insert(imputationPin).values({
+		workspaceId,
+		userId,
+		targetType: input.targetType,
+		...pinTargetColumns(input.targetType, input.targetId),
+		activityId: input.activityId
+	});
+}
+
+export async function unpinRow(
+	workspaceId: string,
+	userId: string,
+	input: { targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE'; targetId: string; activityId: string | null }
+) {
+	await db.delete(imputationPin).where(pinMatch(workspaceId, userId, input));
 }

@@ -8,3 +8,10 @@ export function hslToHex(h: number, s: number, l: number) {
 	const toHex = (x: number) => Math.round(255 * x).toString(16).padStart(2, '0');
 	return `#${toHex(f(0))}${toHex(f(8))}${toHex(f(4))}`;
 }
+
+/** Assombrit une couleur hex `#rrggbb` d'un facteur 0–1 — pour un dégradé à 2 tons depuis une seule couleur d'accent. */
+export function darkenHex(hex: string, amount: number) {
+	const n = parseInt(hex.slice(1), 16);
+	const shade = (byte: number) => Math.round(byte * (1 - amount)).toString(16).padStart(2, '0');
+	return `#${shade((n >> 16) & 255)}${shade((n >> 8) & 255)}${shade(n & 255)}`;
+}

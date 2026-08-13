@@ -8,6 +8,7 @@ import {
 	isOnVacation,
 	vacationWeeks,
 	addObjective,
+	moveObjective,
 	setVacation
 } from './weeklyObjectives';
 
@@ -37,6 +38,29 @@ describe('weeklyObjectives — listing', () => {
 		expect(both.map((o) => o.label).sort()).toEqual(['Semaine 1', 'Semaine 2']);
 
 		expect(await listObjectivesForUserWeeks(workspaceId, userId, [])).toEqual([]);
+	});
+
+	it('crée des objectifs et les réordonne avec moveObjective, sans effet sur une autre semaine', async () => {
+		const { workspaceId, userId } = await makeWorkspace('wo-order');
+		await addObjective(workspaceId, userId, { userId, weekMondayISO: WEEK_1, kind: 'CUSTOM', label: 'A' });
+		await addObjective(workspaceId, userId, { userId, weekMondayISO: WEEK_1, kind: 'CUSTOM', label: 'B' });
+		await addObjective(workspaceId, userId, { userId, weekMondayISO: WEEK_1, kind: 'CUSTOM', label: 'C' });
+		await addObjective(workspaceId, userId, { userId, weekMondayISO: WEEK_2, kind: 'CUSTOM', label: 'Autre semaine' });
+
+		let week1 = await listObjectivesForUser(workspaceId, userId, WEEK_1);
+		expect(week1.map((o) => o.label)).toEqual(['A', 'B', 'C']);
+
+		await moveObjective(workspaceId, week1[2].id, 'up');
+		week1 = await listObjectivesForUser(workspaceId, userId, WEEK_1);
+		expect(week1.map((o) => o.label)).toEqual(['A', 'C', 'B']);
+
+		// Bord : monter le premier ne fait rien.
+		await moveObjective(workspaceId, week1[0].id, 'up');
+		week1 = await listObjectivesForUser(workspaceId, userId, WEEK_1);
+		expect(week1.map((o) => o.label)).toEqual(['A', 'C', 'B']);
+
+		const week2 = await listObjectivesForUser(workspaceId, userId, WEEK_2);
+		expect(week2.map((o) => o.label)).toEqual(['Autre semaine']);
 	});
 
 	it('listObjectivesForWorkspace agrège tous les membres avec leur displayName', async () => {

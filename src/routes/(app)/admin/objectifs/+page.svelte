@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { goto } from '$app/navigation';
+	import { navigating } from '$app/state';
 	import TargetPicker from '$lib/components/TargetPicker.svelte';
 	import { downloadSvgAsPng } from '$lib/utils/svgToPng';
 
@@ -20,6 +21,7 @@
 	function selectUser(id: string) {
 		goto(`?w=${data.weekMondayISO}&u=${id}`);
 	}
+	const isNavigating = $derived(!!navigating.to);
 
 	async function downloadObjectivesPng() {
 		imgBusy = true;
@@ -37,12 +39,13 @@
 <div class="topbar">
 	<h1>Objectifs de la semaine<small>Semaine {data.weekNumber} · {data.weekLabel}</small></h1>
 	<div class="spacer"></div>
-	<div class="wknav">
-		<a class="wkbtn" href="?w={data.prevWeek}&u={data.selectedUserId}" aria-label="Semaine précédente">
+	{#if isNavigating}<span class="loading-hint">Chargement…</span>{/if}
+	<div class="wknav" class:disabled={isNavigating}>
+		<a class="wkbtn" href="?w={data.prevWeek}&u={data.selectedUserId}" aria-label="Semaine précédente" aria-disabled={isNavigating} onclick={(e) => { if (isNavigating) e.preventDefault(); }}>
 			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m15 18-6-6 6-6"/></svg>
 		</a>
 		<span class="cur">S{data.weekNumber}</span>
-		<a class="wkbtn" href="?w={data.nextWeek}&u={data.selectedUserId}" aria-label="Semaine suivante">
+		<a class="wkbtn" href="?w={data.nextWeek}&u={data.selectedUserId}" aria-label="Semaine suivante" aria-disabled={isNavigating} onclick={(e) => { if (isNavigating) e.preventDefault(); }}>
 			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m9 18 6-6-6-6"/></svg>
 		</a>
 	</div>
@@ -59,7 +62,7 @@
 			{#if form?.objOk}<div class="flash ok">Mis à jour ✓</div>{/if}
 
 			<div class="person-row">
-				<select class="member-pick" value={data.selectedUserId} onchange={(e) => selectUser(e.currentTarget.value)} aria-label="Personne">
+				<select class="member-pick" value={data.selectedUserId} disabled={isNavigating} onchange={(e) => selectUser(e.currentTarget.value)} aria-label="Personne">
 					{#each data.members as m (m.id)}
 						<option value={m.id}>{m.displayName}</option>
 					{/each}
@@ -75,8 +78,21 @@
 			</div>
 
 			<div class="ref-list">
-				{#each data.objectives as o (o.id)}
+				{#each data.objectives as o, i (o.id)}
 					<div class="ref-item">
+						<span class="obj-order">
+							<form method="POST" action="?/moveObjective" use:enhance>
+								<input type="hidden" name="id" value={o.id} />
+								<input type="hidden" name="dir" value="up" />
+								<button class="obj-order-btn" type="submit" disabled={i === 0} aria-label="Monter">↑</button>
+							</form>
+							<span class="obj-order-num">{i + 1}</span>
+							<form method="POST" action="?/moveObjective" use:enhance>
+								<input type="hidden" name="id" value={o.id} />
+								<input type="hidden" name="dir" value="down" />
+								<button class="obj-order-btn" type="submit" disabled={i === data.objectives.length - 1} aria-label="Descendre">↓</button>
+							</form>
+						</span>
 						<span class="obj-label">
 							{#if o.kind === 'TICKET'}
 								<span class="pill-ico">🎫</span><b>{o.ticketKey}</b> {o.ticketTitle}
@@ -142,7 +158,21 @@
 			{#each data.members as m (m.id)}
 				{@const mine = data.globalObjectives.filter((o) => o.userId === m.id)}
 				{@const onVac = data.vacations.includes(m.id)}
-				<section class="card block person-card" class:on-vac={onVac}>
+				<section
+					class="card block person-card"
+					class:on-vac={onVac}
+					class:selected={m.id === data.selectedUserId}
+					role="button"
+					tabindex="0"
+					title="Sélectionner {m.displayName} dans « Attribuer pour la semaine »"
+					onclick={() => selectUser(m.id)}
+					onkeydown={(e) => {
+						if (e.key === 'Enter' || e.key === ' ') {
+							e.preventDefault();
+							selectUser(m.id);
+						}
+					}}
+				>
 					<div class="person-card-head">
 						<h3>{m.displayName}</h3>
 						{#if !onVac && mine.length > 0}<span class="obj-count">{mine.length}</span>{/if}
@@ -218,6 +248,14 @@
 	.wkbtn:hover {
 		background: var(--surface-sunk);
 	}
+	.wknav.disabled {
+		opacity: 0.6;
+		pointer-events: none;
+	}
+	.loading-hint {
+		font-size: 12.5px;
+		color: var(--text-mute);
+	}
 	.cur {
 		padding: 0 12px;
 		font-weight: 600;
@@ -253,6 +291,37 @@
 		display: flex;
 		align-items: center;
 		gap: 8px;
+	}
+	.obj-order {
+		display: flex;
+		flex-direction: column;
+		flex-shrink: 0;
+	}
+	.obj-order-btn {
+		width: 20px;
+		height: 16px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 4px;
+		color: var(--text-mute);
+		font-size: 11px;
+		line-height: 1;
+	}
+	.obj-order-btn:hover:not(:disabled) {
+		background: var(--surface-sunk);
+		color: var(--text);
+	}
+	.obj-order-btn:disabled {
+		opacity: 0.25;
+		cursor: default;
+	}
+	.obj-order-num {
+		text-align: center;
+		font-size: 10.5px;
+		font-weight: 700;
+		color: var(--text-mute);
+		line-height: 1;
 	}
 	.obj-label {
 		flex: 1;
@@ -313,6 +382,23 @@
 	.person-card h3 {
 		font-size: 14px;
 		margin-bottom: 0;
+	}
+	.person-card {
+		cursor: pointer;
+		text-align: left;
+		width: 100%;
+		transition: border-color 0.15s, background 0.15s;
+	}
+	.person-card:hover {
+		border-color: var(--border-strong);
+	}
+	.person-card:focus-visible {
+		outline: 2px solid var(--accent);
+		outline-offset: 2px;
+	}
+	.person-card.selected {
+		border-color: var(--accent);
+		box-shadow: 0 0 0 1px var(--accent);
 	}
 	.person-card-head {
 		display: flex;

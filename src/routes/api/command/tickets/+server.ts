@@ -16,7 +16,8 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 		ws.testPhase,
 		isManagerOrAdmin(locals.role),
 		{ query: q },
-		{ pageSize: 8, page: 1 }
+		{ pageSize: 8, page: 1 },
+		false // réponse = juste id/key/title, jamais le détail par activité
 	);
 	return json({ tickets: rows.map((t) => ({ id: t.id, key: t.key, title: t.title })) });
 };

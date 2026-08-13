@@ -3,6 +3,7 @@ import type { Actions, PageServerLoad } from './$types';
 import { getRefData } from '$lib/server/services/tickets';
 import { isManagerOrAdmin } from '$lib/server/services/workspaces';
 import { notifyAbsencePending, notifyAbsenceValidated } from '$lib/server/services/notifications';
+import { getSchoolHolidays } from '$lib/server/services/schoolHolidays';
 import {
 	listAbsencesForUser,
 	listAbsencesForRange,
@@ -44,12 +45,13 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	const monthGroups = groupDaysByMonth(days);
 
 	const canManageOthers = isManagerOrAdmin(locals.role);
-	const [ref, myAbsences, teamAbsences, externalMembers, pendingAbsences] = await Promise.all([
+	const [ref, myAbsences, teamAbsences, externalMembers, pendingAbsences, schoolHolidays] = await Promise.all([
 		getRefData(ws.workspaceId),
 		listAbsencesForUser(ws.workspaceId, user.id),
 		listAbsencesForRange(ws.workspaceId, range.start, range.end),
 		listExternalMembers(ws.workspaceId),
-		canManageOthers ? listPendingAbsences(ws.workspaceId) : Promise.resolve([])
+		canManageOthers ? listPendingAbsences(ws.workspaceId) : Promise.resolve([]),
+		getSchoolHolidays(range.start, range.end)
 	]);
 
 	// Une seule liste pour la synthèse équipe (réels + externes) — `external` pilote la teinte de ligne.
@@ -64,6 +66,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		days,
 		monthGroups,
 		grid: buildAbsenceGrid(teamAbsences, days),
+		schoolHolidays,
 		myAbsences,
 		pendingAbsences,
 		rangeLabel: span === 1 ? formatMonthLabel(range.start) : `${formatMonthLabel(range.start)} → ${formatMonthLabel(range.end)}`,

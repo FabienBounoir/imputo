@@ -89,6 +89,44 @@ select {
 }
 
 /* ---------- App shell ---------- */
+/* Barre de progression globale (changement de page) — indéterminée : la navigation client-side ne
+   donne pas de vraie progression, donc un segment qui balaie plutôt qu'une largeur simulée. */
+.pageload-bar {
+	position: fixed;
+	top: 0;
+	left: 0;
+	right: 0;
+	height: 3px;
+	overflow: hidden;
+	z-index: 150;
+	pointer-events: none;
+	opacity: 0;
+	transition: opacity 0.15s;
+}
+.pageload-bar.on {
+	opacity: 1;
+}
+.pageload-bar::after {
+	content: '';
+	position: absolute;
+	top: 0;
+	left: -35%;
+	width: 35%;
+	height: 100%;
+	background: var(--accent);
+	border-radius: 0 2px 2px 0;
+}
+.pageload-bar.on::after {
+	animation: pageload-sweep 1s ease-in-out infinite;
+}
+@keyframes pageload-sweep {
+	0% {
+		left: -35%;
+	}
+	100% {
+		left: 100%;
+	}
+}
 .app {
 	display: grid;
 	grid-template-columns: 256px 1fr;

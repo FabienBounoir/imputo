@@ -8,6 +8,7 @@ import {
 	listVacationsForWeek,
 	addObjective,
 	removeObjective,
+	moveObjective,
 	setVacation,
 	type ObjectiveKind
 } from '$lib/server/services/weeklyObjectives';
@@ -76,6 +77,19 @@ export const actions: Actions = {
 		const f = await request.formData();
 		try {
 			await removeObjective(ws.workspaceId, String(f.get('id')));
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { objOk: true };
+	},
+
+	moveObjective: async ({ request, locals }) => {
+		if (!isManagerOrAdmin(locals.role)) return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const f = await request.formData();
+		const dir = f.get('dir') === 'up' ? 'up' : 'down';
+		try {
+			await moveObjective(ws.workspaceId, String(f.get('id')), dir);
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}

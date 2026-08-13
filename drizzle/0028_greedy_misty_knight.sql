@@ -1,0 +1,2 @@
+ALTER TABLE "ticket_activity_rae" ADD COLUMN "estimation" numeric(7, 2) DEFAULT '0' NOT NULL;--> statement-breakpoint
+ALTER TABLE "ticket_activity_rae" ADD COLUMN "budget" numeric(7, 2) DEFAULT '0' NOT NULL;

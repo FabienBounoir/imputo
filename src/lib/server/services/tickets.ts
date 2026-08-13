@@ -22,12 +22,18 @@ import {
 	num,
 	round,
 	totalEstimation,
-	ecartExecution,
-	tnfBudget,
+	ecartVsEstime,
+	ecartVsBudget,
 	avancement,
 	raeSuggested,
-	resolvedRae
+	resolvedRae,
+	resolvedEstimation
 } from './calc';
+
+// Bucket synthétique pour les imputations d'un ticket sans activité renseignée — jamais un vrai
+// id d'activité (ticket_activity_rae.activity_id est NOT NULL), donc son RAE/estimation/budget
+// restent toujours à 0 côté serveur ; l'UI (tickets/+page.svelte) le rend en lecture seule.
+export const NO_ACTIVITY_ID = '__no_activity__';
 
 /** Champs budget/estimation tracés dans l'historique (changeLog) — pas le reste (titre, état, code SSP…). */
 const TRACKED_FIELDS = new Set([
@@ -79,25 +85,29 @@ export type TicketRow = {
 	stateLabel: string | null;
 	stateEmoji: string | null;
 	stateColor: string | null;
+	/** Estimation résolue (somme des Estimés par activité si présents, sinon fallback ticket.estimationReal). */
 	estimationReal: number;
 	raeReal: number;
 	estimationTest: number;
 	raeTest: number;
 	consumed: number;
-	ecartExecution: number;
+	/** RAE + Conso − Estimé résolu. Réel uniquement, jamais Test. */
+	ecartVsEstime: number;
+	/** RAE + Conso − Enveloppe totale. Réel uniquement. null si enveloppeTotale non renseignée/invisible. */
+	ecartVsBudget: number | null;
 	avancement: number;
 	raeSuggested: number;
 	/** true si le RAE de ce ticket vient de la somme des lignes ticket_activity_rae (sinon fallback ticket.raeReal/raeTest). */
 	hasActivityRae: boolean;
-	/** RAE par activité + sous-lignes (activité, personne), toujours chargé (affiché en lignes fines sous le ticket). */
+	/** true si l'Estimé de ce ticket vient de la somme des lignes ticket_activity_rae.estimation (sinon fallback ticket.estimationReal). */
+	hasActivityEstimation: boolean;
+	/** RAE/Estimé/Budget par activité + sous-lignes (activité, personne), toujours chargé (affiché en lignes fines sous le ticket). */
 	activityBreakdown: TicketActivityBreakdownRow[];
 	groupIds: string[];
 	/** Admin only — redacted côté route pour un USER standard. */
 	estimationPrev: number | null;
 	/** Admin only — redacted côté route pour un USER standard. null si enveloppeTotale non renseignée. */
 	enveloppeTotale: number | null;
-	/** null si enveloppeTotale non renseignée (pas de TNF budget calculable). */
-	tnfBudget: number | null;
 	sspCode: string | null;
 };
 
@@ -145,12 +155,20 @@ async function fetchBaseTickets(where: ReturnType<typeof and>) {
  * Ajoute consommé + RAE résolu + activité/contributeurs + groupes à un lot de tickets déjà
  * chargés (chiffrage). Factorisé entre listTickets (tout l'espace) et listTicketsPage (paginé/filtré) —
  * mêmes requêtes annexes, seule la sélection des tickets de base change.
+ *
+ * `includeBreakdown` : le détail par activité (contributeurs + labels) n'est affiché nulle part en
+ * vue kanban ni dans la recherche de la palette de commandes (cf. tickets/+page.svelte — seules les
+ * lignes fines de la vue tableau le rendent). Deux requêtes en moins (contributeurs, labels
+ * d'activité) + agrégation JS évitée pour ces appelants — mesuré comme la part la plus coûteuse de
+ * l'enrichissement lors de l'audit de charge (cf. docs/AUDIT-load-testing.md), en particulier pour
+ * le kanban qui charge tout le board sans pagination.
  */
 async function enrichTickets(
 	workspaceId: string,
 	testPhase: boolean,
 	isAdmin: boolean,
-	tickets: BaseTicketRow[]
+	tickets: BaseTicketRow[],
+	includeBreakdown = true
 ): Promise<TicketRow[]> {
 	const ticketIds = tickets.map((t) => t.id);
 
@@ -177,7 +195,9 @@ async function enrichTickets(
 						ticketId: ticketActivityRae.ticketId,
 						activityId: ticketActivityRae.activityId,
 						raeReal: ticketActivityRae.raeReal,
-						raeTest: ticketActivityRae.raeTest
+						raeTest: ticketActivityRae.raeTest,
+						estimation: ticketActivityRae.estimation,
+						budget: ticketActivityRae.budget
 					})
 					.from(ticketActivityRae)
 					.where(inArray(ticketActivityRae.ticketId, ticketIds));
@@ -190,7 +210,7 @@ async function enrichTickets(
 	// Contributeurs (activité, personne) par ticket — batché pour toute la liste, affiché en
 	// lignes fines toujours visibles sous chaque ticket (plus de chargement à la demande).
 	const contribRows =
-		ticketIds.length === 0
+		!includeBreakdown || ticketIds.length === 0
 			? []
 			: await db
 					.select({
@@ -212,11 +232,14 @@ async function enrichTickets(
 					.groupBy(timeEntry.ticketId, timeEntry.activityId, timeEntry.userId, user.displayName);
 	const contribMap = new Map<string, Map<string, { userId: string; displayName: string; consumed: number }[]>>();
 	for (const c of contribRows) {
-		if (!c.activityId || !c.ticketId) continue; // imputation sans activité : hors périmètre des sous-lignes
+		if (!c.ticketId) continue;
+		// Imputation sans activité renseignée : regroupée sous le bucket "Autre" plutôt que perdue —
+		// sinon elle compte dans le "Consommé" du ticket sans jamais apparaître dans le détail par activité.
+		const activityId = c.activityId ?? NO_ACTIVITY_ID;
 		if (!contribMap.has(c.ticketId)) contribMap.set(c.ticketId, new Map());
 		const byActivity = contribMap.get(c.ticketId)!;
-		if (!byActivity.has(c.activityId)) byActivity.set(c.activityId, []);
-		byActivity.get(c.activityId)!.push({ userId: c.userId, displayName: c.displayName, consumed: num(c.total) });
+		if (!byActivity.has(activityId)) byActivity.set(activityId, []);
+		byActivity.get(activityId)!.push({ userId: c.userId, displayName: c.displayName, consumed: num(c.total) });
 	}
 
 	const involvedActivityIds = new Set<string>([
@@ -224,7 +247,7 @@ async function enrichTickets(
 		...contribRows.map((r) => r.activityId).filter((id): id is string => !!id)
 	]);
 	const activityLabelRows =
-		involvedActivityIds.size === 0
+		!includeBreakdown || involvedActivityIds.size === 0
 			? []
 			: await db
 					.select({ id: activity.id, label: activity.label })
@@ -242,13 +265,20 @@ async function enrichTickets(
 				const rae = raeRows.find((r) => r.activityId === id);
 				return {
 					activityId: id,
-					label: activityLabelMap.get(id) ?? '?',
+					label: activityLabelMap.get(id) ?? (id === NO_ACTIVITY_ID ? 'Autre' : '?'),
 					raeReal: num(rae?.raeReal ?? null),
 					raeTest: num(rae?.raeTest ?? null),
+					estimation: num(rae?.estimation ?? null),
+					budget: num(rae?.budget ?? null),
 					contributors: (byActivity.get(id) ?? []).sort((a, b) => a.displayName.localeCompare(b.displayName))
 				};
 			})
-			.sort((a, b) => a.label.localeCompare(b.label));
+			.sort((a, b) => {
+				// "Autre" toujours en dernier, quel que soit l'ordre alphabétique.
+				if (a.activityId === NO_ACTIVITY_ID) return 1;
+				if (b.activityId === NO_ACTIVITY_ID) return -1;
+				return a.label.localeCompare(b.label);
+			});
 	}
 
 	const groupMemberRows =
@@ -265,10 +295,13 @@ async function enrichTickets(
 	}
 
 	return tickets.map((t) => {
-		const totalEst = totalEstimation(t.estimationReal, t.estimationTest, testPhase);
-		const resolved = resolvedRae(t.raeReal, t.raeTest, activityRaeMap.get(t.id) ?? []);
+		const activityRows = activityRaeMap.get(t.id) ?? [];
+		const resolved = resolvedRae(t.raeReal, t.raeTest, activityRows);
+		const estimationResolved = resolvedEstimation(t.estimationReal, activityRows);
+		const totalEst = round(estimationResolved + (testPhase ? num(t.estimationTest) : 0));
 		const rae = round(resolved.real + (testPhase ? resolved.test : 0));
 		const consumed = consumedMap.get(t.id) ?? 0;
+		const enveloppeTotale = !isAdmin || t.enveloppeTotale === null ? null : num(t.enveloppeTotale);
 		return {
 			id: t.id,
 			key: t.key,
@@ -286,26 +319,24 @@ async function enrichTickets(
 			stateLabel: t.stateLabel,
 			stateEmoji: t.stateEmoji,
 			stateColor: t.stateColor,
-			estimationReal: num(t.estimationReal),
+			estimationReal: estimationResolved,
 			raeReal: resolved.real,
 			estimationTest: num(t.estimationTest),
 			raeTest: resolved.test,
-			// estimationPrev/enveloppeTotale invisibles pour un USER ; tnfBudget en dérive
+			// estimationPrev/enveloppeTotale invisibles pour un USER ; ecartVsBudget en dérive
 			// (déductible via consumed/rae déjà visibles) donc masqué pareil.
 			estimationPrev: !isAdmin || t.estimationPrev === null ? null : num(t.estimationPrev),
-			enveloppeTotale: !isAdmin || t.enveloppeTotale === null ? null : num(t.enveloppeTotale),
+			enveloppeTotale,
 			sspCode: t.sspCode,
 			consumed,
-			ecartExecution: ecartExecution(resolved.real, consumed, num(t.estimationReal)),
+			ecartVsEstime: ecartVsEstime(resolved.real, consumed, estimationResolved),
+			ecartVsBudget: enveloppeTotale === null ? null : ecartVsBudget(resolved.real, consumed, enveloppeTotale),
 			avancement: avancement(totalEst, rae),
 			raeSuggested: raeSuggested(totalEst, consumed),
-			hasActivityRae: (activityRaeMap.get(t.id) ?? []).length > 0,
-			activityBreakdown: buildBreakdown(t.id),
-			groupIds: groupIdsMap.get(t.id) ?? [],
-			tnfBudget:
-				!isAdmin || t.enveloppeTotale === null
-					? null
-					: tnfBudget(num(t.enveloppeTotale), consumed, resolved.real, resolved.test, testPhase)
+			hasActivityRae: activityRows.length > 0,
+			hasActivityEstimation: activityRows.length > 0,
+			activityBreakdown: includeBreakdown ? buildBreakdown(t.id) : [],
+			groupIds: groupIdsMap.get(t.id) ?? []
 		};
 	});
 }
@@ -392,7 +423,10 @@ export async function listTicketsPage(
 	isAdmin: boolean,
 	filters: TicketFilters,
 	/** Omis = pas de pagination (vue Kanban : toutes les tickets filtrés, board complet). */
-	paging?: { pageSize: number; page: number }
+	paging?: { pageSize: number; page: number },
+	/** Le kanban et la recherche de la palette de commandes n'affichent jamais le détail par
+	 *  activité (cf. commentaire sur enrichTickets) — passer `false` pour l'appelant l'économiser. */
+	includeBreakdown = true
 ): Promise<{ rows: (TicketRow & { isChild: boolean })[]; total: number }> {
 	const where = ticketFilterConditions(workspaceId, filters);
 	const parentTicket = alias(ticket, 'parent_ticket');
@@ -414,7 +448,7 @@ export async function listTicketsPage(
 		db.select({ count: sql<number>`count(*)::int` }).from(ticket).where(where)
 	]);
 
-	const rows = await enrichTickets(workspaceId, testPhase, isAdmin, tickets);
+	const rows = await enrichTickets(workspaceId, testPhase, isAdmin, tickets, includeBreakdown);
 	return { rows: rows.map((r, i) => ({ ...r, isChild: !!tickets[i].parentId })), total: count };
 }
 
@@ -591,12 +625,17 @@ export type TicketActivityBreakdownRow = {
 	label: string;
 	raeReal: number;
 	raeTest: number;
+	/** Estimé par activité — champ unique, modifiable par tout membre. */
+	estimation: number;
+	/** Budget par activité — indépendant du budget ticket, ADMIN only, 0 par défaut. */
+	budget: number;
 	contributors: { userId: string; displayName: string; consumed: number }[];
 };
 
 /**
  * Détail RAE par activité + sous-lignes (activité, personne) d'un ticket, pour "Tickets & chiffrage".
- * Inclut chaque activité ayant une ligne ticket_activity_rae OU au moins une imputation sur ce ticket.
+ * Inclut chaque activité ayant une ligne ticket_activity_rae OU au moins une imputation sur ce ticket,
+ * plus un bucket "Autre" (NO_ACTIVITY_ID) pour les imputations sans activité renseignée.
  */
 export async function getTicketActivityBreakdown(
 	workspaceId: string,
@@ -613,7 +652,9 @@ export async function getTicketActivityBreakdown(
 			.select({
 				activityId: ticketActivityRae.activityId,
 				raeReal: ticketActivityRae.raeReal,
-				raeTest: ticketActivityRae.raeTest
+				raeTest: ticketActivityRae.raeTest,
+				estimation: ticketActivityRae.estimation,
+				budget: ticketActivityRae.budget
 			})
 			.from(ticketActivityRae)
 			.where(eq(ticketActivityRae.ticketId, ticketId)),
@@ -633,28 +674,40 @@ export async function getTicketActivityBreakdown(
 	const raeMap = new Map(raeRows.map((r) => [r.activityId, r]));
 	const contribByActivity = new Map<string, { userId: string; displayName: string; consumed: number }[]>();
 	for (const c of contribRows) {
-		if (!c.activityId) continue; // imputation sans activité renseignée : hors périmètre des sous-lignes
-		if (!contribByActivity.has(c.activityId)) contribByActivity.set(c.activityId, []);
-		contribByActivity.get(c.activityId)!.push({ userId: c.userId, displayName: c.displayName, consumed: num(c.total) });
+		// Imputation sans activité renseignée : regroupée sous le bucket "Autre" plutôt que perdue.
+		const activityId = c.activityId ?? NO_ACTIVITY_ID;
+		if (!contribByActivity.has(activityId)) contribByActivity.set(activityId, []);
+		contribByActivity.get(activityId)!.push({ userId: c.userId, displayName: c.displayName, consumed: num(c.total) });
 	}
 
 	const activityIds = new Set<string>([...raeMap.keys(), ...contribByActivity.keys()]);
 	if (activityIds.size === 0) return [];
-	const activities = await db
-		.select({ id: activity.id, label: activity.label })
-		.from(activity)
-		.where(and(eq(activity.workspaceId, workspaceId), inArray(activity.id, [...activityIds])));
+	// NO_ACTIVITY_ID n'est jamais une vraie ligne activity (colonne uuid) : hors de la requête.
+	const realActivityIds = [...activityIds].filter((id) => id !== NO_ACTIVITY_ID);
+	const activities =
+		realActivityIds.length === 0
+			? []
+			: await db
+					.select({ id: activity.id, label: activity.label })
+					.from(activity)
+					.where(and(eq(activity.workspaceId, workspaceId), inArray(activity.id, realActivityIds)));
 	const labelMap = new Map(activities.map((a) => [a.id, a.label]));
 
 	return [...activityIds]
 		.map((id) => ({
 			activityId: id,
-			label: labelMap.get(id) ?? '?',
+			label: labelMap.get(id) ?? (id === NO_ACTIVITY_ID ? 'Autre' : '?'),
 			raeReal: num(raeMap.get(id)?.raeReal ?? null),
 			raeTest: num(raeMap.get(id)?.raeTest ?? null),
+			estimation: num(raeMap.get(id)?.estimation ?? null),
+			budget: num(raeMap.get(id)?.budget ?? null),
 			contributors: (contribByActivity.get(id) ?? []).sort((a, b) => a.displayName.localeCompare(b.displayName))
 		}))
-		.sort((a, b) => a.label.localeCompare(b.label));
+		.sort((a, b) => {
+			if (a.activityId === NO_ACTIVITY_ID) return 1;
+			if (b.activityId === NO_ACTIVITY_ID) return -1;
+			return a.label.localeCompare(b.label);
+		});
 }
 
 /**
@@ -685,12 +738,33 @@ export async function canEditActivityRae(
 	return rows.length > 0;
 }
 
-/** Upsert du RAE (réel ou test) d'une activité sur un ticket. */
+export type TicketActivityField = 'raeReal' | 'raeTest' | 'estimation' | 'budget';
+
+/**
+ * Permission par champ pour une valeur d'activité sur un ticket :
+ * - RAE (réel/test) : cf. canEditActivityRae (contributeur ou manager/admin).
+ * - Estimé : tout membre de l'espace (déjà garanti par l'authentification de la route appelante).
+ * - Budget : ADMIN strict — pas manager, contrairement au reste du chiffrage.
+ */
+export async function canEditActivityField(
+	workspaceId: string,
+	userId: string,
+	role: Role | null,
+	ticketId: string,
+	activityId: string,
+	field: TicketActivityField
+): Promise<boolean> {
+	if (field === 'budget') return role === 'ADMIN';
+	if (field === 'estimation') return true;
+	return canEditActivityRae(workspaceId, userId, role, ticketId, activityId);
+}
+
+/** Upsert d'une valeur (RAE réel/test, Estimé ou Budget) d'une activité sur un ticket. */
 export async function upsertTicketActivityRae(
 	workspaceId: string,
 	ticketId: string,
 	activityId: string,
-	field: 'raeReal' | 'raeTest',
+	field: TicketActivityField,
 	value: number,
 	actorId: string | null = null
 ) {
@@ -719,9 +793,12 @@ export async function upsertTicketActivityRae(
 			target: [ticketActivityRae.ticketId, ticketActivityRae.activityId],
 			set: { [field]: String(value), updatedAt: new Date() }
 		});
-	// Trace la dernière mise à jour du RAE au niveau ticket aussi (rappels « RAE périmé »),
-	// même quand le RAE est suivi par activité et non plus sur le champ ticket directement.
-	await db.update(ticket).set({ raeUpdatedAt: new Date() }).where(eq(ticket.id, ticketId));
+	// Trace la dernière mise à jour du RAE au niveau ticket aussi (rappels « RAE périmé »), même
+	// quand le RAE est suivi par activité et non plus sur le champ ticket directement. Ne concerne
+	// que le RAE — un changement d'Estimé ou de Budget ne doit pas déclencher ce rappel.
+	if (field === 'raeReal' || field === 'raeTest') {
+		await db.update(ticket).set({ raeUpdatedAt: new Date() }).where(eq(ticket.id, ticketId));
+	}
 
 	if (String(oldValue ?? '0') !== String(value)) {
 		await logChange({

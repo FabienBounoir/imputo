@@ -49,7 +49,7 @@ describe('dashboard/sprint +page.server load', () => {
 		const memberResult = await load({ locals: await fakeLocals(memberId), url, cookies } as never);
 		const adminResult = await load({ locals: await fakeLocals(userId), url, cookies } as never);
 
-		expect(memberResult.dashboard?.kpis.tnfBudgetTotal).toBeNull();
-		expect(adminResult.dashboard?.kpis.tnfBudgetTotal).not.toBeNull();
+		expect(memberResult.dashboard?.kpis.ecartVsBudgetTotal).toBeNull();
+		expect(adminResult.dashboard?.kpis.ecartVsBudgetTotal).not.toBeNull();
 	});
 });

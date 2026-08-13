@@ -1,6 +1,17 @@
 import { describe, it, expect } from 'vitest';
-import { createTicket, listTickets, updateTicketField, setTicketFlag, parseFlags } from './tickets';
+import {
+	createTicket,
+	listTickets,
+	updateTicketField,
+	setTicketFlag,
+	parseFlags,
+	canEditActivityField,
+	getTicketActivityBreakdown,
+	NO_ACTIVITY_ID
+} from './tickets';
 import { makeWorkspace, addMember } from './test-helpers';
+import { createActivity, listActivities } from './params';
+import { setCell } from './imputation';
 
 describe('parseFlags', () => {
 	it('renvoie les clés par défaut vides sur une valeur nulle ou corrompue', () => {
@@ -86,6 +97,72 @@ describe('updateTicketField — permissions par rôle', () => {
 		await expect(updateTicketField(workspaceId, t.id, 'notAField', 'x', 'ADMIN', userId)).rejects.toThrow(
 			'Champ non éditable.'
 		);
+	});
+});
+
+describe('canEditActivityField — budget par activité (ADMIN strict)', () => {
+	it('un MANAGER ne peut PAS éditer le budget par activité (contrairement au reste du chiffrage)', async () => {
+		const { workspaceId } = await makeWorkspace();
+		const { userId: managerId } = await addMember(workspaceId, 'MANAGER');
+		const t = await createTicket(workspaceId, { key: 'T-10', title: 'x' });
+		await createActivity(workspaceId, `Dev-${t.id}`);
+		const [act] = (await listActivities(workspaceId)).filter((a) => a.label === `Dev-${t.id}`);
+
+		expect(await canEditActivityField(workspaceId, managerId, 'MANAGER', t.id, act.id, 'budget')).toBe(false);
+	});
+
+	it('un ADMIN peut éditer le budget par activité', async () => {
+		const { workspaceId, userId: adminId } = await makeWorkspace();
+		const t = await createTicket(workspaceId, { key: 'T-11', title: 'x' });
+		await createActivity(workspaceId, `Dev-${t.id}`);
+		const [act] = (await listActivities(workspaceId)).filter((a) => a.label === `Dev-${t.id}`);
+
+		expect(await canEditActivityField(workspaceId, adminId, 'ADMIN', t.id, act.id, 'budget')).toBe(true);
+	});
+
+	it("l'Estimé par activité reste éditable par tout membre, contrairement au budget", async () => {
+		const { workspaceId } = await makeWorkspace();
+		const { userId: userId2 } = await addMember(workspaceId, 'USER');
+		const t = await createTicket(workspaceId, { key: 'T-12', title: 'x' });
+		await createActivity(workspaceId, `Dev-${t.id}`);
+		const [act] = (await listActivities(workspaceId)).filter((a) => a.label === `Dev-${t.id}`);
+
+		expect(await canEditActivityField(workspaceId, userId2, 'USER', t.id, act.id, 'estimation')).toBe(true);
+		expect(await canEditActivityField(workspaceId, userId2, 'USER', t.id, act.id, 'budget')).toBe(false);
+	});
+});
+
+describe('activityBreakdown — bucket "Autre" pour les imputations sans activité', () => {
+	it('regroupe les imputations sans activité sous "Autre", triée après les vraies activités, RAE/estimé/budget à 0', async () => {
+		const { workspaceId, userId } = await makeWorkspace();
+		const t = await createTicket(workspaceId, { key: 'T-20', title: 'x' });
+		await createActivity(workspaceId, `Dev-${t.id}`);
+		const [act] = (await listActivities(workspaceId)).filter((a) => a.label === `Dev-${t.id}`);
+
+		// Une imputation avec activité, une sans — le total "Consommé" du ticket doit rester correct
+		// (déjà le cas), mais avant le fix la seconde disparaissait purement et simplement du détail.
+		await setCell(workspaceId, userId, { targetType: 'TICKET', targetId: t.id, activityId: act.id, day: '2026-08-10', amount: 1 });
+		await setCell(workspaceId, userId, { targetType: 'TICKET', targetId: t.id, activityId: null, day: '2026-08-11', amount: 2 });
+
+		const breakdown = await getTicketActivityBreakdown(workspaceId, t.id);
+		expect(breakdown).toHaveLength(2);
+
+		const other = breakdown.find((a) => a.activityId === NO_ACTIVITY_ID);
+		expect(other?.label).toBe('Autre');
+		expect(other?.contributors).toEqual([{ userId, displayName: expect.any(String), consumed: 2 }]);
+		expect(other?.raeReal).toBe(0);
+		expect(other?.raeTest).toBe(0);
+		expect(other?.estimation).toBe(0);
+		expect(other?.budget).toBe(0);
+
+		// "Autre" trie après les vraies activités même si son libellé serait alphabétiquement avant.
+		expect(breakdown.at(-1)?.activityId).toBe(NO_ACTIVITY_ID);
+
+		// enrichTickets/listTickets (chemin batch de la liste des tickets) applique la même règle,
+		// indépendamment de getTicketActivityBreakdown (logique dupliquée, cf. commentaires du code).
+		const [row] = (await listTickets(workspaceId)).filter((r) => r.id === t.id);
+		expect(row.activityBreakdown.find((a) => a.activityId === NO_ACTIVITY_ID)?.label).toBe('Autre');
+		expect(row.consumed).toBe(3); // le total, lui, a toujours compté les deux imputations
 	});
 });
 

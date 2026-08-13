@@ -13,6 +13,7 @@
 	} from '$lib/utils/date';
 	import { tick } from 'svelte';
 	import { goto, afterNavigate } from '$app/navigation';
+	import { navigating } from '$app/state';
 	import ExportModal from '$lib/components/ExportModal.svelte';
 	import TargetPicker from '$lib/components/TargetPicker.svelte';
 	import TicketEditModal from '$lib/components/TicketEditModal.svelte';
@@ -32,11 +33,13 @@
 		sprintName: string | null;
 		versionName: string | null;
 		raeReal: number | null;
+		estimation: number | null;
 		amounts: Record<string, number>;
 	};
 
 	const TASK_COL_W = 320;
 	const RAE_COL_W = 74;
+	const EST_COL_W = 74;
 	const DAY_COL_W = 68;
 	const SUM_COL_W = 72;
 
@@ -69,6 +72,13 @@
 				const targetId = o.kind === 'TICKET' ? (o.ticketId ?? '') : o.id;
 				if (!targetId || next.some((r) => r.targetType === targetType && r.targetId === targetId)) continue;
 				next.push(buildRow(targetType, targetId, o.activityId ?? null));
+			}
+			// Lignes ajoutées via "+ Ajouter" mais jamais remplies (cf. pinRow) : sans ça elles
+			// disparaîtraient au prochain chargement faute d'imputation en base.
+			for (const p of data.pinnedRows) {
+				const rowKey = `${p.targetType}:${p.targetId}:${p.activityId ?? ''}`;
+				if (next.some((r) => r.rowKey === rowKey)) continue;
+				next.push(buildRow(p.targetType, p.targetId, p.activityId));
 			}
 		}
 		return next;
@@ -113,7 +123,7 @@
 	let periodTotal = $derived(round(Object.values(dayTotals).reduce((a, b) => a + b, 0)));
 	// Capacité attendue = capacité/jour × jours ouvrés non fériés de la période (miroir de
 	// calc.ts:weeklyCapacity/capacityPct côté serveur — dupliqué ici car $lib/server n'est pas
-	// importable côté client, cf. le même motif pour totalEst/ecartExecution dans tickets/+page.svelte).
+	// importable côté client, cf. le même motif pour totalEst/ecartVsEstime dans tickets/+page.svelte).
 	let periodWorkdays = $derived(days.filter((d) => !isPublicHolidayFR(d)).length);
 	let periodCapacity = $derived(round(data.capacity * periodWorkdays));
 	let capacityPct = $derived(periodCapacity > 0 ? round(periodTotal / periodCapacity) : 0);
@@ -156,9 +166,11 @@
 		await fetch('?/setCell', { method: 'POST', body });
 	}
 
-	function cycle(row: Row, day: string) {
+	/** Clic = avance dans CYCLE, Shift+clic = recule (pas de conflit avec le clic droit/molette). */
+	function cycle(row: Row, day: string, reverse = false) {
 		const cur = row.amounts[day] ?? 0;
-		const next = CYCLE[(CYCLE.indexOf(cur) + 1) % CYCLE.length];
+		const delta = reverse ? -1 : 1;
+		const next = CYCLE[(CYCLE.indexOf(cur) + delta + CYCLE.length) % CYCLE.length];
 		setAmount(row, day, next);
 	}
 
@@ -170,11 +182,22 @@
 		ArrowUp: [-1, 0]
 	};
 	let scroller: HTMLDivElement | null = $state(null);
-	// Le RAE se saisit sur ses propres lignes : même un admin qui édite l'imputation d'un autre
-	// membre ne doit pas voir cette colonne, sinon `saveRae` écrirait le RAE sous son propre nom.
-	const showRae = $derived(!data.viewingOther);
+	// Un admin voit (et édite) Estimé/RAE même sur l'imputation d'un autre membre — ce sont des
+	// valeurs par ticket + activité (ticket_activity_rae), pas par personne, donc rien ne s'écrit
+	// "sous son nom" : même donnée que dans Tickets & chiffrage. Masqué seulement pour un non-admin
+	// qui consulte un tiers (canViewImputations, lecture seule) et pour la vue "Toute l'équipe"
+	// (agrégée, pas de colonnes par activité).
+	const showRae = $derived(data.isAdmin || (!data.viewingOther && !data.viewingTeam));
+	// Vue "Toute l'équipe" : une ligne par collaborateur, dépliable pour voir ses lignes détaillées.
+	let expandedMembers = $state<Set<string>>(new Set());
+	function toggleMember(userId: string) {
+		const next = new Set(expandedMembers);
+		if (next.has(userId)) next.delete(userId);
+		else next.add(userId);
+		expandedMembers = next;
+	}
 	const tableMinWidth = $derived(
-		TASK_COL_W + (showRae ? RAE_COL_W : 0) + days.length * DAY_COL_W + SUM_COL_W
+		TASK_COL_W + (showRae ? EST_COL_W + RAE_COL_W : 0) + days.length * DAY_COL_W + SUM_COL_W
 	);
 
 	/**
@@ -184,7 +207,7 @@
 	 */
 	function ensureCellVisibleX(el: HTMLElement) {
 		if (!scroller) return;
-		const leftFrozen = TASK_COL_W + (showRae ? RAE_COL_W : 0);
+		const leftFrozen = TASK_COL_W + (showRae ? EST_COL_W + RAE_COL_W : 0);
 		const rightFrozen = SUM_COL_W;
 		const min = el.offsetLeft + el.offsetWidth - (scroller.clientWidth - rightFrozen);
 		const max = el.offsetLeft - leftFrozen;
@@ -211,7 +234,7 @@
 		framedKey = key;
 		const di = days.indexOf(today);
 		const cell = scroller.querySelector<HTMLElement>(`[data-day="${di >= 0 ? today : days[days.length - 1]}"]`);
-		if (cell) scroller.scrollLeft = Math.max(0, cell.offsetLeft - TASK_COL_W - (showRae ? RAE_COL_W : 0) - 40);
+		if (cell) scroller.scrollLeft = Math.max(0, cell.offsetLeft - TASK_COL_W - (showRae ? EST_COL_W + RAE_COL_W : 0) - 40);
 		if (!data.readOnly && rows.length > 0 && !pendingFocus) focusCell(0, di >= 0 ? di : 0);
 	});
 
@@ -221,7 +244,8 @@
 			g: over.g ?? data.period.granularity,
 			mode: over.mode ?? data.period.mode
 		});
-		if (data.viewingOther) p.set('u', data.viewedId);
+		if (data.viewingTeam) p.set('u', 'team');
+		else if (data.viewingOther) p.set('u', data.viewedId);
 		return `?${p}`;
 	}
 	function viewMember(id: string) {
@@ -240,6 +264,10 @@
 		const anchor = days.includes(today) ? today : data.period.firstDay;
 		goto(periodHref(anchor, over), { noScroll: true });
 	}
+	// Granularité/mode/membre/période naviguent tous en rechargeant les données serveur : le
+	// dérivé sert à geler la barre le temps du trajet, pour ne pas confondre l'ancienne période
+	// affichée avec la nouvelle sélection pendant que le backend répond.
+	const isNavigating = $derived(!!navigating.to);
 	function onCellKey(e: KeyboardEvent, ri: number, di: number, row: Row, day: string) {
 		if (e.key in KEYMAP) {
 			e.preventDefault();
@@ -297,9 +325,18 @@
 		}
 	}
 
-	async function doDeleteRow() {
-		const row = confirmDelete;
-		if (!row) return;
+	function hasAmount(row: Row) {
+		return Object.values(row.amounts).some((a) => a > 0);
+	}
+
+	// Rien à perdre sur une ligne encore vide : on la supprime directement, la modale de confirmation
+	// ne sert qu'à éviter d'effacer des heures déjà saisies par erreur.
+	function requestDeleteRow(row: Row) {
+		if (hasAmount(row)) confirmDelete = row;
+		else doDeleteRow(row);
+	}
+
+	async function doDeleteRow(row: Row) {
 		confirmDelete = null;
 		rows = rows.filter((r) => r.rowKey !== row.rowKey); // optimiste
 		const body = new FormData();
@@ -312,6 +349,36 @@
 		body.set('mode', data.period.mode);
 		body.set('targetUserId', data.viewedId);
 		await fetch('?/deleteRow', { method: 'POST', body });
+	}
+
+	// Changement d'activité d'une ligne (clic sur son tag, ou sur "+ Activité" quand elle n'en a pas) —
+	// même principe optimiste que doDeleteRow : on ne recharge pas la page, on rejoue localement ce que
+	// le serveur va faire (fusion avec une ligne existante sur la nouvelle activité, sinon in-place).
+	let activityPickerRow = $state<Row | null>(null);
+	async function doReassignActivity(toActivityId: string | null) {
+		const row = activityPickerRow;
+		activityPickerRow = null;
+		if (!row || row.activityId === toActivityId) return;
+
+		const destKey = `${row.targetType}:${row.targetId}:${toActivityId ?? ''}`;
+		const dest = rows.find((r) => r.rowKey !== row.rowKey && r.rowKey === destKey);
+		if (dest) {
+			for (const d of days) dest.amounts[d] = round((dest.amounts[d] ?? 0) + (row.amounts[d] ?? 0));
+			rows = rows.filter((r) => r.rowKey !== row.rowKey);
+		} else {
+			rows = rows.map((r) => (r.rowKey === row.rowKey ? buildRow(row.targetType, row.targetId, toActivityId, r.amounts) : r));
+		}
+
+		const body = new FormData();
+		body.set('targetType', row.targetType);
+		body.set('targetId', row.targetId);
+		if (row.activityId) body.set('fromActivityId', row.activityId);
+		if (toActivityId) body.set('toActivityId', toActivityId);
+		body.set('anchor', data.period.anchorISO);
+		body.set('g', data.period.granularity);
+		body.set('mode', data.period.mode);
+		body.set('targetUserId', data.viewedId);
+		await fetch('?/reassignActivity', { method: 'POST', body });
 	}
 
 	// Anti-rafale pour le champ RAE (spinner/molette) : chaque pas déclenche un onchange, donc sans
@@ -338,7 +405,34 @@
 		);
 	}
 
-	function buildRow(targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE', targetId: string, activityId: string | null): Row {
+	// Anti-rafale pour le champ Estimé — même principe que le RAE ci-dessus.
+	const pendingEstimationSaves = new Map<string, ReturnType<typeof setTimeout>>();
+
+	/** Estimé d'une ligne ticket + activité — modifiable par tout le monde, même endpoint que le RAE. */
+	async function saveEstimation(row: Row, value: number) {
+		if (!row.activityId) return;
+		row.estimation = value; // optimiste
+		const key = `${row.targetId}-${row.activityId}`;
+		clearTimeout(pendingEstimationSaves.get(key));
+		pendingEstimationSaves.set(
+			key,
+			setTimeout(async () => {
+				pendingEstimationSaves.delete(key);
+				await fetch(`/api/tickets/${row.targetId}/activity-rae`, {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ activityId: row.activityId, field: 'estimation', value })
+				});
+			}, 600)
+		);
+	}
+
+	function buildRow(
+		targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE',
+		targetId: string,
+		activityId: string | null,
+		amounts: Record<string, number> = {}
+	): Row {
 		const rowKey = `${targetType}:${targetId}:${activityId ?? ''}`;
 		let label = '';
 		let sublabel = '';
@@ -362,8 +456,6 @@
 			emoji = '📝';
 			sublabel = 'Tâche assignée';
 		}
-		const act = data.activities.find((a) => a.id === activityId);
-		if (act) sublabel += ` · ${act.label}`;
 		// versionName / raeReal ne sont pas connus côté client : la ligne n'existe pas encore en base,
 		// ils se peupleront au prochain chargement (le RAE part vide et la première saisie l'écrit).
 		return {
@@ -378,11 +470,16 @@
 			sprintName,
 			versionName: null,
 			raeReal: targetType === 'TICKET' && activityId ? 0 : null,
-			amounts: {}
+			estimation: targetType === 'TICKET' && activityId ? 0 : null,
+			amounts
 		};
 	}
 
-	function addRow() {
+	function activityLabel(row: Row) {
+		return data.activities.find((a) => a.id === row.activityId)?.label ?? null;
+	}
+
+	async function addRow() {
 		if (!pickTarget) return;
 		const [targetType, targetId] = pickTarget.split('::') as ['TICKET' | 'CATEGORY' | 'OBJECTIVE', string];
 		const activityId = pickActivity || null;
@@ -394,6 +491,15 @@
 		rows = [...rows, buildRow(targetType, targetId, activityId)];
 		pickTarget = '';
 		pickActivity = '';
+
+		// Épinglée en base tout de suite : sans imputation dessus, la ligne ne survivrait pas
+		// au prochain chargement (cf. syncedRows/pinRow). Seule la poubelle la fait disparaître.
+		const body = new FormData();
+		body.set('targetType', targetType);
+		body.set('targetId', targetId);
+		if (activityId) body.set('activityId', activityId);
+		body.set('targetUserId', data.viewedId);
+		await fetch('?/pinRow', { method: 'POST', body });
 	}
 
 	// Ajout en un clic depuis le bandeau de rappel (contourne le picker).
@@ -416,8 +522,8 @@
 </script>
 
 <div class="topbar">
-	<h1>{data.viewingOther ? `Imputation de ${data.viewedName}` : 'Mon imputation'}<small>{data.period.label}</small></h1>
-	{#if data.vacationWeeks.length > 0}
+	<h1>{data.viewingTeam ? "Imputation de l'équipe" : data.viewingOther ? `Imputation de ${data.viewedName}` : 'Mon imputation'}<small>{data.period.label}</small></h1>
+	{#if !data.viewingTeam && data.vacationWeeks.length > 0}
 		<span class="vac-badge">
 			🏖 En vacances
 			{#if multiWeek && data.vacationWeeks.length < data.period.weeks.length}
@@ -426,7 +532,8 @@
 		</span>
 	{/if}
 	<div class="spacer"></div>
-	<div class="periodpick">
+	{#if isNavigating}<span class="loading-hint">Chargement…</span>{/if}
+	<fieldset class="periodpick" disabled={isNavigating}>
 		<div class="seg">
 			{#each GRANULARITIES as g (g)}
 				<button class:on={data.period.granularity === g} onclick={() => setPeriod({ g })}>{GRANULARITY_LABELS[g]}</button>
@@ -439,10 +546,17 @@
 				{/each}
 			</div>
 		{/if}
-	</div>
+	</fieldset>
 	{#if data.canViewOthers}
-		<select class="member-pick" value={data.viewedId} onchange={(e) => viewMember(e.currentTarget.value)} aria-label="Voir l'imputation de">
+		<select
+			class="member-pick"
+			value={data.viewingTeam ? 'team' : data.viewedId}
+			disabled={isNavigating}
+			onchange={(e) => viewMember(e.currentTarget.value)}
+			aria-label="Voir l'imputation de"
+		>
 			<option value={data.selfId}>Mon imputation</option>
+			<option value="team">Toute l'équipe</option>
 			{#each data.members.filter((m) => m.id !== data.selfId) as m (m.id)}
 				<option value={m.id}>{m.displayName}</option>
 			{/each}
@@ -451,12 +565,12 @@
 	{#if data.isAdmin}
 		<ExportModal label="Exporter Excel" buttonClass="btn btn-ghost" />
 	{/if}
-	<div class="wknav">
-		<a class="wkbtn" href={periodHref(data.period.prevAnchor)} aria-label="Période précédente">
+	<div class="wknav" class:disabled={isNavigating}>
+		<a class="wkbtn" href={periodHref(data.period.prevAnchor)} aria-label="Période précédente" aria-disabled={isNavigating} onclick={(e) => { if (isNavigating) e.preventDefault(); }}>
 			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m15 18-6-6 6-6"/></svg>
 		</a>
 		<span class="cur">{data.period.shortLabel}</span>
-		<a class="wkbtn" href={periodHref(data.period.nextAnchor)} aria-label="Période suivante">
+		<a class="wkbtn" href={periodHref(data.period.nextAnchor)} aria-label="Période suivante" aria-disabled={isNavigating} onclick={(e) => { if (isNavigating) e.preventDefault(); }}>
 			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m9 18 6-6-6-6"/></svg>
 		</a>
 	</div>
@@ -472,6 +586,91 @@
 			{/if}
 		</div>
 	{/if}
+	{#if data.viewingTeam}
+	{@const team = data.team}
+	<div class="card grid-card">
+		<div class="table-scroll">
+		<table class="imp no-rae" style="--imp-min-w: {tableMinWidth}px; --task-w: {TASK_COL_W}px;">
+			<colgroup>
+				<col class="col-task" />
+				{#each days as d (d)}<col class="col-day" />{/each}
+				<col class="col-sum" />
+			</colgroup>
+			<thead>
+				{#if multiWeek}
+					<tr class="wk-head">
+						<th class="task-h"></th>
+						{#each data.period.weeks as w (w.mondayISO)}<th colspan={w.days.length}>S{w.weekNumber}</th>{/each}
+						<th class="sum-h"></th>
+					</tr>
+				{/if}
+				<tr class="day-head" class:below-group={multiWeek}>
+					<th class="task-h">Collaborateur</th>
+					{#each days as d (d)}
+						<th data-day={d} class:today={d === today} class:holiday={isPublicHolidayFR(d)} class:wk-end={weekBoundaries.has(d)}>{dayName(parseISODate(d))}<span class="dnum">{dayNum(parseISODate(d))}</span></th>
+					{/each}
+					<th class="sum-h">Σ</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each team?.members ?? [] as m (m.userId)}
+					{@const isOpen = expandedMembers.has(m.userId)}
+					<tr class="team-member-row">
+						<td class="task">
+							<button type="button" class="team-toggle" onclick={() => toggleMember(m.userId)} aria-expanded={isOpen}>
+								<svg class="chev" class:open={isOpen} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 6 6-6 6" /></svg>
+								<b>{m.name}</b>
+							</button>
+						</td>
+						{#each days as d (d)}
+							<td class="day" class:today={d === today} class:wk-end={weekBoundaries.has(d)}>
+								<span class="cell ro" class:val={(m.dayTotals[d] ?? 0) > 0} class:empty={!(m.dayTotals[d] ?? 0)}>{fmt(m.dayTotals[d])}</span>
+							</td>
+						{/each}
+						<td class="sum tabnum">{m.total}</td>
+					</tr>
+					{#if isOpen}
+						{#each m.rows as row (row.rowKey)}
+							<tr class="team-detail-row">
+								<td class="task">
+									<div class="task-cell">
+										<span class="pill">{row.emoji}</span>
+										<div class="tt">
+											<b>{row.label}</b>
+											<span class="sub">{row.sublabel}</span>
+										</div>
+									</div>
+								</td>
+								{#each days as d (d)}
+									<td class="day" class:today={d === today} class:wk-end={weekBoundaries.has(d)}>
+										<span class="cell ro" class:val={(row.amounts[d] ?? 0) > 0} class:empty={!(row.amounts[d] ?? 0)}>{fmt(row.amounts[d])}</span>
+									</td>
+								{/each}
+								<td class="sum tabnum">{round(days.reduce((a, d) => a + (row.amounts[d] ?? 0), 0))}</td>
+							</tr>
+						{/each}
+						{#if m.rows.length === 0}
+							<tr class="team-detail-row"><td colspan={days.length + 2} class="empty-row">Aucune ligne sur cette période.</td></tr>
+						{/if}
+					{/if}
+				{/each}
+				{#if (team?.members.length ?? 0) === 0}
+					<tr><td colspan={days.length + 2} class="empty-row">Aucune imputation sur cette période.</td></tr>
+				{/if}
+			</tbody>
+			<tfoot>
+				<tr>
+					<td class="task foot-lab">Total / jour</td>
+					{#each days as d (d)}
+						<td class:wk-end={weekBoundaries.has(d)}><span class="day-tot tabnum">{fmt(team?.dayTotals[d] ?? 0)}</span></td>
+					{/each}
+					<td class="sum tabnum">{team?.total ?? 0}</td>
+				</tr>
+			</tfoot>
+		</table>
+		</div>
+	</div>
+	{:else}
 	<div class="summary">
 		<div class="card stat">
 			<div class="k">Saisi · {data.period.shortLabel}</div>
@@ -531,7 +730,7 @@
 		<table class="imp" class:no-rae={!showRae} style="--imp-min-w: {tableMinWidth}px; --task-w: {TASK_COL_W}px;">
 			<colgroup>
 				<col class="col-task" />
-				{#if showRae}<col class="col-rae" />{/if}
+				{#if showRae}<col class="col-estimation" /><col class="col-rae" />{/if}
 				{#each days as d (d)}<col class="col-day" />{/each}
 				<col class="col-sum" />
 			</colgroup>
@@ -539,14 +738,14 @@
 				{#if multiWeek}
 					<tr class="wk-head">
 						<th class="task-h"></th>
-						{#if showRae}<th class="rae-h"></th>{/if}
+						{#if showRae}<th class="est-h"></th><th class="rae-h"></th>{/if}
 						{#each data.period.weeks as w (w.mondayISO)}<th colspan={w.days.length}>S{w.weekNumber}</th>{/each}
 						<th class="sum-h"></th>
 					</tr>
 				{/if}
 				<tr class="day-head" class:below-group={multiWeek}>
 					<th class="task-h">Tâche / catégorie</th>
-					{#if showRae}<th class="rae-h" title="Reste à engager de la paire ticket + activité">RAE</th>{/if}
+					{#if showRae}<th class="est-h" title="Estimé de la paire ticket + activité — modifiable par tout le monde">Estimé</th><th class="rae-h" title="Reste à engager de la paire ticket + activité">RAE</th>{/if}
 					{#each days as d (d)}
 						{@const abs = data.absences[d]}
 						<th
@@ -577,6 +776,25 @@
 									<b>{row.label}</b>
 									<span class="sub">
 										{row.sublabel}
+										{#if !data.readOnly}
+											{#if activityLabel(row)}
+												<button
+													type="button"
+													class="tag-activity tag-link"
+													onclick={() => (activityPickerRow = row)}
+													title="Changer l'activité"
+												>{activityLabel(row)}</button>
+											{:else}
+												<button
+													type="button"
+													class="tag-activity tag-add"
+													onclick={() => (activityPickerRow = row)}
+													title="Associer une activité à cette ligne"
+												>+ Activité</button>
+											{/if}
+										{:else if activityLabel(row)}
+											<span class="tag-activity">{activityLabel(row)}</span>
+										{/if}
 										{#if row.sprintName}
 											<button
 												type="button"
@@ -601,13 +819,33 @@
 									</button>
 								{/if}
 								{#if !data.readOnly}
-									<button class="row-del" onclick={() => (confirmDelete = row)} aria-label="Supprimer la ligne">
+									<button class="row-del" onclick={() => requestDeleteRow(row)} aria-label="Supprimer la ligne">
 										<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg>
 									</button>
 								{/if}
 							</div>
 						</td>
 						{#if showRae}
+							<td class="estimation">
+								{#if row.targetType === 'TICKET' && row.activityId}
+									<input
+										class="rae-input tabnum"
+										type="number"
+										step="0.25"
+										min="0"
+										value={row.estimation ?? 0}
+										aria-label="Estimé"
+										onchange={(e) => saveEstimation(row, Number(e.currentTarget.value) || 0)}
+									/>
+								{:else}
+									<span
+										class="rae-na"
+										title={row.targetType === 'TICKET'
+											? 'Sélectionnez une activité sur cette ligne pour saisir l’Estimé.'
+											: 'L’Estimé ne concerne que les tickets.'}
+									>—</span>
+								{/if}
+							</td>
 							<td class="rae">
 								{#if row.targetType === 'TICKET' && row.activityId}
 									<input
@@ -639,7 +877,7 @@
 										class:val={(row.amounts[d] ?? 0) > 0}
 										class:empty={!(row.amounts[d] ?? 0)}
 										data-cell="{ri}-{di}"
-										onclick={() => cycle(row, d)}
+										onclick={(e) => cycle(row, d, e.shiftKey)}
 										onkeydown={(e) => onCellKey(e, ri, di, row, d)}
 									>{fmt(row.amounts[d])}</button>
 								{/if}
@@ -649,13 +887,13 @@
 					</tr>
 				{/each}
 				{#if rows.length === 0}
-					<tr><td colspan={days.length + (showRae ? 3 : 2)} class="empty-row">{data.readOnly ? 'Aucune imputation sur cette période.' : 'Aucune ligne — ajoutez un ticket ou une catégorie ci-dessous.'}</td></tr>
+					<tr><td colspan={days.length + (showRae ? 4 : 2)} class="empty-row">{data.readOnly ? 'Aucune imputation sur cette période.' : 'Aucune ligne — ajoutez un ticket ou une catégorie ci-dessous.'}</td></tr>
 				{/if}
 			</tbody>
 			<tfoot>
 				<tr>
 					<td class="task foot-lab">Total / jour</td>
-					{#if showRae}<td class="rae"></td>{/if}
+					{#if showRae}<td class="estimation"></td><td class="rae"></td>{/if}
 					{#each days as d (d)}
 						<td class:wk-end={weekBoundaries.has(d)}><span class="day-tot tabnum" class:over={dayTotals[d] > data.capacity} class:ok={dayTotals[d] > 0 && dayTotals[d] <= data.capacity}>{fmt(dayTotals[d])}</span></td>
 					{/each}
@@ -688,13 +926,16 @@
 	<div class="legend">
 		{#if !data.readOnly}
 			{@const keyEntries = Object.entries(KEYMAP).filter(([k]) => k !== '0')}
-			<span class="kbd">Clique pour faire défiler <b>·</b> → {CYCLE.slice(1).map((v) => fmt(v)).join(' → ')}</span>
+			<span class="kbd">Clique pour faire défiler <b>·</b> → {CYCLE.slice(1).map((v) => fmt(v)).join(' → ')} <b>·</b> <kbd>Shift</kbd>+clic pour reculer</span>
 			<span class="kbd">Clavier : {#each keyEntries as [k] (k)}<kbd>{k}</kbd> {/each}→ {keyEntries.map(([, v]) => fmt(v)).join(' / ')} · <kbd>0</kbd>/<kbd>Suppr</kbd> vide · <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> naviguer · <kbd>←</kbd>/<kbd>→</kbd> en bord = période ±</span>
 		{/if}
 	</div>
+	{/if}
 </div>
 
-<svelte:window onkeydown={(e) => e.key === 'Escape' && (confirmDelete = null)} />
+<svelte:window
+	onkeydown={(e) => e.key === 'Escape' && ((confirmDelete = null), (activityPickerRow = null))}
+/>
 
 {#if confirmDelete}
 	{@const row = confirmDelete}
@@ -709,7 +950,34 @@
 			</p>
 			<div class="modal-actions">
 				<button class="btn btn-ghost" onclick={() => (confirmDelete = null)}>Annuler</button>
-				<button class="btn btn-danger" onclick={doDeleteRow}>🗑 Supprimer</button>
+				<button class="btn btn-danger" onclick={() => doDeleteRow(row)}>🗑 Supprimer</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+{#if activityPickerRow}
+	{@const row = activityPickerRow}
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="modal-backdrop" onclick={() => (activityPickerRow = null)}>
+		<div class="modal" onclick={(e) => e.stopPropagation()}>
+			<h3>{row.emoji} {row.label}</h3>
+			<p class="hint">
+				Activité de cette ligne pour <b>{data.period.label}</b> ({data.period.firstDay} → {data.period.lastDay}).
+			</p>
+			<div class="activity-options">
+				<button type="button" class="activity-option" class:sel={!row.activityId} onclick={() => doReassignActivity(null)}>
+					Aucune activité
+				</button>
+				{#each data.activities as a (a.id)}
+					<button type="button" class="activity-option" class:sel={row.activityId === a.id} onclick={() => doReassignActivity(a.id)}>
+						{a.label}
+					</button>
+				{/each}
+			</div>
+			<div class="modal-actions">
+				<button class="btn btn-ghost" onclick={() => (activityPickerRow = null)}>Fermer</button>
 			</div>
 		</div>
 	</div>
@@ -840,6 +1108,40 @@
 		color: var(--accent-ink);
 		background: color-mix(in srgb, var(--accent) 18%, var(--surface-sunk));
 	}
+	button.tag-activity.tag-add {
+		background: transparent;
+		border: 1px dashed var(--border-strong);
+		color: var(--text-mute);
+	}
+	button.tag-activity.tag-add:hover {
+		border-color: var(--accent);
+		color: var(--accent-ink);
+		background: color-mix(in srgb, var(--accent) 10%, transparent);
+	}
+	.activity-options {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		margin-top: 16px;
+		max-height: 320px;
+		overflow-y: auto;
+	}
+	.activity-option {
+		width: 100%;
+		text-align: left;
+		padding: 8px 10px;
+		border-radius: var(--r-md, 10px);
+		font-size: 13.5px;
+		font-weight: 600;
+		color: var(--text);
+	}
+	.activity-option:hover {
+		background: var(--surface-2);
+	}
+	.activity-option.sel {
+		background: var(--accent-tint-2, color-mix(in srgb, var(--accent) 14%, transparent));
+		color: var(--accent-ink);
+	}
 	.reminder-add {
 		flex-shrink: 0;
 		padding: 5px 11px;
@@ -883,6 +1185,14 @@
 	}
 	.wkbtn:hover {
 		background: var(--surface-sunk);
+	}
+	.wknav.disabled {
+		opacity: 0.6;
+		pointer-events: none;
+	}
+	.loading-hint {
+		font-size: 12.5px;
+		color: var(--text-mute);
 	}
 	.cur {
 		padding: 0 12px;
@@ -932,6 +1242,9 @@
 	.col-task {
 		width: var(--task-w);
 	}
+	.col-estimation {
+		width: 74px;
+	}
 	.col-rae {
 		width: 74px;
 	}
@@ -953,10 +1266,17 @@
 		z-index: 2;
 		background: var(--surface);
 	}
+	.imp th.est-h,
+	.imp td.estimation {
+		position: sticky;
+		left: var(--task-w);
+		z-index: 2;
+		background: var(--surface);
+	}
 	.imp th.rae-h,
 	.imp td.rae {
 		position: sticky;
-		left: var(--task-w);
+		left: calc(var(--task-w) + 74px);
 		z-index: 2;
 		background: var(--surface);
 		border-right: 1px solid var(--border);
@@ -1001,8 +1321,9 @@
 		z-index: 3;
 		background: var(--surface);
 	}
-	/* Les quatre coins doivent passer au-dessus des deux axes à la fois. */
+	/* Les coins doivent passer au-dessus des deux axes à la fois. */
 	.imp thead th.task-h,
+	.imp thead th.est-h,
 	.imp thead th.rae-h,
 	.imp thead th.sum-h,
 	.imp tfoot td.task,
@@ -1029,7 +1350,8 @@
 		outline: none;
 		border-color: var(--accent);
 	}
-	.imp td.rae {
+	.imp td.rae,
+	.imp td.estimation {
 		text-align: center;
 		border-top: 1px solid var(--border);
 	}
@@ -1043,6 +1365,13 @@
 		display: flex;
 		align-items: center;
 		gap: 8px;
+		margin: 0;
+		padding: 0;
+		border: 0;
+		min-width: 0;
+	}
+	.periodpick:disabled {
+		opacity: 0.6;
 	}
 	.seg {
 		display: flex;
@@ -1253,6 +1582,35 @@
 	}
 	.cell.ro {
 		cursor: default;
+	}
+	.team-toggle {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		font: inherit;
+		width: 100%;
+		text-align: left;
+	}
+	.team-toggle .chev {
+		flex-shrink: 0;
+		color: var(--text-mute);
+		transition: transform 0.15s;
+	}
+	.team-toggle .chev.open {
+		transform: rotate(90deg);
+	}
+	.team-member-row:hover td {
+		background: var(--surface-2);
+	}
+	.team-detail-row td.task {
+		padding-left: 40px;
+	}
+	.team-detail-row .task-cell .tt b {
+		font-size: 13px;
+		font-weight: 500;
+	}
+	.team-detail-row td {
+		background: var(--surface-sunk);
 	}
 	td.day.today {
 		background: color-mix(in srgb, var(--accent) 5%, transparent);

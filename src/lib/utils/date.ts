@@ -253,6 +253,68 @@ export function previousMoodPeriodStart(kind: 'WEEK_1' | 'WEEK_2' | 'WEEK_3' | '
 	return toISODate(addDays(start, -MOOD_PERIOD_DAYS[kind]));
 }
 
+// Lundi = 0 … dimanche = 6 (contrairement à getUTCDay() où dimanche = 0).
+function mondayBasedDow(d: Date): number {
+	return (d.getUTCDay() + 6) % 7;
+}
+
+/** Jour "actif" pour la perm support : lun-ven toujours, samedi seulement si `includeSaturday`, jamais dimanche. */
+function isActiveSupportDay(d: Date, includeSaturday: boolean): boolean {
+	const dow = mondayBasedDow(d);
+	if (dow === 5) return includeSaturday; // samedi
+	return dow !== 6; // tout sauf dimanche
+}
+
+/**
+ * Plage de la période de perm support (DAY/WEEK/MONTH) contenant `todayISO`. WEEK = lun→ven (ou
+ * lun→sam si `includeSaturday`). DAY : un jour non actif (week-end) retombe sur le dernier jour
+ * actif précédent — comme WEEK, où le week-end "appartient" toujours à la semaine en cours.
+ */
+export function currentSupportPeriod(
+	cadence: 'DAY' | 'WEEK' | 'MONTH',
+	todayISO: string,
+	includeSaturday = false
+): { start: string; end: string } {
+	const today = parseISODate(todayISO);
+	if (cadence === 'MONTH') {
+		const start = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
+		const end = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 0));
+		return { start: toISODate(start), end: toISODate(end) };
+	}
+	if (cadence === 'WEEK') {
+		const start = mondayOf(today);
+		return { start: toISODate(start), end: toISODate(addDays(start, includeSaturday ? 5 : 4)) };
+	}
+	let d = today;
+	while (!isActiveSupportDay(d, includeSaturday)) d = addDays(d, -1);
+	const activeDay = toISODate(d);
+	return { start: activeDay, end: activeDay };
+}
+
+// Ancrage arbitraire (lundi) pour numéroter les périodes de façon stable, sans stocker de date de
+// départ de rotation : deux workspaces avec la même cadence et le même ordre de membres tombent
+// naturellement d'accord, même après ajout/suppression d'un membre.
+const SUPPORT_EPOCH_MS = Date.UTC(2000, 0, 3);
+
+/**
+ * Index entier croissant de la période — sert à choisir `membres[index % nbMembres]`. En cadence
+ * DAY, seuls les jours actifs comptent (jamais le dimanche, le samedi seulement si
+ * `includeSaturday`) : sans ça, un week-end de 2 jours ferait sauter 2 personnes dans la rotation
+ * entre vendredi et lundi alors qu'un seul jour ouvré s'est écoulé.
+ */
+export function supportPeriodIndex(
+	cadence: 'DAY' | 'WEEK' | 'MONTH',
+	periodStartISO: string,
+	includeSaturday = false
+): number {
+	const start = parseISODate(periodStartISO);
+	if (cadence === 'MONTH') return start.getUTCFullYear() * 12 + start.getUTCMonth();
+	const diffDays = Math.round((start.getTime() - SUPPORT_EPOCH_MS) / 86400000);
+	if (cadence === 'WEEK') return Math.floor(diffDays / 7);
+	const activeDaysPerWeek = includeSaturday ? 6 : 5;
+	return Math.floor(diffDays / 7) * activeDaysPerWeek + mondayBasedDow(start);
+}
+
 /** Plage de dates lisible : « 6 → 10 juil. 2026 », « 29 juin → 3 juil. 2026 », « 29 déc. 2025 → 2 janv. 2026 ». */
 export function formatDayRange(fromISO: string, toISO: string): string {
 	const from = parseISODate(fromISO);

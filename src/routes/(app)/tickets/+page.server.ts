@@ -56,7 +56,16 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	// estimationPrev/enveloppeTotale/tnfBudget : redaction faite dans listTicketsPage() (source
 	// unique, tout appelant en profite) — pas juste ici, sinon un autre consommateur la raterait.
 	const [{ rows: tickets, total }, ref] = await Promise.all([
-		listTicketsPage(ws.workspaceId, ws.testPhase, isAdmin, filters, view === 'table' ? { pageSize: PAGE_SIZE, page } : undefined),
+		listTicketsPage(
+			ws.workspaceId,
+			ws.testPhase,
+			isAdmin,
+			filters,
+			view === 'table' ? { pageSize: PAGE_SIZE, page } : undefined,
+			// Le détail par activité n'est rendu que dans les lignes fines de la vue tableau — le
+			// kanban charge tout le board sans pagination, l'économiser y compte double (cf. audit).
+			view === 'table'
+		),
 		getRefData(ws.workspaceId)
 	]);
 	return {
@@ -71,6 +80,9 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		ref,
 		testPhase: ws.testPhase,
 		isAdmin,
+		// Budget par activité (sous-lignes) : ADMIN strict, contrairement au reste du chiffrage
+		// (isManagerOrAdmin) — cf. canEditActivityField côté service.
+		isStrictAdmin: locals.role === 'ADMIN',
 		/** Chiffrage global (estimations, prépa) : lecture seule pour un USER standard. */
 		canEditEstimation: isManagerOrAdmin(locals.role),
 		selfId: locals.user!.id

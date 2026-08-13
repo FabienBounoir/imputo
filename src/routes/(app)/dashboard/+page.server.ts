@@ -38,5 +38,5 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		getDashboard(ws.workspaceId, period, ws.testPhase),
 		getWeeklySynthesis(ws.workspaceId, weekRange.from, weekRange.to)
 	]);
-	return { dashboard, weeklySynthesis, scope, months };
+	return { dashboard, weeklySynthesis, weekRange, scope, months };
 };

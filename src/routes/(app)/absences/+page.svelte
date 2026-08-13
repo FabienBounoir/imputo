@@ -12,6 +12,7 @@
 		type AbsencePeriod
 	} from '$lib/absenceTypes';
 	import { parseISODate, formatDayRange, formatDateTime } from '$lib/utils/date';
+	import { SCHOOL_ZONES, SCHOOL_ZONE_LABELS, SCHOOL_ZONE_COLORS, isSchoolHoliday } from '$lib/schoolZones';
 	import { downloadSvgAsPng } from '$lib/utils/svgToPng';
 
 	let { data, form } = $props();
@@ -136,14 +137,24 @@
 	function openImageModal() {
 		imgFrom = data.days[0];
 		imgTo = data.days[data.days.length - 1];
-		imgRowIds = data.rows.map((r) => r.id);
+		imgRowIds = [];
 		showImageModal = true;
 	}
 
+	/** Coche/décoche une ligne — l'ordre de coche fait l'ordre d'export (décocher/recocher pour réordonner). */
+	function toggleImgRow(id: string) {
+		imgRowIds = imgRowIds.includes(id) ? imgRowIds.filter((x) => x !== id) : [...imgRowIds, id];
+	}
+	function selectAllImgRows() {
+		imgRowIds = data.rows.map((r) => r.id);
+	}
+
 	async function downloadImagePng() {
+		// Garde explicite en plus du `disabled` sur le bouton : `rows` vide côté serveur exporterait
+		// toute l'équipe, pas rien — un appel sans sélection ne doit jamais partir.
+		if (imgRowIds.length === 0) return;
 		imgBusy = true;
-		const params = new URLSearchParams({ from: imgFrom, to: imgTo });
-		if (imgRowIds.length > 0) params.set('rows', imgRowIds.join(','));
+		const params = new URLSearchParams({ from: imgFrom, to: imgTo, rows: imgRowIds.join(',') });
 		try {
 			const res = await fetch(`/absences/export-image?${params}`);
 			if (!res.ok) return;
@@ -258,6 +269,17 @@
 								<th class:weekend={isWeekend(d)} class:today={d === data.todayISO}>{parseISODate(d).getUTCDate()}</th>
 							{/each}
 						</tr>
+						{#each SCHOOL_ZONES as zone (zone)}
+							<tr class="zone-row" title="{SCHOOL_ZONE_LABELS[zone]} (vacances scolaires)">
+								<th class="name-col zone-label">{zone}</th>
+								{#each data.days as d (d)}
+									<td
+										class="zone-cell"
+										style={isSchoolHoliday(d, zone, data.schoolHolidays) ? `background:${SCHOOL_ZONE_COLORS[zone]};` : ''}
+									></td>
+								{/each}
+							</tr>
+						{/each}
 					</thead>
 					<tbody>
 						{#each data.rows as m (m.id)}
@@ -289,10 +311,19 @@
 			</div>
 
 			<div class="legend">
-				{#each ABSENCE_TYPES as t (t)}
-					<span class="legend-item"><span class="swatch" style="background:{ABSENCE_TYPE_COLORS[t]};"></span>{ABSENCE_TYPE_LABELS[t]}</span>
-					<span class="legend-item"><span class="swatch" style="background:linear-gradient(135deg, transparent 0 50%, {ABSENCE_TYPE_COLORS[t]} 50% 100%);"></span>{ABSENCE_TYPE_LABELS[t]} (demi-journée)</span>
-				{/each}
+				<div class="legend-row">
+					<span class="legend-row-label">Absences</span>
+					{#each ABSENCE_TYPES as t (t)}
+						<span class="legend-item"><span class="swatch" style="background:{ABSENCE_TYPE_COLORS[t]};"></span>{ABSENCE_TYPE_LABELS[t]}</span>
+					{/each}
+					<span class="legend-item legend-note"><span class="swatch swatch-half"></span>Demi-journée</span>
+				</div>
+				<div class="legend-row">
+					<span class="legend-row-label">Vacances scolaires</span>
+					{#each SCHOOL_ZONES as zone (zone)}
+						<span class="legend-item"><span class="swatch swatch-bar" style="background:{SCHOOL_ZONE_COLORS[zone]};"></span>{SCHOOL_ZONE_LABELS[zone]}</span>
+					{/each}
+				</div>
 			</div>
 		{/if}
 	</section>
@@ -543,12 +574,23 @@
 			</div>
 
 			<div class="field">
-				<label for="imgRows">Lignes (Ctrl/Cmd-clic pour en sélectionner plusieurs)</label>
-				<select id="imgRows" multiple bind:value={imgRowIds} size={Math.min(8, Math.max(3, data.rows.length))}>
+				<div class="img-rows-head">
+					<div class="field-label" id="imgRowsLabel">Lignes (cochées dans l'ordre voulu = ordre d'export)</div>
+					{#if imgRowIds.length > 0}
+						<button type="button" class="img-rows-all" onclick={() => (imgRowIds = [])}>Tout désélectionner</button>
+					{:else}
+						<button type="button" class="img-rows-all" onclick={selectAllImgRows}>Tout sélectionner</button>
+					{/if}
+				</div>
+				<div class="img-rows-pick" role="group" aria-labelledby="imgRowsLabel">
 					{#each data.rows as r (r.id)}
-						<option value={r.id}>{r.displayName}{r.external ? ' (externe)' : ''}</option>
+						<label class="img-row-check">
+							<input type="checkbox" checked={imgRowIds.includes(r.id)} onchange={() => toggleImgRow(r.id)} />
+							<span class="img-row-name">{r.displayName}{r.external ? ' (externe)' : ''}</span>
+							{#if imgRowIds.includes(r.id)}<span class="img-row-pos">{imgRowIds.indexOf(r.id) + 1}</span>{/if}
+						</label>
 					{/each}
-				</select>
+				</div>
 			</div>
 
 			<div class="modal-actions">
@@ -836,6 +878,11 @@
 		border: 1px solid var(--border);
 		flex-shrink: 0;
 	}
+	.swatch-bar {
+		height: 6px;
+		border-radius: 3px;
+		border: none;
+	}
 
 	.grid-wrap {
 		overflow-x: auto;
@@ -882,14 +929,44 @@
 		font-weight: 600;
 		position: sticky;
 	}
-	.grid thead tr:first-child th {
+	.grid thead tr:nth-child(1) th {
 		top: 0;
 	}
-	.grid thead tr:last-child th {
+	.grid thead tr:nth-child(2) th {
 		top: 27px;
+	}
+	/* Bandeaux vacances scolaires (zones A/B/C) : lignes fines empilées sous l'en-tête jours, elles
+	   aussi épinglées pour rester avec le reste de l'en-tête au scroll vertical de la page. */
+	.grid thead tr.zone-row th,
+	.grid thead tr.zone-row td {
+		position: sticky;
+	}
+	.grid thead tr:nth-child(3) th,
+	.grid thead tr:nth-child(3) td {
+		top: 54px;
+	}
+	.grid thead tr:nth-child(4) th,
+	.grid thead tr:nth-child(4) td {
+		top: 68px;
+	}
+	.grid thead tr:nth-child(5) th,
+	.grid thead tr:nth-child(5) td {
+		top: 82px;
 	}
 	.grid .month-hdr {
 		border-left-width: 2px;
+	}
+	.zone-row th,
+	.zone-row td {
+		height: 14px;
+	}
+	.zone-label {
+		font-size: 9px;
+		color: var(--text-mute);
+	}
+	.grid td.zone-cell {
+		background: var(--surface-sunk);
+		border-color: transparent;
 	}
 	.grid .name-col {
 		text-align: left;
@@ -937,17 +1014,41 @@
 
 	.legend {
 		display: flex;
-		flex-wrap: wrap;
-		gap: 6px 18px;
+		flex-direction: column;
+		gap: 8px;
 		margin-top: 14px;
 		font-size: 12.5px;
 		color: var(--text-soft);
+	}
+	.legend-row {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 6px 16px;
+	}
+	.legend-row + .legend-row {
+		padding-top: 8px;
+		border-top: 1px solid var(--border);
+	}
+	.legend-row-label {
+		font-size: 10.5px;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
+		color: var(--text-mute);
+		margin-right: 2px;
 	}
 	.legend-item {
 		display: flex;
 		align-items: center;
 		gap: 6px;
 		white-space: nowrap;
+	}
+	.legend-note {
+		color: var(--text-mute);
+	}
+	.swatch-half {
+		background: linear-gradient(135deg, transparent 0 50%, var(--text-mute) 50% 100%);
 	}
 
 	.modal-backdrop {
@@ -981,9 +1082,93 @@
 	.modal .field {
 		margin-top: 14px;
 	}
-	.modal .field select[multiple] {
-		height: auto;
+	.modal .field > label,
+	.field-label {
+		display: block;
+		font-size: 11px;
+		font-weight: 600;
+		color: var(--text-mute);
+		margin-bottom: 6px;
+	}
+	.img-rows-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+		margin-bottom: 6px;
+	}
+	.img-rows-head .field-label {
+		margin-bottom: 0;
+	}
+	.img-rows-all {
+		font-size: 11.5px;
+		font-weight: 600;
+		color: var(--accent);
+		white-space: nowrap;
+	}
+	.img-rows-all:hover {
+		text-decoration: underline;
+	}
+	.img-rows-pick {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+		gap: 1px 8px;
+		max-height: 180px;
+		overflow-y: auto;
+		border: 1px solid var(--border);
+		border-radius: var(--r-md);
 		padding: 4px;
+	}
+	.img-row-check {
+		display: flex;
+		align-items: center;
+		gap: 7px;
+		padding: 5px 6px;
+		margin-bottom: 0;
+		border-radius: var(--r-sm, 6px);
+		font-size: 13px;
+		font-weight: 400;
+		color: var(--text);
+		cursor: pointer;
+		min-width: 0;
+	}
+	/* La checkbox vit dans un `.field` (cf. app.css `.field input`) qui la stylerait sinon comme un
+	   champ texte pleine largeur — on la ramène à une case à cocher normale. */
+	.img-row-check input[type='checkbox'] {
+		width: 15px;
+		height: 15px;
+		flex-shrink: 0;
+		padding: 0;
+		margin: 0;
+		border-radius: 4px;
+		accent-color: var(--accent);
+	}
+	.img-row-name {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.img-row-check:has(input:checked) {
+		background: var(--accent-tint-2);
+	}
+	.img-row-check:hover {
+		background: var(--surface-2);
+	}
+	.img-row-pos {
+		margin-left: auto;
+		min-width: 16px;
+		height: 16px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 50%;
+		background: var(--accent);
+		color: var(--surface);
+		font-size: 10px;
+		font-weight: 700;
+		flex-shrink: 0;
 	}
 	.ex-dates {
 		display: flex;
