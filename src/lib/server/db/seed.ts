@@ -5,6 +5,10 @@
 //
 // Usage : npm run db:seed   (déploie/rafraîchit)
 //         npm run db:unseed (supprime tout)
+//
+// Échelle (tests de charge, cf. loadtest/README.md) : SEED_WORKSPACES/SEED_USERS_PER_WS/
+// SEED_TICKETS_PER_WS/SEED_WEEKS — voir getSeedScale() dans seed.shared.ts. Sans ces variables,
+// comportement strictement identique à avant (1 espace, 5 comptes, ~36 tickets, ~15 semaines).
 import { eq, inArray } from 'drizzle-orm';
 import { hashPassword } from '../auth/password';
 import { DEFAULT_STATES, DEFAULT_ACTIVITIES, DEFAULT_CATEGORIES } from '../services/defaults';
@@ -32,7 +36,7 @@ import {
 	weeklyObjective,
 	weeklyVacation
 } from './schema';
-import { getDb, wipeSandbox, WORKSPACE_NAME, SEED_DOMAIN, SEED_USERS } from './seed.shared';
+import { getDb, wipeSandbox, WORKSPACE_NAME, SEED_DOMAIN, SEED_USERS, getSeedScale, type SeedScale } from './seed.shared';
 
 function rand<T>(arr: T[]): T {
 	return arr[Math.floor(Math.random() * arr.length)];
@@ -65,19 +69,49 @@ function splitShares(n: number): number[] {
 	return raw.map((x) => round(x / total));
 }
 
-// ---------- Chronologie : 8 sprints de 2 semaines (~4 mois), 4 versions (2 sprints chacune) ----------
-const SPRINT_DEFS = [
-	{ name: 'Sprint 9', startWeeksAgo: 15, endWeeksAgo: 14, version: 'V1.0' },
-	{ name: 'Sprint 10', startWeeksAgo: 13, endWeeksAgo: 12, version: 'V1.0' },
-	{ name: 'Sprint 11', startWeeksAgo: 11, endWeeksAgo: 10, version: 'V1.1' },
-	{ name: 'Sprint 12', startWeeksAgo: 9, endWeeksAgo: 8, version: 'V1.1' },
-	{ name: 'Sprint 13', startWeeksAgo: 7, endWeeksAgo: 6, version: 'V1.2' },
-	{ name: 'Sprint 14', startWeeksAgo: 5, endWeeksAgo: 4, version: 'V1.2' },
-	{ name: 'Sprint 15', startWeeksAgo: 3, endWeeksAgo: 2, version: 'V1.3' },
-	{ name: 'Sprint 16', startWeeksAgo: 1, endWeeksAgo: 0, version: 'V1.3' } // sprint courant
-];
+// ---------- Personas : les 5 comptes nommés (identiques à avant par défaut) + comptes
+// synthétiques au-delà, pour SEED_USERS_PER_WS. `slot` = identifiant stable (alice, bob, user6…)
+// indépendant de l'email réel (suffixé par workspace dès que SEED_WORKSPACES > 1, l'email doit
+// rester unique globalement). ----------
+type Persona = { slot: string; displayName: string; email: string; password: string; role: 'ADMIN' | 'USER' | 'MANAGER' };
+const EXTRA_ROLE_CYCLE = ['USER', 'USER', 'USER', 'MANAGER'] as const;
+
+function buildPersonas(usersPerWorkspace: number, wsSuffix: string): Persona[] {
+	const base: Persona[] = SEED_USERS.map((u) => {
+		const slot = u.email.split('@')[0];
+		return { slot, displayName: u.displayName, email: `${slot}${wsSuffix}@${SEED_DOMAIN}`, password: u.password, role: u.role };
+	});
+	const extra: Persona[] = [];
+	for (let i = base.length; i < usersPerWorkspace; i++) {
+		const slot = `user${i + 1}`;
+		extra.push({
+			slot,
+			displayName: `Load User ${i + 1}`,
+			email: `${slot}${wsSuffix}@${SEED_DOMAIN}`,
+			password: 'loadtest123',
+			role: EXTRA_ROLE_CYCLE[i % EXTRA_ROLE_CYCLE.length]
+		});
+	}
+	return [...base, ...extra];
+}
+
+// ---------- Chronologie : sprints de 2 semaines jusqu'à `weeks` semaines en arrière, 4 versions en
+// rotation. weeks=15 (défaut) reproduit exactement les 8 sprints historiques. ----------
 const VERSION_NAMES = ['V1.0', 'V1.1', 'V1.2', 'V1.3'];
 const PROJECT_NAMES = ['Mobile', 'Web', 'Backend'] as const;
+
+function buildSprintDefs(weeks: number) {
+	const sprintCount = Math.max(1, Math.round(weeks / 2));
+	return Array.from({ length: sprintCount }, (_, i) => {
+		const startWeeksAgo = weeks - 2 * i;
+		return {
+			name: `Sprint ${9 + i}`,
+			startWeeksAgo,
+			endWeeksAgo: Math.max(0, startWeeksAgo - 1),
+			version: VERSION_NAMES[Math.floor(i / 2) % VERSION_NAMES.length]
+		};
+	});
+}
 
 const TITLE_POOL: Record<(typeof PROJECT_NAMES)[number], string[]> = {
 	Mobile: [
@@ -130,12 +164,18 @@ const TITLE_POOL: Record<(typeof PROJECT_NAMES)[number], string[]> = {
 	]
 };
 
-/** États plausibles selon l'ancienneté du sprint (0 = le plus vieux, 7 = le sprint courant). */
-function statesForAge(age: number): [string, number][] {
-	if (age <= 1) return [['En production', 6], ['A mettre en production', 2], ['Retour recette', 1]];
-	if (age <= 3) return [['En production', 5], ['En recette métier', 2], ['Retour recette', 1], ['Defect', 1]];
-	if (age <= 5) return [['En qualif', 3], ['A mettre en qualif', 2], ['En production', 2], ['Defect', 1]];
-	if (age === 6) return [['En cours de dev', 3], ['En MR', 3], ['A mettre en qualif', 2], ['Defect', 1]];
+/**
+ * États plausibles selon l'ancienneté du sprint : `age` 0 = le plus vieux, `mostRecentAge` = sprint
+ * courant. On raisonne en distance au sprint courant plutôt qu'en `age` absolu, pour rester correct
+ * quel que soit le nombre de sprints généré (cf. `SEED_WEEKS`) — reproduit exactement les seuils
+ * historiques (8 sprints, mostRecentAge=7) une fois retraduits en distance.
+ */
+function statesForAge(age: number, mostRecentAge: number): [string, number][] {
+	const distanceFromNow = mostRecentAge - age;
+	if (distanceFromNow >= 6) return [['En production', 6], ['A mettre en production', 2], ['Retour recette', 1]];
+	if (distanceFromNow >= 4) return [['En production', 5], ['En recette métier', 2], ['Retour recette', 1], ['Defect', 1]];
+	if (distanceFromNow >= 2) return [['En qualif', 3], ['A mettre en qualif', 2], ['En production', 2], ['Defect', 1]];
+	if (distanceFromNow === 1) return [['En cours de dev', 3], ['En MR', 3], ['A mettre en qualif', 2], ['Defect', 1]];
 	return [['En cours de dev', 4], ['En MR', 2], ['Réalisation à faire', 2], ['A macro-chiffrer', 1]];
 }
 const DONE_STATES = new Set(['En production', 'A mettre en production']);
@@ -149,38 +189,43 @@ const ESTIMATION_CHOICES: [number, number][] = [
 	[13, 1]
 ];
 
+// Activités plausibles par persona nommée (slot) — comptes synthétiques au-delà : profil générique.
 const USER_ACTIVITIES: Record<string, string[]> = {
-	[`alice@${SEED_DOMAIN}`]: ['Dev', 'TU'],
-	[`bob@${SEED_DOMAIN}`]: ['Dev', 'Infra'],
-	[`chloe@${SEED_DOMAIN}`]: ['TU', 'TNR', 'Analyse'],
-	[`david@${SEED_DOMAIN}`]: ['Dev', 'Relecture', 'DA'],
-	[`manon@${SEED_DOMAIN}`]: ['Analyse', 'Relecture']
+	alice: ['Dev', 'TU'],
+	bob: ['Dev', 'Infra'],
+	chloe: ['TU', 'TNR', 'Analyse'],
+	david: ['Dev', 'Relecture', 'DA'],
+	manon: ['Analyse', 'Relecture']
 };
+const DEFAULT_PERSONA_ACTIVITIES = ['Dev', 'TU', 'Analyse'];
+function activitiesFor(slot: string) {
+	return USER_ACTIVITIES[slot] ?? DEFAULT_PERSONA_ACTIVITIES;
+}
 
-async function main() {
-	const db = getDb();
-	console.log(`Nettoyage d'un éventuel "${WORKSPACE_NAME}" précédent…`);
-	await wipeSandbox(db);
+/** Génère un espace complet (référentiels, tickets, imputations, mood, absences, objectifs…). */
+async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, personas: Persona[], scale: SeedScale) {
+	const sprintDefs = buildSprintDefs(scale.weeks);
 
 	// ---------- Utilisateurs + espace ----------
-	const passwordHashes = await Promise.all(SEED_USERS.map((u) => hashPassword(u.password)));
+	const passwordHashes = await Promise.all(personas.map((p) => hashPassword(p.password)));
 	const insertedUsers = await db
 		.insert(user)
-		.values(SEED_USERS.map((u, i) => ({ displayName: u.displayName, email: u.email, passwordHash: passwordHashes[i] })))
+		.values(personas.map((p, i) => ({ displayName: p.displayName, email: p.email, passwordHash: passwordHashes[i] })))
 		.returning();
 	const userByEmail = new Map(insertedUsers.map((u) => [u.email, u]));
+	const bySlot = (slot: string) => userByEmail.get(personas.find((p) => p.slot === slot)!.email)!;
 
 	const [ws] = await db
 		.insert(workspace)
-		.values({ name: WORKSPACE_NAME, allowedDomain: SEED_DOMAIN, createdByUserId: userByEmail.get(`alice@${SEED_DOMAIN}`)!.id })
+		.values({ name: wsName, allowedDomain: SEED_DOMAIN, createdByUserId: bySlot('alice').id })
 		.returning();
 
 	await db.insert(membership).values(
-		SEED_USERS.map((u) => ({
+		personas.map((p) => ({
 			workspaceId: ws.id,
-			userId: userByEmail.get(u.email)!.id,
-			role: u.role,
-			capacityPerDay: u.email.startsWith('bob') ? '0.8' : '1' // un temps partiel pour voir le % de capacité varier
+			userId: userByEmail.get(p.email)!.id,
+			role: p.role,
+			capacityPerDay: p.slot === 'bob' ? '0.8' : '1' // un temps partiel pour voir le % de capacité varier
 		}))
 	);
 
@@ -216,7 +261,7 @@ async function main() {
 
 	const insertedSprints = await db
 		.insert(sprint)
-		.values(SPRINT_DEFS.map((s, i) => ({ workspaceId: ws.id, name: s.name, kind: 'SPRINT' as const, sortOrder: i })))
+		.values(sprintDefs.map((s, i) => ({ workspaceId: ws.id, name: s.name, kind: 'SPRINT' as const, sortOrder: i })))
 		.returning();
 	const sprintByName = new Map(insertedSprints.map((s) => [s.name, s]));
 
@@ -236,12 +281,12 @@ async function main() {
 	const mondayWeeksAgo = (n: number) => addDays(currentMonday, -7 * n);
 	const fridayWeeksAgo = (n: number) => addDays(mondayWeeksAgo(n), 4);
 
-	const sprintWindows = SPRINT_DEFS.map((s) => ({
+	const sprintWindows = sprintDefs.map((s) => ({
 		...s,
 		from: toISODate(mondayWeeksAgo(s.startWeeksAgo)),
 		to: toISODate(fridayWeeksAgo(s.endWeeksAgo) < today ? fridayWeeksAgo(s.endWeeksAgo) : today)
 	}));
-	const rangeStart = mondayWeeksAgo(SPRINT_DEFS[0].startWeeksAgo);
+	const rangeStart = mondayWeeksAgo(sprintDefs[0].startWeeksAgo);
 	const allDays: string[] = [];
 	for (let d = rangeStart; d <= today; d = addDays(d, 1)) {
 		const dow = d.getUTCDay();
@@ -251,7 +296,7 @@ async function main() {
 		return sprintWindows.find((s) => dayISO >= s.from && dayISO <= s.to);
 	}
 
-	// ---------- Tickets : 4 par sprint (32) + 4 en backlog, sans sprint/version ----------
+	// ---------- Tickets : 4 par sprint + 4 en backlog, sans sprint/version ----------
 	type TicketDraft = {
 		key: string;
 		title: string;
@@ -280,6 +325,7 @@ async function main() {
 
 	let ticketNum = 1;
 	const drafts: TicketDraft[] = [];
+	const mostRecentAge = sprintWindows.length - 1;
 	sprintWindows.forEach((sw, age) => {
 		for (let i = 0; i < 4; i++) {
 			const proj = PROJECT_NAMES[(age * 4 + i) % PROJECT_NAMES.length];
@@ -289,10 +335,10 @@ async function main() {
 				project: proj,
 				sprintName: sw.name,
 				versionName: chance(0.85) ? sw.version : undefined, // ~15% de tickets techniques hors version
-				state: weighted(statesForAge(age)),
+				state: weighted(statesForAge(age, mostRecentAge)),
 				estimationReal: weighted(ESTIMATION_CHOICES),
 				estimationTest: chance(0.5) ? weighted<number>([[1, 3], [2, 2], [3, 1]]) : null,
-				owner: SEED_USERS[(age * 4 + i) % SEED_USERS.length].email,
+				owner: personas[(age * 4 + i) % personas.length].email,
 				group: chance(0.25) ? rand(['Quick wins', 'Dette technique', 'Sécurité']) : undefined
 			});
 		}
@@ -306,7 +352,7 @@ async function main() {
 			state: rand(['A macro-chiffrer', 'DA à faire / à revoir']),
 			estimationReal: weighted(ESTIMATION_CHOICES),
 			estimationTest: null,
-			owner: rand(SEED_USERS).email
+			owner: rand(personas).email
 		});
 	}
 
@@ -340,7 +386,32 @@ async function main() {
 		if (t.group) await db.insert(ticketGroupMember).values({ groupId: groupByLabel.get(t.group)!.id, ticketId: ticketByKey.get(t.key)!.id });
 	}
 
-	// ---------- Imputations : ~4 mois glissants, ancrées sur le sprint actif à chaque date ----------
+	// ---------- Top-up : tickets bulk supplémentaires pour atteindre SEED_TICKETS_PER_WS (tests de
+	// charge) — pas d'imputation/snapshot dessus, juste du volume pour stresser liste/kanban/dashboard.
+	if (scale.ticketsPerWorkspace > insertedTickets.length) {
+		const bulkCount = scale.ticketsPerWorkspace - insertedTickets.length;
+		const bulkStates = [...DONE_STATES, 'En cours de dev', 'En qualif', 'En MR'];
+		const bulkDrafts = Array.from({ length: bulkCount }, (_, i) => {
+			const proj = PROJECT_NAMES[i % PROJECT_NAMES.length];
+			const sw = rand(sprintWindows);
+			const est = weighted(ESTIMATION_CHOICES);
+			return {
+				workspaceId: ws.id,
+				key: `SBX-${ticketNum++}`,
+				title: `${nextTitle(proj)} #${i + 1}`,
+				projectId: projectByName.get(proj)!.id,
+				sprintId: chance(0.7) ? sprintByName.get(sw.name)!.id : null,
+				versionId: chance(0.5) ? versionByName.get(sw.version)!.id : null,
+				stateId: stateByLabel.get(rand(bulkStates))?.id ?? null,
+				estimationReal: String(est),
+				raeReal: String(est)
+			};
+		});
+		for (const batch of chunk(bulkDrafts, 500)) await db.insert(ticket).values(batch);
+	}
+
+	// ---------- Imputations : glissantes sur `scale.weeks` semaines, ancrées sur le sprint actif à
+	// chaque date ----------
 	type EntryDraft = {
 		userId: string;
 		targetType: 'TICKET' | 'CATEGORY';
@@ -368,8 +439,8 @@ async function main() {
 		const sprintTickets = drafts.filter((d) => d.sprintName === sw.name);
 		if (sprintTickets.length === 0) continue;
 
-		for (const u of SEED_USERS) {
-			const userId = userByEmail.get(u.email)!.id;
+		for (const p of personas) {
+			const userId = userByEmail.get(p.email)!.id;
 			if (chance(0.1)) {
 				entryDrafts.push({ userId, targetType: 'CATEGORY', categoryId: categoryByLabel.get('Congé')!.id, activityId: null, day, amount: 1 });
 				continue;
@@ -378,17 +449,17 @@ async function main() {
 				entryDrafts.push({ userId, targetType: 'CATEGORY', categoryId: categoryByLabel.get('Formation')!.id, activityId: null, day, amount: 1 });
 				continue;
 			}
-			// Ticket "possédé" ce sprint par l'utilisateur, sinon coup de main sur un ticket du sprint.
-			const owned = sprintTickets.filter((t) => t.owner === u.email);
+			// Ticket "possédé" ce sprint par la personne, sinon coup de main sur un ticket du sprint.
+			const owned = sprintTickets.filter((t) => t.owner === p.email);
 			const primary = owned.length > 0 ? rand(owned) : rand(sprintTickets);
-			const userActivities = USER_ACTIVITIES[u.email];
+			const personaActivities = activitiesFor(p.slot);
 
 			const splitDay = chance(0.25) && sprintTickets.length > 1;
 			const picks = splitDay ? [primary, rand(sprintTickets.filter((t) => t.key !== primary.key))] : [primary];
 			const amounts = splitDay ? [0.75, 0.25] : [1];
 			picks.forEach((t, i) => {
 				const tk = ticketByKey.get(t.key)!;
-				const activityLabel = rand(userActivities);
+				const activityLabel = rand(personaActivities);
 				entryDrafts.push({
 					userId,
 					targetType: 'TICKET',
@@ -504,16 +575,16 @@ async function main() {
 		const periodStart = toISODate(mondayWeeksAgo(weeksAgo));
 		const periodEnd = toISODate(addDays(mondayWeeksAgo(weeksAgo), 6));
 		// Semaine courante : pas encore terminée, seule une partie de l'équipe a déjà voté.
-		const voters = weeksAgo === 0 ? shuffled(SEED_USERS).slice(0, 3) : SEED_USERS;
+		const voters = weeksAgo === 0 ? shuffled(personas).slice(0, Math.min(3, personas.length)) : personas;
 		// Un coup de mou marqué il y a 3 semaines, pour que la courbe ne soit pas plate.
 		const scoreWeights: [number, number][] =
 			weeksAgo === 3
 				? [[1, 2], [2, 4], [3, 3], [4, 1], [5, 0]]
 				: [[1, 1], [2, 2], [3, 4], [4, 5], [5, 3]];
-		for (const u of voters) {
+		for (const p of voters) {
 			moodVoteRows.push({
 				workspaceId: ws.id,
-				userId: userByEmail.get(u.email)!.id,
+				userId: userByEmail.get(p.email)!.id,
 				periodStart,
 				periodEnd,
 				score: weighted(scoreWeights),
@@ -525,13 +596,13 @@ async function main() {
 
 	// ---------- Absences : congés/formations passés (déjà pris) et à venir (prévisionnels) ----------
 	const absenceRows: (typeof absence.$inferInsert)[] = [];
-	for (const u of SEED_USERS) {
-		const userId = userByEmail.get(u.email)!.id;
+	for (const p of personas) {
+		const userId = userByEmail.get(p.email)!.id;
 
 		// 2 à 3 congés déjà posés, étalés sur toute la fenêtre du seed (pas juste les dernières semaines).
 		const pastCount = chance(0.5) ? 3 : 2;
 		for (let i = 0; i < pastCount; i++) {
-			const pastStart = addDays(mondayWeeksAgo(1 + Math.floor(Math.random() * 14)), Math.floor(Math.random() * 5));
+			const pastStart = addDays(mondayWeeksAgo(1 + Math.floor(Math.random() * Math.max(1, scale.weeks - 1))), Math.floor(Math.random() * 5));
 			absenceRows.push({
 				workspaceId: ws.id,
 				userId,
@@ -544,7 +615,7 @@ async function main() {
 
 		// 2 demi-journées ou journées de formation / hors-projet, passées.
 		for (let i = 0; i < 2; i++) {
-			const trainingDay = addDays(mondayWeeksAgo(1 + Math.floor(Math.random() * 14)), Math.floor(Math.random() * 5));
+			const trainingDay = addDays(mondayWeeksAgo(1 + Math.floor(Math.random() * Math.max(1, scale.weeks - 1))), Math.floor(Math.random() * 5));
 			absenceRows.push({
 				workspaceId: ws.id,
 				userId,
@@ -575,7 +646,7 @@ async function main() {
 	// cf. règle métier dans absences.ts.
 	const [client] = await db.insert(externalMember).values({ workspaceId: ws.id, displayName: 'Client Acme' }).returning();
 	const clientAbsenceRows: (typeof absence.$inferInsert)[] = Array.from({ length: 3 }, () => {
-		const start = addDays(mondayWeeksAgo(1 + Math.floor(Math.random() * 10)), Math.floor(Math.random() * 5));
+		const start = addDays(mondayWeeksAgo(1 + Math.floor(Math.random() * Math.max(1, scale.weeks - 5))), Math.floor(Math.random() * 5));
 		return {
 			workspaceId: ws.id,
 			externalMemberId: client.id,
@@ -589,9 +660,9 @@ async function main() {
 
 	// Quelques absences créées puis retirées (erreur de saisie corrigée) — pour peupler les
 	// suppressions tracées dans l'historique, en plus des révisions ci-dessous.
-	const phantomAbsenceRows: (typeof absence.$inferInsert)[] = SEED_USERS.slice(0, 3).map((u) => ({
+	const phantomAbsenceRows: (typeof absence.$inferInsert)[] = personas.slice(0, Math.min(3, personas.length)).map((p) => ({
 		workspaceId: ws.id,
-		userId: userByEmail.get(u.email)!.id,
+		userId: userByEmail.get(p.email)!.id,
 		startDate: toISODate(addDays(mondayWeeksAgo(1 + Math.floor(Math.random() * 3)), Math.floor(Math.random() * 5))),
 		endDate: toISODate(addDays(mondayWeeksAgo(1 + Math.floor(Math.random() * 3)), Math.floor(Math.random() * 5))),
 		type: 'CONGE_PREVISIONNEL' as const,
@@ -610,15 +681,14 @@ async function main() {
 	// semaine prochaine (vue par défaut de la page) et n'a donc aucun objectif ce jour-là.
 	const nextMondayISO = toISODate(mondayWeeksAgo(-1));
 	const thisMondayISO = toISODate(currentMonday);
-	const assignerId = userByEmail.get(`manon@${SEED_DOMAIN}`)!.id;
-	const uid = (email: string) => userByEmail.get(email)!.id;
+	const assignerId = bySlot('manon').id;
 	const ticketPick = (n: number) => insertedTickets[n % insertedTickets.length];
 
 	await db.insert(weeklyObjective).values([
 		// Semaine prochaine (vue par défaut de la page).
 		{
 			workspaceId: ws.id,
-			userId: uid(`bob@${SEED_DOMAIN}`),
+			userId: bySlot('bob').id,
 			weekMonday: nextMondayISO,
 			kind: 'TICKET',
 			ticketId: ticketPick(0).id,
@@ -627,7 +697,7 @@ async function main() {
 		},
 		{
 			workspaceId: ws.id,
-			userId: uid(`bob@${SEED_DOMAIN}`),
+			userId: bySlot('bob').id,
 			weekMonday: nextMondayISO,
 			kind: 'CUSTOM',
 			// Libellé volontairement long pour vérifier le rendu (page + export SVG) sur une tâche qui déborde.
@@ -636,7 +706,7 @@ async function main() {
 		},
 		{
 			workspaceId: ws.id,
-			userId: uid(`chloe@${SEED_DOMAIN}`),
+			userId: bySlot('chloe').id,
 			weekMonday: nextMondayISO,
 			kind: 'TICKET',
 			ticketId: ticketPick(1).id,
@@ -645,7 +715,7 @@ async function main() {
 		},
 		{
 			workspaceId: ws.id,
-			userId: uid(`alice@${SEED_DOMAIN}`),
+			userId: bySlot('alice').id,
 			weekMonday: nextMondayISO,
 			kind: 'CUSTOM',
 			label: "Revue de code de l'équipe",
@@ -654,7 +724,7 @@ async function main() {
 		// Semaine courante (pour tester la navigation "précédent").
 		{
 			workspaceId: ws.id,
-			userId: uid(`bob@${SEED_DOMAIN}`),
+			userId: bySlot('bob').id,
 			weekMonday: thisMondayISO,
 			kind: 'TICKET',
 			ticketId: ticketPick(2).id,
@@ -662,24 +732,24 @@ async function main() {
 		},
 		{
 			workspaceId: ws.id,
-			userId: uid(`manon@${SEED_DOMAIN}`),
+			userId: bySlot('manon').id,
 			weekMonday: thisMondayISO,
 			kind: 'CUSTOM',
 			label: 'Point budget mensuel',
 			createdByUserId: assignerId
 		}
 	]);
-	await db.insert(weeklyVacation).values({ workspaceId: ws.id, userId: uid(`david@${SEED_DOMAIN}`), weekMonday: nextMondayISO });
+	await db.insert(weeklyVacation).values({ workspaceId: ws.id, userId: bySlot('david').id, weekMonday: nextMondayISO });
 
 	// ---------- Historique des modifications (change_log) : révisions d'estimation ticket, RAE par
 	// activité et absences, + les suppressions ci-dessus — dans les 30 derniers jours (fenêtre
 	// affichée par /admin/history), quelle que soit la date réelle du sprint ou de l'absence, pour
 	// avoir de quoi filtrer/rechercher/paginer sur cet écran dès le premier chargement.
 	const recentTimestamp = (maxDaysAgo = 25) => new Date(Date.now() - Math.random() * maxDaysAgo * 24 * 60 * 60 * 1000);
-	const anyUserId = () => userByEmail.get(rand(SEED_USERS).email)!.id;
+	const anyUserId = () => userByEmail.get(rand(personas).email)!.id;
 	const changeLogRows: (typeof changeLog.$inferInsert)[] = [];
 
-	// Révisions de champs budget/estimation, sur ~40% des tickets.
+	// Révisions de champs budget/estimation, sur ~40% des tickets (curatés — pas le top-up bulk).
 	for (const tk of insertedTickets) {
 		if (!chance(0.4)) continue;
 		const fields = (['estimationReal', 'estimationTest', 'estimationPrev', 'enveloppeTotale'] as const)
@@ -755,15 +825,29 @@ async function main() {
 
 	for (const batch of chunk(changeLogRows, 500)) await db.insert(changeLog).values(batch);
 
-	// ---------- Résumé ----------
+	const totalTickets = insertedTickets.length + Math.max(0, scale.ticketsPerWorkspace - insertedTickets.length);
 	const totalAbsences = insertedAbsences.length + clientAbsenceRows.length;
 	console.log(
-		`\n✓ "${WORKSPACE_NAME}" créé — ${insertedTickets.length} tickets sur ${SPRINT_DEFS.length} sprints / ${VERSION_NAMES.length} versions, ` +
-			`${entryDrafts.length} imputations (${allDays.length} jours ouvrés, du ${allDays[0]} au ${allDays[allDays.length - 1]}), ${snapshotRows.length} snapshots, ${moodVoteRows.length} votes team mood sur 7 semaines, ${totalAbsences} absences (dont 1 membre externe), ${changeLogRows.length} entrées d'historique, 6 objectifs de semaine (dont David en vacances la semaine prochaine, sans objectif).\n`
+		`✓ "${wsName}" créé — ${totalTickets} tickets sur ${sprintDefs.length} sprints / ${VERSION_NAMES.length} versions, ` +
+			`${entryDrafts.length} imputations (${allDays.length} jours ouvrés, du ${allDays[0]} au ${allDays[allDays.length - 1]}), ${snapshotRows.length} snapshots, ${moodVoteRows.length} votes team mood sur 7 semaines, ${totalAbsences} absences (dont 1 membre externe), ${changeLogRows.length} entrées d'historique, 6 objectifs de semaine (dont David en vacances la semaine prochaine, sans objectif).`
 	);
-	console.log('Comptes :');
-	for (const u of SEED_USERS) console.log(`  ${u.email.padEnd(24)} ${u.password.padEnd(12)} (${u.role})`);
-	console.log(`\nPour repartir de zéro : npm run db:unseed`);
+	for (const p of personas) console.log(`  ${p.email.padEnd(32)} ${p.password.padEnd(14)} (${p.role})`);
+}
+
+async function main() {
+	const db = getDb();
+	const scale = getSeedScale();
+	console.log(`Nettoyage d'un éventuel "${WORKSPACE_NAME}" précédent…`);
+	await wipeSandbox(db);
+
+	for (let i = 0; i < scale.workspaces; i++) {
+		const wsSuffix = scale.workspaces > 1 ? `+ws${i + 1}` : '';
+		const wsName = scale.workspaces > 1 ? `${WORKSPACE_NAME} ${i + 1}` : WORKSPACE_NAME;
+		const personas = buildPersonas(scale.usersPerWorkspace, wsSuffix);
+		await seedOneWorkspace(db, wsName, personas, scale);
+	}
+
+	console.log(`\n${scale.workspaces} espace(s) créé(s). Pour repartir de zéro : npm run db:unseed`);
 }
 
 main()
