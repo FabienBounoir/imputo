@@ -155,12 +155,20 @@ async function fetchBaseTickets(where: ReturnType<typeof and>) {
  * Ajoute consommé + RAE résolu + activité/contributeurs + groupes à un lot de tickets déjà
  * chargés (chiffrage). Factorisé entre listTickets (tout l'espace) et listTicketsPage (paginé/filtré) —
  * mêmes requêtes annexes, seule la sélection des tickets de base change.
+ *
+ * `includeBreakdown` : le détail par activité (contributeurs + labels) n'est affiché nulle part en
+ * vue kanban ni dans la recherche de la palette de commandes (cf. tickets/+page.svelte — seules les
+ * lignes fines de la vue tableau le rendent). Deux requêtes en moins (contributeurs, labels
+ * d'activité) + agrégation JS évitée pour ces appelants — mesuré comme la part la plus coûteuse de
+ * l'enrichissement lors de l'audit de charge (cf. docs/AUDIT-load-testing.md), en particulier pour
+ * le kanban qui charge tout le board sans pagination.
  */
 async function enrichTickets(
 	workspaceId: string,
 	testPhase: boolean,
 	isAdmin: boolean,
-	tickets: BaseTicketRow[]
+	tickets: BaseTicketRow[],
+	includeBreakdown = true
 ): Promise<TicketRow[]> {
 	const ticketIds = tickets.map((t) => t.id);
 
@@ -202,7 +210,7 @@ async function enrichTickets(
 	// Contributeurs (activité, personne) par ticket — batché pour toute la liste, affiché en
 	// lignes fines toujours visibles sous chaque ticket (plus de chargement à la demande).
 	const contribRows =
-		ticketIds.length === 0
+		!includeBreakdown || ticketIds.length === 0
 			? []
 			: await db
 					.select({
@@ -239,7 +247,7 @@ async function enrichTickets(
 		...contribRows.map((r) => r.activityId).filter((id): id is string => !!id)
 	]);
 	const activityLabelRows =
-		involvedActivityIds.size === 0
+		!includeBreakdown || involvedActivityIds.size === 0
 			? []
 			: await db
 					.select({ id: activity.id, label: activity.label })
@@ -327,7 +335,7 @@ async function enrichTickets(
 			raeSuggested: raeSuggested(totalEst, consumed),
 			hasActivityRae: activityRows.length > 0,
 			hasActivityEstimation: activityRows.length > 0,
-			activityBreakdown: buildBreakdown(t.id),
+			activityBreakdown: includeBreakdown ? buildBreakdown(t.id) : [],
 			groupIds: groupIdsMap.get(t.id) ?? []
 		};
 	});
@@ -415,7 +423,10 @@ export async function listTicketsPage(
 	isAdmin: boolean,
 	filters: TicketFilters,
 	/** Omis = pas de pagination (vue Kanban : toutes les tickets filtrés, board complet). */
-	paging?: { pageSize: number; page: number }
+	paging?: { pageSize: number; page: number },
+	/** Le kanban et la recherche de la palette de commandes n'affichent jamais le détail par
+	 *  activité (cf. commentaire sur enrichTickets) — passer `false` pour l'appelant l'économiser. */
+	includeBreakdown = true
 ): Promise<{ rows: (TicketRow & { isChild: boolean })[]; total: number }> {
 	const where = ticketFilterConditions(workspaceId, filters);
 	const parentTicket = alias(ticket, 'parent_ticket');
@@ -437,7 +448,7 @@ export async function listTicketsPage(
 		db.select({ count: sql<number>`count(*)::int` }).from(ticket).where(where)
 	]);
 
-	const rows = await enrichTickets(workspaceId, testPhase, isAdmin, tickets);
+	const rows = await enrichTickets(workspaceId, testPhase, isAdmin, tickets, includeBreakdown);
 	return { rows: rows.map((r, i) => ({ ...r, isChild: !!tickets[i].parentId })), total: count };
 }
 

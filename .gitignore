@@ -30,3 +30,6 @@ vite.config.ts.timestamp-*
 # Fichiers bureautiques sensibles (chiffrage, imputation, etc.)
 *.xlsx
 *.xls
+
+# Résultats de tests de charge (artefacts de run, pas du code — cf. loadtest/README.md)
+loadtest/results/
