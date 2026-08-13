@@ -55,25 +55,28 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	// évite de tout charger d'un coup quand l'espace a beaucoup de tickets (§ retour utilisateur).
 	// estimationPrev/enveloppeTotale/tnfBudget : redaction faite dans listTicketsPage() (source
 	// unique, tout appelant en profite) — pas juste ici, sinon un autre consommateur la raterait.
-	const [{ rows: tickets, total }, ref] = await Promise.all([
-		listTicketsPage(
-			ws.workspaceId,
-			ws.testPhase,
-			isAdmin,
-			filters,
-			view === 'table' ? { pageSize: PAGE_SIZE, page } : undefined,
-			// Le détail par activité n'est rendu que dans les lignes fines de la vue tableau — le
-			// kanban charge tout le board sans pagination, l'économiser y compte double (cf. audit).
-			view === 'table'
-		),
-		getRefData(ws.workspaceId)
-	]);
-	return {
+	// `ticketsPage` n'est PAS awaité : la requête (jointures + enrichissement par activité) est la
+	// partie lente de la page — on la laisse streamer après le shell (filtres, chrome) pendant que
+	// `ref` (petites tables de référence) est prêt tout de suite (§ retour utilisateur, page trop lente).
+	const ticketsPage = listTicketsPage(
+		ws.workspaceId,
+		ws.testPhase,
+		isAdmin,
+		filters,
+		view === 'table' ? { pageSize: PAGE_SIZE, page } : undefined,
+		// Le détail par activité n'est rendu que dans les lignes fines de la vue tableau — le
+		// kanban charge tout le board sans pagination, l'économiser y compte double (cf. audit).
+		view === 'table'
+	).then(({ rows: tickets, total }) => ({
 		tickets,
 		total,
+		pageCount: view === 'table' ? Math.max(1, Math.ceil(total / PAGE_SIZE)) : 1
+	}));
+	const ref = await getRefData(ws.workspaceId);
+	return {
+		ticketsPage,
 		page,
 		pageSize: PAGE_SIZE,
-		pageCount: view === 'table' ? Math.max(1, Math.ceil(total / PAGE_SIZE)) : 1,
 		view,
 		filters,
 		highlightKey,

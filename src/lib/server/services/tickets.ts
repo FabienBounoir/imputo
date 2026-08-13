@@ -441,7 +441,11 @@ export async function listTicketsPage(
 			.orderBy(
 				sql`coalesce(${parentTicket.createdAt}, ${ticket.createdAt})`,
 				sql`(${ticket.parentId} is not null)`,
-				ticket.createdAt
+				ticket.createdAt,
+				// Tie-breaker : createdAt seul n'est pas unique (insertion en masse, cf. seed), donc
+				// LIMIT/OFFSET devient non déterministe entre deux appels sans lui — un ticket peut
+				// réapparaître sur la page suivante (visible en scroll infini : les deux pages coexistent).
+				ticket.id
 			)
 			.limit(pageSize)
 			.offset((page - 1) * pageSize),

@@ -112,7 +112,15 @@
 		{ key: 'prepaQualif', label: 'Prépa qualif' }
 	] as const;
 
+	// data.ticketsPage est streamé (non-awaité côté serveur, cf. +page.server.ts) : le shell (filtres,
+	// chrome) s'affiche tout de suite, rows/total/pageCount arrivent dès que la requête résout —
+	// `ticketsLoading` distingue ce vrai chargement du cas "0 résultat" pour le rendu (skeleton vs
+	// message vide, cf. plus bas).
 	let rows = $state<Row[]>([]);
+	let total = $state(0);
+	let pageCount = $state(1);
+	let ticketsLoading = $state(true);
+	const colCount = $derived(7 + (data.testPhase ? 2 : 0) + (data.isAdmin ? 2 : 0));
 
 	// Chiffrage : verrouillé pour un USER standard (retour utilisateur). Le RAE d'une activité reste
 	// éditable par ses contributeurs — `contributors` est déjà chargé, aucun appel supplémentaire.
@@ -130,7 +138,7 @@
 	}
 
 	// RAE/Estimé/Budget par activité : lignes fines toujours visibles sous le ticket (plus de
-	// collapse/fetch à l'ouverture — data.tickets porte déjà le détail, chargé en une fois avec la liste).
+	// collapse/fetch à l'ouverture — le détail arrive déjà avec chaque ticket, cf. data.ticketsPage).
 	async function saveActivityField(
 		row: Row,
 		activityId: string,
@@ -153,9 +161,8 @@
 		}
 		flash();
 	}
-	// (Re)synchronise quand les données serveur changent (création, reload).
-	$effect(() => {
-		rows = data.tickets.map((t) => ({
+	function toRow(t: Awaited<typeof data.ticketsPage>['tickets'][number]): Row {
+		return {
 			id: t.id,
 			key: t.key,
 			title: t.title,
@@ -178,7 +185,67 @@
 			hasActivityEstimation: t.hasActivityEstimation,
 			groupIds: [...t.groupIds],
 			activityBreakdown: t.activityBreakdown.map((a) => ({ ...a, contributors: [...a.contributors] }))
-		}));
+		};
+	}
+
+	// Scroll infini (retour utilisateur : les boutons de pagination sont remplacés par un
+	// chargement automatique des pages suivantes). `loadedPage`/`hasMore` sont locaux car on
+	// ajoute des tickets sans re-déclencher le load serveur (qui, lui, repart toujours en page 1).
+	let loadedPage = $state(data.page);
+	let hasMore = $state(false);
+	let loadingMore = $state(false);
+	let sentinel = $state<HTMLElement | null>(null);
+
+	// (Re)synchronise quand les données serveur changent (filtre, vue, recherche, arrivée sur la page)
+	// — `data.ticketsPage` est une nouvelle promesse à chaque nouveau `load`, ce qui redéclenche cet
+	// effet. `cancelled` évite qu'une réponse en retard (navigation encore plus récente) écrase des
+	// données déjà à jour.
+	$effect(() => {
+		ticketsLoading = true;
+		let cancelled = false;
+		data.ticketsPage.then((r) => {
+			if (cancelled) return;
+			rows = r.tickets.map(toRow);
+			total = r.total;
+			pageCount = r.pageCount;
+			loadedPage = data.page;
+			hasMore = data.view === 'table' && data.page < r.pageCount;
+			ticketsLoading = false;
+		});
+		return () => {
+			cancelled = true;
+		};
+	});
+
+	async function loadMore() {
+		if (loadingMore || !hasMore) return;
+		loadingMore = true;
+		try {
+			const p = new URLSearchParams();
+			if (data.filters.query) p.set('q', data.filters.query);
+			if (data.filters.stateId) p.set('state', data.filters.stateId);
+			if (data.filters.projectId) p.set('project', data.filters.projectId);
+			if (data.filters.sprintId) p.set('sprint', data.filters.sprintId);
+			if (data.filters.versionId) p.set('version', data.filters.versionId);
+			p.set('page', String(loadedPage + 1));
+			const res = await fetch(`/api/tickets?${p}`);
+			if (!res.ok) return;
+			const d = await res.json();
+			rows = [...rows, ...d.tickets.map(toRow)];
+			loadedPage = d.page;
+			hasMore = d.page < d.pageCount;
+		} finally {
+			loadingMore = false;
+		}
+	}
+
+	$effect(() => {
+		if (!sentinel || data.view !== 'table') return;
+		const obs = new IntersectionObserver((es) => {
+			if (es[0].isIntersecting) loadMore();
+		});
+		obs.observe(sentinel);
+		return () => obs.disconnect();
 	});
 
 	// Arrivée depuis l'imputation (clic sur le sprint/version d'une ligne, cf. ?highlight=) :
@@ -337,7 +404,7 @@
 </script>
 
 <div class="topbar">
-	<h1>Tickets &amp; chiffrage<small>{data.total} ticket{data.total > 1 ? 's' : ''}{data.view === 'table' && data.pageCount > 1 ? ` · page ${data.page}/${data.pageCount}` : ''} · édition directe</small></h1>
+	<h1>Tickets &amp; chiffrage<small>{ticketsLoading ? 'Chargement…' : `${total} ticket${total > 1 ? 's' : ''}${data.view === 'table' && rows.length < total ? ` · ${rows.length} chargés` : ''}`} · édition directe</small></h1>
 	<div class="spacer"></div>
 	{#if savedFlash}<span class="saved">Enregistré ✓</span>{/if}
 	<a class="btn btn-ghost" href="/export" data-sveltekit-reload>
@@ -425,7 +492,7 @@
 				<button class="reset-btn" onclick={resetFilters}>✕ Réinitialiser</button>
 			{/if}
 		</fieldset>
-		{#if hasFilters}<span class="count">{data.total} résultat{data.total > 1 ? 's' : ''}</span>{/if}
+		{#if hasFilters && !ticketsLoading}<span class="count">{total} résultat{total > 1 ? 's' : ''}</span>{/if}
 		{#if isNavigating}<span class="loading-hint">Chargement…</span>{/if}
 		<div class="search">
 			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
@@ -435,6 +502,38 @@
 	</div>
 
 	{#if data.view === 'table'}
+	{#snippet skeletonRow()}
+		<tr class="ticket-row skeleton-row">
+			<td><div class="cell-select state-select skeleton-bar" style="height:16px;"></div></td>
+			<td class="ttl">
+				<div class="ttl-wrap">
+					<div class="skeleton-bar" style="width:22px;height:22px;border-radius:6px;flex-shrink:0;"></div>
+					<div class="ttl-main">
+						<div class="skeleton-bar" style="width:44px;height:8px;margin:4px 0 6px 7px;border-radius:4px;"></div>
+						<!-- largeur en px, pas % : le tableau est en table-layout:auto, un % ne compte pas
+						     dans le calcul de la largeur de colonne et donnait une barre minuscule. -->
+						<div class="cell-input title-input skeleton-bar" style="width:240px;height:16px;"></div>
+					</div>
+				</div>
+			</td>
+			{#if data.isAdmin}<td class="num"><div class="cell-input num-input skeleton-bar" style="height:16px;"></div></td>{/if}
+			<td class="num"><div class="cell-input num-input skeleton-bar" style="height:16px;"></div></td>
+			<td class="num"><div class="cell-input num-input skeleton-bar" style="height:16px;"></div></td>
+			{#if data.testPhase}
+				<td class="num"><div class="cell-input num-input skeleton-bar" style="height:16px;"></div></td>
+				<td class="num"><div class="cell-input num-input skeleton-bar" style="height:16px;"></div></td>
+			{/if}
+			<td class="num tabnum"><div class="skeleton-bar" style="width:32px;height:13px;margin-left:auto;border-radius:4px;"></div></td>
+			{#if data.isAdmin}<td class="num"><div class="skeleton-bar" style="width:40px;height:13px;margin-left:auto;border-radius:4px;"></div></td>{/if}
+			<td class="num"><div class="skeleton-bar" style="width:40px;height:13px;margin-left:auto;border-radius:4px;"></div></td>
+			<td>
+				<div class="prog">
+					<div class="bar skeleton-bar"></div>
+					<span class="skeleton-bar" style="width:28px;height:12px;border-radius:4px;"></span>
+				</div>
+			</td>
+		</tr>
+	{/snippet}
 	<div class="card tk-card">
 	<div class="tk-scroll">
 		<table class="tk">
@@ -621,18 +720,25 @@
 						</tr>
 					{/each}
 				{/each}
+				{#if loadingMore}
+					{#each { length: 4 } as _, i (i)}
+						{@render skeletonRow()}
+					{/each}
+				{/if}
 				{#if rows.length === 0}
-					<tr><td colspan={7 + (data.testPhase ? 2 : 0) + (data.isAdmin ? 2 : 0)} class="empty-row">Aucun ticket. Créez-en un pour démarrer.</td></tr>
+					{#if isNavigating || ticketsLoading}
+						{#each { length: 8 } as _, i (i)}
+							{@render skeletonRow()}
+						{/each}
+					{:else}
+						<tr><td colspan={colCount} class="empty-row">Aucun ticket. Créez-en un pour démarrer.</td></tr>
+					{/if}
 				{/if}
 			</tbody>
 		</table>
 	</div>
-		{#if data.pageCount > 1}
-			<div class="pager">
-				<button class="btn btn-ghost" disabled={data.page <= 1 || isNavigating} onclick={() => navigateWith({ page: String(data.page - 1) })}>← Précédent</button>
-				<span class="pager-info">Page {data.page} / {data.pageCount} · {data.total} tickets</span>
-				<button class="btn btn-ghost" disabled={data.page >= data.pageCount || isNavigating} onclick={() => navigateWith({ page: String(data.page + 1) })}>Suivant →</button>
-			</div>
+		{#if hasMore}
+			<div class="pager" bind:this={sentinel}></div>
 		{/if}
 	</div>
 	{:else}
@@ -675,7 +781,7 @@
 							</div>
 						</div>
 					{/each}
-					{#if colTickets(col.id).length === 0}<div class="kempty">Aucun ticket</div>{/if}
+					{#if ticketsLoading}<div class="kempty">Chargement…</div>{:else if colTickets(col.id).length === 0}<div class="kempty">Aucun ticket</div>{/if}
 				</div>
 			</div>
 		{/each}
@@ -1202,11 +1308,29 @@
 		padding: 14px;
 		border-top: 1px solid var(--border);
 	}
-	.pager-info {
-		font-size: 12.5px;
-		font-weight: 600;
-		color: var(--text-mute);
-		font-variant-numeric: tabular-nums;
+	/* Pas de padding/border dédiés : .skeleton-row réutilise .ticket-row (même <td>, mêmes classes
+	   cell-input/num-input) pour tomber pile sur la hauteur d'une vraie ligne, sans la deviner. */
+	.skeleton-bar {
+		height: 14px;
+		border-radius: 6px;
+		/* Mélangé à --text (pas --surface/--surface-2, quasi identiques ici) pour rester visible sur
+		   le fond de la ligne dans les deux thèmes — clair ou sombre, --text s'inverse déjà pour ça. */
+		background: linear-gradient(
+			90deg,
+			color-mix(in srgb, var(--text) 12%, var(--surface-2)) 25%,
+			color-mix(in srgb, var(--text) 26%, var(--surface-2)) 50%,
+			color-mix(in srgb, var(--text) 12%, var(--surface-2)) 75%
+		);
+		background-size: 200% 100%;
+		animation: skeleton-shimmer 1.4s ease-in-out infinite;
+	}
+	@keyframes skeleton-shimmer {
+		0% {
+			background-position: 200% 0;
+		}
+		100% {
+			background-position: -200% 0;
+		}
 	}
 	.seg2 {
 		display: flex;
