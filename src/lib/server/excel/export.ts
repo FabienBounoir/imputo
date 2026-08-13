@@ -493,7 +493,7 @@ export async function buildWorkbook(
 		['Estimé total (j)', estTotal, '0.00'],
 		['Consommé sur tickets (j)', consumedTickets, '0.00'],
 		['RAE total (j)', raeTotalSum, '0.00'],
-		['Avancement global', avancement(estTotal, raeTotalSum), '0%'],
+		['Avancement global', avancement(estTotal, raeTotalSum, consumedTickets), '0%'],
 		['Productif (j)', productiveTotal, '0.00'],
 		['Non productif (j)', nonProductiveTotal, '0.00']
 	];
@@ -585,7 +585,7 @@ export async function buildWorkbook(
 			consumed,
 			// Réel uniquement, toujours (jamais Estimation/RAE Test même si la phase Test est active).
 			ecart: ecartVsEstime(resolved.real, consumed, estReal),
-			pct: avancement(totalEst, rae),
+			pct: avancement(totalEst, rae, consumed),
 			cypress: fl.cypress,
 			docTech: fl.docTech,
 			prepaQualif: fl.prepaQualif
@@ -629,7 +629,7 @@ export async function buildWorkbook(
 		key: 'TOTAL', er: round(totEr), rr: round(totRr), et: round(totEt), pr: round(totPr),
 		rt: round(totRt), te: round(totTe), tr: round(totTr), consumed: round(totCons),
 		// Somme des écarts d'exécution ticket = RAE Réel total + consommé total − Est. Réal totale.
-		ecart: round(totRr + totCons - totEr), pct: avancement(round(totTe), round(totTr))
+		ecart: round(totRr + totCons - totEr), pct: avancement(round(totTe), round(totTr), round(totCons))
 	}, theme);
 
 	// ===== Feuille 2 — Synthèse par projet & sprint =====
@@ -651,7 +651,7 @@ export async function buildWorkbook(
 			const est = round(g.est), consumed = round(g.consumed), rae = round(g.rae);
 			const row = s2.addRow({
 				type: label, name: g.name, tickets: g.tickets, est, consumed, rae,
-				ecart: round(consumed - est), pct: avancement(est, rae)
+				ecart: round(consumed - est), pct: avancement(est, rae, consumed)
 			});
 			if (est > 0 && consumed - est > 0) row.getCell('ecart').font = { color: { argb: OVER_RED } };
 		}

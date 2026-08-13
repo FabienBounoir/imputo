@@ -239,6 +239,20 @@
       "when": 1786535010590,
       "tag": "0033_eminent_karen_page",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1786629673552,
+      "tag": "0034_gray_rogue",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1786631471222,
+      "tag": "0035_material_giant_girl",
+      "breakpoints": true
     }
   ]
 }

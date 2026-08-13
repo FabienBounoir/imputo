@@ -7,7 +7,8 @@ import {
 	renameTicketGroup,
 	setTicketGroupArchived,
 	getTicketGroupIds,
-	setTicketInGroup
+	setTicketInGroup,
+	reorderTicketGroups
 } from './ticketGroups';
 
 describe('ticketGroups', () => {
@@ -51,6 +52,24 @@ describe('ticketGroups', () => {
 		expect(await getTicketGroupIds(workspaceId, ticket.id)).toEqual([]);
 		groups = await listTicketGroups(workspaceId);
 		expect(groups.find((x) => x.id === group.id)?.usage).toBe(0);
+	});
+
+	it('reorderTicketGroups applique le nouvel ordre et ignore les id d’un autre espace', async () => {
+		const ws = await makeWorkspace('tg-reorder');
+		const other = await makeWorkspace('tg-reorder-other');
+		await createTicketGroup(ws.workspaceId, 'A');
+		await createTicketGroup(ws.workspaceId, 'B');
+		await createTicketGroup(ws.workspaceId, 'C');
+		await createTicketGroup(other.workspaceId, 'X');
+		const [a, b, c] = await listTicketGroups(ws.workspaceId);
+		const [x] = await listTicketGroups(other.workspaceId);
+		expect([a.label, b.label, c.label]).toEqual(['A', 'B', 'C']); // ordre de création par défaut
+
+		await reorderTicketGroups(ws.workspaceId, [c.id, a.id, x.id, b.id]);
+
+		expect((await listTicketGroups(ws.workspaceId)).map((g) => g.label)).toEqual(['C', 'A', 'B']);
+		// L'id d'un autre espace glissé dans la liste n'a rien modifié chez lui.
+		expect((await listTicketGroups(other.workspaceId)).map((g) => g.label)).toEqual(['X']);
 	});
 
 	it('setTicketInGroup refuse un groupe ou un ticket d’un autre espace', async () => {

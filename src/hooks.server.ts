@@ -28,7 +28,8 @@ export const handle: Handle = async ({ event, resolve }) => {
 				email: user.email,
 				themePref: user.themePref,
 				accentMode: user.accentMode,
-				accentColor: user.accentColor
+				accentColor: user.accentColor,
+				sortActivitiesAlpha: user.sortActivitiesAlpha
 			};
 
 			const memberships = await listMembershipsForUser(user.id);

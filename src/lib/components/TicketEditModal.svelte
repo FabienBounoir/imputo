@@ -1,6 +1,9 @@
 <script lang="ts">
+	import { enhance, deserialize } from '$app/forms';
 	import { formatDateTime } from '$lib/utils/date';
 	import { TICKET_FIELD_LABELS } from '$lib/changeLogLabels';
+	import { confirmDialog } from '$lib/confirm.svelte';
+	import ModalErrorToast from './ModalErrorToast.svelte';
 
 	// Même modal d'édition que Tickets & chiffrage (tickets/+page.svelte), rendue utilisable depuis
 	// n'importe quelle page (ex. Mon imputation) : elle se charge elle-même par id plutôt que de
@@ -16,8 +19,10 @@
 		testPhase,
 		canEditEstimation,
 		isAdmin,
+		isOwner,
 		onClose,
-		onSaved
+		onSaved,
+		onDeleted
 	}: {
 		ticketId: string | null;
 		states: { id: string; label: string; emoji: string | null; color: string | null }[];
@@ -28,10 +33,14 @@
 		testPhase: boolean;
 		canEditEstimation: boolean;
 		isAdmin: boolean;
+		/** Créateur de l'espace (super admin) — seul profil autorisé à supprimer un ticket. */
+		isOwner: boolean;
 		onClose: () => void;
 		/** Appelé après chaque sauvegarde — permet à l'appelant de patcher son propre affichage
 		 * (ex. la ligne de Mon imputation) sans recharger toute la page. */
 		onSaved?: (ticket: { id: string; title: string; sprintId: string | null; versionId: string | null }) => void;
+		/** Appelé après une suppression réussie — permet à l'appelant de retirer le ticket de son affichage. */
+		onDeleted?: (ticketId: string) => void;
 	} = $props();
 
 	type Ticket = {
@@ -56,6 +65,7 @@
 		hasActivityEstimation: boolean;
 		ecartVsBudget: number | null;
 		groupIds: string[];
+		imputationCount: number;
 	};
 	type HistoryEntry = {
 		field: string | null;
@@ -79,9 +89,11 @@
 	let historyLoading = $state(false);
 	let savedFlash = $state(false);
 	let flashTimer: ReturnType<typeof setTimeout>;
+	let actionError = $state('');
 
 	$effect(() => {
 		const id = ticketId;
+		actionError = '';
 		if (!id) {
 			ticket = null;
 			historyEntries = [];
@@ -111,7 +123,15 @@
 	const totalEst = $derived(ticket ? round(n(ticket.estimationReal) + (testPhase ? n(ticket.estimationTest) : 0)) : 0);
 	const totalRae = $derived(ticket ? round(n(ticket.raeReal) + (testPhase ? n(ticket.raeTest) : 0)) : 0);
 	const ecartVsEstime = $derived(ticket ? round(n(ticket.raeReal) + ticket.consumed - n(ticket.estimationReal)) : 0);
-	const avancement = $derived(totalEst > 0 ? Math.min(1, Math.max(0, (totalEst - totalRae) / totalEst)) : 0);
+	// Sans estimation : 100 % si du temps est consommé et qu'il ne reste rien à faire (RAE nul),
+	// plutôt que 0 % qui laissait croire à un ticket non démarré — même règle que calc.ts:avancement.
+	const avancement = $derived(
+		totalEst > 0
+			? Math.min(1, Math.max(0, (totalEst - totalRae) / totalEst))
+			: totalRae <= 0 && (ticket?.consumed ?? 0) > 0
+				? 1
+				: 0
+	);
 	const pct = (x: number) => Math.round(x * 100);
 
 	const pendingSaves = new Map<string, ReturnType<typeof setTimeout>>();
@@ -126,8 +146,13 @@
 		body.set('ticketId', ticket.id);
 		body.set('field', field);
 		body.set('value', value == null ? '' : String(value));
-		await fetch('/tickets?/update', { method: 'POST', body });
-		flash();
+		const res = await fetch('/tickets?/update', { method: 'POST', body });
+		const result = deserialize(await res.text());
+		if (result.type === 'failure') {
+			actionError = (result.data?.error as string) ?? 'Erreur lors de l’enregistrement.';
+		} else {
+			flash();
+		}
 	}
 	// Saisie d'une estimation : pré-remplit le RAE correspondant s'il est encore vide (sinon un
 	// ticket estimé mais sans RAE afficherait 100 % d'avancement) — même règle que la page tickets.
@@ -173,9 +198,38 @@
 		flashTimer = setTimeout(() => (savedFlash = false), 1400);
 		if (ticket) onSaved?.({ id: ticket.id, title: ticket.title, sprintId: ticket.sprintId, versionId: ticket.versionId });
 	}
+
+	// Bloque si des imputations sont liées (pas de popup dans ce cas — juste le message), sinon
+	// demande confirmation avant d'envoyer la requête de suppression (cf. deleteTicket côté serveur,
+	// revérifié là-bas quoi qu'il arrive).
+	async function confirmDelete({ cancel }: { cancel: () => void }) {
+		if (!ticket) return cancel();
+		if (ticket.imputationCount > 0) {
+			actionError = 'Des imputations sont liées à ce ticket : suppression impossible.';
+			return cancel();
+		}
+		const ok = await confirmDialog({
+			title: 'Supprimer le ticket',
+			message: `Supprimer définitivement ${ticket.key} — « ${ticket.title} » ? Cette action est irréversible.`,
+			confirmLabel: 'Supprimer'
+		});
+		if (!ok) return cancel();
+		actionError = '';
+		const id = ticket.id;
+		return async ({ result }: { result: { type: string; data?: Record<string, unknown> } }) => {
+			if (result.type === 'failure') {
+				actionError = (result.data?.error as string) ?? 'Erreur lors de la suppression.';
+			} else {
+				onDeleted?.(id);
+				onClose();
+			}
+		};
+	}
 </script>
 
 <svelte:window onkeydown={(e) => ticketId && e.key === 'Escape' && onClose()} />
+
+{#if actionError}<ModalErrorToast message={actionError} />{/if}
 
 {#if ticketId}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -187,7 +241,11 @@
 				<p class="hint">{loading ? 'Chargement…' : 'Ticket introuvable.'}</p>
 			{:else}
 				<div class="tk-modal-head">
-					<span class="tk-key tabnum">{ticket.key}</span>
+					{#if isOwner}
+						<input class="tk-key-input tabnum" bind:value={ticket.key} onchange={() => save('key', ticket!.key)} aria-label="Clé du ticket" />
+					{:else}
+						<span class="tk-key tabnum">{ticket.key}</span>
+					{/if}
 					<button class="tk-x" onclick={onClose} aria-label="Fermer">✕</button>
 				</div>
 				<input class="tk-title" bind:value={ticket.title} onchange={() => save('title', ticket!.title)} aria-label="Titre" />
@@ -250,9 +308,9 @@
 				</div>
 				<div class="tk-foot">
 					<span>Consommé <b class="tabnum">{ticket.consumed || '—'}</b></span>
-					<span>Écart vs estimé <b class="tabnum" class:gap-pos={ecartVsEstime > 0}>{ecartVsEstime > 0 ? '+' : ''}{ecartVsEstime || 0}</b></span>
+					<span>Écart vs estimé <b class="tabnum" class:gap-pos={ecartVsEstime > 0} class:gap-neg={ecartVsEstime < 0}>{ecartVsEstime > 0 ? '+' : ''}{ecartVsEstime || 0}</b></span>
 					{#if ticket.ecartVsBudget !== null}
-						<span>Écart vs budget <b class="tabnum" class:gap-pos={ticket.ecartVsBudget > 0}>{ticket.ecartVsBudget > 0 ? '+' : ''}{ticket.ecartVsBudget || 0}</b></span>
+						<span>Écart vs budget <b class="tabnum" class:gap-pos={ticket.ecartVsBudget > 0} class:gap-neg={ticket.ecartVsBudget < 0}>{ticket.ecartVsBudget > 0 ? '+' : ''}{ticket.ecartVsBudget || 0}</b></span>
 					{/if}
 					<span>Avancement <b class="tabnum">{pct(avancement)}%</b></span>
 				</div>
@@ -274,6 +332,14 @@
 						</ul>
 					{/if}
 				</div>
+				{#if isOwner}
+					<div class="tk-danger">
+						<form method="POST" action="/tickets?/delete" use:enhance={confirmDelete}>
+							<input type="hidden" name="ticketId" value={ticket.id} />
+							<button class="tk-delete-link" type="submit">🗑 Supprimer ce ticket</button>
+						</form>
+					</div>
+				{/if}
 			{/if}
 		</div>
 	</div>
@@ -322,10 +388,45 @@
 		align-items: center;
 		justify-content: space-between;
 	}
+	.tk-danger {
+		margin-top: 14px;
+		padding-top: 14px;
+		border-top: 1px solid var(--border);
+		display: flex;
+		justify-content: flex-end;
+	}
+	.tk-delete-link {
+		font-size: 12.5px;
+		font-weight: 600;
+		color: var(--text-mute);
+		border-radius: 7px;
+		padding: 5px 10px;
+	}
+	.tk-delete-link:hover {
+		color: var(--warn);
+		background: var(--warn-tint);
+	}
 	.tk-key {
 		font-size: 12px;
 		font-weight: 700;
 		color: var(--text-mute);
+	}
+	.tk-key-input {
+		font-size: 12px;
+		font-weight: 700;
+		color: var(--text-mute);
+		background: transparent;
+		border: 1px solid transparent;
+		border-radius: 6px;
+		padding: 3px 6px;
+		width: 110px;
+	}
+	.tk-key-input:hover,
+	.tk-key-input:focus {
+		border-color: var(--border-strong);
+		background: var(--surface-2);
+		color: var(--text);
+		outline: none;
 	}
 	.tk-x {
 		font-size: 15px;
@@ -448,6 +549,10 @@
 	}
 	.gap-pos {
 		color: var(--warn) !important;
+		font-weight: 700;
+	}
+	.gap-neg {
+		color: var(--accent) !important;
 		font-weight: 700;
 	}
 	.tk-history {

@@ -14,6 +14,7 @@ declare global {
 				themePref: string;
 				accentMode: string;
 				accentColor: string | null;
+				sortActivitiesAlpha: boolean;
 			} | null;
 			sessionToken: string | null;
 			memberships: MembershipInfo[];

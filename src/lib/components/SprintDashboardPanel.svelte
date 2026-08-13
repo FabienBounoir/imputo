@@ -25,21 +25,32 @@
 		byActivity: { label: string; raeReal: number; raeTest: number }[];
 		byPerson: { name: string; consumed: number }[];
 		history: { date: string; consumed: number; rae: number }[];
-		tickets: {
-			id: string;
-			key: string;
-			title: string;
-			stateLabel: string | null;
-			stateEmoji: string | null;
-			stateColor: string | null;
-			budget: number | null;
+		tickets: SprintDashboardTicket[];
+		ticketGroups: {
+			groupId: string | null;
+			label: string;
 			estTotal: number;
 			raeTotal: number;
 			consumed: number;
-			ecartVsEstime: number;
-			ecartVsBudget: number | null;
 			avancement: number;
+			tickets: SprintDashboardTicket[];
 		}[];
+	};
+
+	type SprintDashboardTicket = {
+		id: string;
+		key: string;
+		title: string;
+		stateLabel: string | null;
+		stateEmoji: string | null;
+		stateColor: string | null;
+		budget: number | null;
+		estTotal: number;
+		raeTotal: number;
+		consumed: number;
+		ecartVsEstime: number;
+		ecartVsBudget: number | null;
+		avancement: number;
 	};
 
 	let {
@@ -59,6 +70,22 @@
 	} = $props();
 
 	const pct = (x: number) => Math.round(x * 100);
+	// État, Ticket, Estimé, RAE, Consommé, Écart vs estimé, Avancement — + Budget / Écart vs budget
+	// si visibles (isAdmin), pour le colspan de l'en-tête et de la ligne de sous-total par groupe.
+	const usColCount = $derived(
+		7 + (dashboard?.kpis.budgetTotal !== null ? 1 : 0) + (dashboard?.kpis.ecartVsBudgetTotal !== null ? 1 : 0)
+	);
+
+	// Sections par groupe de tickets : préférence locale (retour utilisateur), pas serveur — chacun
+	// choisit sa vue sans que ça affecte les autres. Défaut = pas de groupement (liste à plat).
+	const GROUP_KEY = 'imputo-dashboard-group-tickets';
+	let groupByTicketGroup = $state(false);
+	$effect(() => {
+		groupByTicketGroup = localStorage.getItem(GROUP_KEY) === '1';
+	});
+	function onToggleGroup() {
+		localStorage.setItem(GROUP_KEY, groupByTicketGroup ? '1' : '0');
+	}
 	const maxActivity = $derived(Math.max(1, ...(dashboard?.byActivity.map((a) => a.raeReal + a.raeTest) ?? [1])));
 	const maxPerson = $derived(Math.max(1, ...(dashboard?.byPerson.map((p) => p.consumed) ?? [1])));
 
@@ -170,12 +197,12 @@
 				<div class="k">RAE global</div>
 				<div class="v tabnum">{dashboard.kpis.raeTotal}<small>j</small></div>
 			</div>
-			<div class="card kpi" class:warn={dashboard.kpis.ecartVsEstimeTotal > 0}>
+			<div class="card kpi" class:warn={dashboard.kpis.ecartVsEstimeTotal > 0} class:good={dashboard.kpis.ecartVsEstimeTotal < 0}>
 				<div class="k">Écart vs estimé</div>
 				<div class="v tabnum">{dashboard.kpis.ecartVsEstimeTotal > 0 ? '+' : ''}{dashboard.kpis.ecartVsEstimeTotal}<small>j</small></div>
 			</div>
 			{#if dashboard.kpis.ecartVsBudgetTotal !== null}
-				<div class="card kpi" class:warn={dashboard.kpis.ecartVsBudgetTotal > 0}>
+				<div class="card kpi" class:warn={dashboard.kpis.ecartVsBudgetTotal > 0} class:good={dashboard.kpis.ecartVsBudgetTotal < 0}>
 					<div class="k">Écart vs budget (TNF)</div>
 					<div class="v tabnum">{dashboard.kpis.ecartVsBudgetTotal > 0 ? '+' : ''}{dashboard.kpis.ecartVsBudgetTotal}<small>j</small></div>
 				</div>
@@ -254,10 +281,53 @@
 		</div>
 
 		<div class="card panel tickets-panel">
-			<h3>{dashboard.kind === 'VERSION' ? 'Tickets de la version' : 'Tickets du sprint'}</h3>
+			<div class="tickets-head">
+				<h3>{dashboard.kind === 'VERSION' ? 'Tickets de la version' : 'Tickets du sprint'}</h3>
+				<label class="group-toggle">
+					<input type="checkbox" bind:checked={groupByTicketGroup} onchange={onToggleGroup} />
+					<span class="switch"></span>
+					<span class="switch-label">Grouper par groupe de tickets</span>
+				</label>
+			</div>
 			{#if dashboard.tickets.length === 0}
 				<p class="empty">Aucun ticket.</p>
 			{:else}
+				{#snippet ticketRow(t: (typeof dashboard.tickets)[number])}
+					<tr
+						class="us-row"
+						tabindex="0"
+						role="link"
+						onclick={() => goto(`/tickets?ticket=${encodeURIComponent(t.key)}`)}
+						onkeydown={(e) => {
+							if (e.key === 'Enter') goto(`/tickets?ticket=${encodeURIComponent(t.key)}`);
+						}}
+					>
+						<td>
+							<span
+								class="state-pill"
+								style={t.stateColor ? `background:color-mix(in srgb, ${t.stateColor} 18%, transparent); color:${t.stateColor};` : ''}
+							>{t.stateEmoji ?? ''} {t.stateLabel ?? '—'}</span>
+						</td>
+						<td class="ttl">
+							<span class="key tabnum">{t.key}</span>
+							<span class="title">{t.title}</span>
+						</td>
+						{#if dashboard.kpis.budgetTotal !== null}<td class="num tabnum">{t.budget ?? '—'}</td>{/if}
+						<td class="num tabnum">{t.estTotal}</td>
+						<td class="num tabnum">{t.raeTotal}</td>
+						<td class="num tabnum">{t.consumed || '—'}</td>
+						{#if dashboard.kpis.ecartVsBudgetTotal !== null}
+							<td class="num tabnum" class:over={(t.ecartVsBudget ?? 0) > 0} class:under={(t.ecartVsBudget ?? 0) < 0}>{(t.ecartVsBudget ?? 0) > 0 ? '+' : ''}{t.ecartVsBudget ?? 0}</td>
+						{/if}
+						<td class="num tabnum" class:over={t.ecartVsEstime > 0} class:under={t.ecartVsEstime < 0}>{t.ecartVsEstime > 0 ? '+' : ''}{t.ecartVsEstime || 0}</td>
+						<td>
+							<div class="prog">
+								<div class="bar"><i style="width:{pct(t.avancement)}%"></i></div>
+								<span class="pct tabnum">{pct(t.avancement)}%</span>
+							</div>
+						</td>
+					</tr>
+				{/snippet}
 				<div class="us-table-wrap">
 					<table class="us-table">
 						<thead>
@@ -270,42 +340,39 @@
 							</tr>
 						</thead>
 						<tbody>
-							{#each dashboard.tickets as t (t.id)}
-								<tr
-									class="us-row"
-									tabindex="0"
-									role="link"
-									onclick={() => goto(`/tickets?ticket=${encodeURIComponent(t.key)}`)}
-									onkeydown={(e) => {
-										if (e.key === 'Enter') goto(`/tickets?ticket=${encodeURIComponent(t.key)}`);
-									}}
-								>
-									<td>
-										<span
-											class="state-pill"
-											style={t.stateColor ? `background:color-mix(in srgb, ${t.stateColor} 18%, transparent); color:${t.stateColor};` : ''}
-										>{t.stateEmoji ?? ''} {t.stateLabel ?? '—'}</span>
-									</td>
-									<td class="ttl">
-										<span class="key tabnum">{t.key}</span>
-										<span class="title">{t.title}</span>
-									</td>
-									{#if dashboard.kpis.budgetTotal !== null}<td class="num tabnum">{t.budget ?? '—'}</td>{/if}
-									<td class="num tabnum">{t.estTotal}</td>
-									<td class="num tabnum">{t.raeTotal}</td>
-									<td class="num tabnum">{t.consumed || '—'}</td>
-									{#if dashboard.kpis.ecartVsBudgetTotal !== null}
-										<td class="num tabnum" class:over={(t.ecartVsBudget ?? 0) > 0}>{(t.ecartVsBudget ?? 0) > 0 ? '+' : ''}{t.ecartVsBudget ?? 0}</td>
-									{/if}
-									<td class="num tabnum" class:over={t.ecartVsEstime > 0}>{t.ecartVsEstime > 0 ? '+' : ''}{t.ecartVsEstime || 0}</td>
-									<td>
-										<div class="prog">
-											<div class="bar"><i style="width:{pct(t.avancement)}%"></i></div>
-											<span class="pct tabnum">{pct(t.avancement)}%</span>
-										</div>
-									</td>
-								</tr>
-							{/each}
+							{#if groupByTicketGroup}
+								{#each dashboard.ticketGroups as g (g.groupId ?? '__none__')}
+									<tr class="us-group-row">
+										<td colspan={usColCount}>
+											{g.label}
+											<span class="us-group-count">{g.tickets.length} ticket{g.tickets.length > 1 ? 's' : ''}</span>
+										</td>
+									</tr>
+									{#each g.tickets as t (t.id)}
+										{@render ticketRow(t)}
+									{/each}
+									<tr class="us-subtotal-row">
+										<td></td>
+										<td class="ttl">Sous-total</td>
+										{#if dashboard.kpis.budgetTotal !== null}<td></td>{/if}
+										<td class="num tabnum">{g.estTotal}</td>
+										<td class="num tabnum">{g.raeTotal}</td>
+										<td class="num tabnum">{g.consumed || '—'}</td>
+										{#if dashboard.kpis.ecartVsBudgetTotal !== null}<td></td>{/if}
+										<td></td>
+										<td>
+											<div class="prog">
+												<div class="bar"><i style="width:{pct(g.avancement)}%"></i></div>
+												<span class="pct tabnum">{pct(g.avancement)}%</span>
+											</div>
+										</td>
+									</tr>
+								{/each}
+							{:else}
+								{#each dashboard.tickets as t (t.id)}
+									{@render ticketRow(t)}
+								{/each}
+							{/if}
 						</tbody>
 					</table>
 				</div>
@@ -400,6 +467,9 @@
 	}
 	.kpi.warn {
 		border-color: #c0392b;
+	}
+	.kpi.good {
+		border-color: var(--accent);
 	}
 	.kpi .k {
 		font-size: 12px;
@@ -522,6 +592,65 @@
 	.tickets-panel {
 		margin-top: 16px;
 	}
+	.tickets-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		flex-wrap: wrap;
+		margin-bottom: 12px;
+	}
+	.tickets-head h3 {
+		margin: 0;
+	}
+	.group-toggle {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		cursor: pointer;
+	}
+	.group-toggle input {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		opacity: 0;
+	}
+	.switch {
+		position: relative;
+		width: 34px;
+		height: 20px;
+		flex-shrink: 0;
+		border-radius: 20px;
+		background: var(--border-strong);
+		transition: background 0.15s;
+	}
+	.switch::after {
+		content: '';
+		position: absolute;
+		top: 2px;
+		left: 2px;
+		width: 16px;
+		height: 16px;
+		border-radius: 50%;
+		background: var(--surface);
+		box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+		transition: transform 0.15s;
+	}
+	.group-toggle input:checked + .switch {
+		background: var(--accent);
+	}
+	.group-toggle input:checked + .switch::after {
+		transform: translateX(14px);
+	}
+	.group-toggle input:focus-visible + .switch {
+		outline: 2px solid var(--accent);
+		outline-offset: 2px;
+	}
+	.switch-label {
+		font-size: 12.5px;
+		font-weight: 600;
+		color: var(--text-mute);
+	}
 	.us-table-wrap {
 		overflow-x: auto;
 	}
@@ -559,6 +688,31 @@
 		outline: 2px solid var(--accent);
 		outline-offset: -2px;
 	}
+	.us-group-row td {
+		padding: 10px 10px 6px;
+		border-top: none;
+		font-size: 12px;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		color: var(--text-soft);
+	}
+	.us-group-row:first-child td {
+		padding-top: 8px;
+	}
+	.us-group-count {
+		margin-left: 8px;
+		font-size: 11px;
+		font-weight: 600;
+		text-transform: none;
+		letter-spacing: normal;
+		color: var(--text-mute);
+	}
+	.us-subtotal-row td {
+		background: var(--surface-2);
+		font-weight: 600;
+		color: var(--text-soft);
+	}
 	.us-table .ttl {
 		display: flex;
 		align-items: baseline;
@@ -585,6 +739,10 @@
 	}
 	.us-table td.over {
 		color: var(--warn);
+		font-weight: 700;
+	}
+	.us-table td.under {
+		color: var(--accent);
 		font-weight: 700;
 	}
 	.prog {

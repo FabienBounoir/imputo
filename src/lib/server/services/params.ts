@@ -112,8 +112,8 @@ export async function listActivities(workspaceId: string): Promise<ActivityItem[
 			.from(activity)
 			.leftJoin(timeEntry, eq(timeEntry.activityId, activity.id))
 			.where(eq(activity.workspaceId, workspaceId))
-			.groupBy(activity.id, activity.label, activity.archivedAt)
-			.orderBy(activity.label),
+			.groupBy(activity.id, activity.label, activity.archivedAt, activity.sortOrder)
+			.orderBy(activity.sortOrder),
 		db
 			.select({ activityId: ticketActivityRae.activityId, n: count(ticketActivityRae.id) })
 			.from(ticketActivityRae)
@@ -134,7 +134,23 @@ export async function createActivity(workspaceId: string, label: string) {
 	const trimmed = label.trim();
 	if (!trimmed) throw new Error('Nom requis.');
 	await assertUniqueLabel(activity, workspaceId, trimmed, null);
-	await db.insert(activity).values({ workspaceId, label: trimmed });
+	const [{ max }] = await db
+		.select({ max: sql<number>`coalesce(max(${activity.sortOrder}), -1)` })
+		.from(activity)
+		.where(eq(activity.workspaceId, workspaceId));
+	await db.insert(activity).values({ workspaceId, label: trimmed, sortOrder: Number(max) + 1 });
+}
+
+/** Réordonne toutes les activités d'un espace en un seul geste (drag-and-drop), cf. reorderTicketGroups. */
+export async function reorderActivities(workspaceId: string, orderedIds: string[]) {
+	await db.transaction(async (tx) => {
+		for (let i = 0; i < orderedIds.length; i++) {
+			await tx
+				.update(activity)
+				.set({ sortOrder: i })
+				.where(and(eq(activity.id, orderedIds[i]), eq(activity.workspaceId, workspaceId)));
+		}
+	});
 }
 
 export async function renameActivity(workspaceId: string, id: string, label: string) {

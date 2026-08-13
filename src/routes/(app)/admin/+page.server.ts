@@ -36,6 +36,7 @@ import {
 	renameActivity,
 	setActivityActive,
 	deleteActivity,
+	reorderActivities,
 	listStates,
 	createState,
 	updateState,
@@ -47,7 +48,8 @@ import {
 	listTicketGroups,
 	createTicketGroup,
 	renameTicketGroup,
-	setTicketGroupArchived
+	setTicketGroupArchived,
+	reorderTicketGroups
 } from '$lib/server/services/ticketGroups';
 import { getMoodConfig, setMoodEnabled, setMoodPeriodConfig, type MoodPeriodKind } from '$lib/server/services/mood';
 import {
@@ -511,6 +513,19 @@ export const actions: Actions = {
 		return { actOk: true };
 	},
 
+	actReorder: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const f = await request.formData();
+		const ids = f.getAll('id').map(String);
+		try {
+			await reorderActivities(ws.workspaceId, ids);
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { actOk: true };
+	},
+
 	groupCreate: async ({ request, locals }) => {
 		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
 		const ws = locals.workspace!;
@@ -541,6 +556,19 @@ export const actions: Actions = {
 		const f = await request.formData();
 		try {
 			await setTicketGroupArchived(ws.workspaceId, String(f.get('id')), f.get('archived') === 'true');
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { groupOk: true };
+	},
+
+	groupReorder: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const f = await request.formData();
+		const ids = f.getAll('id').map(String);
+		try {
+			await reorderTicketGroups(ws.workspaceId, ids);
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}

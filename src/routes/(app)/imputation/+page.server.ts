@@ -38,7 +38,7 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 	const period = buildPeriod(granularity, mode, url.searchParams.get('w') ?? todayInParis());
 	const weekMondays = period.weeks.map((w) => w.mondayISO);
 
-	const ref = await getRefData(ws.workspaceId);
+	const ref = await getRefData(ws.workspaceId, user.sortActivitiesAlpha);
 
 	// Un admin, ou une personne avec la capacité canViewImputations, peut consulter l'imputation
 	// d'un autre membre via ?u=<userId> — en lecture seule sauf pour l'admin (cf. resolveSubjectId).
@@ -98,6 +98,8 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 		capacity: num(membership?.capacityPerDay ?? '1'),
 		imputationStep: num(ws.imputationStep),
 		isAdmin,
+		// Suppression de ticket (TicketEditModal) réservée au créateur de l'espace (super admin).
+		isOwner: user.id === ws.createdByUserId,
 		canViewOthers,
 		members: canViewOthers ? ref.members : [],
 		selfId: user.id,

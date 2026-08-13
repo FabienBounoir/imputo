@@ -137,6 +137,11 @@ export async function setAccentPref(userId: string, mode: 'WORKSPACE' | 'CUSTOM'
 	await db.update(user).set({ accentMode: mode, accentColor: mode === 'CUSTOM' ? color : null }).where(eq(user.id, userId));
 }
 
+/** Répartition par activité (dashboard sprint/version) : false = ordre des référentiels, true = alphabétique. */
+export async function setSortActivitiesAlphaPref(userId: string, value: boolean) {
+	await db.update(user).set({ sortActivitiesAlpha: value }).where(eq(user.id, userId));
+}
+
 /** Met à jour la couleur d'accent d'un espace (réservé ADMIN). */
 export async function setAccentColor(workspaceId: string, color: string, rgb: boolean) {
 	await db.update(workspace).set({ accentColor: color, accentRgb: rgb }).where(eq(workspace.id, workspaceId));

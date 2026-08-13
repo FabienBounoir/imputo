@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { invalidateAll } from '$app/navigation';
 	import ExportModal from '$lib/components/ExportModal.svelte';
 	import AccentPicker from '$lib/components/AccentPicker.svelte';
 	import MemberAccessModal from '$lib/components/MemberAccessModal.svelte';
@@ -8,6 +9,61 @@
 
 	let accessModalFor = $state<string | null>(null);
 	const accessModalMember = $derived(data.members.find((m) => m.id === accessModalFor) ?? null);
+
+	// Glisser-déposer (groupes de tickets, activités) : 'end' = zone sous le dernier élément
+	// (dépose = envoyer à la fin) ; null = pas de survol actif.
+	const DROP_END = 'end';
+	function reorderList<T extends { id: string }>(list: T[], draggedId: string, targetId: string | typeof DROP_END): T[] | null {
+		const from = list.findIndex((x) => x.id === draggedId);
+		if (from === -1) return null;
+		const next = [...list];
+		const [moved] = next.splice(from, 1);
+		const insertAt = targetId === DROP_END ? next.length : next.findIndex((x) => x.id === targetId);
+		if (insertAt === -1) return null;
+		next.splice(insertAt, 0, moved);
+		return next;
+	}
+
+	// Ordre des groupes de tickets : copie locale pour un retour visuel immédiat pendant le drag,
+	// resynchronisée dès que `data.ticketGroups` change (création/renommage/archivage/reorder serveur).
+	let groupOrder = $state(data.ticketGroups);
+	$effect(() => {
+		groupOrder = data.ticketGroups;
+	});
+	let draggingGroupId = $state<string | null>(null);
+	let dragOverGroupId = $state<string | null>(null);
+	function onGroupDrop(targetId: string | typeof DROP_END) {
+		const id = draggingGroupId;
+		draggingGroupId = null;
+		dragOverGroupId = null;
+		if (!id || id === targetId) return;
+		const next = reorderList(groupOrder, id, targetId);
+		if (!next) return;
+		groupOrder = next;
+		const body = new FormData();
+		for (const g of next) body.append('id', g.id);
+		fetch('?/groupReorder', { method: 'POST', body }).then(() => invalidateAll());
+	}
+
+	// Même mécanique pour l'ordre des activités (référentiels) — cf. onGroupDrop ci-dessus.
+	let activityOrder = $state(data.activities);
+	$effect(() => {
+		activityOrder = data.activities;
+	});
+	let draggingActivityId = $state<string | null>(null);
+	let dragOverActivityId = $state<string | null>(null);
+	function onActivityDrop(targetId: string | typeof DROP_END) {
+		const id = draggingActivityId;
+		draggingActivityId = null;
+		dragOverActivityId = null;
+		if (!id || id === targetId) return;
+		const next = reorderList(activityOrder, id, targetId);
+		if (!next) return;
+		activityOrder = next;
+		const body = new FormData();
+		for (const a of next) body.append('id', a.id);
+		fetch('?/actReorder', { method: 'POST', body }).then(() => invalidateAll());
+	}
 
 	const PRESETS = ['#16A34A', '#4F46E5', '#9333EA', '#0EA5E9', '#E11D48', '#EA580C', '#0D9488', '#CA8A04'];
 	let accent = $state(data.accentColor);
@@ -315,11 +371,28 @@
 
 			<section class="card block">
 				<h3>Activités</h3>
-				<p class="hint">Nature du travail (Dev, TU, DA…), optionnelle sur une imputation.</p>
+				<p class="hint">Nature du travail (Dev, TU, DA…), optionnelle sur une imputation. Glisse-dépose ⠿ pour réordonner : c'est cet ordre qui sert dans la répartition par activité des synthèses (sauf préférence "alphabétique" d'un membre dans ses paramètres de compte).</p>
 				{#if form?.actOk}<div class="flash ok">Mis à jour ✓</div>{/if}
 				<div class="ref-list">
-					{#each data.activities as a (a.id)}
-						<div class="ref-item" class:archived={a.archived}>
+					{#each activityOrder as a (a.id)}
+						<!-- svelte-ignore a11y_no_static_element_interactions -->
+						<div
+							class="ref-item"
+							class:archived={a.archived}
+							class:drag-over={dragOverActivityId === a.id && draggingActivityId !== a.id}
+							ondragover={(e) => { e.preventDefault(); dragOverActivityId = a.id; }}
+							ondragleave={() => { if (dragOverActivityId === a.id) dragOverActivityId = null; }}
+							ondrop={(e) => { e.preventDefault(); onActivityDrop(a.id); }}
+						>
+							<span
+								class="drag-handle"
+								draggable="true"
+								ondragstart={(e) => { draggingActivityId = a.id; e.dataTransfer?.setData('text/plain', a.id); }}
+								ondragend={() => { draggingActivityId = null; dragOverActivityId = null; }}
+								aria-label="Glisser pour réordonner {a.label}"
+								role="button"
+								tabindex="-1"
+							>⠿</span>
 							<form method="POST" action="?/actRename" use:enhance>
 								<input type="hidden" name="id" value={a.id} />
 								<input class="ref-name" name="label" value={a.label} disabled={a.archived} onchange={(e) => e.currentTarget.form?.requestSubmit()} />
@@ -360,7 +433,18 @@
 							{/if}
 						</div>
 					{/each}
-					{#if data.activities.length === 0}<p class="hint" style="margin:0;">Aucune activité.</p>{/if}
+					{#if activityOrder.length === 0}
+						<p class="hint" style="margin:0;">Aucune activité.</p>
+					{:else}
+						<!-- svelte-ignore a11y_no_static_element_interactions -->
+						<div
+							class="drop-end"
+							class:drag-over={dragOverActivityId === DROP_END}
+							ondragover={(e) => { if (draggingActivityId) { e.preventDefault(); dragOverActivityId = DROP_END; } }}
+							ondragleave={() => { if (dragOverActivityId === DROP_END) dragOverActivityId = null; }}
+							ondrop={(e) => { e.preventDefault(); onActivityDrop(DROP_END); }}
+						></div>
+					{/if}
 				</div>
 				<form method="POST" action="?/actCreate" use:enhance class="ref-add">
 					<input class="ref-input" name="label" placeholder="Nouvelle activité…" required />
@@ -370,11 +454,28 @@
 
 			<section class="card block">
 				<h3>Groupes de tickets</h3>
-				<p class="hint">Regroupement libre et transverse, indépendant des sprints/versions. Un ticket peut appartenir à plusieurs groupes.</p>
+				<p class="hint">Regroupement libre et transverse, indépendant des sprints/versions. Un ticket peut appartenir à plusieurs groupes. Glisse-dépose ⠿ pour réordonner : c'est cet ordre qui sert dans les synthèses par sprint/version.</p>
 				{#if form?.groupOk}<div class="flash ok">Mis à jour ✓</div>{/if}
 				<div class="ref-list">
-					{#each data.ticketGroups as g (g.id)}
-						<div class="ref-item" class:archived={g.archived}>
+					{#each groupOrder as g (g.id)}
+						<!-- svelte-ignore a11y_no_static_element_interactions -->
+						<div
+							class="ref-item"
+							class:archived={g.archived}
+							class:drag-over={dragOverGroupId === g.id && draggingGroupId !== g.id}
+							ondragover={(e) => { e.preventDefault(); dragOverGroupId = g.id; }}
+							ondragleave={() => { if (dragOverGroupId === g.id) dragOverGroupId = null; }}
+							ondrop={(e) => { e.preventDefault(); onGroupDrop(g.id); }}
+						>
+							<span
+								class="drag-handle"
+								draggable="true"
+								ondragstart={(e) => { draggingGroupId = g.id; e.dataTransfer?.setData('text/plain', g.id); }}
+								ondragend={() => { draggingGroupId = null; dragOverGroupId = null; }}
+								aria-label="Glisser pour réordonner {g.label}"
+								role="button"
+								tabindex="-1"
+							>⠿</span>
 							<form method="POST" action="?/groupRename" use:enhance>
 								<input type="hidden" name="id" value={g.id} />
 								<input class="ref-name" name="label" value={g.label} disabled={g.archived} onchange={(e) => e.currentTarget.form?.requestSubmit()} />
@@ -388,7 +489,18 @@
 							</form>
 						</div>
 					{/each}
-					{#if data.ticketGroups.length === 0}<p class="hint" style="margin:0;">Aucun groupe.</p>{/if}
+					{#if groupOrder.length === 0}
+						<p class="hint" style="margin:0;">Aucun groupe.</p>
+					{:else}
+						<!-- svelte-ignore a11y_no_static_element_interactions -->
+						<div
+							class="drop-end"
+							class:drag-over={dragOverGroupId === DROP_END}
+							ondragover={(e) => { if (draggingGroupId) { e.preventDefault(); dragOverGroupId = DROP_END; } }}
+							ondragleave={() => { if (dragOverGroupId === DROP_END) dragOverGroupId = null; }}
+							ondrop={(e) => { e.preventDefault(); onGroupDrop(DROP_END); }}
+						></div>
+					{/if}
 				</div>
 				<form method="POST" action="?/groupCreate" use:enhance class="ref-add">
 					<input class="ref-input" name="label" placeholder="Nouveau groupe…" required />
@@ -1032,9 +1144,30 @@
 		align-items: center;
 		gap: 8px;
 	}
-	.ref-item form:first-of-type {
+	.ref-item > form:first-of-type {
 		flex: 1;
 		min-width: 0;
+	}
+	.ref-item.drag-over {
+		box-shadow: inset 0 2px 0 var(--accent);
+	}
+	.drop-end {
+		height: 22px;
+		margin-top: -6px;
+	}
+	.drop-end.drag-over {
+		box-shadow: inset 0 2px 0 var(--accent);
+	}
+	.drag-handle {
+		font-size: 15px;
+		line-height: 1;
+		color: var(--accent);
+		cursor: grab;
+		padding: 2px 4px;
+		user-select: none;
+	}
+	.drag-handle:active {
+		cursor: grabbing;
 	}
 	.ref-name {
 		width: 100%;

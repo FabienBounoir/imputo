@@ -85,7 +85,7 @@ export async function seedDefaults(tx: Tx, workspaceId: string) {
 	);
 	await tx
 		.insert(activity)
-		.values(DEFAULT_ACTIVITIES.map((label) => ({ workspaceId, label })));
+		.values(DEFAULT_ACTIVITIES.map((label, i) => ({ workspaceId, label, sortOrder: i })));
 	await tx
 		.insert(category)
 		.values(DEFAULT_CATEGORIES.map((c) => ({ workspaceId, label: c.label, kind: c.kind })));

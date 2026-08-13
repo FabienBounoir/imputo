@@ -13,6 +13,8 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 	const selectedId = resolveSelection(cookies, ws.workspaceId, 'sprint', url.searchParams.get('id'), options);
 
 	const isAdmin = locals.role === 'ADMIN';
-	const dashboard = selectedId ? await getSprintDashboard(ws.workspaceId, selectedId, ws.testPhase, isAdmin) : null;
+	const dashboard = selectedId
+		? await getSprintDashboard(ws.workspaceId, selectedId, ws.testPhase, isAdmin, locals.user!.sortActivitiesAlpha)
+		: null;
 	return { dashboard, options, selectedId };
 };

@@ -1,9 +1,11 @@
 <script lang="ts">
-	import { enhance } from '$app/forms';
+	import { enhance, deserialize } from '$app/forms';
 	import { goto } from '$app/navigation';
 	import { page, navigating } from '$app/state';
 	import { formatDateTime } from '$lib/utils/date';
 	import { TICKET_FIELD_LABELS } from '$lib/changeLogLabels';
+	import { confirmDialog } from '$lib/confirm.svelte';
+	import ModalErrorToast from '$lib/components/ModalErrorToast.svelte';
 	let { data, form } = $props();
 
 	let showCreate = $state(false);
@@ -266,9 +268,13 @@
 	// Écarts : Réel uniquement, jamais Test (cf. calc.ts:ecartVsEstime/ecartVsBudget côté serveur).
 	const ecartVsEstime = (r: Row) => round(n(r.raeReal) + r.consumed - n(r.estimationReal));
 	const ecartVsBudget = (r: Row) => (r.enveloppeTotale == null ? null : round(n(r.raeReal) + r.consumed - r.enveloppeTotale));
+	// Sans estimation : 100 % si du temps est consommé et qu'il ne reste rien à faire (RAE nul),
+	// plutôt que 0 % qui laissait croire à un ticket non démarré — même règle que calc.ts:avancement.
 	const avancement = (r: Row) => {
 		const te = totalEst(r);
-		return te > 0 ? Math.min(1, Math.max(0, (te - totalRae(r)) / te)) : 0;
+		const tr = totalRae(r);
+		if (te <= 0) return tr <= 0 && r.consumed > 0 ? 1 : 0;
+		return Math.min(1, Math.max(0, (te - tr) / te));
 	};
 	const raeSugg = (r: Row) => round(Math.max(0, totalEst(r) - r.consumed));
 	const pct = (x: number) => Math.round(x * 100);
@@ -279,6 +285,38 @@
 	// Modal d'édition (ouverte au clic sur une carte Kanban).
 	let editId = $state<string | null>(null);
 	const editRow = $derived(rows.find((r) => r.id === editId) ?? null);
+	let actionError = $state('');
+	$effect(() => {
+		editId;
+		actionError = '';
+	});
+
+	// Suppression réservée au créateur de l'espace (super admin, cf. data.isOwner). `rows` n'a pas le
+	// nombre d'imputations liées (pas ajouté à listTicketsPage pour ne pas alourdir le chargement de
+	// toute la liste) — on le vérifie à la demande, seulement au moment de supprimer.
+	async function confirmDeleteTicket(row: Row, { cancel }: { cancel: () => void }) {
+		actionError = '';
+		const res = await fetch(`/api/tickets/${row.id}`);
+		const t = res.ok ? await res.json() : null;
+		if (!t || t.imputationCount > 0) {
+			actionError = t ? 'Des imputations sont liées à ce ticket : suppression impossible.' : 'Erreur lors de la vérification.';
+			return cancel();
+		}
+		const ok = await confirmDialog({
+			title: 'Supprimer le ticket',
+			message: `Supprimer définitivement ${row.key} — « ${row.title} » ? Cette action est irréversible.`,
+			confirmLabel: 'Supprimer'
+		});
+		if (!ok) return cancel();
+		return async ({ result }: { result: { type: string; data?: Record<string, unknown> } }) => {
+			if (result.type === 'failure') {
+				actionError = (result.data?.error as string) ?? 'Erreur lors de la suppression.';
+			} else {
+				rows = rows.filter((r) => r.id !== row.id);
+				editId = null;
+			}
+		};
+	}
 
 	// Historique (champs budget/estimation) — chargé à la demande à l'ouverture de la modal, pas
 	// avec la liste des tickets (rarement consulté, autant ne pas alourdir le chargement initial).
@@ -358,8 +396,13 @@
 		body.set('ticketId', row.id);
 		body.set('field', field);
 		body.set('value', value == null ? '' : String(value));
-		await fetch('?/update', { method: 'POST', body });
-		flash();
+		const res = await fetch('?/update', { method: 'POST', body });
+		const result = deserialize(await res.text());
+		if (result.type === 'failure') {
+			actionError = (result.data?.error as string) ?? 'Erreur lors de l’enregistrement.';
+		} else {
+			flash();
+		}
 	}
 	// Saisie d'une estimation : pré-remplit le RAE correspondant s'il est encore vide
 	// (sinon un ticket estimé mais sans RAE afficherait 100 % d'avancement).
@@ -614,9 +657,9 @@
 						{/if}
 						<td class="num tabnum consumed">{r.consumed || '—'}</td>
 						{#if data.isAdmin}
-							<td class="num tabnum" class:gap-pos={(ecartVsBudget(r) ?? 0) > 0}>{ecartVsBudget(r) == null ? '—' : `${ecartVsBudget(r)! > 0 ? '+' : ''}${ecartVsBudget(r) || 0}`}</td>
+							<td class="num tabnum" class:gap-pos={(ecartVsBudget(r) ?? 0) > 0} class:gap-neg={(ecartVsBudget(r) ?? 0) < 0}>{ecartVsBudget(r) == null ? '—' : `${ecartVsBudget(r)! > 0 ? '+' : ''}${ecartVsBudget(r) || 0}`}</td>
 						{/if}
-						<td class="num tabnum" class:gap-pos={ecartVsEstime(r) > 0}>{ecartVsEstime(r) > 0 ? '+' : ''}{ecartVsEstime(r) || 0}</td>
+						<td class="num tabnum" class:gap-pos={ecartVsEstime(r) > 0} class:gap-neg={ecartVsEstime(r) < 0}>{ecartVsEstime(r) > 0 ? '+' : ''}{ecartVsEstime(r) || 0}</td>
 						<td>
 							<div class="prog">
 								<div class="bar"><i style="width:{pct(avancement(r))}%"></i></div>
@@ -791,13 +834,19 @@
 
 <svelte:window onkeydown={(e) => e.key === 'Escape' && (editId = null)} />
 
+{#if actionError}<ModalErrorToast message={actionError} />{/if}
+
 {#if editRow}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<div class="tk-backdrop" onclick={(e) => { if (e.target === e.currentTarget) editId = null; }}>
 		<div class="tk-modal">
 			<div class="tk-modal-head">
-				<span class="tk-key tabnum">{editRow.key}</span>
+				{#if data.isOwner}
+					<input class="tk-key-input tabnum" bind:value={editRow.key} onchange={() => save(editRow!, 'key', editRow!.key)} aria-label="Clé du ticket" />
+				{:else}
+					<span class="tk-key tabnum">{editRow.key}</span>
+				{/if}
 				<button class="tk-x" onclick={() => (editId = null)} aria-label="Fermer">✕</button>
 			</div>
 			<input class="tk-title" bind:value={editRow.title} onchange={() => save(editRow!, 'title', editRow!.title)} aria-label="Titre" />
@@ -860,9 +909,9 @@
 			</div>
 			<div class="tk-foot">
 				<span>Consommé <b class="tabnum">{editRow.consumed || '—'}</b></span>
-				<span>Écart vs estimé <b class="tabnum" class:gap-pos={ecartVsEstime(editRow) > 0}>{ecartVsEstime(editRow) > 0 ? '+' : ''}{ecartVsEstime(editRow) || 0}</b></span>
+				<span>Écart vs estimé <b class="tabnum" class:gap-pos={ecartVsEstime(editRow) > 0} class:gap-neg={ecartVsEstime(editRow) < 0}>{ecartVsEstime(editRow) > 0 ? '+' : ''}{ecartVsEstime(editRow) || 0}</b></span>
 				{#if ecartVsBudget(editRow) !== null}
-					<span>Écart vs budget <b class="tabnum" class:gap-pos={(ecartVsBudget(editRow) ?? 0) > 0}>{(ecartVsBudget(editRow) ?? 0) > 0 ? '+' : ''}{ecartVsBudget(editRow) || 0}</b></span>
+					<span>Écart vs budget <b class="tabnum" class:gap-pos={(ecartVsBudget(editRow) ?? 0) > 0} class:gap-neg={(ecartVsBudget(editRow) ?? 0) < 0}>{(ecartVsBudget(editRow) ?? 0) > 0 ? '+' : ''}{ecartVsBudget(editRow) || 0}</b></span>
 				{/if}
 				<span>Avancement <b class="tabnum">{pct(avancement(editRow))}%</b></span>
 			</div>
@@ -884,6 +933,14 @@
 					</ul>
 				{/if}
 			</div>
+			{#if data.isOwner}
+				<div class="tk-danger">
+					<form method="POST" action="?/delete" use:enhance={(opts) => confirmDeleteTicket(editRow!, opts)}>
+						<input type="hidden" name="ticketId" value={editRow.id} />
+						<button class="tk-delete-link" type="submit">🗑 Supprimer ce ticket</button>
+					</form>
+				</div>
+			{/if}
 		</div>
 	</div>
 {/if}
@@ -1295,6 +1352,10 @@
 		color: var(--warn) !important;
 		font-weight: 700;
 	}
+	.gap-neg {
+		color: var(--accent) !important;
+		font-weight: 700;
+	}
 	.empty-row {
 		text-align: center;
 		color: var(--text-mute);
@@ -1507,10 +1568,45 @@
 		align-items: center;
 		justify-content: space-between;
 	}
+	.tk-danger {
+		margin-top: 14px;
+		padding-top: 14px;
+		border-top: 1px solid var(--border);
+		display: flex;
+		justify-content: flex-end;
+	}
+	.tk-delete-link {
+		font-size: 12.5px;
+		font-weight: 600;
+		color: var(--text-mute);
+		border-radius: 7px;
+		padding: 5px 10px;
+	}
+	.tk-delete-link:hover {
+		color: var(--warn);
+		background: var(--warn-tint);
+	}
 	.tk-key {
 		font-size: 12px;
 		font-weight: 700;
 		color: var(--text-mute);
+	}
+	.tk-key-input {
+		font-size: 12px;
+		font-weight: 700;
+		color: var(--text-mute);
+		background: transparent;
+		border: 1px solid transparent;
+		border-radius: 6px;
+		padding: 3px 6px;
+		width: 110px;
+	}
+	.tk-key-input:hover,
+	.tk-key-input:focus {
+		border-color: var(--border-strong);
+		background: var(--surface-2);
+		color: var(--text);
+		outline: none;
 	}
 	.tk-x {
 		font-size: 15px;

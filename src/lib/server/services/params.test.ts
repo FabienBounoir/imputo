@@ -12,6 +12,7 @@ import {
 	setActivityActive,
 	countActivityUsage,
 	deleteActivity,
+	reorderActivities,
 	listStates,
 	createState,
 	updateState,
@@ -97,6 +98,26 @@ describe('params — activités', () => {
 
 		expect(await countActivityUsage(workspaceId, a.id)).toBeGreaterThan(0);
 		await expect(deleteActivity(workspaceId, a.id)).rejects.toThrow();
+	});
+
+	it('reorderActivities applique le nouvel ordre et ignore les id d’un autre espace', async () => {
+		// Un espace neuf a déjà des activités par défaut (seedDefaults) : on regarde uniquement
+		// nos 3 nouvelles activités, pas la position absolue dans la liste complète.
+		const ws = await makeWorkspace('act-reorder');
+		const other = await makeWorkspace('act-reorder-other');
+		await createActivity(ws.workspaceId, 'A');
+		await createActivity(ws.workspaceId, 'B');
+		await createActivity(ws.workspaceId, 'C');
+		await createActivity(other.workspaceId, 'X');
+		const byLabel = <T extends { label: string }>(rows: T[]) => rows.filter((r) => ['A', 'B', 'C'].includes(r.label));
+		const [a, b, c] = byLabel(await listActivities(ws.workspaceId));
+		const [x] = (await listActivities(other.workspaceId)).filter((r) => r.label === 'X');
+		expect([a.label, b.label, c.label]).toEqual(['A', 'B', 'C']); // ordre de création par défaut
+
+		await reorderActivities(ws.workspaceId, [c.id, a.id, x.id, b.id]);
+
+		expect(byLabel(await listActivities(ws.workspaceId)).map((r) => r.label)).toEqual(['C', 'A', 'B']);
+		expect((await listActivities(other.workspaceId)).map((r) => r.label)).toContain('X');
 	});
 });
 

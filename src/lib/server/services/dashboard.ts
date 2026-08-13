@@ -180,7 +180,7 @@ export async function getDashboard(
 				est: round(g.est),
 				consumed: round(g.consumed),
 				rae: round(g.rae),
-				avancement: avancement(g.est, g.rae),
+				avancement: avancement(g.est, g.rae, g.consumed),
 				ticketCount: g.ticketCount
 			}))
 			.sort((a, b) => b.est - a.est);
@@ -200,7 +200,7 @@ export async function getDashboard(
 			estTotal,
 			consumedTotal,
 			raeTotal: raeTotalSum,
-			avancement: avancement(estTotal, raeTotalSum),
+			avancement: avancement(estTotal, raeTotalSum, consumedTotal),
 			ticketCount: tickets.length
 		},
 		byState,

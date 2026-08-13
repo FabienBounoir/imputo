@@ -7,6 +7,7 @@ import {
 	createTicket,
 	updateTicketField,
 	setTicketFlag,
+	deleteTicket,
 	type TicketFilters
 } from '$lib/server/services/tickets';
 import { setTicketInGroup } from '$lib/server/services/ticketGroups';
@@ -72,7 +73,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		total,
 		pageCount: view === 'table' ? Math.max(1, Math.ceil(total / PAGE_SIZE)) : 1
 	}));
-	const ref = await getRefData(ws.workspaceId);
+	const ref = await getRefData(ws.workspaceId, locals.user!.sortActivitiesAlpha);
 	return {
 		ticketsPage,
 		page,
@@ -88,7 +89,9 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		isStrictAdmin: locals.role === 'ADMIN',
 		/** Chiffrage global (estimations, prépa) : lecture seule pour un USER standard. */
 		canEditEstimation: isManagerOrAdmin(locals.role),
-		selfId: locals.user!.id
+		selfId: locals.user!.id,
+		// Suppression de ticket réservée au créateur de l'espace (super admin), cf. deleteTicket().
+		isOwner: locals.user!.id === ws.createdByUserId
 	};
 };
 
@@ -142,9 +145,24 @@ export const actions: Actions = {
 		const value = String(f.get('value') ?? '');
 		if (!ticketId || !field) return fail(400, { error: 'Données invalides.' });
 		try {
-			await updateTicketField(ws.workspaceId, ticketId, field, value, locals.role, locals.user?.id ?? null);
+			await updateTicketField(
+				ws.workspaceId,
+				ticketId,
+				field,
+				value,
+				locals.role,
+				locals.user?.id ?? null,
+				locals.user!.id === ws.createdByUserId
+			);
 		} catch (e) {
-			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+			return fail(400, {
+				error:
+					e instanceof Error && /unique|duplicate/i.test(e.message)
+						? 'Un ticket avec cette clé existe déjà.'
+						: e instanceof Error
+							? e.message
+							: 'Erreur.'
+			});
 		}
 		return { ok: true };
 	},
@@ -179,5 +197,22 @@ export const actions: Actions = {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { ok: true };
+	},
+
+	// Réservé au créateur de l'espace (super admin) — la modal ne propose le bouton qu'à lui, mais
+	// on revérifie ici, seul point de passage réel de la suppression.
+	delete: async ({ request, locals }) => {
+		const ws = locals.workspace;
+		if (!ws || !locals.user) return fail(401, { error: 'Non authentifié.' });
+		if (locals.user.id !== ws.createdByUserId) return fail(403, { error: 'Réservé au créateur de l’espace.' });
+		const f = await request.formData();
+		const ticketId = String(f.get('ticketId') ?? '');
+		if (!ticketId) return fail(400, { error: 'Données invalides.' });
+		try {
+			await deleteTicket(ws.workspaceId, ticketId);
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { ok: true, deletedId: ticketId };
 	}
 };

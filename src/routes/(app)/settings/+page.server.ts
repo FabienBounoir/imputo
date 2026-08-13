@@ -5,7 +5,7 @@ import type { Actions, PageServerLoad } from './$types';
 import { db, user } from '$lib/server/db';
 import { config } from '$lib/server/config';
 import { parseNotifPrefs } from '$lib/server/services/notifications';
-import { setAccentPref, changePassword } from '$lib/server/services/accounts';
+import { setAccentPref, setSortActivitiesAlphaPref, changePassword } from '$lib/server/services/accounts';
 import { changePasswordSchema } from '$lib/server/validation/auth';
 
 const accentPrefSchema = z.object({
@@ -25,6 +25,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		prefs: parseNotifPrefs(u?.notifPrefs ?? null),
 		accentMode: locals.user.accentMode,
 		accentColor: locals.user.accentColor,
+		sortActivitiesAlpha: locals.user.sortActivitiesAlpha,
 		role: locals.role
 	};
 };
@@ -36,6 +37,13 @@ export const actions: Actions = {
 		if (!parsed.success) return fail(400, { error: parsed.error.issues[0].message });
 		await setAccentPref(locals.user.id, parsed.data.mode, parsed.data.color);
 		return { accentPrefOk: true };
+	},
+
+	sortActivitiesAlphaPref: async ({ request, locals }) => {
+		if (!locals.user) return fail(401);
+		const f = await request.formData();
+		await setSortActivitiesAlphaPref(locals.user.id, f.get('value') === 'true');
+		return { sortActivitiesAlphaOk: true };
 	},
 
 	changePassword: async ({ request, locals }) => {

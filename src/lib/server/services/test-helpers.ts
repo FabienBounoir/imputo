@@ -1,6 +1,6 @@
 import { afterAll } from 'vitest';
 import { and, eq } from 'drizzle-orm';
-import { db, workspace, user, membership, type Role } from '$lib/server/db';
+import { db, workspace, user, membership, ticket, type Role } from '$lib/server/db';
 import { createWorkspaceWithOwner } from './workspaces';
 import { inviteMember } from './accounts';
 
@@ -9,7 +9,14 @@ import { inviteMember } from './accounts';
 const wsIds: string[] = [];
 
 afterAll(async () => {
-	for (const id of wsIds) await db.delete(workspace).where(eq(workspace.id, id)); // cascade
+	for (const id of wsIds) {
+		// ticket_activity_rae.activity_id est ON DELETE RESTRICT (protection contre une suppression
+		// brute d'activité utilisée, cf. deleteActivity()) — sans ce pré-nettoyage, le cascade
+		// workspace → activity peut s'exécuter avant workspace → ticket → ticket_activity_rae et
+		// se faire bloquer par des lignes encore référencées.
+		await db.delete(ticket).where(eq(ticket.workspaceId, id)); // cascade → ticket_activity_rae
+		await db.delete(workspace).where(eq(workspace.id, id)); // cascade (le reste)
+	}
 });
 
 let counter = 0;

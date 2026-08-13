@@ -12,7 +12,7 @@
 		type PeriodMode
 	} from '$lib/utils/date';
 	import { tick } from 'svelte';
-	import { goto, afterNavigate } from '$app/navigation';
+	import { goto, afterNavigate, invalidateAll } from '$app/navigation';
 	import { navigating } from '$app/state';
 	import ExportModal from '$lib/components/ExportModal.svelte';
 	import TargetPicker from '$lib/components/TargetPicker.svelte';
@@ -313,6 +313,11 @@
 	// direct de la ligne à chaque sauvegarde (titre/sprint/version) plutôt qu'un invalidateAll : plus
 	// rapide, et ça ne touche pas row.amounts/raeReal (indépendants d'une édition de ticket).
 	let editTicketId = $state<string | null>(null);
+	// Ticket supprimé (créateur de l'espace) : la grille référence ce ticket dans plusieurs lignes,
+	// plus simple et sûr de tout recharger que de patcher chaque ligne à la main.
+	function onTicketDeleted() {
+		invalidateAll();
+	}
 	function onTicketSaved(ticket: { id: string; title: string; sprintId: string | null; versionId: string | null }) {
 		const sprintName = data.sprints.find((s) => s.id === ticket.sprintId)?.name ?? null;
 		const versionName = data.versions.find((v) => v.id === ticket.versionId)?.name ?? null;
@@ -993,8 +998,10 @@
 	testPhase={data.testPhase}
 	canEditEstimation={data.canEditEstimation}
 	isAdmin={data.isAdmin}
+	isOwner={data.isOwner}
 	onClose={() => (editTicketId = null)}
 	onSaved={onTicketSaved}
+	onDeleted={onTicketDeleted}
 />
 
 <style>

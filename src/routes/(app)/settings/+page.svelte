@@ -29,6 +29,7 @@
 	let accentOverride = $state(data.accentMode !== 'WORKSPACE');
 	let accentRgb = $state(data.accentMode === 'RGB');
 	let accentColor = $state(data.accentColor ?? data.workspace?.accentColor ?? PRESETS[0]);
+	let sortActivitiesAlpha = $state(data.sortActivitiesAlpha);
 	const activeSeasonal = $derived(activeSeasonalEffects());
 
 	const GROUPS: { label: string; items: { key: keyof NotifPrefs; label: string }[] }[] = [
@@ -212,6 +213,18 @@
 				<input type="hidden" name="mode" value={!accentOverride ? 'WORKSPACE' : accentRgb ? 'RGB' : 'CUSTOM'} />
 				<input type="hidden" name="color" value={accentColor} />
 				<button class="btn btn-primary" type="submit" style="margin-top:14px;">Enregistrer</button>
+			</form>
+		</section>
+
+		<section class="card block">
+			<h3>Répartition par activité</h3>
+			<p class="hint">Ordre des activités dans la synthèse par sprint/version. Par défaut, suit l'ordre défini dans les référentiels de l'espace.</p>
+			{#if form?.sortActivitiesAlphaOk}<div class="flash ok">Préférence enregistrée ✓</div>{/if}
+			<form method="POST" action="?/sortActivitiesAlphaPref" use:enhance>
+				<div class="seg">
+					<button type="submit" name="value" value="false" class:on={!sortActivitiesAlpha} onclick={() => (sortActivitiesAlpha = false)}>Ordre des référentiels</button>
+					<button type="submit" name="value" value="true" class:on={sortActivitiesAlpha} onclick={() => (sortActivitiesAlpha = true)}>Alphabétique</button>
+				</div>
 			</form>
 		</section>
 

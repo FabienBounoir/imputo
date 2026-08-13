@@ -1,5 +1,5 @@
-import { and, eq, inArray, sql } from 'drizzle-orm';
-import { db, sprint, timeEntry, user, activity, ticketActivityRae, ticketSnapshot } from '$lib/server/db';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { db, sprint, timeEntry, user, activity, ticketActivityRae, ticketSnapshot, ticketGroup } from '$lib/server/db';
 import { num, round, totalEstimation, totalRae, avancement } from './calc';
 import { listTickets } from './tickets';
 
@@ -22,6 +22,24 @@ export type SprintDashboard = {
 	byActivity: { label: string; raeReal: number; raeTest: number }[];
 	byPerson: { name: string; consumed: number }[];
 	history: { date: string; consumed: number; rae: number }[];
+	tickets: SprintDashboardTicket[];
+	/**
+	 * Mêmes tickets que `tickets`, éclatés en sections par groupe (retour utilisateur : la liste à
+	 * plat triée par clé ne permettait pas de voir d'un coup d'œil l'avancement par groupe). Un
+	 * ticket dans plusieurs groupes apparaît dans chaque section concernée. Ordre = sortOrder du
+	 * groupe (paramétrable dans les référentiels), "Sans groupe" toujours en dernier.
+	 */
+	ticketGroups: SprintDashboardGroupSection[];
+};
+
+export type SprintDashboardGroupSection = {
+	/** null = bucket "Sans groupe" (tickets qui n'appartiennent à aucun groupe). */
+	groupId: string | null;
+	label: string;
+	estTotal: number;
+	raeTotal: number;
+	consumed: number;
+	avancement: number;
 	tickets: SprintDashboardTicket[];
 };
 
@@ -51,7 +69,9 @@ export async function getSprintDashboard(
 	workspaceId: string,
 	sprintId: string,
 	testPhase = true,
-	isAdmin = true
+	isAdmin = true,
+	/** Répartition par activité : false (défaut) = ordre des référentiels (activity.sortOrder), true = alphabétique — préférence du membre courant (user.sortActivitiesAlpha). */
+	sortActivitiesAlpha = false
 ): Promise<SprintDashboard> {
 	const [sprintRow] = await db
 		.select({ id: sprint.id, name: sprint.name, kind: sprint.kind })
@@ -73,6 +93,7 @@ export async function getSprintDashboard(
 	let ecartBudgetTotal = 0;
 	let budgetTotal = 0;
 	const ticketRows: SprintDashboardTicket[] = [];
+	const groupIdsByTicket = new Map<string, string[]>();
 	for (const t of tickets) {
 		const tEst = totalEstimation(String(t.estimationReal), String(t.estimationTest), testPhase);
 		const tRae = totalRae(String(t.raeReal), String(t.raeTest), testPhase);
@@ -82,6 +103,7 @@ export async function getSprintDashboard(
 		ecartEstimeTotal += t.ecartVsEstime;
 		ecartBudgetTotal += t.ecartVsBudget ?? 0;
 		budgetTotal += t.enveloppeTotale ?? 0;
+		groupIdsByTicket.set(t.id, t.groupIds);
 		ticketRows.push({
 			id: t.id,
 			key: t.key,
@@ -107,6 +129,27 @@ export async function getSprintDashboard(
 	// Tri naturel/numérique par clé (SBX-2 avant SBX-10) — plus lisible qu'un tri lexicographique brut.
 	ticketRows.sort((a, b) => a.key.localeCompare(b.key, undefined, { numeric: true }));
 
+	// Sections par groupe (retour utilisateur) : un ticket dans plusieurs groupes apparaît dans
+	// chacune de ses sections — chaque sous-total reste exact pour son groupe, même si ça compte le
+	// ticket plusieurs fois si on additionnait les sections entre elles (pas fait ici). Ordre =
+	// sortOrder (paramétrable dans les référentiels, cf. moveTicketGroup), "Sans groupe" en dernier.
+	const activeGroups = await db
+		.select({ id: ticketGroup.id, label: ticketGroup.label })
+		.from(ticketGroup)
+		.where(and(eq(ticketGroup.workspaceId, workspaceId), isNull(ticketGroup.archivedAt)))
+		.orderBy(ticketGroup.sortOrder);
+	const buildSection = (groupId: string | null, label: string, rows: SprintDashboardTicket[]): SprintDashboardGroupSection => {
+		const est = round(rows.reduce((s, r) => s + r.estTotal, 0));
+		const rae = round(rows.reduce((s, r) => s + r.raeTotal, 0));
+		const consumed = round(rows.reduce((s, r) => s + r.consumed, 0));
+		return { groupId, label, estTotal: est, raeTotal: rae, consumed, avancement: avancement(est, rae, consumed), tickets: rows };
+	};
+	const ticketGroupSections = activeGroups
+		.map((g) => buildSection(g.id, g.label, ticketRows.filter((r) => groupIdsByTicket.get(r.id)?.includes(g.id))))
+		.filter((s) => s.tickets.length > 0);
+	const ungroupedRows = ticketRows.filter((r) => (groupIdsByTicket.get(r.id) ?? []).length === 0);
+	if (ungroupedRows.length > 0) ticketGroupSections.push(buildSection(null, 'Sans groupe', ungroupedRows));
+
 	// Répartition par activité : RAE agrégé depuis ticket_activity_rae. Les tickets sans ligne
 	// (fallback ticket.raeReal/raeTest) sont regroupés dans un bucket "Non ventilé".
 	const activityRaeRows =
@@ -117,6 +160,7 @@ export async function getSprintDashboard(
 						ticketId: ticketActivityRae.ticketId,
 						activityId: ticketActivityRae.activityId,
 						label: activity.label,
+						sortOrder: activity.sortOrder,
 						raeReal: ticketActivityRae.raeReal,
 						raeTest: ticketActivityRae.raeTest
 					})
@@ -124,9 +168,9 @@ export async function getSprintDashboard(
 					.innerJoin(activity, eq(ticketActivityRae.activityId, activity.id))
 					.where(inArray(ticketActivityRae.ticketId, ticketIds));
 	const ventiledTicketIds = new Set(activityRaeRows.map((r) => r.ticketId));
-	const byActivityMap = new Map<string, { label: string; raeReal: number; raeTest: number }>();
+	const byActivityMap = new Map<string, { label: string; sortOrder: number; raeReal: number; raeTest: number }>();
 	for (const r of activityRaeRows) {
-		const cur = byActivityMap.get(r.activityId) ?? { label: r.label, raeReal: 0, raeTest: 0 };
+		const cur = byActivityMap.get(r.activityId) ?? { label: r.label, sortOrder: r.sortOrder, raeReal: 0, raeTest: 0 };
 		cur.raeReal = round(cur.raeReal + num(r.raeReal));
 		cur.raeTest = round(cur.raeTest + num(r.raeTest));
 		byActivityMap.set(r.activityId, cur);
@@ -138,7 +182,11 @@ export async function getSprintDashboard(
 		fallbackReal = round(fallbackReal + t.raeReal);
 		fallbackTest = round(fallbackTest + t.raeTest);
 	}
-	const byActivity = [...byActivityMap.values()].sort((a, b) => b.raeReal - a.raeReal);
+	// Ordre = référentiels (activity.sortOrder, paramétrable) par défaut, ou alphabétique si le
+	// membre courant l'a choisi dans ses paramètres de compte. "Non ventilé" toujours en dernier.
+	const byActivity: { label: string; raeReal: number; raeTest: number }[] = [...byActivityMap.values()].sort(
+		sortActivitiesAlpha ? (a, b) => a.label.localeCompare(b.label) : (a, b) => a.sortOrder - b.sortOrder
+	);
 	if (fallbackReal > 0 || fallbackTest > 0) byActivity.push({ label: 'Non ventilé', raeReal: fallbackReal, raeTest: fallbackTest });
 
 	// Répartition par personne : consommé sur les tickets de la version/sprint.
@@ -184,7 +232,7 @@ export async function getSprintDashboard(
 			estTotal,
 			consumedTotal,
 			raeTotal,
-			avancement: avancement(estTotal, raeTotal),
+			avancement: avancement(estTotal, raeTotal, consumedTotal),
 			ecartVsEstimeTotal: ecartEstimeTotal,
 			ecartVsBudgetTotal: isAdmin ? ecartBudgetTotal : null,
 			budgetTotal: isAdmin ? budgetTotal : null,
@@ -193,6 +241,7 @@ export async function getSprintDashboard(
 		byActivity,
 		byPerson,
 		history,
-		tickets: ticketRows
+		tickets: ticketRows,
+		ticketGroups: ticketGroupSections
 	};
 }

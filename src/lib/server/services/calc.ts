@@ -101,8 +101,13 @@ export function raeSuggested(totalEst: number, consumed: number): number {
 	return round(Math.max(0, totalEst - consumed));
 }
 
-/** % d'avancement = (estimation − rae) / estimation, borné 0–1. 0 si estimation nulle. */
-export function avancement(totalEst: number, totalRaeValue: number): number {
-	if (totalEst <= 0) return 0;
+/**
+ * % d'avancement = (estimation − rae) / estimation, borné 0–1.
+ * Sans estimation : 100 % si du temps a été consommé et qu'il ne reste rien à faire (RAE nul) —
+ * plutôt que 0 %, qui laissait croire à un ticket non démarré alors qu'il est terminé sans avoir
+ * été chiffré. 0 % si rien n'a encore été consommé (ticket réellement pas commencé).
+ */
+export function avancement(totalEst: number, totalRaeValue: number, consumed = 0): number {
+	if (totalEst <= 0) return totalRaeValue <= 0 && consumed > 0 ? 1 : 0;
 	return round(clamp((totalEst - totalRaeValue) / totalEst, 0, 1));
 }

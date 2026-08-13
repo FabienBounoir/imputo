@@ -3,7 +3,11 @@ import { db, ticket, ticketGroup, ticketGroupMember } from '$lib/server/db';
 
 export type TicketGroupItem = { id: string; label: string; archived: boolean; usage: number };
 
-/** Liste les groupes d'un espace (actifs + inactifs), avec le nombre de tickets actifs liés. */
+/**
+ * Liste les groupes d'un espace (actifs + inactifs), avec le nombre de tickets actifs liés.
+ * Ordre = `sortOrder` (paramétrable via moveTicketGroup, référentiels) — cet ordre est repris tel
+ * quel dans les synthèses par sprint/version (cf. getSprintDashboard).
+ */
 export async function listTicketGroups(workspaceId: string): Promise<TicketGroupItem[]> {
 	const rows = await db
 		.select({
@@ -19,8 +23,8 @@ export async function listTicketGroups(workspaceId: string): Promise<TicketGroup
 		)
 		.leftJoin(ticket, and(eq(ticket.id, ticketGroupMember.ticketId), isNull(ticket.archivedAt)))
 		.where(eq(ticketGroup.workspaceId, workspaceId))
-		.groupBy(ticketGroup.id, ticketGroup.label, ticketGroup.archivedAt)
-		.orderBy(ticketGroup.label);
+		.groupBy(ticketGroup.id, ticketGroup.label, ticketGroup.archivedAt, ticketGroup.sortOrder)
+		.orderBy(ticketGroup.sortOrder);
 	return rows.map((r) => ({ id: r.id, label: r.label, archived: r.archivedAt !== null, usage: r.usage }));
 }
 
@@ -39,7 +43,27 @@ export async function createTicketGroup(workspaceId: string, label: string) {
 	const trimmed = label.trim();
 	if (!trimmed) throw new Error('Nom requis.');
 	await assertUniqueLabel(workspaceId, trimmed, null);
-	await db.insert(ticketGroup).values({ workspaceId, label: trimmed });
+	const [{ max }] = await db
+		.select({ max: sql<number>`coalesce(max(${ticketGroup.sortOrder}), -1)` })
+		.from(ticketGroup)
+		.where(eq(ticketGroup.workspaceId, workspaceId));
+	await db.insert(ticketGroup).values({ workspaceId, label: trimmed, sortOrder: Number(max) + 1 });
+}
+
+/**
+ * Réordonne tous les groupes d'un espace en un seul geste (drag-and-drop) : `orderedIds` est la
+ * liste complète des groupes de l'espace dans le nouvel ordre voulu. Les id qui n'appartiennent
+ * pas à l'espace sont ignorés (where scopé workspaceId).
+ */
+export async function reorderTicketGroups(workspaceId: string, orderedIds: string[]) {
+	await db.transaction(async (tx) => {
+		for (let i = 0; i < orderedIds.length; i++) {
+			await tx
+				.update(ticketGroup)
+				.set({ sortOrder: i })
+				.where(and(eq(ticketGroup.id, orderedIds[i]), eq(ticketGroup.workspaceId, workspaceId)));
+		}
+	});
 }
 
 export async function renameTicketGroup(workspaceId: string, id: string, label: string) {

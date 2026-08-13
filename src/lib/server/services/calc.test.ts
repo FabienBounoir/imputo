@@ -95,8 +95,14 @@ describe('calc', () => {
 		expect(avancement(10, 0)).toBe(1);
 		expect(avancement(10, 10)).toBe(0);
 		expect(avancement(10, 4)).toBe(0.6);
-		expect(avancement(0, 0)).toBe(0); // pas de division par zéro
+		expect(avancement(0, 0)).toBe(0); // pas de division par zéro, pas de consommé
 		expect(avancement(10, 20)).toBe(0); // borné bas
 		expect(avancement(10, -5)).toBe(1); // borné haut
+	});
+
+	it('avancement: sans estimation, 100 % si consommé et RAE nul, sinon 0 %', () => {
+		expect(avancement(0, 0, 5)).toBe(1); // travaillé et terminé, jamais chiffré
+		expect(avancement(0, 0, 0)).toBe(0); // ticket vraiment pas commencé
+		expect(avancement(0, 3, 5)).toBe(0); // RAE restant sans estimation : pas "terminé"
 	});
 });

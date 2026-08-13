@@ -90,6 +90,8 @@ export const user = pgTable('user', {
 	accentMode: accentModeEnum('accent_mode').notNull().default('WORKSPACE'),
 	accentColor: text('accent_color'), // utilisé quand accentMode = CUSTOM
 	notifPrefs: text('notif_prefs'), // JSON sérialisé { enabled, eveningMissing, … } ; null = tout activé
+	// Répartition par activité (dashboard sprint/version) : false = ordre des référentiels (défaut), true = alphabétique.
+	sortActivitiesAlpha: boolean('sort_activities_alpha').notNull().default(false),
 	active: boolean('active').notNull().default(true),
 	createdAt: createdAt()
 });
@@ -193,6 +195,7 @@ export const activity = pgTable(
 			.notNull()
 			.references(() => workspace.id, { onDelete: 'cascade' }),
 		label: text('label').notNull(),
+		sortOrder: integer('sort_order').notNull().default(0),
 		archivedAt: archivedAt()
 	},
 	(t) => [
@@ -318,6 +321,7 @@ export const ticketGroup = pgTable(
 			.notNull()
 			.references(() => workspace.id, { onDelete: 'cascade' }),
 		label: text('label').notNull(),
+		sortOrder: integer('sort_order').notNull().default(0),
 		archivedAt: archivedAt(),
 		createdAt: createdAt()
 	},

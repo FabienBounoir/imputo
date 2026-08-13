@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, or, ilike, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, or, ilike, sql, count } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import {
 	db,
@@ -331,7 +331,7 @@ async function enrichTickets(
 			consumed,
 			ecartVsEstime: ecartVsEstime(resolved.real, consumed, estimationResolved),
 			ecartVsBudget: enveloppeTotale === null ? null : ecartVsBudget(resolved.real, consumed, enveloppeTotale),
-			avancement: avancement(totalEst, rae),
+			avancement: avancement(totalEst, rae, consumed),
 			raeSuggested: raeSuggested(totalEst, consumed),
 			hasActivityRae: activityRows.length > 0,
 			hasActivityEstimation: activityRows.length > 0,
@@ -363,6 +363,26 @@ export async function getTicketById(
 	if (tickets.length === 0) return null;
 	const [row] = await enrichTickets(workspaceId, testPhase, isAdmin, tickets);
 	return row;
+}
+
+/** Nombre d'imputations (timeEntry) liées à ce ticket — sert à bloquer la suppression si non nul. */
+export async function countTicketImputations(workspaceId: string, ticketId: string): Promise<number> {
+	const [{ n }] = await db
+		.select({ n: count(timeEntry.id) })
+		.from(timeEntry)
+		.where(and(eq(timeEntry.workspaceId, workspaceId), eq(timeEntry.ticketId, ticketId)));
+	return n;
+}
+
+/** Hard delete — réservé au créateur de l'espace (super admin), et bloqué si des imputations sont liées. */
+export async function deleteTicket(workspaceId: string, ticketId: string) {
+	const usage = await countTicketImputations(workspaceId, ticketId);
+	if (usage > 0) throw new Error('Des imputations sont liées à ce ticket : suppression impossible.');
+	const res = await db
+		.delete(ticket)
+		.where(and(eq(ticket.id, ticketId), eq(ticket.workspaceId, workspaceId)))
+		.returning({ id: ticket.id });
+	if (res.length === 0) throw new Error('Introuvable dans cet espace.');
 }
 
 /**
@@ -467,8 +487,13 @@ export type RefData = {
 	ticketGroups: { id: string; label: string }[];
 };
 
-/** Référentiels d'un espace (pour les sélecteurs). */
-export async function getRefData(workspaceId: string): Promise<RefData> {
+/**
+ * Référentiels d'un espace (pour les sélecteurs). `sortActivitiesAlpha` : ordre des activités —
+ * false (défaut) = référentiels (activity.sortOrder, paramétrable), true = alphabétique — cf.
+ * préférence de compte `user.sortActivitiesAlpha`, même règle que la répartition par activité du
+ * dashboard sprint/version (sprintDashboard.ts).
+ */
+export async function getRefData(workspaceId: string, sortActivitiesAlpha = false): Promise<RefData> {
 	const [states, sprints, versions, projects, activities, categories, members, ticketGroups] = await Promise.all([
 		db
 			.select({ id: state.id, label: state.label, emoji: state.emoji, color: state.color })
@@ -493,7 +518,7 @@ export async function getRefData(workspaceId: string): Promise<RefData> {
 			.select({ id: activity.id, label: activity.label })
 			.from(activity)
 			.where(and(eq(activity.workspaceId, workspaceId), isNull(activity.archivedAt)))
-			.orderBy(activity.label),
+			.orderBy(activity.sortOrder),
 		db
 			.select({ id: category.id, label: category.label, kind: category.kind })
 			.from(category)
@@ -509,6 +534,7 @@ export async function getRefData(workspaceId: string): Promise<RefData> {
 			.where(and(eq(ticketGroup.workspaceId, workspaceId), isNull(ticketGroup.archivedAt)))
 			.orderBy(ticketGroup.label)
 	]);
+	if (sortActivitiesAlpha) activities.sort((a, b) => a.label.localeCompare(b.label));
 	return { states, sprints, versions, projects, activities, categories, members, ticketGroups };
 }
 
@@ -540,6 +566,11 @@ export const MANAGER_ONLY_FIELDS = new Set([
  */
 export const ADMIN_ONLY_FIELDS = new Set(['estimationPrev', 'enveloppeTotale']);
 const NUMERIC_FIELDS = new Set([...MANAGER_ONLY_FIELDS, ...ADMIN_ONLY_FIELDS]);
+/**
+ * La clé (ex. "SBX-42") identifie le ticket partout (imputation, liens, historique) — réservée au
+ * créateur de l'espace (super admin), pas juste ADMIN, comme la suppression.
+ */
+const OWNER_ONLY_FIELDS = new Set(['key']);
 
 /** Met à jour un champ d'un ticket (édition inline). Scopé workspace + liste blanche par rôle. */
 export async function updateTicketField(
@@ -548,11 +579,13 @@ export async function updateTicketField(
 	field: string,
 	rawValue: string,
 	role: Role | null = null,
-	actorId: string | null = null
+	actorId: string | null = null,
+	isOwner = false
 ) {
 	const allowedFields = new Set(EDITABLE_FIELDS);
 	if (isManagerOrAdmin(role))
 		for (const f of [...MANAGER_ONLY_FIELDS, ...ADMIN_ONLY_FIELDS]) allowedFields.add(f);
+	if (isOwner) for (const f of OWNER_ONLY_FIELDS) allowedFields.add(f);
 	const numericFields = NUMERIC_FIELDS;
 	if (!allowedFields.has(field)) throw new Error('Champ non éditable.');
 	let value: string | null = rawValue === '' ? null : rawValue;
@@ -560,6 +593,10 @@ export async function updateTicketField(
 		const n = Number(value);
 		if (!Number.isFinite(n) || n < 0) throw new Error('Valeur numérique invalide.');
 		value = String(n);
+	}
+	if (field === 'key') {
+		value = value?.trim() || null;
+		if (!value) throw new Error('Clé requise.');
 	}
 
 	// Valeur avant modif — uniquement pour les champs tracés dans l'historique (changeLog).
