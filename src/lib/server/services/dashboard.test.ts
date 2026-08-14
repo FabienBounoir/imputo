@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { createTicket } from './tickets';
 import { setCell } from './imputation';
-import { listCategories } from './params';
+import { listCategories, listActivities } from './params';
 import { makeWorkspace } from './test-helpers';
 import { getDashboard } from './dashboard';
 
@@ -52,6 +52,46 @@ describe('getDashboard', () => {
 		const project = dash.byProject.find((p) => p.name === 'Sans projet')!;
 		expect(project.ticketCount).toBe(1);
 		expect(project.est).toBe(4);
+
+		// Les deux entrées ci-dessus (ticket productif + congé non productif) n'ont pas d'activité
+		// taguée (activityId: null) : elles tombent toutes les deux dans le même bucket "Non précisé",
+		// mais doivent y rester distinguées.
+		const nonPrecise = dash.byActivity.find((a) => a.label === 'Non précisé')!;
+		expect(nonPrecise.productive).toBe(2);
+		expect(nonPrecise.nonProductive).toBe(1);
+		expect(nonPrecise.total).toBe(3);
+	});
+
+	it('sépare productif/non-productif au sein d’une même activité nommée (pas juste "Non précisé")', async () => {
+		const ws = await makeWorkspace('dash-activity');
+		// 'Dev' fait partie des activités par défaut d'un espace neuf (cf. DEFAULT_ACTIVITIES).
+		const dev = (await listActivities(ws.workspaceId)).find((a) => a.label === 'Dev')!;
+
+		const t = await createTicket(ws.workspaceId, { key: `DA-${ws.id}`, title: 'Ticket dev' });
+		await setCell(ws.workspaceId, ws.userId, {
+			targetType: 'TICKET',
+			targetId: t.id,
+			activityId: dev.id,
+			day: '2026-06-01',
+			amount: 3
+		});
+
+		// Une catégorie non productive peut être taguée avec une activité — rien ne l'en empêche à la
+		// saisie (cf. imputation/+page.svelte, formulaire d'ajout de ligne).
+		const conge = (await listCategories(ws.workspaceId)).find((c) => c.label === 'Congé')!;
+		await setCell(ws.workspaceId, ws.userId, {
+			targetType: 'CATEGORY',
+			targetId: conge.id,
+			activityId: dev.id,
+			day: '2026-06-01',
+			amount: 1
+		});
+
+		const dash = await getDashboard(ws.workspaceId);
+		const devRow = dash.byActivity.find((a) => a.label === 'Dev')!;
+		expect(devRow.productive).toBe(3);
+		expect(devRow.nonProductive).toBe(1);
+		expect(devRow.total).toBe(4);
 	});
 
 	it('en mode période, masque le chiffrage et ne renvoie que les stats bornées', async () => {

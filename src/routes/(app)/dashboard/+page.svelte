@@ -15,7 +15,37 @@
 	const dash = $derived(`${d.kpis.avancement * C} ${C}`);
 
 	const maxPerson = $derived(Math.max(1, ...d.byPerson.map((p) => p.total)));
-	const maxActivity = $derived(Math.max(1, ...d.byActivity.map((a) => a.total)));
+	// Répartition par activité : exclu par défaut (une catégorie non productive, ex. Congé, peut
+	// être taguée avec une activité sans que rien ne l'en empêche à la saisie — sans ce filtre, son
+	// temps se mélange silencieusement au travail productif du même libellé). Mémorisé en
+	// localStorage (pas une préférence de compte comme sortActivitiesAlpha/etc. — cf. le motif déjà
+	// utilisé pour le thème, $lib/theme.ts) : départ à `false` pour un rendu serveur cohérent, puis
+	// hydraté depuis localStorage juste après le montage (le flash est ici sans conséquence, ça ne
+	// change qu'un mode d'affichage sur des données déjà chargées, pas comme dashboardPrefs.ts/
+	// imputationPrefs.ts qui pilotent quelles données le serveur charge — eux utilisent des cookies
+	// exprès pour éviter un flash sur le mauvais jeu de données).
+	const ACTIVITY_STORAGE_KEY = 'imputo-dashboard-include-nonprod-activity';
+	let includeNonProductiveActivity = $state(false);
+	$effect(() => {
+		if (typeof localStorage === 'undefined') return;
+		includeNonProductiveActivity = localStorage.getItem(ACTIVITY_STORAGE_KEY) === 'true';
+	});
+	function setIncludeNonProductiveActivity(v: boolean) {
+		includeNonProductiveActivity = v;
+		if (typeof localStorage !== 'undefined') localStorage.setItem(ACTIVITY_STORAGE_KEY, String(v));
+	}
+	const activityRows = $derived(
+		d.byActivity
+			.map((a) => ({
+				label: a.label,
+				productive: a.productive,
+				nonProductive: a.nonProductive,
+				value: includeNonProductiveActivity ? a.total : a.productive
+			}))
+			.filter((a) => a.value > 0)
+			.sort((a, b) => b.value - a.value)
+	);
+	const maxActivity = $derived(Math.max(1, ...activityRows.map((a) => a.value)));
 	const maxState = $derived(Math.max(1, ...d.byState.map((s) => s.count)));
 	const prodTotal = $derived(d.productiveVsNot.productive + d.productiveVsNot.nonProductive);
 	const prodPct = $derived(prodTotal > 0 ? d.productiveVsNot.productive / prodTotal : 0);
@@ -199,16 +229,35 @@
 
 		<!-- Par activité -->
 		<div class="card panel">
-			<h3>Répartition par activité</h3>
-			{#if d.byActivity.length === 0}
+			<div class="weekly-head">
+				<h3>Répartition par activité</h3>
+				<div class="seg2">
+					<button type="button" class:on={!includeNonProductiveActivity} onclick={() => setIncludeNonProductiveActivity(false)}>Productif seul</button>
+					<button type="button" class:on={includeNonProductiveActivity} onclick={() => setIncludeNonProductiveActivity(true)}>Tout inclure</button>
+				</div>
+			</div>
+			{#if includeNonProductiveActivity}
+				<div class="split-legend" style="margin-bottom:10px;">
+					<span><i class="dot prod"></i> Productif</span>
+					<span><i class="dot nonprod"></i> Non productif</span>
+				</div>
+			{/if}
+			{#if activityRows.length === 0}
 				<p class="empty">Aucune imputation.</p>
 			{:else}
 				<div class="barlist">
-					{#each d.byActivity as a (a.label)}
+					{#each activityRows as a (a.label)}
 						<div class="barrow">
 							<span class="lbl">{a.label}</span>
-							<div class="track"><i style="width:{(a.total / maxActivity) * 100}%"></i></div>
-							<span class="val tabnum">{a.total}</span>
+							{#if includeNonProductiveActivity}
+								<div class="track stacked">
+									<i class="prod" style="width:{(a.productive / maxActivity) * 100}%"></i>
+									<i class="nonprod" style="width:{(a.nonProductive / maxActivity) * 100}%"></i>
+								</div>
+							{:else}
+								<div class="track"><i style="width:{(a.value / maxActivity) * 100}%"></i></div>
+							{/if}
+							<span class="val tabnum">{a.value}</span>
 						</div>
 					{/each}
 				</div>

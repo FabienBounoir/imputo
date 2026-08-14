@@ -17,7 +17,7 @@ export type Dashboard = {
 	byVersion: GroupProgress[];
 	byGroup: GroupProgress[];
 	byPerson: { name: string; productive: number; nonProductive: number; total: number }[];
-	byActivity: { label: string; total: number }[];
+	byActivity: { label: string; productive: number; nonProductive: number; total: number }[];
 	productiveVsNot: { productive: number; nonProductive: number };
 };
 
@@ -63,12 +63,15 @@ export async function getDashboard(
 		db
 			.select({
 				label: sql<string>`coalesce(${activity.label}, 'Non précisé')`,
+				tt: timeEntry.targetType,
+				kind: category.kind,
 				total: sql<string>`sum(${timeEntry.amount})`
 			})
 			.from(timeEntry)
 			.leftJoin(activity, eq(timeEntry.activityId, activity.id))
+			.leftJoin(category, eq(timeEntry.categoryId, category.id))
 			.where(and(eq(timeEntry.workspaceId, workspaceId), inPeriod))
-			.groupBy(sql`coalesce(${activity.label}, 'Non précisé')`)
+			.groupBy(sql`coalesce(${activity.label}, 'Non précisé')`, timeEntry.targetType, category.kind)
 	]);
 
 	// Par personne (productif vs non productif) + consommé ticket sur la période
@@ -94,8 +97,20 @@ export async function getDashboard(
 		.map(([name, p]) => ({ name, ...p, total: round(p.productive + p.nonProductive) }))
 		.sort((a, b) => b.total - a.total);
 
-	const byActivity = activityRows
-		.map((a) => ({ label: a.label, total: round(num(a.total)) }))
+	// Par activité (productif vs non productif) : même règle que byPerson ci-dessus — une catégorie
+	// non productive (ex. Congé) peut être taguée avec une activité (rien ne l'en empêche à la
+	// saisie), sans ça son temps se mélangerait silencieusement au travail productif du même libellé.
+	const activities = new Map<string, { productive: number; nonProductive: number }>();
+	for (const r of activityRows) {
+		const v = num(r.total);
+		const isNonProd = r.tt === 'CATEGORY' && r.kind === 'NON_PRODUCTIVE';
+		if (!activities.has(r.label)) activities.set(r.label, { productive: 0, nonProductive: 0 });
+		const a = activities.get(r.label)!;
+		if (isNonProd) a.nonProductive = round(a.nonProductive + v);
+		else a.productive = round(a.productive + v);
+	}
+	const byActivity = [...activities.entries()]
+		.map(([label, a]) => ({ label, ...a, total: round(a.productive + a.nonProductive) }))
 		.sort((a, b) => b.total - a.total);
 
 	const productiveVsNot = { productive: prodTotal, nonProductive: nonProdTotal };
