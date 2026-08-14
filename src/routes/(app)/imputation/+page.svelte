@@ -45,8 +45,10 @@
 
 	// Pas de saisie (§7 admin) : ex. 0.25 → [0, .25, .5, .75, 1] ; 0.5 → [0, .5, 1]. Jamais
 	// figé sur .25, sinon un espace qui règle un autre pas ne change rien à la saisie réelle.
+	// Arrondi à 3 décimales (pas 2) : un pas de 0.125 (1h/jour) doit survivre intact, sinon il
+	// dérive silencieusement vers 0.13 dès la génération du cycle de clic.
 	function round(n: number) {
-		return Math.round((n + Number.EPSILON) * 100) / 100;
+		return Math.round((n + Number.EPSILON) * 1000) / 1000;
 	}
 	let CYCLE = $derived.by(() => {
 		const step = data.imputationStep > 0 ? data.imputationStep : 0.25;

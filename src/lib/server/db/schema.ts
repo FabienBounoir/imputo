@@ -69,7 +69,8 @@ export const workspace = pgTable('workspace', {
 	// PPR = estimationReal * pprRatio, calculé à la volée (non stocké sur le ticket).
 	pprRatio: numeric('ppr_ratio', { precision: 3, scale: 2 }).notNull().default('0.90'),
 	// Pas du champ de saisie d'imputation (0.25 = quart de jour).
-	imputationStep: numeric('imputation_step', { precision: 3, scale: 2 }).notNull().default('0.25'),
+	// scale 3 (pas 2) : nécessaire pour un pas à l'heure sur une journée type (1/8 = 0.125).
+	imputationStep: numeric('imputation_step', { precision: 4, scale: 3 }).notNull().default('0.25'),
 	// Team mood : désactivé par défaut, activable par l'admin.
 	moodEnabled: boolean('mood_enabled').notNull().default(false),
 	moodPeriodKind: moodPeriodKindEnum('mood_period_kind').notNull().default('WEEK_1'),
@@ -484,7 +485,8 @@ export const timeEntry = pgTable(
 		objectiveId: uuid('objective_id').references(() => weeklyObjective.id, { onDelete: 'set null' }),
 		activityId: uuid('activity_id').references(() => activity.id, { onDelete: 'set null' }),
 		day: date('day').notNull(),
-		amount: numeric('amount', { precision: 4, scale: 2 }).notNull(),
+		// scale 3 (pas 2) : suit imputationStep — un pas de 0.125 doit pouvoir être stocké tel quel.
+		amount: numeric('amount', { precision: 5, scale: 3 }).notNull(),
 		createdAt: createdAt(),
 		updatedAt: updatedAt()
 	},

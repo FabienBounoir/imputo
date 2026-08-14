@@ -998,7 +998,7 @@
 					<form method="POST" action="?/imputationStep" use:enhance style="display:flex;align-items:center;justify-content:space-between;gap:14px;">
 						<span>Pas d'imputation</span>
 						<div style="display:flex;align-items:center;gap:8px;">
-							<input class="cap-input" type="number" name="value" min="0.00" max="1" step="0.05" value={data.imputationStep} />
+							<input class="cap-input" type="number" name="value" min="0.00" max="1" step="any" value={data.imputationStep} />
 							<button class="btn btn-ghost" type="submit">Enregistrer</button>
 						</div>
 					</form>

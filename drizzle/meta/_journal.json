@@ -281,6 +281,13 @@
       "when": 1786730065446,
       "tag": "0039_certain_crusher_hogan",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1786733696821,
+      "tag": "0040_bored_gravity",
+      "breakpoints": true
     }
   ]
 }
