@@ -515,10 +515,12 @@
 				<button class:on={data.view === 'table'} onclick={() => navigateWith({ view: 'table' })}>Tableau</button>
 				<button class:on={data.view === 'kanban'} onclick={() => navigateWith({ view: 'kanban' })}>Kanban</button>
 			</div>
-			<select class="filter-sel" value={data.filters.stateId ?? ''} onchange={(e) => navigateWith({ state: e.currentTarget.value })} aria-label="Filtrer par état">
-				<option value="">Tous les états</option>
-				{#each data.ref.states as s (s.id)}<option value={s.id}>{s.emoji} {s.label}</option>{/each}
-			</select>
+			{#if data.view !== 'kanban'}
+				<select class="filter-sel" value={data.filters.stateId ?? ''} onchange={(e) => navigateWith({ state: e.currentTarget.value })} aria-label="Filtrer par état">
+					<option value="">Tous les états</option>
+					{#each data.ref.states as s (s.id)}<option value={s.id}>{s.emoji} {s.label}</option>{/each}
+				</select>
+			{/if}
 			<select class="filter-sel" value={data.filters.projectId ?? ''} onchange={(e) => navigateWith({ project: e.currentTarget.value })} aria-label="Filtrer par projet">
 				<option value="">Tous les projets</option>
 				{#each data.ref.projects as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
@@ -783,6 +785,11 @@
 		{#if hasMore}
 			<div class="pager" bind:this={sentinel}></div>
 		{/if}
+	</div>
+	{:else if data.kanbanNeedsScope}
+	<div class="kanban-scope-prompt">
+		<p>Choisis un sprint ou une version ci-dessus pour afficher le kanban.</p>
+		<p class="hint">Sans ce filtre, le board chargerait l'ensemble des tickets de l'espace.</p>
 	</div>
 	{:else}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1426,6 +1433,21 @@
 		   barre de défilement horizontale partait en bas de page, hors de portée sans tout dérouler.
 		   Le débordement vertical est repris colonne par colonne (.kcards). */
 		height: calc(100dvh - 13rem);
+	}
+	.kanban-scope-prompt {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 6px;
+		height: calc(100dvh - 13rem);
+		text-align: center;
+		color: var(--text-mute);
+	}
+	.kanban-scope-prompt p:first-child {
+		font-size: 15px;
+		font-weight: 600;
+		color: var(--text);
 	}
 	.kcol {
 		flex: 0 0 280px;

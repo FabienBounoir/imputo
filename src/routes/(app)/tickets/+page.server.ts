@@ -54,31 +54,43 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
 	// Kanban a besoin du board complet (pas de pagination) ; le tableau ne charge qu'une page —
 	// évite de tout charger d'un coup quand l'espace a beaucoup de tickets (§ retour utilisateur).
+	// Avec le pull Jira, un espace peut monter à plusieurs milliers de tickets : le kanban exige
+	// donc un sprint ou une version pour se déclencher, sinon la requête complète (et son rendu)
+	// tourne pour rien — on ne l'exécute même pas (§ retour utilisateur, sync Jira).
+	const kanbanNeedsScope = view === 'kanban' && !filters.sprintId && !filters.versionId;
+	// Chaque colonne du kanban EST un état (cf. kanbanCols côté client) : filtrer par état n'y a
+	// aucun sens (une seule colonne resterait peuplée) — ignoré pour la requête en mode kanban,
+	// pas seulement caché côté UI, sinon un ?state= traînant depuis la vue tableau viderait le
+	// board silencieusement sans que le contrôle pour l'expliquer soit visible.
+	const queryFilters: TicketFilters = view === 'kanban' ? { ...filters, stateId: undefined } : filters;
 	// estimationPrev/enveloppeTotale/tnfBudget : redaction faite dans listTicketsPage() (source
 	// unique, tout appelant en profite) — pas juste ici, sinon un autre consommateur la raterait.
 	// `ticketsPage` n'est PAS awaité : la requête (jointures + enrichissement par activité) est la
 	// partie lente de la page — on la laisse streamer après le shell (filtres, chrome) pendant que
 	// `ref` (petites tables de référence) est prêt tout de suite (§ retour utilisateur, page trop lente).
-	const ticketsPage = listTicketsPage(
-		ws.workspaceId,
-		ws.testPhase,
-		isAdmin,
-		filters,
-		view === 'table' ? { pageSize: PAGE_SIZE, page } : undefined,
-		// Le détail par activité n'est rendu que dans les lignes fines de la vue tableau — le
-		// kanban charge tout le board sans pagination, l'économiser y compte double (cf. audit).
-		view === 'table'
-	).then(({ rows: tickets, total }) => ({
-		tickets,
-		total,
-		pageCount: view === 'table' ? Math.max(1, Math.ceil(total / PAGE_SIZE)) : 1
-	}));
+	const ticketsPage = kanbanNeedsScope
+		? Promise.resolve({ tickets: [], total: 0, pageCount: 1 })
+		: listTicketsPage(
+				ws.workspaceId,
+				ws.testPhase,
+				isAdmin,
+				queryFilters,
+				view === 'table' ? { pageSize: PAGE_SIZE, page } : undefined,
+				// Le détail par activité n'est rendu que dans les lignes fines de la vue tableau — le
+				// kanban charge tout le board sans pagination, l'économiser y compte double (cf. audit).
+				view === 'table'
+			).then(({ rows: tickets, total }) => ({
+				tickets,
+				total,
+				pageCount: view === 'table' ? Math.max(1, Math.ceil(total / PAGE_SIZE)) : 1
+			}));
 	const ref = await getRefData(ws.workspaceId, locals.user!.sortActivitiesAlpha);
 	return {
 		ticketsPage,
 		page,
 		pageSize: PAGE_SIZE,
 		view,
+		kanbanNeedsScope,
 		filters,
 		highlightKey,
 		ref,
