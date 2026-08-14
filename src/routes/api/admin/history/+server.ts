@@ -8,7 +8,9 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 
 	const entityTypeRaw = url.searchParams.get('entityType');
 	const entityType: ChangeLogEntity | undefined =
-		entityTypeRaw === 'TICKET' || entityTypeRaw === 'ABSENCE' ? entityTypeRaw : undefined;
+		entityTypeRaw === 'TICKET' || entityTypeRaw === 'ABSENCE' || entityTypeRaw === 'WORKSPACE'
+			? entityTypeRaw
+			: undefined;
 	const query = url.searchParams.get('q') ?? undefined;
 	const cursorCreatedAt = url.searchParams.get('cursorCreatedAt');
 	const cursorId = url.searchParams.get('cursorId');

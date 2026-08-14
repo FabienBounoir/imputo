@@ -20,7 +20,12 @@ Choix retenus :
 3. Remplacer les placeholders `CHANGEME-*` :
    - `secret.yaml` : `DATABASE_URL`, `SESSION_SECRET`, `CRON_SECRET`, et éventuellement les
      clés VAPID (`npx web-push generate-vapid-keys`). Voir les commandes `oc create secret`
-     suggérées en commentaire dans le fichier.
+     suggérées en commentaire dans le fichier. Pour l'intégration Jira (voir plus bas) :
+     `AZURE_CLIENT_SECRET` (app registration Azure AD) et `JIRA_PAT_ENCRYPTION_KEY`
+     (`openssl rand -base64 32` — chiffre les PAT Jira saisis par espace, à ne jamais faire
+     tourner sans re-chiffrer les PAT existants).
+   - `configmap.yaml` : `AZURE_TENANT_ID`/`AZURE_CLIENT_ID` (identifiants publics de l'app
+     registration, non secrets) et `JIRA_BASE_URL` si l'instance diffère du défaut.
    - `db-secret.yaml` : mot de passe Postgres (`imputo-db-secret`) — doit correspondre à
      `DATABASE_URL` ci-dessus.
    - `deployment.yaml` : le namespace dans `spec.template.spec.containers[0].image` (valeur de
@@ -66,7 +71,10 @@ Inutile si vous utilisez la CI GitLab ci-dessous : c'est elle qui déclenche les
 - **preprod** — à chaque push sur `main` : build, rollout, puis seed automatique (`npm run
   db:seed`, données de démo) via un Job dédié (`imputo-tools` + `seed-job.yaml`).
 - **production** — à chaque tag : build de l'image à partir du commit du tag
-  (`oc start-build --commit=<tag>`), rollout. Pas de seed.
+  (`oc start-build --commit=<tag>`), rollout, puis build de `imputo:tools` (nécessaire au
+  CronJob de sync Jira, jamais construit en prod avant l'intégration Jira) et apply du CronJob.
+  Toujours pas de seed — `imputo:tools` y sert uniquement au sync Jira, jamais aux données de
+  démo.
 
 ### Bootstrap requis avant le premier run CI
 
@@ -103,6 +111,16 @@ dans le ConfigMap avant de builder — pas de manip manuelle à refaire à chaqu
 (`cleanup`, `snapshot`, `notify`), appelées via le Service interne `imputo` et authentifiées
 par `CRON_SECRET`. La variante `notify?kind=weekly` est laissée en commentaire à dupliquer si
 besoin.
+
+`cronjob-jira-sync.yaml` (fichier séparé) pull les tickets Jira à intervalle régulier — voir
+`src/lib/server/services/jiraSync.ts`. Contrairement aux jobs ci-dessus, il ne fait pas de
+`curl` vers le pod web : il tourne sur l'image `imputo:tools` (celle du job de seed, §
+suivante) avec un accès DB direct, pas de `CRON_SECRET`. Choix délibéré, détaillé en
+commentaire dans le fichier : à la charge cible de prod, le pod web sature déjà en CPU
+(`docs/AUDIT-load-testing.md`), donc ce job tourne isolé plutôt que de partager son process.
+Comme `seed-job.yaml`, `CHANGEME-namespace` y est substitué par la CI avant `oc apply` — non
+couvert par `oc apply -k openshift/`, à appliquer manuellement si besoin en dehors de la CI :
+`sed "s#CHANGEME-namespace#<namespace>#" openshift/cronjob-jira-sync.yaml | oc apply -f -`.
 
 ## Limite connue : une seule réplique
 

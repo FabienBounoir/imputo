@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { actions } from './+page.server';
 import { makeWorkspace, addMember } from '$lib/server/services/test-helpers';
 import { fakeLocals, formRequest } from '$lib/server/test-helpers/http';
+import { getJiraConfig } from '$lib/server/services/accounts';
 
 // Toutes ces actions (sauf transferOwnership, gardée par le statut owner et testée séparément)
 // partagent la même garde `locals.role !== 'ADMIN'` -> fail(403). On le vérifie une seule fois
@@ -250,4 +251,96 @@ describe('admin transferOwnership', () => {
 		} as never);
 		expect(res).toEqual({ ownerOk: true });
 	});
+});
+
+describe('admin jiraToggleEnabled / jiraSave / jiraSyncNow', () => {
+	it('jiraToggleEnabled bascule le flag de sync planifiée', async () => {
+		const { userId } = await makeWorkspace('jira-toggle');
+		const locals = await fakeLocals(userId);
+		const res = await actions.jiraToggleEnabled({ locals, request: formRequest({ enabled: 'true' }) } as never);
+		expect(res).toEqual({ jiraToggleOk: true });
+	});
+
+	it('jiraSave sans PAT met à jour jql/stratégie/regex (indépendant de JIRA_PAT_ENCRYPTION_KEY)', async () => {
+		const { userId } = await makeWorkspace('jira-save');
+		const locals = await fakeLocals(userId);
+		const res = await actions.jiraSave({
+			locals,
+			request: formRequest({ jql: 'project = X', conflictStrategy: 'JIRA_WINS', regexPattern: '', regexReplacement: '' })
+		} as never);
+		expect(res).toEqual({ jiraSaveOk: true });
+	});
+
+	it('jiraSave avec une regex invalide -> fail 400', async () => {
+		const { userId } = await makeWorkspace('jira-save-badregex');
+		const locals = await fakeLocals(userId);
+		const res = await actions.jiraSave({
+			locals,
+			request: formRequest({ jql: 'project = X', conflictStrategy: 'KEEP_LOCAL', regexPattern: '(unclosed', regexReplacement: '' })
+		} as never);
+		expect(res?.status).toBe(400);
+	});
+
+	it('jiraSyncNow sur un espace sans PAT/JQL -> fail 400, sans appel réseau', async () => {
+		const { userId } = await makeWorkspace('jira-syncnow');
+		const locals = await fakeLocals(userId);
+		const res = await actions.jiraSyncNow({ locals } as never);
+		expect(res?.status).toBe(400);
+	});
+
+	it('jiraSave transmet updatedSinceDate au service', async () => {
+		const { userId, workspaceId } = await makeWorkspace('jira-since');
+		const locals = await fakeLocals(userId);
+		const res = await actions.jiraSave({
+			locals,
+			request: formRequest({
+				jql: 'project = X',
+				conflictStrategy: 'KEEP_LOCAL',
+				regexPattern: '',
+				regexReplacement: '',
+				updatedSinceDate: '2026-06-01'
+			})
+		} as never);
+		expect(res).toEqual({ jiraSaveOk: true });
+		expect((await getJiraConfig(workspaceId)).updatedSince?.toISOString()).toBe('2026-06-01T00:00:00.000Z');
+	});
+
+	it('jiraSave avec une date minimum invalide -> fail 400', async () => {
+		const { userId } = await makeWorkspace('jira-since-badval');
+		const locals = await fakeLocals(userId);
+		const res = await actions.jiraSave({
+			locals,
+			request: formRequest({
+				jql: 'project = X',
+				conflictStrategy: 'KEEP_LOCAL',
+				regexPattern: '',
+				regexReplacement: '',
+				updatedSinceDate: 'pas-une-date'
+			})
+		} as never);
+		expect(res?.status).toBe(400);
+	});
+
+	it('jiraResetUpdatedSince vide la date minimum', async () => {
+		const { userId, workspaceId } = await makeWorkspace('jira-reset');
+		const locals = await fakeLocals(userId);
+		await actions.jiraSave({
+			locals,
+			request: formRequest({
+				jql: 'project = X',
+				conflictStrategy: 'KEEP_LOCAL',
+				regexPattern: '',
+				regexReplacement: '',
+				updatedSinceDate: '2026-06-01'
+			})
+		} as never);
+
+		const res = await actions.jiraResetUpdatedSince({ locals } as never);
+
+		expect(res).toEqual({ jiraResetSinceOk: true });
+		expect((await getJiraConfig(workspaceId)).updatedSince).toBeNull();
+	});
+
+	// Pas de test 403 dédié pour jiraResetUpdatedSince : déjà couvert gratuitement par
+	// ROLE_GATED_ACTIONS ci-dessus (Object.keys(actions)), sa garde étant la première ligne.
 });

@@ -253,6 +253,20 @@
       "when": 1786631471222,
       "tag": "0035_material_giant_girl",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1786652220505,
+      "tag": "0036_steep_queen_noir",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1786701466894,
+      "tag": "0037_lowly_masked_marvel",
+      "breakpoints": true
     }
   ]
 }

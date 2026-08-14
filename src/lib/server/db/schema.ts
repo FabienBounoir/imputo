@@ -41,9 +41,15 @@ export const absenceTypeEnum = pgEnum('absence_type', [
 	'HORS_PROJET'
 ]);
 export const absencePeriodEnum = pgEnum('absence_period', ['FULL', 'AM', 'PM']);
-export const changeLogEntityEnum = pgEnum('change_log_entity', ['TICKET', 'ABSENCE']);
+// 'WORKSPACE' : utilisé pour tracer les changements de config Jira (ex. rotation du PAT) —
+// jamais oldValue/newValue pour ce type, voir services/jiraSync.ts.
+export const changeLogEntityEnum = pgEnum('change_log_entity', ['TICKET', 'ABSENCE', 'WORKSPACE']);
 export const changeLogActionEnum = pgEnum('change_log_action', ['UPDATE', 'DELETE']);
 export const supportCadenceEnum = pgEnum('support_cadence', ['DAY', 'WEEK', 'MONTH']);
+export const jiraSyncStatusEnum = pgEnum('jira_sync_status', ['SUCCESS', 'ERROR']);
+// KEEP_LOCAL (défaut) : un ticket déjà connu localement (créé à la main ou par un sync
+// précédent) n'est jamais écrasé par le sync. JIRA_WINS : Jira écrase title/projectId/parentId.
+export const jiraConflictStrategyEnum = pgEnum('jira_conflict_strategy', ['JIRA_WINS', 'KEEP_LOCAL']);
 
 const id = () => uuid('id').primaryKey().defaultRandom();
 const createdAt = () => timestamp('created_at', { withTimezone: true }).defaultNow().notNull();
@@ -77,6 +83,42 @@ export const workspace = pgTable('workspace', {
 	supportRotationOffset: integer('support_rotation_offset').notNull().default(0),
 	// Le samedi compte-t-il comme un jour de perm (cadence DAY) ? Dimanche jamais inclus.
 	supportIncludeSaturday: boolean('support_include_saturday').notNull().default(false),
+
+	// ---------- Synchronisation Jira (pull planifié + forçage manuel) ----------
+	jiraSyncEnabled: boolean('jira_sync_enabled').notNull().default(false),
+	// Chiffré (AES-256-GCM, voir auth/secretCrypto.ts) — jamais en clair, jamais réaffiché.
+	jiraPatEncrypted: text('jira_pat_encrypted'),
+	// JQL libre, ex. "project = CARTEJEUNE_BLM". Ne doit jamais contenir ORDER BY (voir
+	// hasOrderByClause dans jiraClient.ts) — incompatible avec le wrapping fait pour jiraUpdatedSince.
+	jiraJql: text('jira_jql'),
+	// Plancher + watermark incrémental : ne redemander à Jira que les tickets dont `updated` est
+	// postérieur à cette date. Sert à la fois de plancher manuel (saisi par l'admin, jour près, via
+	// jiraSave) ET de valeur auto-avancée après chaque sync réussi (jiraSync.ts, précision seconde +
+	// marge de sécurité) — un seul champ, une seule sémantique : "ne rien redemander avant cette
+	// date". Null = pas de plancher (comportement historique, JQL non modifié).
+	jiraUpdatedSince: timestamp('jira_updated_since', { withTimezone: true }),
+	// Traçabilité : qui a saisi le PAT actuel et quand (mis à jour uniquement quand une nouvelle
+	// valeur est effectivement soumise, pas à chaque sauvegarde du formulaire).
+	// Pas de FK : même choix que createdByUserId ci-dessous (user est déclaré plus loin dans ce
+	// fichier), voir aussi la note sur entityId dans changeLog pour la même contrainte d'ordre.
+	jiraPatUpdatedByUserId: uuid('jira_pat_updated_by_user_id'),
+	jiraPatUpdatedAt: timestamp('jira_pat_updated_at', { withTimezone: true }),
+	// Réconciliation de clé : ex. pattern "^CARTEJEUNE_" + remplacement "" pour faire correspondre
+	// une clé Jira réelle (CARTEJEUNE_BLM-123) à une clé déjà utilisée localement (BLM-123).
+	// Remplace la 1ère occurrence uniquement (pas de flag global) ; appliqué à key ET parentKey.
+	jiraKeyRegexPattern: text('jira_key_regex_pattern'),
+	jiraKeyRegexReplacement: text('jira_key_regex_replacement'),
+	jiraConflictStrategy: jiraConflictStrategyEnum('jira_conflict_strategy').notNull().default('KEEP_LOCAL'),
+	// Statut du dernier run (planifié ou forcé) — visibilité opérationnelle pour l'admin.
+	jiraLastSyncAt: timestamp('jira_last_sync_at', { withTimezone: true }),
+	jiraLastSyncStatus: jiraSyncStatusEnum('jira_last_sync_status'),
+	jiraLastSyncError: text('jira_last_sync_error'),
+	jiraLastSyncTicketCount: integer('jira_last_sync_ticket_count'),
+	// Échecs d'authentification (401/403) consécutifs. Remis à 0 sur succès ou sur un nouveau PAT
+	// sauvegardé. À 5, le sync planifié se désactive automatiquement (jiraSyncEnabled -> false) —
+	// voir services/jiraSync.ts. N'inclut jamais les erreurs réseau/Jira non liées au PAT.
+	jiraConsecutiveFailures: integer('jira_consecutive_failures').notNull().default(0),
+
 	createdByUserId: uuid('created_by_user_id'),
 	createdAt: createdAt()
 });

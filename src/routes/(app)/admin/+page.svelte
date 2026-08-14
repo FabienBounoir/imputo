@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
-	import { invalidateAll } from '$app/navigation';
+	import { invalidateAll, replaceState } from '$app/navigation';
+	import { page } from '$app/state';
+	import { formatDateTime } from '$lib/utils/date';
 	import ExportModal from '$lib/components/ExportModal.svelte';
 	import AccentPicker from '$lib/components/AccentPicker.svelte';
 	import MemberAccessModal from '$lib/components/MemberAccessModal.svelte';
@@ -102,24 +104,52 @@
 	}
 
 	const TABS = [
+		{ key: 'general', label: 'Général' },
 		{ key: 'membres', label: 'Membres' },
 		{ key: 'referentiels', label: 'Référentiels' },
 		{ key: 'workflow', label: 'Workflow' },
 		{ key: 'support', label: 'Support' },
-		{ key: 'general', label: 'Général' }
+		{ key: 'jira', label: 'Jira' }
 	] as const;
 	type Tab = (typeof TABS)[number]['key'];
-	let tab = $state<Tab>('membres');
+	// Onglet lu depuis ?tab= au premier chargement (pour pouvoir transmettre un lien direct vers un
+	// onglet précis) ; replaceState (pas goto) pour ne jamais redéclencher le load au clic.
+	const tabFromUrl = TABS.find((t) => t.key === page.url.searchParams.get('tab'))?.key;
+	let tab = $state<Tab>(tabFromUrl ?? 'general');
+	function setTab(next: Tab) {
+		tab = next;
+		replaceState(`?tab=${next}`, {});
+	}
+
+	// ---------- Jira (onglet) ----------
+	let jiraRegexPattern = $state(data.jira.regexPattern);
+	let jiraRegexReplacement = $state(data.jira.regexReplacement);
+	let jiraSampleKey = $state('CARTEJEUNE_BLM-123');
+	const jiraSampleResult = $derived.by(() => {
+		if (!jiraRegexPattern) return jiraSampleKey;
+		try {
+			return jiraSampleKey.replace(new RegExp(jiraRegexPattern), jiraRegexReplacement);
+		} catch {
+			return null; // regex invalide, cf. message sous le champ
+		}
+	});
+	const jiraAutoDisabled = $derived(!data.jira.enabled && data.jira.consecutiveFailures >= 5);
+	let jiraSyncing = $state(false);
+	// Une fois JQL + PAT renseignés, la configuration se replie derrière un bouton "Éditer" — seule
+	// l'activation (toggle + statut + sync manuel) reste visible en permanence.
+	const jiraConfigured = $derived(!!data.jira.jql && data.jira.patConfigured);
+	let jiraEditing = $state(false);
+	let jiraPatEditing = $state(false);
 </script>
 
 <div class="topbar">
-	<h1>Paramètres &amp; membres<small>Espace {data.allowedDomain}</small></h1>
+	<h1>Paramètres &amp; membres</h1>
 </div>
 
 <div class="content admin">
 	<div class="tabs">
 		{#each TABS as t (t.key)}
-			<button type="button" class:on={tab === t.key} onclick={() => (tab = t.key)}>{t.label}</button>
+			<button type="button" class:on={tab === t.key} onclick={() => setTab(t.key)}>{t.label}</button>
 		{/each}
 	</div>
 
@@ -658,6 +688,214 @@
 		</section>
 	{/if}
 
+	{#if tab === 'jira'}
+		<section class="card block">
+			<h3>Intégration Jira</h3>
+			<p class="hint">Pull planifié + forçage manuel des tickets Jira, propre à cet espace.</p>
+			{#if form?.error}<div class="flash error">{form.error}</div>{/if}
+			{#if form?.jiraSaveOk}<div class="flash ok">Configuration enregistrée ✓</div>{/if}
+
+			{#if !jiraConfigured || jiraEditing}
+				<form
+					method="POST"
+					action="?/jiraSave"
+					use:enhance={() => async ({ result, update }) => {
+						await update({ reset: false });
+						if (result.type === 'success') {
+							jiraEditing = false;
+							jiraPatEditing = false;
+						}
+					}}
+					class="jira-steps"
+				>
+					<div class="step">
+						<div class="step-num">1</div>
+						<div class="step-body">
+							<h4>Connexion</h4>
+							<div class="field">
+								<label for="jira-jql">Filtre JQL</label>
+								<input id="jira-jql" name="jql" value={data.jira.jql} placeholder="project = CARTEJEUNE_BLM" />
+								<p class="hint" style="margin:6px 0 0;">Ne doit pas contenir ORDER BY (inutile ici, incompatible avec la date minimum ci-dessous).</p>
+							</div>
+							<div class="field">
+								<label for="jira-updated-since">Date minimum (optionnel)</label>
+								<input id="jira-updated-since" name="updatedSinceDate" type="date" />
+								<p class="hint pat-meta">
+									{#if data.jira.updatedSince}
+										Valeur actuelle : <b>{formatDateTime(new Date(data.jira.updatedSince))}</b> — laisser vide pour ne pas modifier.
+									{:else}
+										Aucune limite actuellement — laisser vide pour ne pas modifier.
+									{/if}
+								</p>
+							</div>
+							<div class="field">
+								<label for="jira-pat">Token Jira (PAT)</label>
+								{#if data.jira.patConfigured && !jiraPatEditing}
+									<div class="jira-pat-summary">
+										<div class="jira-pat-summary-info">
+											<span class="pill active">✓ Configuré</span>
+											{#if data.jira.patUpdatedByName && data.jira.patUpdatedAt}
+												<span class="hint">Modifié par {data.jira.patUpdatedByName} le {formatDateTime(new Date(data.jira.patUpdatedAt))}</span>
+											{/if}
+										</div>
+										<button type="button" class="btn btn-ghost" onclick={() => (jiraPatEditing = true)}>Changer le token</button>
+									</div>
+								{:else}
+									<input id="jira-pat" name="pat" type="password" autocomplete="new-password" placeholder="Coller le token ici" />
+									{#if data.jira.patConfigured}
+										<p class="hint pat-meta">Laisser vide pour ne pas changer.</p>
+									{:else}
+										<p class="hint pat-meta">Aucun token enregistré pour l'instant.</p>
+									{/if}
+								{/if}
+							</div>
+						</div>
+					</div>
+
+					<div class="step">
+						<div class="step-num">2</div>
+						<div class="step-body">
+							<h4>En cas de conflit sur une clé déjà connue</h4>
+							<div class="field">
+								<select id="jira-conflict" name="conflictStrategy" value={data.jira.conflictStrategy}>
+									<option value="KEEP_LOCAL">Garder les tickets existants tels quels</option>
+									<option value="JIRA_WINS">Jira fait autorité (écrase titre/projet)</option>
+								</select>
+								<p class="hint" style="margin:6px 0 0;">
+									S'applique uniquement au titre et au projet — l'estimation, le RAE et le workflow restent
+									toujours saisis à la main, quelle que soit l'option.
+								</p>
+							</div>
+						</div>
+					</div>
+
+					<div class="step">
+						<div class="step-num">3</div>
+						<div class="step-body">
+							<h4>Réconciliation des clés <span class="step-optional">optionnel</span></h4>
+							<p class="hint">
+								Si la clé renvoyée par Jira ne correspond pas à celle déjà utilisée dans l'app (ex.
+								<code>CARTEJEUNE_BLM-123</code> côté Jira vs <code>BLM-123</code> ici), un motif à
+								rechercher/remplacer les fait correspondre avant tout rapprochement.
+							</p>
+							<div class="field">
+								<label for="jira-regex-pattern">Motif à rechercher (regex)</label>
+								<input id="jira-regex-pattern" name="regexPattern" bind:value={jiraRegexPattern} placeholder="^CARTEJEUNE_" />
+							</div>
+							<div class="field">
+								<label for="jira-regex-replacement">Remplacement</label>
+								<input id="jira-regex-replacement" name="regexReplacement" bind:value={jiraRegexReplacement} placeholder="(laisser vide pour supprimer)" />
+							</div>
+							<div class="field">
+								<label for="jira-regex-sample">Tester avec une clé exemple</label>
+								<input id="jira-regex-sample" bind:value={jiraSampleKey} />
+							</div>
+							<p class="regex-preview">
+								{#if jiraSampleResult === null}
+									<span class="err-text">Regex invalide.</span>
+								{:else}
+									→ <b>{jiraSampleResult}</b>
+								{/if}
+							</p>
+						</div>
+					</div>
+
+					<div class="jira-form-actions">
+						<button class="btn btn-primary" type="submit">Enregistrer</button>
+						{#if jiraConfigured}
+							<button type="button" class="btn btn-ghost" onclick={() => { jiraEditing = false; jiraPatEditing = false; }}>Annuler</button>
+						{/if}
+					</div>
+				</form>
+			{:else}
+				<div class="jira-config-summary">
+					<span class="pill active">✓ Configuré</span>
+					<button type="button" class="btn btn-ghost" onclick={() => (jiraEditing = true)}>Éditer la configuration</button>
+				</div>
+			{/if}
+
+			<div class="jira-activation">
+				<h4>Activation</h4>
+
+				{#if jiraAutoDisabled}
+					<div class="flash warn">
+						Synchronisation désactivée automatiquement après {data.jira.consecutiveFailures} échecs
+						d'authentification consécutifs. Vérifie/renouvelle le token ci-dessus, puis réactive-la.
+					</div>
+				{/if}
+				{#if form?.jiraToggleOk}<div class="flash ok">Réglage mis à jour ✓</div>{/if}
+
+				<form method="POST" action="?/jiraToggleEnabled" use:enhance>
+					<input type="hidden" name="enabled" value={String(!data.jira.enabled)} />
+					<div class="row-between">
+						<span>Synchronisation planifiée actuellement <b>{data.jira.enabled ? 'activée' : 'désactivée'}</b></span>
+						<button class="btn {data.jira.enabled ? 'btn-ghost' : 'btn-primary'}" type="submit">
+							{data.jira.enabled ? 'Désactiver' : 'Activer'}
+						</button>
+					</div>
+				</form>
+
+				<div class="sync-status">
+					{#if data.jira.lastSyncAt}
+						<span>
+							Dernier run : <b>{formatDateTime(new Date(data.jira.lastSyncAt))}</b>
+							{#if data.jira.lastSyncStatus === 'SUCCESS'}
+								<span class="pill active">✓ {data.jira.lastSyncTicketCount} ticket{(data.jira.lastSyncTicketCount ?? 0) > 1 ? 's' : ''}</span>
+							{:else}
+								<span class="pill pending">✗ échec</span>
+							{/if}
+						</span>
+						{#if data.jira.lastSyncStatus === 'ERROR' && data.jira.lastSyncError}
+							<p class="hint err-text">{data.jira.lastSyncError}</p>
+						{/if}
+					{:else}
+						<span class="hint">Aucun run pour l'instant.</span>
+					{/if}
+					<p class="hint" style="margin:8px 0 0;">
+						Filtré depuis :
+						<b>{data.jira.updatedSince ? formatDateTime(new Date(data.jira.updatedSince)) : "aucune limite pour l'instant"}</b>
+					</p>
+				</div>
+
+				{#if data.jira.updatedSince}
+					{#if form?.jiraResetSinceOk}<div class="flash ok">Réinitialisé ✓</div>{/if}
+					<form
+						method="POST"
+						action="?/jiraResetUpdatedSince"
+						use:enhance={async ({ cancel }) => {
+							const ok = await confirmDialog({
+								message: 'Le prochain run Jira re-téléchargera tous les tickets du filtre JQL. Continuer ?',
+								confirmLabel: 'Réinitialiser'
+							});
+							if (!ok) cancel();
+						}}
+						style="margin-top:6px;"
+					>
+						<button type="submit" class="btn btn-ghost">Réinitialiser — resynchronisation complète au prochain run</button>
+					</form>
+				{/if}
+
+				{#if form?.jiraSyncOk}<div class="flash ok">Sync manuel terminé ✓ ({form.jiraTicketsUpserted} ticket{form.jiraTicketsUpserted > 1 ? 's' : ''})</div>{/if}
+				<form
+					method="POST"
+					action="?/jiraSyncNow"
+					use:enhance={() => {
+						jiraSyncing = true;
+						return async ({ update }) => {
+							await update();
+							jiraSyncing = false;
+						};
+					}}
+					style="margin-top:10px;"
+				>
+					<button class="btn btn-ghost" type="submit" disabled={jiraSyncing}>
+						{jiraSyncing ? 'Synchronisation…' : 'Forcer le sync maintenant'}
+					</button>
+				</form>
+			</div>
+		</section>
+	{/if}
+
 	{#if tab === 'general'}
 		<section class="card block export-block">
 			<div>
@@ -786,6 +1024,16 @@
 		background: var(--surface-sunk);
 		border: 1px solid var(--border);
 		margin-bottom: 18px;
+	}
+	@media (max-width: 640px) {
+		.tabs {
+			display: flex;
+			max-width: 100%;
+			overflow-x: auto;
+		}
+		.tabs button {
+			flex-shrink: 0;
+		}
 	}
 	.tabs button {
 		padding: 8px 18px;
@@ -1258,5 +1506,128 @@
 		.ref-grid {
 			grid-template-columns: 1fr;
 		}
+	}
+
+	/* ---------- Jira ---------- */
+	.jira-steps {
+		display: flex;
+		flex-direction: column;
+	}
+	.step {
+		display: grid;
+		grid-template-columns: 32px 1fr;
+		gap: 14px;
+		position: relative;
+		padding-bottom: 22px;
+	}
+	.jira-steps .step:not(:last-child)::before {
+		content: '';
+		position: absolute;
+		left: 15px;
+		top: 32px;
+		bottom: 0;
+		width: 2px;
+		background: var(--border);
+	}
+	.step-num {
+		width: 32px;
+		height: 32px;
+		border-radius: 50%;
+		background: var(--accent-tint);
+		color: var(--accent-ink);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-weight: 700;
+		font-size: 14px;
+		flex-shrink: 0;
+		z-index: 1;
+	}
+	.step-body h4,
+	.jira-activation h4 {
+		margin: 0 0 8px;
+		font-family: var(--font-display);
+		font-weight: 600;
+		font-size: 14.5px;
+	}
+	.step-optional {
+		font-size: 11px;
+		font-weight: 500;
+		color: var(--text-mute);
+		margin-left: 6px;
+	}
+	.jira-form-actions {
+		display: flex;
+		gap: 10px;
+		margin-left: 46px;
+	}
+	.jira-config-summary {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 14px;
+		margin-top: 14px;
+		padding: 12px 14px;
+		background: var(--surface-sunk);
+		border-radius: 10px;
+	}
+	.jira-pat-summary {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 14px;
+		flex-wrap: wrap;
+	}
+	.jira-pat-summary-info {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		flex-wrap: wrap;
+	}
+	.jira-pat-summary-info .hint {
+		margin: 0;
+	}
+	.jira-activation {
+		margin-top: 22px;
+		padding-top: 20px;
+		border-top: 1px solid var(--border);
+	}
+	.row-between {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 14px;
+		margin-top: 6px;
+	}
+	.sync-status {
+		margin-top: 14px;
+		padding-top: 14px;
+		border-top: 1px solid var(--border);
+		font-size: 13px;
+	}
+	.err-text {
+		color: var(--warn);
+	}
+	.pat-meta {
+		margin: 6px 0 0;
+	}
+	.flash.warn {
+		background: var(--warn-tint);
+		border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+		color: var(--warn);
+		padding: 10px 14px;
+		border-radius: var(--r-sm);
+		font-size: 13px;
+		margin-bottom: 12px;
+	}
+	.regex-preview {
+		font-size: 14px;
+		margin: 4px 0 10px;
+	}
+	.step-body code {
+		background: var(--surface-sunk);
+		padding: 1px 5px;
+		border-radius: 4px;
+		font-size: 0.9em;
 	}
 </style>

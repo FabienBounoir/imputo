@@ -15,3 +15,7 @@ export const ABSENCE_FIELD_LABELS: Record<string, string> = {
 	type: 'Type',
 	period: 'Durée'
 };
+
+export const WORKSPACE_FIELD_LABELS: Record<string, string> = {
+	jiraPat: 'Token Jira'
+};

@@ -14,3 +14,8 @@ data:
   ORIGIN: 'https://imputo-imputo.apps.ocp4.innershift.sodigital.io'
   VAPID_SUBJECT: 'mailto:admin@imputo.app'
   NOTIF_RAE_STALE_DAYS: '7'
+  # App registration Azure AD (client_credentials) — credentials globales à l'app, pas secrètes en
+  # elles-mêmes (identifiants publics d'un client OAuth) ; AZURE_CLIENT_SECRET reste dans secret.yaml.
+  AZURE_TENANT_ID: '8b87af7d-8647-4dc7-8df4-5f69a2011bb5'
+  AZURE_CLIENT_ID: 'CHANGEME-azure-client-id'
+  JIRA_BASE_URL: 'https://jira.constellation.soprasteria.com'
