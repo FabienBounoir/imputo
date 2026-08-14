@@ -4,6 +4,7 @@ import { verifyPassword, hashPassword } from '$lib/server/auth/password';
 import { generateToken, hashToken } from '$lib/server/auth/tokens';
 import { encryptSecret } from '$lib/server/auth/secretCrypto';
 import { hasOrderByClause } from './jiraClient';
+import type { TicketFiltersSnapshot } from './tickets';
 import { parseISODate } from '$lib/utils/date';
 import { logChange } from './changeLog';
 import { config } from '$lib/server/config';
@@ -144,6 +145,36 @@ export async function setAccentPref(userId: string, mode: 'WORKSPACE' | 'CUSTOM'
 /** Répartition par activité (dashboard sprint/version) : false = ordre des référentiels, true = alphabétique. */
 export async function setSortActivitiesAlphaPref(userId: string, value: boolean) {
 	await db.update(user).set({ sortActivitiesAlpha: value }).where(eq(user.id, userId));
+}
+
+/** Préférence + dernier instantané de filtres tickets (compte, pas espace — cf. réglages). */
+export async function getTicketFiltersPref(userId: string): Promise<{ remember: boolean; snapshotRaw: string | null }> {
+	const [row] = await db
+		.select({ remember: user.rememberTicketFilters, snapshotRaw: user.ticketFiltersSnapshot })
+		.from(user)
+		.where(eq(user.id, userId));
+	return { remember: row?.remember ?? true, snapshotRaw: row?.snapshotRaw ?? null };
+}
+
+/** Active/désactive la mémorisation des filtres tickets (le snapshot n'est pas effacé : réactiver retrouve le dernier état). */
+export async function setRememberTicketFiltersPref(userId: string, value: boolean) {
+	await db.update(user).set({ rememberTicketFilters: value }).where(eq(user.id, userId));
+}
+
+/** Détail par activité replié par défaut sous chaque ticket (vue tableau) — préférence de compte. */
+export async function getCompactTicketActivityPref(userId: string): Promise<boolean> {
+	const [row] = await db.select({ v: user.compactTicketActivity }).from(user).where(eq(user.id, userId));
+	return row?.v ?? true;
+}
+
+export async function setCompactTicketActivityPref(userId: string, value: boolean) {
+	await db.update(user).set({ compactTicketActivity: value }).where(eq(user.id, userId));
+}
+
+/** Remplace entièrement le dernier état de filtres tickets — un champ absent du payload = filtre
+ *  désormais vide, c'est ce qui permet à "Réinitialiser" de s'y refléter sans code dédié. */
+export async function setTicketFiltersSnapshot(userId: string, snapshot: TicketFiltersSnapshot) {
+	await db.update(user).set({ ticketFiltersSnapshot: JSON.stringify(snapshot) }).where(eq(user.id, userId));
 }
 
 /** Met à jour la couleur d'accent d'un espace (réservé ADMIN). */

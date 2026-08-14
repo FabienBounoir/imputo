@@ -417,6 +417,40 @@ export type TicketFilters = {
 	exactKey?: string;
 };
 
+export type TicketFiltersSnapshot = {
+	view: 'table' | 'kanban';
+	query: string | null;
+	stateId: string | null;
+	projectId: string | null;
+	sprintId: string | null;
+	versionId: string | null;
+};
+
+/**
+ * Parse le JSON de filtres tickets mémorisés (préférence de compte, cf. réglages) ; jamais
+ * d'exception sur une entrée invalide (même contrat que parseNotifPrefs). Contrairement aux
+ * notifs, pas de valeurs par défaut à fusionner ici : l'absence doit rester "rien à réappliquer",
+ * pas un jeu de filtres actif.
+ */
+export function parseTicketFiltersSnapshot(raw: string | null): TicketFiltersSnapshot | null {
+	if (!raw) return null;
+	try {
+		const p = JSON.parse(raw);
+		if (!p || typeof p !== 'object') return null;
+		const str = (v: unknown) => (typeof v === 'string' && v ? v : null);
+		return {
+			view: p.view === 'kanban' ? 'kanban' : 'table',
+			query: str(p.query),
+			stateId: str(p.stateId),
+			projectId: str(p.projectId),
+			sprintId: str(p.sprintId),
+			versionId: str(p.versionId)
+		};
+	} catch {
+		return null;
+	}
+}
+
 function ticketFilterConditions(workspaceId: string, filters: TicketFilters) {
 	const conditions = [eq(ticket.workspaceId, workspaceId), isNull(ticket.archivedAt)];
 	if (filters.stateId) conditions.push(eq(ticket.stateId, filters.stateId));

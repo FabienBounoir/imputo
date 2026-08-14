@@ -267,6 +267,20 @@
       "when": 1786701466894,
       "tag": "0037_lowly_masked_marvel",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1786716451992,
+      "tag": "0038_large_master_mold",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1786730065446,
+      "tag": "0039_certain_crusher_hogan",
+      "breakpoints": true
     }
   ]
 }

@@ -1,4 +1,4 @@
-import { fail } from '@sveltejs/kit';
+import { fail, redirect } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import {
@@ -8,10 +8,17 @@ import {
 	updateTicketField,
 	setTicketFlag,
 	deleteTicket,
+	parseTicketFiltersSnapshot,
 	type TicketFilters
 } from '$lib/server/services/tickets';
 import { setTicketInGroup } from '$lib/server/services/ticketGroups';
 import { isManagerOrAdmin } from '$lib/server/services/workspaces';
+import {
+	getTicketFiltersPref,
+	setTicketFiltersSnapshot,
+	getCompactTicketActivityPref,
+	setCompactTicketActivityPref
+} from '$lib/server/services/accounts';
 
 const PAGE_SIZE = 50;
 
@@ -36,6 +43,32 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	// ADMIN ou MANAGER : même règle en lecture qu'en écriture pour les champs budget et le
 	// chiffrage (cf. isManagerOrAdmin) — un MANAGER pouvait les écrire sans jamais les voir.
 	const isAdmin = isManagerOrAdmin(locals.role);
+
+	// Arrivée "à blanc" (aucun paramètre : lien de nav, favori, saisie directe de l'URL) — si le
+	// compte a un instantané de filtres mémorisé (préférence "Garder mes filtres", cf. réglages), on
+	// relance vers l'URL équivalente. L'URL reste la seule source de vérité de ce qui est affiché
+	// (jamais un état caché côté serveur) : tout ce qui porte déjà un paramètre — reset, pagination,
+	// deep-link ?ticket=/?highlight=, ?new=1 — n'est donc jamais réécrit ici.
+	if (!url.search) {
+		const { remember, snapshotRaw } = await getTicketFiltersPref(locals.user!.id);
+		const snapshot = remember ? parseTicketFiltersSnapshot(snapshotRaw) : null;
+		if (snapshot) {
+			// Un compte peut appartenir à plusieurs espaces : état/projet/sprint/version sont propres
+			// à l'espace où ils ont été enregistrés — on ne réinjecte que les id qui existent bien
+			// dans l'espace courant (ignorés silencieusement sinon), pour éviter un "0 résultat" muet
+			// juste après un changement d'espace.
+			const ref = await getRefData(ws.workspaceId);
+			const target = new URLSearchParams();
+			if (snapshot.view === 'kanban') target.set('view', 'kanban');
+			if (snapshot.query) target.set('q', snapshot.query);
+			if (snapshot.stateId && ref.states.some((s) => s.id === snapshot.stateId)) target.set('state', snapshot.stateId);
+			if (snapshot.projectId && ref.projects.some((p) => p.id === snapshot.projectId)) target.set('project', snapshot.projectId);
+			if (snapshot.sprintId && ref.sprints.some((s) => s.id === snapshot.sprintId)) target.set('sprint', snapshot.sprintId);
+			if (snapshot.versionId && ref.versions.some((v) => v.id === snapshot.versionId)) target.set('version', snapshot.versionId);
+			if ([...target.keys()].length > 0) redirect(303, `/tickets?${target}`);
+		}
+	}
+
 	const view = url.searchParams.get('view') === 'kanban' ? 'kanban' : 'table';
 	const page = Math.max(1, Number(url.searchParams.get('page')) || 1);
 	const filters: TicketFilters = {
@@ -103,7 +136,8 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		canEditEstimation: isManagerOrAdmin(locals.role),
 		selfId: locals.user!.id,
 		// Suppression de ticket réservée au créateur de l'espace (super admin), cf. deleteTicket().
-		isOwner: locals.user!.id === ws.createdByUserId
+		isOwner: locals.user!.id === ws.createdByUserId,
+		compactTicketActivity: await getCompactTicketActivityPref(locals.user!.id)
 	};
 };
 
@@ -226,5 +260,30 @@ export const actions: Actions = {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { ok: true, deletedId: ticketId };
+	},
+
+	// Action de compte (garde !locals.user, pas !ws comme le reste de ce fichier) : appelée en
+	// fire-and-forget à chaque interaction filtre depuis navigateWith (cf. +page.svelte).
+	rememberFilters: async ({ request, locals }) => {
+		if (!locals.user) return fail(401);
+		const f = await request.formData();
+		await setTicketFiltersSnapshot(locals.user.id, {
+			view: f.get('view') === 'kanban' ? 'kanban' : 'table',
+			query: (f.get('q') as string) || null,
+			stateId: (f.get('state') as string) || null,
+			projectId: (f.get('project') as string) || null,
+			sprintId: (f.get('sprint') as string) || null,
+			versionId: (f.get('version') as string) || null
+		});
+		return { ok: true };
+	},
+
+	// Action de compte (garde !locals.user) : appelée par le bouton "Tout déplier/replier" —
+	// le dépli/repli par ticket, lui, reste local à la session, jamais persisté (cf. +page.svelte).
+	compactActivityPref: async ({ request, locals }) => {
+		if (!locals.user) return fail(401);
+		const f = await request.formData();
+		await setCompactTicketActivityPref(locals.user.id, f.get('value') === 'true');
+		return { ok: true };
 	}
 };

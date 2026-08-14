@@ -6,6 +6,7 @@
 	import { TICKET_FIELD_LABELS } from '$lib/changeLogLabels';
 	import { confirmDialog } from '$lib/confirm.svelte';
 	import ModalErrorToast from '$lib/components/ModalErrorToast.svelte';
+	import { slide } from 'svelte/transition';
 	let { data, form } = $props();
 
 	let showCreate = $state(false);
@@ -61,6 +62,13 @@
 		const p = new URLSearchParams();
 		for (const [k, v] of Object.entries(merged)) if (v) p.set(k, v);
 		goto(`?${p.toString()}`, { keepFocus: true, noScroll: true });
+		// Mémorisation (préférence de compte, § réglages) : même forme que ci-dessus, `page` exclue
+		// (jamais "remembered") — fire-and-forget comme ?/groupReorder plus haut dans ce fichier.
+		const body = new FormData();
+		for (const k of ['q', 'state', 'project', 'sprint', 'version', 'view'] as const) {
+			if (merged[k]) body.set(k, merged[k]);
+		}
+		fetch('?/rememberFilters', { method: 'POST', body });
 	}
 	// exactKey : arrivée via un lien direct depuis un dashboard sprint/version (?ticket=…) — sans
 	// ça le bouton Réinitialiser reste invisible et on ne peut plus revenir à la liste complète.
@@ -70,6 +78,28 @@
 	const isNavigating = $derived(!!navigating.to);
 	function resetFilters() {
 		navigateWith({ q: '', state: '', project: '', sprint: '', version: '' });
+	}
+
+	// Détail par activité (vue tableau) : `compact` est le défaut de compte (persisté, cf.
+	// Réglages) ; `expandedOverrides` liste les tickets qui dérogent à ce défaut pour la session en
+	// cours seulement — mémoriser individuellement quels tickets étaient ouverts n'a de sens que
+	// pendant qu'on regarde le tableau, pas d'une visite à l'autre.
+	let compact = $state(data.compactTicketActivity);
+	let expandedOverrides = $state<Set<string>>(new Set());
+	function isExpanded(ticketId: string): boolean {
+		return expandedOverrides.has(ticketId) ? compact : !compact;
+	}
+	function toggleTicket(ticketId: string) {
+		if (expandedOverrides.has(ticketId)) expandedOverrides.delete(ticketId);
+		else expandedOverrides.add(ticketId);
+		expandedOverrides = new Set(expandedOverrides); // réassignation : mutation seule ne redéclenche pas $state
+	}
+	function toggleCompactGlobal() {
+		compact = !compact;
+		expandedOverrides = new Set(); // un "tout déplier/replier" écrase les dérogations en cours
+		const body = new FormData();
+		body.set('value', String(compact));
+		fetch('?/compactActivityPref', { method: 'POST', body });
 	}
 
 	type Row = {
@@ -122,7 +152,7 @@
 	let total = $state(0);
 	let pageCount = $state(1);
 	let ticketsLoading = $state(true);
-	const colCount = $derived(7 + (data.testPhase ? 2 : 0) + (data.isAdmin ? 2 : 0));
+	const colCount = $derived(6 + (data.testPhase ? 2 : 0) + (data.isAdmin ? 2 : 0));
 
 	// Chiffrage : verrouillé pour un USER standard (retour utilisateur). Le RAE d'une activité reste
 	// éditable par ses contributeurs — `contributors` est déjà chargé, aucun appel supplémentaire.
@@ -515,6 +545,11 @@
 				<button class:on={data.view === 'table'} onclick={() => navigateWith({ view: 'table' })}>Tableau</button>
 				<button class:on={data.view === 'kanban'} onclick={() => navigateWith({ view: 'kanban' })}>Kanban</button>
 			</div>
+			{#if data.view === 'table'}
+				<button type="button" class="btn btn-ghost" onclick={toggleCompactGlobal}>
+					{compact ? 'Tout déplier' : 'Tout replier'}
+				</button>
+			{/if}
 			{#if data.view !== 'kanban'}
 				<select class="filter-sel" value={data.filters.stateId ?? ''} onchange={(e) => navigateWith({ state: e.currentTarget.value })} aria-label="Filtrer par état">
 					<option value="">Tous les états</option>
@@ -549,10 +584,10 @@
 	{#if data.view === 'table'}
 	{#snippet skeletonRow()}
 		<tr class="ticket-row skeleton-row">
-			<td><div class="cell-select state-select skeleton-bar" style="height:16px;"></div></td>
 			<td class="ttl">
 				<div class="ttl-wrap">
 					<div class="skeleton-bar" style="width:22px;height:22px;border-radius:6px;flex-shrink:0;"></div>
+					<div class="skeleton-bar" style="width:110px;height:16px;border-radius:7px;flex-shrink:0;"></div>
 					<div class="ttl-main">
 						<div class="skeleton-bar" style="width:44px;height:8px;margin:4px 0 6px 7px;border-radius:4px;"></div>
 						<!-- largeur en px, pas % : le tableau est en table-layout:auto, un % ne compte pas
@@ -584,7 +619,7 @@
 		<table class="tk">
 			<thead>
 				<tr>
-					<th style="width:170px;">État</th><th>Ticket</th>
+					<th>Ticket</th>
 					{#if data.isAdmin}<th class="num">Budget</th>{/if}
 					<th class="num">Estimé</th><th class="num">RAE Réal</th>
 					{#if data.testPhase}<th class="num">Est. Test</th><th class="num">RAE Test</th>{/if}<th class="num">Conso.</th>
@@ -596,24 +631,35 @@
 				{#each rows as r (r.id)}
 					{@const st = r.stateId ? stateById.get(r.stateId) : null}
 					<tr class="ticket-row" id="ticket-{r.id}" class:highlighted={r.key === data.highlightKey}>
-						<td>
-							<select
-								class="cell-select state-select"
-								style={st?.color ? `color:${st.color};font-weight:600;` : ''}
-								bind:value={r.stateId}
-								onchange={() => save(r, 'stateId', r.stateId)}
-							>
-								<option value={null}>—</option>
-								{#each data.ref.states as s (s.id)}<option value={s.id}>{s.emoji} {s.label}</option>{/each}
-							</select>
-						</td>
 						<td class="ttl" class:sub={r.isChild}>
 							<div class="ttl-wrap">
+								{#if r.activityBreakdown.length > 0}
+									<button
+										type="button"
+										class="chevron-btn"
+										class:open={isExpanded(r.id)}
+										onclick={() => toggleTicket(r.id)}
+										aria-label="Détail par activité"
+										aria-expanded={isExpanded(r.id)}
+									>▸</button>
+								{/if}
 								<button class="expand-btn" onclick={() => (editId = r.id)} aria-label="Voir le détail du ticket">
 								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
 							</button>
 								<div class="ttl-main">
-									<div class="key tabnum">{r.key}</div>
+									<div class="key-row">
+										<div class="key tabnum">{r.key}</div>
+										<select
+											class="cell-select state-select"
+											style={st?.color ? `color:${st.color};font-weight:600;` : ''}
+											title={st?.label ?? ''}
+											bind:value={r.stateId}
+											onchange={() => save(r, 'stateId', r.stateId)}
+										>
+											<option value={null}>—</option>
+											{#each data.ref.states as s (s.id)}<option value={s.id}>{s.emoji} {s.label}</option>{/each}
+										</select>
+									</div>
 									<input class="cell-input title-input" bind:value={r.title} onchange={() => save(r, 'title', r.title)} />
 								</div>
 							</div>
@@ -669,11 +715,11 @@
 							</div>
 						</td>
 					</tr>
+					{#if isExpanded(r.id)}
 					{#each r.activityBreakdown as ar (ar.activityId)}
 						{@const canRae = canEditRae(ar)}
 						{@const isOther = ar.activityId === NO_ACTIVITY_ID}
-						<tr class="activity-subrow">
-							<td></td>
+						<tr class="activity-subrow" transition:slide={{ duration: 150 }}>
 							<td class="ar-name">↳ {ar.label}
 								{#if ar.contributors.length > 0}
 									<span class="ar-contrib">{#each ar.contributors as c, i (c.userId)}{i > 0 ? ', ' : ''}{c.displayName} <b class="tabnum">{c.consumed}</b>j{/each}</span>
@@ -764,6 +810,7 @@
 							<td></td>
 						</tr>
 					{/each}
+					{/if}
 				{/each}
 				{#if loadingMore}
 					{#each { length: 4 } as _, i (i)}
@@ -1177,7 +1224,12 @@
 		flex: 1;
 		min-width: 0;
 	}
-	.tk .ttl.sub .key,
+	.key-row {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+	.tk .ttl.sub .key-row,
 	.tk .ttl.sub .title-input {
 		margin-left: 20px;
 	}
@@ -1199,6 +1251,29 @@
 		background: var(--surface);
 		border-color: var(--border-strong);
 		color: var(--text);
+	}
+	.chevron-btn {
+		flex-shrink: 0;
+		width: 22px;
+		height: 22px;
+		border-radius: 6px;
+		border: 1px solid transparent;
+		color: var(--text-mute);
+		font-size: 12px;
+		line-height: 1;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		transition: transform 0.15s, color 0.15s, background 0.15s;
+	}
+	.chevron-btn:hover,
+	.chevron-btn:focus-visible {
+		background: var(--surface);
+		border-color: var(--border-strong);
+		color: var(--text);
+	}
+	.chevron-btn.open {
+		transform: rotate(90deg);
 	}
 	.group-chips {
 		display: flex;
@@ -1327,6 +1402,12 @@
 	}
 	.state-select {
 		font-size: 12.5px;
+	}
+	.key-row .state-select {
+		width: 212px;
+		flex-shrink: 0;
+		padding: 0 6px;
+		font-size: 11px;
 	}
 	.prog {
 		display: flex;

@@ -134,6 +134,13 @@ export const user = pgTable('user', {
 	notifPrefs: text('notif_prefs'), // JSON sérialisé { enabled, eveningMissing, … } ; null = tout activé
 	// Répartition par activité (dashboard sprint/version) : false = ordre des référentiels (défaut), true = alphabétique.
 	sortActivitiesAlpha: boolean('sort_activities_alpha').notNull().default(false),
+	// Filtres tickets mémorisés (vue Tickets & chiffrage) : remember=true (défaut) réapplique le
+	// dernier instantané à une arrivée "à blanc" (lien de nav, favori...) ; false = repart toujours
+	// sans filtre. Snapshot nul tant qu'aucun filtre n'a jamais été touché.
+	rememberTicketFilters: boolean('remember_ticket_filters').notNull().default(true),
+	ticketFiltersSnapshot: text('ticket_filters_snapshot'), // JSON { view, query, stateId, projectId, sprintId, versionId }
+	// Détail par activité sous chaque ticket (vue tableau) : true = masqué par défaut (compact).
+	compactTicketActivity: boolean('compact_ticket_activity').notNull().default(true),
 	active: boolean('active').notNull().default(true),
 	createdAt: createdAt()
 });

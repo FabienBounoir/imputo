@@ -5,7 +5,13 @@ import type { Actions, PageServerLoad } from './$types';
 import { db, user } from '$lib/server/db';
 import { config } from '$lib/server/config';
 import { parseNotifPrefs } from '$lib/server/services/notifications';
-import { setAccentPref, setSortActivitiesAlphaPref, changePassword } from '$lib/server/services/accounts';
+import {
+	setAccentPref,
+	setSortActivitiesAlphaPref,
+	setRememberTicketFiltersPref,
+	setCompactTicketActivityPref,
+	changePassword
+} from '$lib/server/services/accounts';
 import { changePasswordSchema } from '$lib/server/validation/auth';
 
 const accentPrefSchema = z.object({
@@ -16,7 +22,11 @@ const accentPrefSchema = z.object({
 export const load: PageServerLoad = async ({ locals }) => {
 	if (!locals.user) redirect(303, '/login');
 	const [u] = await db
-		.select({ notifPrefs: user.notifPrefs })
+		.select({
+			notifPrefs: user.notifPrefs,
+			rememberTicketFilters: user.rememberTicketFilters,
+			compactTicketActivity: user.compactTicketActivity
+		})
 		.from(user)
 		.where(eq(user.id, locals.user.id));
 	return {
@@ -26,6 +36,8 @@ export const load: PageServerLoad = async ({ locals }) => {
 		accentMode: locals.user.accentMode,
 		accentColor: locals.user.accentColor,
 		sortActivitiesAlpha: locals.user.sortActivitiesAlpha,
+		rememberTicketFilters: u?.rememberTicketFilters ?? true,
+		compactTicketActivity: u?.compactTicketActivity ?? true,
 		role: locals.role
 	};
 };
@@ -44,6 +56,20 @@ export const actions: Actions = {
 		const f = await request.formData();
 		await setSortActivitiesAlphaPref(locals.user.id, f.get('value') === 'true');
 		return { sortActivitiesAlphaOk: true };
+	},
+
+	rememberTicketFiltersPref: async ({ request, locals }) => {
+		if (!locals.user) return fail(401);
+		const f = await request.formData();
+		await setRememberTicketFiltersPref(locals.user.id, f.get('value') === 'true');
+		return { rememberTicketFiltersOk: true };
+	},
+
+	compactActivityPref: async ({ request, locals }) => {
+		if (!locals.user) return fail(401);
+		const f = await request.formData();
+		await setCompactTicketActivityPref(locals.user.id, f.get('value') === 'true');
+		return { compactActivityOk: true };
 	},
 
 	changePassword: async ({ request, locals }) => {
