@@ -1661,11 +1661,11 @@
 		border-radius: 8px;
 	}
 	.day-tot.ok {
-		color: var(--accent-ink);
-		background: var(--accent-tint);
+		color: #22c55e;
+		background: color-mix(in srgb, #22c55e 15%, transparent);
 	}
 	:global([data-theme='dark']) .day-tot.ok {
-		color: color-mix(in srgb, var(--accent) 75%, #fff);
+		color: color-mix(in srgb, #22c55e 75%, #fff);
 	}
 	.day-tot.over {
 		color: var(--warn);

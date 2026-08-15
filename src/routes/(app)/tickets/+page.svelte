@@ -477,7 +477,7 @@
 </script>
 
 <div class="topbar">
-	<h1>Tickets &amp; chiffrage<small>{ticketsLoading ? 'Chargement…' : `${total} ticket${total > 1 ? 's' : ''}${data.view === 'table' && rows.length < total ? ` · ${rows.length} chargés` : ''}`} · édition directe</small></h1>
+	<h1>Tickets &amp; chiffrage<small>{ticketsLoading ? 'Chargement…' : `${total} ticket${total > 1 ? 's' : ''}${data.view === 'table' && rows.length < total ? ` · ${rows.length} chargés` : ''}`}</small></h1>
 	<div class="spacer"></div>
 	{#if savedFlash}<span class="saved">Enregistré ✓</span>{/if}
 	<a class="btn btn-ghost" href="/export" data-sveltekit-reload>
@@ -546,8 +546,15 @@
 				<button class:on={data.view === 'kanban'} onclick={() => navigateWith({ view: 'kanban' })}>Kanban</button>
 			</div>
 			{#if data.view === 'table'}
-				<button type="button" class="btn btn-ghost" onclick={toggleCompactGlobal}>
-					{compact ? 'Tout déplier' : 'Tout replier'}
+				<button
+					type="button"
+					class="btn btn-ghost icon-toggle"
+					class:open={!compact}
+					onclick={toggleCompactGlobal}
+					aria-label={compact ? 'Tout déplier' : 'Tout replier'}
+					title={compact ? 'Tout déplier' : 'Tout replier'}
+				>
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 5-5-5-5" /><path d="m13 17 5-5-5-5" /></svg>
 				</button>
 			{/if}
 			{#if data.view !== 'kanban'}
@@ -587,12 +594,15 @@
 			<td class="ttl">
 				<div class="ttl-wrap">
 					<div class="skeleton-bar" style="width:22px;height:22px;border-radius:6px;flex-shrink:0;"></div>
-					<div class="skeleton-bar" style="width:110px;height:16px;border-radius:7px;flex-shrink:0;"></div>
+					<div class="skeleton-bar" style="width:22px;height:22px;border-radius:6px;flex-shrink:0;"></div>
 					<div class="ttl-main">
-						<div class="skeleton-bar" style="width:44px;height:8px;margin:4px 0 6px 7px;border-radius:4px;"></div>
+						<div class="key-row">
+							<div class="skeleton-bar" style="width:56px;height:12px;border-radius:4px;flex-shrink:0;"></div>
+							<div class="skeleton-bar" style="width:212px;height:20px;border-radius:6px;flex-shrink:0;"></div>
+						</div>
 						<!-- largeur en px, pas % : le tableau est en table-layout:auto, un % ne compte pas
 						     dans le calcul de la largeur de colonne et donnait une barre minuscule. -->
-						<div class="cell-input title-input skeleton-bar" style="width:240px;height:16px;"></div>
+						<div class="cell-input title-input skeleton-bar" style="width:240px;height:16px;margin-top:6px;"></div>
 					</div>
 				</div>
 			</td>
@@ -633,16 +643,19 @@
 					<tr class="ticket-row" id="ticket-{r.id}" class:highlighted={r.key === data.highlightKey}>
 						<td class="ttl" class:sub={r.isChild}>
 							<div class="ttl-wrap">
-								{#if r.activityBreakdown.length > 0}
-									<button
-										type="button"
-										class="chevron-btn"
-										class:open={isExpanded(r.id)}
-										onclick={() => toggleTicket(r.id)}
-										aria-label="Détail par activité"
-										aria-expanded={isExpanded(r.id)}
-									>▸</button>
-								{/if}
+								<button
+									type="button"
+									class="chevron-btn"
+									class:open={r.activityBreakdown.length > 0 && isExpanded(r.id)}
+									disabled={r.activityBreakdown.length === 0}
+									onclick={() => toggleTicket(r.id)}
+									aria-label="Détail par activité"
+									aria-expanded={r.activityBreakdown.length > 0 ? isExpanded(r.id) : undefined}
+								>
+									{#if r.activityBreakdown.length > 0}
+										<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6" /></svg>
+									{/if}
+								</button>
 								<button class="expand-btn" onclick={() => (editId = r.id)} aria-label="Voir le détail du ticket">
 								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
 							</button>
@@ -1214,6 +1227,8 @@
 		font-weight: 600;
 		color: var(--text-mute);
 		padding-left: 7px;
+		white-space: nowrap;
+		flex-shrink: 0;
 	}
 	.ttl-wrap {
 		display: flex;
@@ -1266,13 +1281,22 @@
 		justify-content: center;
 		transition: transform 0.15s, color 0.15s, background 0.15s;
 	}
-	.chevron-btn:hover,
+	.chevron-btn:hover:not(:disabled),
 	.chevron-btn:focus-visible {
 		background: var(--surface);
 		border-color: var(--border-strong);
 		color: var(--text);
 	}
+	.chevron-btn:disabled {
+		cursor: default;
+	}
 	.chevron-btn.open {
+		transform: rotate(90deg);
+	}
+	.icon-toggle {
+		padding: 9px 11px;
+	}
+	.icon-toggle.open {
 		transform: rotate(90deg);
 	}
 	.group-chips {
@@ -1441,7 +1465,7 @@
 		font-weight: 700;
 	}
 	.gap-neg {
-		color: var(--accent) !important;
+		color: #22c55e !important;
 		font-weight: 700;
 	}
 	.empty-row {

@@ -1,5 +1,5 @@
 import { and, eq, gte, lte, sql } from 'drizzle-orm';
-import { db, timeEntry, category, activity, user, ticketGroup } from '$lib/server/db';
+import { db, timeEntry, category, activity, user, ticketGroup, ticket } from '$lib/server/db';
 import { listTickets, getRefData } from './tickets';
 import { num, round, totalEstimation, totalRae, avancement } from './calc';
 
@@ -19,6 +19,7 @@ export type Dashboard = {
 	byPerson: { name: string; productive: number; nonProductive: number; total: number }[];
 	byActivity: { label: string; productive: number; nonProductive: number; total: number }[];
 	productiveVsNot: { productive: number; nonProductive: number };
+	bySsp: { personName: string; ssp: string; total: number }[];
 };
 
 /** Avancement agrégé d'un regroupement de tickets (projet ou sprint). */
@@ -47,7 +48,7 @@ export async function getDashboard(
 		? and(gte(timeEntry.day, period.from), lte(timeEntry.day, period.to))
 		: undefined;
 
-	const [personRows, activityRows] = await Promise.all([
+	const [personRows, activityRows, sspRows] = await Promise.all([
 		db
 			.select({
 				name: user.displayName,
@@ -71,7 +72,21 @@ export async function getDashboard(
 			.leftJoin(activity, eq(timeEntry.activityId, activity.id))
 			.leftJoin(category, eq(timeEntry.categoryId, category.id))
 			.where(and(eq(timeEntry.workspaceId, workspaceId), inPeriod))
-			.groupBy(sql`coalesce(${activity.label}, 'Non précisé')`, timeEntry.targetType, category.kind)
+			.groupBy(sql`coalesce(${activity.label}, 'Non précisé')`, timeEntry.targetType, category.kind),
+		// Détail par SSP : le code SSP vit sur le ticket, jamais sur une catégorie/objectif — l'inner
+		// join exclut donc naturellement tout ce qui n'est pas une imputation TICKET, sans avoir à
+		// filtrer sur targetType à la main.
+		db
+			.select({
+				personName: user.displayName,
+				ssp: sql<string>`coalesce(${ticket.sspCode}, 'Sans code SSP')`,
+				total: sql<string>`sum(${timeEntry.amount})`
+			})
+			.from(timeEntry)
+			.innerJoin(user, eq(timeEntry.userId, user.id))
+			.innerJoin(ticket, eq(timeEntry.ticketId, ticket.id))
+			.where(and(eq(timeEntry.workspaceId, workspaceId), inPeriod))
+			.groupBy(user.displayName, sql`coalesce(${ticket.sspCode}, 'Sans code SSP')`)
 	]);
 
 	// Par personne (productif vs non productif) + consommé ticket sur la période
@@ -115,6 +130,11 @@ export async function getDashboard(
 
 	const productiveVsNot = { productive: prodTotal, nonProductive: nonProdTotal };
 
+	// Le GROUP BY (personName, ssp) correspond déjà exactement à la forme de sortie voulue —
+	// contrairement à byPerson/byActivity ci-dessus, pas de distinction productif/non productif à
+	// recombiner ici, juste un round par ligne.
+	const bySsp = sspRows.map((r) => ({ personName: r.personName, ssp: r.ssp, total: round(num(r.total)) }));
+
 	// Mode mois : on ne renvoie que les stats mensuelles ; chiffrage masqué (vide).
 	if (period) {
 		return {
@@ -126,7 +146,8 @@ export async function getDashboard(
 			byGroup: [],
 			byPerson,
 			byActivity,
-			productiveVsNot
+			productiveVsNot,
+			bySsp
 		};
 	}
 
@@ -225,6 +246,7 @@ export async function getDashboard(
 		byGroup,
 		byPerson,
 		byActivity,
-		productiveVsNot
+		productiveVsNot,
+		bySsp
 	};
 }
