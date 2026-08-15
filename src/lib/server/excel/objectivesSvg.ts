@@ -1,8 +1,14 @@
+import { eq } from 'drizzle-orm';
+import { db, workspace } from '$lib/server/db';
 import { getRefData } from '$lib/server/services/tickets';
 import { listObjectivesForWorkspace, listVacationsForWeek, type WeeklyObjectiveWithUser } from '$lib/server/services/weeklyObjectives';
 import { mondayOf, parseISODate, isoWeek, formatRange } from '$lib/utils/date';
 
-const CARD_W = 280;
+// Cartes larges plutôt qu'étroites : en 16/9 forcé, une grille à beaucoup de colonnes étroites
+// laisse un cadre proche du contenu mais force les tâches à retourner à la ligne ; des cartes plus
+// larges (2 colonnes max, cf. plus bas) remplissent mieux la largeur dispo et les tâches courantes
+// tiennent sur une seule ligne.
+const CARD_W = 420;
 const CARD_GAP = 16;
 const HEADER_H = 26;
 const LINE_H = 18;
@@ -16,11 +22,57 @@ const HEADER_FILL = '#EFEFEF';
 const BORDER = '#D9D9D9';
 const TEXT_DARK = '#1F2937';
 const TEXT_MUTE = '#64748B';
-const ACCENT = '#2563EB';
-const VAC_FILL = '#FEF3C7';
-const VAC_TEXT = '#92400E';
+
+// Icônes de type (ticket/tâche) en trait — mêmes tracés que celles de la page, dessinées dans un
+// <g> mis à l'échelle plutôt qu'un vrai composant SVG (on est côté serveur, texte brut).
+function iconGroup(paths: string, x: number, y: number, size: number, color: string): string {
+	return `<g transform="translate(${x},${y}) scale(${size / 24})" fill="none" stroke="${color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${paths}</g>`;
+}
+const TICKET_PATHS =
+	'<path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4Z" /><path d="M13 6v2M13 11v2M13 16v2" />';
+const TASK_PATHS = '<rect x="5" y="4" width="14" height="16" rx="2" /><path d="M9 9h6M9 13h6M9 17h3" />';
+function kindIcon(kind: 'TICKET' | 'CUSTOM', x: number, y: number, size: number, color: string): string {
+	return iconGroup(kind === 'TICKET' ? TICKET_PATHS : TASK_PATHS, x, y, size, color);
+}
+
+// Bande "en vacances" en bas de l'image : mêmes personnes qu'avant en carte pleine (qui n'affichait
+// jamais rien d'autre qu'un badge) compactées en petites puces, pour laisser la place aux cartes qui
+// ont du contenu réel (cf. même changement sur la page).
+const VAC_CHIP_H = 22;
+const VAC_CHIP_GAP_X = 6;
+const VAC_CHIP_GAP_Y = 6;
+const VAC_ICON_SIZE = 12;
+const VAC_CHAR_W = 6;
+const VAC_CHIP_FILL = '#F3F1EA';
+const VAC_CHIP_TEXT = '#6B7280';
+
+function vacChipWidth(name: string): number {
+	return 10 + VAC_ICON_SIZE + 4 + Math.ceil(name.length * VAC_CHAR_W) + 10;
+}
+
+// Petit palmier en trait, même dessin que l'icône vacances de la page (pas un palmier "plein" —
+// juste tronc + 3 palmes) pour rester cohérent entre l'appli et l'export.
+const PALM_PATHS =
+	'<path d="M12 21v-9" /><path d="M12 12c-1-4-4-6-8-6 1 4 4 6 8 6Z" /><path d="M12 12c1-4 4-6 8-6-1 4-4 6-8 6Z" /><path d="M12 12c-3-2-5-5-4-9 3 1 5 4 4 9Z" />';
+function palmIcon(x: number, y: number): string {
+	return iconGroup(PALM_PATHS, x, y, VAC_ICON_SIZE, VAC_CHIP_TEXT);
+}
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+// Équivalent de color-mix(in srgb, accent X%, white/black) côté serveur (pas de CSS ici) — reproduit
+// --accent-tint / --accent-ink de l'appli pour teinter la pilule d'activité avec l'accent de l'espace.
+function hexToRgb(hex: string): [number, number, number] {
+	const h = hex.replace('#', '');
+	const n = parseInt(h.length === 3 ? h.replace(/./g, (c) => c + c) : h, 16);
+	return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+function mixHex(hex: string, withHex: string, ratio: number): string {
+	const [r1, g1, b1] = hexToRgb(hex);
+	const [r2, g2, b2] = hexToRgb(withHex);
+	const mix = (a: number, b: number) => Math.round(a * ratio + b * (1 - ratio));
+	return `#${[mix(r1, r2), mix(g1, g2), mix(b1, b2)].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+}
 
 // ponytail: heuristique de largeur de caractère (pas de mesure de texte réelle côté serveur) — 6.6px
 // est une estimation prudente pour de l'Arial 12px (les libellés longs débordaient avec 6px).
@@ -60,35 +112,57 @@ function objectiveLine(o: WeeklyObjectiveWithUser): string {
 	return o.activityLabel ? `${base} [${o.activityLabel}]` : base;
 }
 
+// Découpe une ligne en tspans : le "[Activité]" final (s'il y en a un) ressort teinté avec l'accent
+// de l'espace plutôt que de se fondre dans le reste du texte gris.
+function lineTspans(line: string, textColor: string, accentColor: string): string {
+	const m = line.match(/^(.*?)(\s?\[[^[\]]*\])?$/);
+	const bracket = m?.[2] ?? '';
+	const before = bracket ? line.slice(0, line.length - bracket.length) : line;
+	const beforeSpan = before ? `<tspan fill="${textColor}">${esc(before)}</tspan>` : '';
+	const bracketSpan = bracket ? `<tspan fill="${accentColor}">${esc(bracket)}</tspan>` : '';
+	return beforeSpan + bracketSpan;
+}
+
 export type ObjectivesSvg = { svg: string; width: number; height: number };
 
 /** Image (SVG) de la vue globale des objectifs de la semaine — une carte par membre. */
 export async function buildObjectivesSvg(workspaceId: string, weekMondayISO: string): Promise<ObjectivesSvg> {
 	const monday = mondayOf(parseISODate(weekMondayISO));
-	const [ref, objectives, vacations] = await Promise.all([
+	const [ref, objectives, vacations, wsRow] = await Promise.all([
 		getRefData(workspaceId),
 		listObjectivesForWorkspace(workspaceId, weekMondayISO),
-		listVacationsForWeek(workspaceId, weekMondayISO)
+		listVacationsForWeek(workspaceId, weekMondayISO),
+		db.select({ accentColor: workspace.accentColor }).from(workspace).where(eq(workspace.id, workspaceId)).limit(1)
 	]);
+	const accent = wsRow[0]?.accentColor ?? '#16A34A';
+	const activityColor = mixHex(accent, '#000000', 0.78);
 	const members = ref.members;
 	const innerW = CARD_W - PAD * 2;
 
-	// blocks : un tableau de lignes par objectif (jusqu'à 2 lignes si le libellé est long) — lines
-	// reste la version "1 ligne par entrée" pour les cas simples (vacances / aucun objectif).
-	type Card = { name: string; lines: string[]; blocks: string[][]; onVac: boolean; empty: boolean; height: number };
-	const cards: Card[] = members.map((m) => {
-		const onVac = vacations.has(m.id);
-		const mine = objectives.filter((o) => o.userId === m.id);
-		const lines = onVac ? ['🏖 En vacances'] : mine.length === 0 ? ['Aucun objectif.'] : [];
-		const blocks = onVac || mine.length === 0 ? [] : mine.map((o) => wrapLines(objectiveLine(o), innerW));
-		const totalLines = blocks.length > 0 ? blocks.reduce((n, b) => n + b.length, 0) : lines.length;
-		const height = HEADER_H + PAD * 2 + Math.max(1, totalLines) * LINE_H;
-		return { name: m.displayName, lines, blocks, onVac, empty: !onVac && mine.length === 0, height };
-	});
+	// blocks : un objectif par entrée, avec ses lignes (jusqu'à 2 si le libellé est long) — lines
+	// reste la version "1 ligne" pour le cas simple "aucun objectif".
+	type ObjBlock = { kind: 'TICKET' | 'CUSTOM'; ticketKey: string | null; lines: string[] };
+	type Card = { name: string; lines: string[]; blocks: ObjBlock[]; empty: boolean; height: number; count: number };
+	const TEXT_INDENT = 17; // largeur icône + espace — même repère pour tout le texte, y compris les retours à la ligne
+	function buildBlock(o: WeeklyObjectiveWithUser): ObjBlock {
+		return { kind: o.kind, ticketKey: o.kind === 'TICKET' ? o.ticketKey : null, lines: wrapLines(objectiveLine(o), innerW) };
+	}
+	const activeMembers = members.filter((m) => !vacations.has(m.id));
+	const vacationMembers = members.filter((m) => vacations.has(m.id));
+	// Celles avec le plus d'objectifs en premier, celles sans objectif en dernier.
+	const cards: Card[] = activeMembers
+		.map((m) => {
+			const mine = objectives.filter((o) => o.userId === m.id);
+			const lines = mine.length === 0 ? ['Aucun objectif.'] : [];
+			const blocks: ObjBlock[] = mine.length === 0 ? [] : mine.map(buildBlock);
+			const totalLines = blocks.length > 0 ? blocks.reduce((n, b) => n + b.lines.length, 0) : lines.length;
+			const height = HEADER_H + PAD * 2 + Math.max(1, totalLines) * LINE_H;
+			return { name: m.displayName, lines, blocks, empty: mine.length === 0, height, count: mine.length };
+		})
+		.sort((a, b) => b.count - a.count);
 
-	// Choix "intelligent" du nombre de colonnes : celui qui rapproche le plus le contenu d'un cadre
-	// 16/9 (au lieu d'une grille à colonnes fixes qui laisse parfois beaucoup de vide, ou déborde en
-	// hauteur) — on essaie chaque découpage possible et on garde celui qui colle le mieux au ratio.
+	// Choix du nombre de colonnes (2 max — des cartes larges plutôt qu'une grille à colonnes
+	// étroites) : celui qui rapproche le plus le contenu d'un cadre 16/9.
 	function layoutFor(cols: number) {
 		const rows = Math.ceil(cards.length / cols) || 1;
 		const rowHeights: number[] = [];
@@ -101,9 +175,10 @@ export async function buildObjectivesSvg(workspaceId: string, weekMondayISO: str
 		return { cols, rows, rowHeights, width, height };
 	}
 	const TARGET_RATIO = 16 / 9;
+	const MAX_COLS = 2;
 	let layout = layoutFor(1);
 	let bestScore = Infinity;
-	for (let c = 1; c <= cards.length; c++) {
+	for (let c = 1; c <= Math.min(MAX_COLS, cards.length); c++) {
 		const l = layoutFor(c);
 		const score = Math.abs(l.width / l.height - TARGET_RATIO);
 		if (score < bestScore) {
@@ -111,7 +186,28 @@ export async function buildObjectivesSvg(workspaceId: string, weekMondayISO: str
 			layout = l;
 		}
 	}
-	const { cols, rows, rowHeights, width: contentWidth, height: contentHeight } = layout;
+	const { cols, rows, rowHeights, width: contentWidth } = layout;
+
+	// Puces "en vacances" repliées sur plusieurs lignes si besoin, dans la largeur du contenu.
+	const vacRows: { name: string; w: number }[][] = [];
+	{
+		let row: { name: string; w: number }[] = [];
+		let rowW = 0;
+		for (const m of vacationMembers) {
+			const w = vacChipWidth(m.displayName);
+			const next = rowW + (row.length ? VAC_CHIP_GAP_X : 0) + w;
+			if (row.length && next > contentWidth) {
+				vacRows.push(row);
+				row = [];
+				rowW = 0;
+			}
+			row.push({ name: m.displayName, w });
+			rowW += (row.length > 1 ? VAC_CHIP_GAP_X : 0) + w;
+		}
+		if (row.length) vacRows.push(row);
+	}
+	const vacStripH = vacRows.length > 0 ? vacRows.length * VAC_CHIP_H + (vacRows.length - 1) * VAC_CHIP_GAP_Y : 0;
+	const contentHeight = layout.height + (vacStripH > 0 ? CARD_GAP + vacStripH : 0);
 
 	// Cale le tout (contenu + marges) dans un cadre 16/9 exact — jamais rogné, juste complété par du
 	// blanc réparti autour, pratique pour coller directement dans une slide sans recadrer.
@@ -144,31 +240,50 @@ export async function buildObjectivesSvg(workspaceId: string, weekMondayISO: str
 			parts.push(
 				`<text x="${x + PAD}" y="${y + HEADER_H / 2 + 4}" font-size="12.5" font-weight="700" fill="${TEXT_DARK}" ${FONT}>${esc(truncate(c.name, innerW))}</text>`
 			);
-			if (c.onVac) {
-				const bw = 90;
-				parts.push(`<rect x="${x + PAD}" y="${y + HEADER_H + PAD}" width="${bw}" height="18" rx="9" fill="${VAC_FILL}"/>`);
-				parts.push(
-					`<text x="${x + PAD + bw / 2}" y="${y + HEADER_H + PAD + 13}" font-size="11" font-weight="600" text-anchor="middle" fill="${VAC_TEXT}" ${FONT}>🏖 En vacances</text>`
-				);
-			} else if (c.empty) {
+			if (c.empty) {
 				parts.push(
 					`<text x="${x + PAD}" y="${y + HEADER_H + PAD + 11}" font-size="12" fill="${TEXT_MUTE}" ${FONT}>${esc(c.lines[0])}</text>`
 				);
 			} else {
 				let li = 0;
 				c.blocks.forEach((block) => {
-					block.forEach((line, sub) => {
+					block.lines.forEach((line, sub) => {
 						const ly = y + HEADER_H + PAD + li * LINE_H;
-						// Puce uniquement sur la 1ère ligne d'un objectif ; les lignes de retour à la
-						// ligne gardent le même retrait pour rester alignées sous le texte, pas la puce.
-						if (sub === 0) parts.push(`<circle cx="${x + PAD + 3}" cy="${ly + 7}" r="3" fill="${ACCENT}"/>`);
-						parts.push(`<text x="${x + PAD + 12}" y="${ly + 11}" font-size="12" fill="${TEXT_DARK}" ${FONT}>${esc(line)}</text>`);
+						const textX = x + PAD + TEXT_INDENT;
+						// Icône (ticket/tâche) uniquement sur la 1ère ligne d'un objectif ; les lignes de
+						// retour à la ligne gardent le même retrait pour rester alignées sous le texte.
+						if (sub === 0) parts.push(kindIcon(block.kind, x + PAD, ly + 2, 13, accent));
+						if (sub === 0 && block.ticketKey && line.startsWith(block.ticketKey)) {
+							const rest = line.slice(block.ticketKey.length);
+							parts.push(
+								`<text x="${textX}" y="${ly + 11}" font-size="12" ${FONT}><tspan font-weight="700" fill="${TEXT_DARK}">${esc(block.ticketKey)}</tspan>${lineTspans(rest, TEXT_DARK, activityColor)}</text>`
+							);
+						} else {
+							parts.push(`<text x="${textX}" y="${ly + 11}" font-size="12" ${FONT}>${lineTspans(line, TEXT_DARK, activityColor)}</text>`);
+						}
 						li++;
 					});
 				});
 			}
 		});
-		y += rowH + CARD_GAP;
+		y += rowH;
+		if (r < rows - 1) y += CARD_GAP;
+	}
+
+	if (vacRows.length > 0) {
+		y += CARD_GAP;
+		vacRows.forEach((row) => {
+			let x = originX;
+			row.forEach((chip) => {
+				parts.push(`<rect x="${x}" y="${y}" width="${chip.w}" height="${VAC_CHIP_H}" rx="${VAC_CHIP_H / 2}" fill="${VAC_CHIP_FILL}"/>`);
+				parts.push(palmIcon(x + 10, y + (VAC_CHIP_H - VAC_ICON_SIZE) / 2));
+				parts.push(
+					`<text x="${x + 10 + VAC_ICON_SIZE + 4}" y="${y + VAC_CHIP_H / 2 + 4}" font-size="11" font-weight="600" fill="${VAC_CHIP_TEXT}" ${FONT}>${esc(chip.name)}</text>`
+				);
+				x += chip.w + VAC_CHIP_GAP_X;
+			});
+			y += VAC_CHIP_H + VAC_CHIP_GAP_Y;
+		});
 	}
 
 	parts.push('</svg>');

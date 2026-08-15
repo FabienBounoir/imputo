@@ -23,6 +23,17 @@
 	}
 	const isNavigating = $derived(!!navigating.to);
 
+	// Les personnes en vacances n'ont rien à montrer (pas d'objectifs) — leur donner une carte
+	// pleine taille dans la grille gâche de la place ; elles passent dans une bande compacte en bas.
+	// Celles avec le plus d'objectifs en premier, celles sans objectif en dernier.
+	const activeMembers = $derived(
+		data.members
+			.filter((m) => !data.vacations.includes(m.id))
+			.map((m) => ({ ...m, objectives: data.globalObjectives.filter((o) => o.userId === m.id) }))
+			.sort((a, b) => b.objectives.length - a.objectives.length)
+	);
+	const vacationMembers = $derived(data.members.filter((m) => data.vacations.includes(m.id)));
+
 	async function downloadObjectivesPng() {
 		imgBusy = true;
 		try {
@@ -35,6 +46,29 @@
 		}
 	}
 </script>
+
+{#snippet ticketIcon()}
+	<svg class="ic-inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+		<path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4Z" />
+		<path d="M13 6v2M13 11v2M13 16v2" />
+	</svg>
+{/snippet}
+
+{#snippet taskIcon()}
+	<svg class="ic-inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+		<rect x="5" y="4" width="14" height="16" rx="2" />
+		<path d="M9 9h6M9 13h6M9 17h3" />
+	</svg>
+{/snippet}
+
+{#snippet vacationIcon()}
+	<svg class="ic-inline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+		<path d="M12 21v-9" />
+		<path d="M12 12c-1-4-4-6-8-6 1 4 4 6 8 6Z" />
+		<path d="M12 12c1-4 4-6 8-6-1 4-4 6-8 6Z" />
+		<path d="M12 12c-3-2-5-5-4-9 3 1 5 4 4 9Z" />
+	</svg>
+{/snippet}
 
 <div class="topbar">
 	<h1>Objectifs de la semaine<small>Semaine {data.weekNumber} · {data.weekLabel}</small></h1>
@@ -57,7 +91,7 @@
 	{:else}
 		<section class="card block">
 			<h3>Attribuer pour la semaine</h3>
-			<p class="hint">Choisis une personne, puis cherche un ticket à assigner — si la recherche ne trouve rien, tu peux créer une tâche personnalisée avec le texte tapé. Ces éléments seront épinglés en tête de sa page « Mon imputation ».</p>
+			<p class="hint">Choisis une personne, puis cherche un ticket à assigner — si la recherche ne trouve rien, tu peux créer une tâche personnalisée avec le texte tapé.</p>
 			{#if form?.error}<div class="flash error">{form.error}</div>{/if}
 			{#if form?.objOk}<div class="flash ok">Mis à jour ✓</div>{/if}
 
@@ -72,7 +106,8 @@
 					<input type="hidden" name="weekMondayISO" value={data.weekMondayISO} />
 					<input type="hidden" name="onVacation" value={String(!data.selectedOnVacation)} />
 					<button class="btn {data.selectedOnVacation ? 'btn-primary' : 'btn-ghost'}" type="submit">
-						{data.selectedOnVacation ? '🏖 En vacances — retirer' : '🏖 Marquer en vacances'}
+						{@render vacationIcon()}
+						{data.selectedOnVacation ? 'En vacances — retirer' : 'Marquer en vacances'}
 					</button>
 				</form>
 			</div>
@@ -95,9 +130,9 @@
 						</span>
 						<span class="obj-label">
 							{#if o.kind === 'TICKET'}
-								<span class="pill-ico">🎫</span><b>{o.ticketKey}</b> {o.ticketTitle}
+								<span class="pill-ico">{@render ticketIcon()}</span><b>{o.ticketKey}</b> {o.ticketTitle}
 							{:else}
-								<span class="pill-ico">📝</span>{o.label}
+								<span class="pill-ico">{@render taskIcon()}</span>{o.label}
 							{/if}
 							{#if o.activityLabel}<span class="tag-activity">{o.activityLabel}</span>{/if}
 						</span>
@@ -111,7 +146,7 @@
 			</div>
 
 			{#if data.selectedOnVacation}
-				<p class="hint vac-hint">🏖 Cette personne est marquée en vacances cette semaine — aucun objectif ne peut lui être attribué tant que ce n'est pas retiré ci-dessus.</p>
+				<p class="hint vac-hint">{@render vacationIcon()} Cette personne est marquée en vacances cette semaine — aucun objectif ne peut lui être attribué tant que ce n'est pas retiré ci-dessus.</p>
 			{:else}
 				<div class="add-objective">
 					<form
@@ -155,12 +190,10 @@
 			</button>
 		</div>
 		<div class="ref-grid">
-			{#each data.members as m (m.id)}
-				{@const mine = data.globalObjectives.filter((o) => o.userId === m.id)}
-				{@const onVac = data.vacations.includes(m.id)}
+			{#each activeMembers as m (m.id)}
+				{@const mine = m.objectives}
 				<section
 					class="card block person-card"
-					class:on-vac={onVac}
 					class:selected={m.id === data.selectedUserId}
 					role="button"
 					tabindex="0"
@@ -175,17 +208,17 @@
 				>
 					<div class="person-card-head">
 						<h3>{m.displayName}</h3>
-						{#if !onVac && mine.length > 0}<span class="obj-count">{mine.length}</span>{/if}
+						{#if mine.length > 0}<span class="obj-count">{mine.length}</span>{/if}
 					</div>
-					{#if onVac}
-						<span class="tag-vac">🏖 En vacances</span>
-					{:else if mine.length === 0}
+					{#if mine.length === 0}
 						<p class="hint" style="margin:0;">Aucun objectif.</p>
 					{:else}
 						<ul class="person-tasks">
 							{#each mine as o (o.id)}
 								<li>
-									<span class="task-text">{o.kind === 'TICKET' ? `🎫 ${o.ticketKey} — ${o.ticketTitle}` : `📝 ${o.label}`}</span>
+									<span class="task-text">
+										{#if o.kind === 'TICKET'}<span class="task-ico">{@render ticketIcon()}</span> <b>{o.ticketKey}</b> — {o.ticketTitle}{:else}<span class="task-ico">{@render taskIcon()}</span> {o.label}{/if}
+									</span>
 									{#if o.activityLabel}<span class="tag-activity">{o.activityLabel}</span>{/if}
 								</li>
 							{/each}
@@ -194,6 +227,16 @@
 				</section>
 			{/each}
 		</div>
+
+		{#if vacationMembers.length > 0}
+			<div class="vac-strip">
+				{#each vacationMembers as m (m.id)}
+					<button type="button" class="vac-chip" class:selected={m.id === data.selectedUserId} onclick={() => selectUser(m.id)}>
+						{@render vacationIcon()} {m.displayName}
+					</button>
+				{/each}
+			</div>
+		{/if}
 	</section>
 </div>
 
@@ -328,11 +371,19 @@
 		min-width: 0;
 		font-size: 13.5px;
 		display: flex;
-		align-items: baseline;
+		align-items: center;
 		gap: 6px;
 	}
 	.pill-ico {
+		display: inline-flex;
 		flex-shrink: 0;
+		color: var(--text-mute);
+	}
+	.ic-inline {
+		width: 1em;
+		height: 1em;
+		flex-shrink: 0;
+		vertical-align: -0.15em;
 	}
 	.ref-btn {
 		font-size: 12px;
@@ -373,7 +424,7 @@
 	}
 	.ref-grid {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+		grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
 		gap: 18px;
 	}
 	.ref-grid .block {
@@ -422,16 +473,39 @@
 		border-radius: 20px;
 		flex-shrink: 0;
 	}
-	.person-card.on-vac {
-		background: var(--accent-tint-2);
-		border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+	.vac-strip {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+		margin-top: 14px;
+	}
+	.vac-chip {
+		font-size: 11.5px;
+		font-weight: 600;
+		color: var(--text-mute);
+		background: var(--surface-sunk);
+		border: 1px solid transparent;
+		padding: 4px 10px;
+		border-radius: 20px;
+		transition: border-color 0.15s, color 0.15s;
+	}
+	.vac-chip:hover {
+		color: var(--text-soft);
+		border-color: var(--border-strong);
+	}
+	.vac-chip.selected {
+		color: var(--accent-ink);
+		background: var(--accent-tint);
+	}
+	:global([data-theme='dark']) .vac-chip.selected {
+		color: color-mix(in srgb, var(--accent) 78%, #fff);
 	}
 	.person-tasks {
 		display: flex;
 		flex-direction: column;
 		gap: 7px;
 		font-size: 12.5px;
-		padding-left: 18px;
+		list-style: none;
 		color: var(--text-soft);
 	}
 	.person-tasks li {
@@ -440,14 +514,14 @@
 	.task-text {
 		word-break: break-word;
 	}
-	.tag-vac {
-		display: inline-block;
-		font-size: 11.5px;
-		font-weight: 600;
-		color: var(--accent-ink);
-		background: var(--accent-tint);
-		padding: 3px 9px;
-		border-radius: 20px;
+	.task-ico {
+		display: inline-flex;
+		color: var(--accent);
+		vertical-align: -0.2em;
+	}
+	.task-ico .ic-inline {
+		width: 1.3em;
+		height: 1.3em;
 	}
 	.tag-activity {
 		display: inline-block;
