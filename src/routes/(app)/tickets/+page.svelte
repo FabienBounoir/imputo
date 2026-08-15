@@ -251,6 +251,11 @@
 	let hasMore = $state(false);
 	let loadingMore = $state(false);
 	let sentinel = $state<HTMLElement | null>(null);
+	// Incrémenté à chaque reset serveur (filtre/recherche/vue) : un loadMore() encore en vol depuis
+	// l'ancien filtre compare sa génération avant d'écrire, sinon il rattache une page de l'ancien
+	// jeu de résultats aux rows déjà réinitialisées et corrompt hasMore (scroll infini qui se bloque
+	// ou qui s'arrête trop tôt en fin de liste).
+	let loadGeneration = 0;
 
 	// (Re)synchronise quand les données serveur changent (filtre, vue, recherche, arrivée sur la page)
 	// — `data.ticketsPage` est une nouvelle promesse à chaque nouveau `load`, ce qui redéclenche cet
@@ -258,6 +263,7 @@
 	// données déjà à jour.
 	$effect(() => {
 		ticketsLoading = true;
+		loadGeneration++;
 		let cancelled = false;
 		data.ticketsPage.then((r) => {
 			if (cancelled) return;
@@ -276,6 +282,7 @@
 	async function loadMore() {
 		if (loadingMore || !hasMore) return;
 		loadingMore = true;
+		const generation = loadGeneration;
 		try {
 			const p = new URLSearchParams();
 			if (data.filters.query) p.set('q', data.filters.query);
@@ -285,8 +292,9 @@
 			if (data.filters.versionId) p.set('version', data.filters.versionId);
 			p.set('page', String(loadedPage + 1));
 			const res = await fetch(`/api/tickets?${p}`);
-			if (!res.ok) return;
+			if (!res.ok || generation !== loadGeneration) return;
 			const d = await res.json();
+			if (generation !== loadGeneration) return;
 			rows = [...rows, ...d.tickets.map(toRow)];
 			loadedPage = d.page;
 			hasMore = d.page < d.pageCount;

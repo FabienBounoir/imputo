@@ -857,41 +857,41 @@
 					</p>
 				</div>
 
-				{#if data.jira.updatedSince}
-					{#if form?.jiraResetSinceOk}<div class="flash ok">Réinitialisé ✓</div>{/if}
+				{#if form?.jiraResetSinceOk}<div class="flash ok">Réinitialisé ✓</div>{/if}
+				{#if form?.jiraSyncOk}<div class="flash ok">Sync manuel terminé ✓ ({form.jiraTicketsUpserted} ticket{form.jiraTicketsUpserted > 1 ? 's' : ''})</div>{/if}
+				<div class="jira-force-actions">
+					{#if data.jira.updatedSince}
+						<form
+							method="POST"
+							action="?/jiraResetUpdatedSince"
+							use:enhance={async ({ cancel }) => {
+								const ok = await confirmDialog({
+									message: 'Le prochain run Jira re-téléchargera tous les tickets du filtre JQL. Continuer ?',
+									confirmLabel: 'Réinitialiser'
+								});
+								if (!ok) cancel();
+							}}
+						>
+							<button type="submit" class="btn btn-ghost">Réinitialiser le filtre</button>
+						</form>
+					{/if}
+
 					<form
 						method="POST"
-						action="?/jiraResetUpdatedSince"
-						use:enhance={async ({ cancel }) => {
-							const ok = await confirmDialog({
-								message: 'Le prochain run Jira re-téléchargera tous les tickets du filtre JQL. Continuer ?',
-								confirmLabel: 'Réinitialiser'
-							});
-							if (!ok) cancel();
+						action="?/jiraSyncNow"
+						use:enhance={() => {
+							jiraSyncing = true;
+							return async ({ update }) => {
+								await update();
+								jiraSyncing = false;
+							};
 						}}
-						style="margin-top:6px;"
 					>
-						<button type="submit" class="btn btn-ghost">Réinitialiser — resynchronisation complète au prochain run</button>
+						<button class="btn btn-ghost" type="submit" disabled={jiraSyncing}>
+							{jiraSyncing ? 'Synchronisation…' : 'Forcer le sync maintenant'}
+						</button>
 					</form>
-				{/if}
-
-				{#if form?.jiraSyncOk}<div class="flash ok">Sync manuel terminé ✓ ({form.jiraTicketsUpserted} ticket{form.jiraTicketsUpserted > 1 ? 's' : ''})</div>{/if}
-				<form
-					method="POST"
-					action="?/jiraSyncNow"
-					use:enhance={() => {
-						jiraSyncing = true;
-						return async ({ update }) => {
-							await update();
-							jiraSyncing = false;
-						};
-					}}
-					style="margin-top:10px;"
-				>
-					<button class="btn btn-ghost" type="submit" disabled={jiraSyncing}>
-						{jiraSyncing ? 'Synchronisation…' : 'Forcer le sync maintenant'}
-					</button>
-				</form>
+				</div>
 			</div>
 
 			<div class="jira-history">
@@ -923,7 +923,7 @@
 										<div class="jira-run-actions">
 											<a class="btn btn-ghost" href="/tickets?jiraRun={run.id}">Voir les tickets</a>
 											{#if run.undoneAt}
-												<span class="hint">Lot annulé le {formatDateTime(new Date(run.undoneAt))}</span>
+												<span class="hint" style="margin:0;">Lot annulé le {formatDateTime(new Date(run.undoneAt))}</span>
 											{:else}
 												<form
 													method="POST"
@@ -1673,6 +1673,13 @@
 		align-items: center;
 		gap: 10px;
 		flex-wrap: wrap;
+	}
+	.jira-force-actions {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		flex-wrap: wrap;
+		margin-top: 10px;
 	}
 	.jira-run-row .btn {
 		padding: 5px 10px;

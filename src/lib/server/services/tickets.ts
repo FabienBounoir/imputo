@@ -558,7 +558,16 @@ export async function listTicketsPage(
 	]);
 
 	const rows = await enrichTickets(workspaceId, testPhase, isAdmin, tickets, includeBreakdown);
-	return { rows: rows.map((r, i) => ({ ...r, isChild: !!tickets[i].parentId })), total: count };
+	// isChild ne doit indenter que si le parent est visible plus haut sur cette même page :
+	// une famille coupée par la pagination affiche sinon une sous-tâche indentée sans son
+	// parent à l'écran, ce qui ne veut rien dire visuellement.
+	const seenIds = new Set<string>();
+	const rowsWithIsChild = tickets.map((t, i) => {
+		const isChild = !!t.parentId && seenIds.has(t.parentId);
+		seenIds.add(t.id);
+		return { ...rows[i], isChild };
+	});
+	return { rows: rowsWithIsChild, total: count };
 }
 
 export type RefData = {
