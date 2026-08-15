@@ -6,6 +6,7 @@
 	import { TICKET_FIELD_LABELS } from '$lib/changeLogLabels';
 	import { confirmDialog } from '$lib/confirm.svelte';
 	import ModalErrorToast from '$lib/components/ModalErrorToast.svelte';
+	import { slide } from 'svelte/transition';
 	let { data, form } = $props();
 
 	let showCreate = $state(false);
@@ -61,16 +62,69 @@
 		const p = new URLSearchParams();
 		for (const [k, v] of Object.entries(merged)) if (v) p.set(k, v);
 		goto(`?${p.toString()}`, { keepFocus: true, noScroll: true });
+		// Mémorisation (préférence de compte, § réglages) : même forme que ci-dessus, `page` exclue
+		// (jamais "remembered") — fire-and-forget comme ?/groupReorder plus haut dans ce fichier.
+		const body = new FormData();
+		for (const k of ['q', 'state', 'project', 'sprint', 'version', 'view'] as const) {
+			if (merged[k]) body.set(k, merged[k]);
+		}
+		fetch('?/rememberFilters', { method: 'POST', body });
 	}
-	// exactKey : arrivée via un lien direct depuis un dashboard sprint/version (?ticket=…) — sans
-	// ça le bouton Réinitialiser reste invisible et on ne peut plus revenir à la liste complète.
-	const hasFilters = $derived(!!(data.filters.query || data.filters.stateId || data.filters.projectId || data.filters.sprintId || data.filters.versionId || data.filters.exactKey));
+	// exactKey/syncRunId : arrivée via un lien direct (dashboard sprint/version ?ticket=…, ou
+	// historique de sync Jira ?jiraRun=…) — sans ça le bouton Réinitialiser reste invisible et on ne
+	// peut plus revenir à la liste complète.
+	const hasFilters = $derived(!!(data.filters.query || data.filters.stateId || data.filters.projectId || data.filters.sprintId || data.filters.versionId || data.filters.exactKey || data.filters.syncRunId));
 	// Filtres/vue/pagination naviguent tous via goto() (rechargement serveur) : un fieldset désactive
 	// la barre d'un coup pendant le trajet, pour qu'on ne confonde jamais l'ancienne liste avec la nouvelle.
 	const isNavigating = $derived(!!navigating.to);
 	function resetFilters() {
 		navigateWith({ q: '', state: '', project: '', sprint: '', version: '' });
 	}
+
+	// Détail par activité (vue tableau) : `compact` est le défaut de compte (persisté, cf.
+	// Réglages) ; `expandedOverrides` liste les tickets qui dérogent à ce défaut pour la session en
+	// cours seulement — mémoriser individuellement quels tickets étaient ouverts n'a de sens que
+	// pendant qu'on regarde le tableau, pas d'une visite à l'autre.
+	let compact = $state(data.compactTicketActivity);
+	let expandedOverrides = $state<Set<string>>(new Set());
+	function isExpanded(ticketId: string): boolean {
+		return expandedOverrides.has(ticketId) ? compact : !compact;
+	}
+	function toggleTicket(ticketId: string) {
+		if (expandedOverrides.has(ticketId)) expandedOverrides.delete(ticketId);
+		else expandedOverrides.add(ticketId);
+		expandedOverrides = new Set(expandedOverrides); // réassignation : mutation seule ne redéclenche pas $state
+	}
+	function toggleCompactGlobal() {
+		compact = !compact;
+		expandedOverrides = new Set(); // un "tout déplier/replier" écrase les dérogations en cours
+		const body = new FormData();
+		body.set('value', String(compact));
+		fetch('?/compactActivityPref', { method: 'POST', body });
+	}
+
+	// Tableau responsive : sous cette largeur, les colonnes les moins essentielles se masquent
+	// plutôt que de faire déborder le tableau — leurs valeurs restent consultables via la flèche
+	// (rejoint le détail par activité), sur une ligne dédiée. Les seuils doivent rester synchronisés
+	// avec les @media du même nom en CSS ci-dessous.
+	let hideDetailCols = $state(false);
+	let hideMoreCols = $state(false);
+	$effect(() => {
+		const mqDetail = window.matchMedia('(max-width: 1300px)');
+		const mqMore = window.matchMedia('(max-width: 1050px)');
+		const update = () => {
+			hideDetailCols = mqDetail.matches;
+			hideMoreCols = mqMore.matches;
+		};
+		update();
+		mqDetail.addEventListener('change', update);
+		mqMore.addEventListener('change', update);
+		return () => {
+			mqDetail.removeEventListener('change', update);
+			mqMore.removeEventListener('change', update);
+		};
+	});
+	const hasHiddenCols = $derived(hideDetailCols || hideMoreCols);
 
 	type Row = {
 		id: string;
@@ -122,7 +176,7 @@
 	let total = $state(0);
 	let pageCount = $state(1);
 	let ticketsLoading = $state(true);
-	const colCount = $derived(7 + (data.testPhase ? 2 : 0) + (data.isAdmin ? 2 : 0));
+	const colCount = $derived(6 + (data.testPhase ? 2 : 0) + (data.isAdmin ? 2 : 0));
 
 	// Chiffrage : verrouillé pour un USER standard (retour utilisateur). Le RAE d'une activité reste
 	// éditable par ses contributeurs — `contributors` est déjà chargé, aucun appel supplémentaire.
@@ -447,7 +501,7 @@
 </script>
 
 <div class="topbar">
-	<h1>Tickets &amp; chiffrage<small>{ticketsLoading ? 'Chargement…' : `${total} ticket${total > 1 ? 's' : ''}${data.view === 'table' && rows.length < total ? ` · ${rows.length} chargés` : ''}`} · édition directe</small></h1>
+	<h1>Tickets &amp; chiffrage<small>{ticketsLoading ? 'Chargement…' : `${total} ticket${total > 1 ? 's' : ''}${data.view === 'table' && rows.length < total ? ` · ${rows.length} chargés` : ''}`}</small></h1>
 	<div class="spacer"></div>
 	{#if savedFlash}<span class="saved">Enregistré ✓</span>{/if}
 	<a class="btn btn-ghost" href="/export" data-sveltekit-reload>
@@ -515,10 +569,24 @@
 				<button class:on={data.view === 'table'} onclick={() => navigateWith({ view: 'table' })}>Tableau</button>
 				<button class:on={data.view === 'kanban'} onclick={() => navigateWith({ view: 'kanban' })}>Kanban</button>
 			</div>
-			<select class="filter-sel" value={data.filters.stateId ?? ''} onchange={(e) => navigateWith({ state: e.currentTarget.value })} aria-label="Filtrer par état">
-				<option value="">Tous les états</option>
-				{#each data.ref.states as s (s.id)}<option value={s.id}>{s.emoji} {s.label}</option>{/each}
-			</select>
+			{#if data.view === 'table'}
+				<button
+					type="button"
+					class="btn btn-ghost icon-toggle"
+					class:open={!compact}
+					onclick={toggleCompactGlobal}
+					aria-label={compact ? 'Tout déplier' : 'Tout replier'}
+					title={compact ? 'Tout déplier' : 'Tout replier'}
+				>
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 5-5-5-5" /><path d="m13 17 5-5-5-5" /></svg>
+				</button>
+			{/if}
+			{#if data.view !== 'kanban'}
+				<select class="filter-sel" value={data.filters.stateId ?? ''} onchange={(e) => navigateWith({ state: e.currentTarget.value })} aria-label="Filtrer par état">
+					<option value="">Tous les états</option>
+					{#each data.ref.states as s (s.id)}<option value={s.id}>{s.emoji} {s.label}</option>{/each}
+				</select>
+			{/if}
 			<select class="filter-sel" value={data.filters.projectId ?? ''} onchange={(e) => navigateWith({ project: e.currentTarget.value })} aria-label="Filtrer par projet">
 				<option value="">Tous les projets</option>
 				{#each data.ref.projects as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
@@ -547,29 +615,32 @@
 	{#if data.view === 'table'}
 	{#snippet skeletonRow()}
 		<tr class="ticket-row skeleton-row">
-			<td><div class="cell-select state-select skeleton-bar" style="height:16px;"></div></td>
 			<td class="ttl">
 				<div class="ttl-wrap">
 					<div class="skeleton-bar" style="width:22px;height:22px;border-radius:6px;flex-shrink:0;"></div>
+					<div class="skeleton-bar" style="width:22px;height:22px;border-radius:6px;flex-shrink:0;"></div>
 					<div class="ttl-main">
-						<div class="skeleton-bar" style="width:44px;height:8px;margin:4px 0 6px 7px;border-radius:4px;"></div>
+						<div class="key-row">
+							<div class="skeleton-bar" style="width:56px;height:12px;border-radius:4px;flex-shrink:0;"></div>
+							<div class="skeleton-bar" style="width:212px;height:20px;border-radius:6px;flex-shrink:0;"></div>
+						</div>
 						<!-- largeur en px, pas % : le tableau est en table-layout:auto, un % ne compte pas
 						     dans le calcul de la largeur de colonne et donnait une barre minuscule. -->
-						<div class="cell-input title-input skeleton-bar" style="width:240px;height:16px;"></div>
+						<div class="cell-input title-input skeleton-bar" style="width:240px;height:16px;margin-top:6px;"></div>
 					</div>
 				</div>
 			</td>
-			{#if data.isAdmin}<td class="num"><div class="cell-input num-input skeleton-bar" style="height:16px;"></div></td>{/if}
+			{#if data.isAdmin}<td class="num col-detail"><div class="cell-input num-input skeleton-bar" style="height:16px;"></div></td>{/if}
 			<td class="num"><div class="cell-input num-input skeleton-bar" style="height:16px;"></div></td>
-			<td class="num"><div class="cell-input num-input skeleton-bar" style="height:16px;"></div></td>
+			<td class="num col-more"><div class="cell-input num-input skeleton-bar" style="height:16px;"></div></td>
 			{#if data.testPhase}
-				<td class="num"><div class="cell-input num-input skeleton-bar" style="height:16px;"></div></td>
-				<td class="num"><div class="cell-input num-input skeleton-bar" style="height:16px;"></div></td>
+				<td class="num col-detail"><div class="cell-input num-input skeleton-bar" style="height:16px;"></div></td>
+				<td class="num col-detail"><div class="cell-input num-input skeleton-bar" style="height:16px;"></div></td>
 			{/if}
 			<td class="num tabnum"><div class="skeleton-bar" style="width:32px;height:13px;margin-left:auto;border-radius:4px;"></div></td>
-			{#if data.isAdmin}<td class="num"><div class="skeleton-bar" style="width:40px;height:13px;margin-left:auto;border-radius:4px;"></div></td>{/if}
-			<td class="num"><div class="skeleton-bar" style="width:40px;height:13px;margin-left:auto;border-radius:4px;"></div></td>
-			<td>
+			{#if data.isAdmin}<td class="num col-detail"><div class="skeleton-bar" style="width:40px;height:13px;margin-left:auto;border-radius:4px;"></div></td>{/if}
+			<td class="num col-more"><div class="skeleton-bar" style="width:40px;height:13px;margin-left:auto;border-radius:4px;"></div></td>
+			<td class="col-more">
 				<div class="prog">
 					<div class="bar skeleton-bar"></div>
 					<span class="skeleton-bar" style="width:28px;height:12px;border-radius:4px;"></span>
@@ -582,42 +653,56 @@
 		<table class="tk">
 			<thead>
 				<tr>
-					<th style="width:170px;">État</th><th>Ticket</th>
-					{#if data.isAdmin}<th class="num">Budget</th>{/if}
-					<th class="num">Estimé</th><th class="num">RAE Réal</th>
-					{#if data.testPhase}<th class="num">Est. Test</th><th class="num">RAE Test</th>{/if}<th class="num">Conso.</th>
-					{#if data.isAdmin}<th class="num" title="Écart vs budget : RAE Réel + consommé − Budget">Écart vs budget</th>{/if}
-					<th class="num" title="Écart vs estimé : RAE Réel + consommé − Estimé">Écart vs estimé</th><th class="num" style="width:130px;">Avancement</th>
+					<th>Ticket</th>
+					{#if data.isAdmin}<th class="num col-detail">Budget</th>{/if}
+					<th class="num">Estimé</th><th class="num col-more">RAE Réal</th>
+					{#if data.testPhase}<th class="num col-detail">Est. Test</th><th class="num col-detail">RAE Test</th>{/if}<th class="num">Conso.</th>
+					{#if data.isAdmin}<th class="num col-detail" title="Écart vs budget : RAE Réel + consommé − Budget">Écart vs budget</th>{/if}
+					<th class="num col-more" title="Écart vs estimé : RAE Réel + consommé − Estimé">Écart vs estimé</th><th class="num col-more" style="width:130px;">Avancement</th>
 				</tr>
 			</thead>
 			<tbody>
 				{#each rows as r (r.id)}
 					{@const st = r.stateId ? stateById.get(r.stateId) : null}
 					<tr class="ticket-row" id="ticket-{r.id}" class:highlighted={r.key === data.highlightKey}>
-						<td>
-							<select
-								class="cell-select state-select"
-								style={st?.color ? `color:${st.color};font-weight:600;` : ''}
-								bind:value={r.stateId}
-								onchange={() => save(r, 'stateId', r.stateId)}
-							>
-								<option value={null}>—</option>
-								{#each data.ref.states as s (s.id)}<option value={s.id}>{s.emoji} {s.label}</option>{/each}
-							</select>
-						</td>
 						<td class="ttl" class:sub={r.isChild}>
 							<div class="ttl-wrap">
+								<button
+									type="button"
+									class="chevron-btn"
+									class:open={(r.activityBreakdown.length > 0 || hasHiddenCols) && isExpanded(r.id)}
+									disabled={r.activityBreakdown.length === 0 && !hasHiddenCols}
+									onclick={() => toggleTicket(r.id)}
+									aria-label="Détail par activité"
+									aria-expanded={r.activityBreakdown.length > 0 || hasHiddenCols ? isExpanded(r.id) : undefined}
+								>
+									{#if r.activityBreakdown.length > 0 || hasHiddenCols}
+										<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6" /></svg>
+									{/if}
+								</button>
 								<button class="expand-btn" onclick={() => (editId = r.id)} aria-label="Voir le détail du ticket">
 								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
 							</button>
 								<div class="ttl-main">
-									<div class="key tabnum">{r.key}</div>
+									<div class="key-row">
+										<div class="key tabnum">{r.key}</div>
+										<select
+											class="cell-select state-select"
+											style={st?.color ? `color:${st.color};font-weight:600;` : ''}
+											title={st?.label ?? ''}
+											bind:value={r.stateId}
+											onchange={() => save(r, 'stateId', r.stateId)}
+										>
+											<option value={null}>—</option>
+											{#each data.ref.states as s (s.id)}<option value={s.id}>{s.emoji} {s.label}</option>{/each}
+										</select>
+									</div>
 									<input class="cell-input title-input" bind:value={r.title} onchange={() => save(r, 'title', r.title)} />
 								</div>
 							</div>
 						</td>
 						{#if data.isAdmin}
-							<td class="num">
+							<td class="num col-detail">
 								<input
 									class="cell-input num-input"
 									type="number"
@@ -640,7 +725,7 @@
 								onchange={() => debouncedSave(`est-${r.id}-real`, () => saveEst(r, 'real'))}
 							/>
 						</td>
-						<td class="num">
+						<td class="num col-more">
 							<input
 								class="cell-input num-input"
 								type="number"
@@ -652,33 +737,58 @@
 							/>
 						</td>
 						{#if data.testPhase}
-							<td class="num"><input class="cell-input num-input" type="number" step="0.25" min="0" bind:value={r.estimationTest} disabled={!data.canEditEstimation} title={estTitle} onchange={() => debouncedSave(`est-${r.id}-test`, () => saveEst(r, 'test'))} /></td>
-							<td class="num"><input class="cell-input num-input" type="number" step="0.25" min="0" value={r.raeTest} disabled title="RAE Test = compilation des RAE par activité ci-dessous (non éditable ici)" /></td>
+							<td class="num col-detail"><input class="cell-input num-input" type="number" step="0.25" min="0" bind:value={r.estimationTest} disabled={!data.canEditEstimation} title={estTitle} onchange={() => debouncedSave(`est-${r.id}-test`, () => saveEst(r, 'test'))} /></td>
+							<td class="num col-detail"><input class="cell-input num-input" type="number" step="0.25" min="0" value={r.raeTest} disabled title="RAE Test = compilation des RAE par activité ci-dessous (non éditable ici)" /></td>
 						{/if}
 						<td class="num tabnum consumed">{r.consumed || '—'}</td>
 						{#if data.isAdmin}
-							<td class="num tabnum" class:gap-pos={(ecartVsBudget(r) ?? 0) > 0} class:gap-neg={(ecartVsBudget(r) ?? 0) < 0}>{ecartVsBudget(r) == null ? '—' : `${ecartVsBudget(r)! > 0 ? '+' : ''}${ecartVsBudget(r) || 0}`}</td>
+							<td class="num tabnum col-detail" class:gap-pos={(ecartVsBudget(r) ?? 0) > 0} class:gap-neg={(ecartVsBudget(r) ?? 0) < 0}>{ecartVsBudget(r) == null ? '—' : `${ecartVsBudget(r)! > 0 ? '+' : ''}${ecartVsBudget(r) || 0}`}</td>
 						{/if}
-						<td class="num tabnum" class:gap-pos={ecartVsEstime(r) > 0} class:gap-neg={ecartVsEstime(r) < 0}>{ecartVsEstime(r) > 0 ? '+' : ''}{ecartVsEstime(r) || 0}</td>
-						<td>
+						<td class="num tabnum col-more" class:gap-pos={ecartVsEstime(r) > 0} class:gap-neg={ecartVsEstime(r) < 0}>{ecartVsEstime(r) > 0 ? '+' : ''}{ecartVsEstime(r) || 0}</td>
+						<td class="col-more">
 							<div class="prog">
 								<div class="bar"><i style="width:{pct(avancement(r))}%"></i></div>
 								<span class="pct tabnum">{pct(avancement(r))}%</span>
 							</div>
 						</td>
 					</tr>
+					{#if isExpanded(r.id)}
+					{#if hasHiddenCols}
+						<!-- Fenêtre étroite : reprend ici les colonnes masquées sur la ligne principale
+						     (cf. .col-detail/.col-more), pour qu'aucune info ne soit perdue — juste
+						     déplacée derrière la flèche. Lecture seule (édition via le crayon). -->
+						<tr class="hidden-cols-row" transition:slide={{ duration: 150 }}>
+							<td colspan={colCount}>
+								<div class="hidden-cols">
+									<span class="hc-label">Détails</span>
+									{#if data.isAdmin && hideDetailCols}<span class="hc-item">Budget <b class="tabnum">{r.enveloppeTotale ?? '—'}</b></span>{/if}
+									{#if hideMoreCols}<span class="hc-item">RAE Réal <b class="tabnum">{r.raeReal}</b></span>{/if}
+									{#if data.testPhase && hideDetailCols}
+										<span class="hc-item">Est. Test <b class="tabnum">{r.estimationTest}</b></span>
+										<span class="hc-item">RAE Test <b class="tabnum">{r.raeTest}</b></span>
+									{/if}
+									{#if data.isAdmin && hideDetailCols}
+										<span class="hc-item">Écart vs budget <b class="tabnum" class:gap-pos={(ecartVsBudget(r) ?? 0) > 0} class:gap-neg={(ecartVsBudget(r) ?? 0) < 0}>{ecartVsBudget(r) == null ? '—' : `${ecartVsBudget(r)! > 0 ? '+' : ''}${ecartVsBudget(r) || 0}`}</b></span>
+									{/if}
+									{#if hideMoreCols}
+										<span class="hc-item">Écart vs estimé <b class="tabnum" class:gap-pos={ecartVsEstime(r) > 0} class:gap-neg={ecartVsEstime(r) < 0}>{ecartVsEstime(r) > 0 ? '+' : ''}{ecartVsEstime(r) || 0}</b></span>
+										<span class="hc-item">Avancement <b class="tabnum">{pct(avancement(r))}%</b></span>
+									{/if}
+								</div>
+							</td>
+						</tr>
+					{/if}
 					{#each r.activityBreakdown as ar (ar.activityId)}
 						{@const canRae = canEditRae(ar)}
 						{@const isOther = ar.activityId === NO_ACTIVITY_ID}
-						<tr class="activity-subrow">
-							<td></td>
+						<tr class="activity-subrow" transition:slide={{ duration: 150 }}>
 							<td class="ar-name">↳ {ar.label}
 								{#if ar.contributors.length > 0}
 									<span class="ar-contrib">{#each ar.contributors as c, i (c.userId)}{i > 0 ? ', ' : ''}{c.displayName} <b class="tabnum">{c.consumed}</b>j{/each}</span>
 								{/if}
 							</td>
 							{#if data.isAdmin}
-								<td class="num">
+								<td class="num col-detail">
 									{#if isOther}
 										<span class="cell-readonly" title={NO_ACTIVITY_HINT}>—</span>
 									{:else}
@@ -715,7 +825,7 @@
 									/>
 								{/if}
 							</td>
-							<td class="num">
+							<td class="num col-more">
 								{#if isOther}
 									<span class="cell-readonly" title={NO_ACTIVITY_HINT}>—</span>
 								{:else}
@@ -735,8 +845,8 @@
 								{/if}
 							</td>
 							{#if data.testPhase}
-								<td></td>
-								<td class="num">
+								<td class="col-detail"></td>
+								<td class="num col-detail">
 									{#if isOther}
 										<span class="cell-readonly" title={NO_ACTIVITY_HINT}>—</span>
 									{:else}
@@ -757,11 +867,12 @@
 								</td>
 							{/if}
 							<td class="num tabnum consumed">{round(ar.contributors.reduce((s, c) => s + c.consumed, 0)) || '—'}</td>
-							{#if data.isAdmin}<td></td>{/if}
-							<td></td>
-							<td></td>
+							{#if data.isAdmin}<td class="col-detail"></td>{/if}
+							<td class="col-more"></td>
+							<td class="col-more"></td>
 						</tr>
 					{/each}
+					{/if}
 				{/each}
 				{#if loadingMore}
 					{#each { length: 4 } as _, i (i)}
@@ -783,6 +894,11 @@
 		{#if hasMore}
 			<div class="pager" bind:this={sentinel}></div>
 		{/if}
+	</div>
+	{:else if data.kanbanNeedsScope}
+	<div class="kanban-scope-prompt">
+		<p>Choisis un sprint ou une version ci-dessus pour afficher le kanban.</p>
+		<p class="hint">Sans ce filtre, le board chargerait l'ensemble des tickets de l'espace.</p>
 	</div>
 	{:else}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1076,35 +1192,35 @@
 	   reste local à .tk-scroll (overflow-y:visible, même raison). */
 	.tk-card {
 		overflow: clip;
-		position: relative;
 	}
 	.tk-scroll {
 		overflow-x: auto;
 		overflow-y: visible;
-	}
-	/* < 900px : le tableau dépasse toujours (colonnes fixes) — dégradé indiquant qu'on peut swiper
-	   à droite, sinon rien ne le montre (coupé net au bord de l'écran). */
-	.tk-card::after {
-		content: '';
-		display: none;
-		position: absolute;
-		top: 0;
-		right: 0;
-		bottom: 0;
-		width: 28px;
-		pointer-events: none;
-		background: linear-gradient(to right, transparent, var(--surface) 70%);
-	}
-	@media (max-width: 900px) {
-		.tk-card::after {
-			display: block;
-		}
 	}
 	table.tk {
 		width: 100%;
 		min-width: 820px;
 		border-collapse: separate;
 		border-spacing: 0;
+	}
+	/* Seuils synchronisés avec le matchMedia du script (hideDetailCols/hideMoreCols) : au lieu de
+	   ne plus dépendre que du scroll horizontal ci-dessus, les colonnes les moins essentielles se
+	   masquent — leur valeur reste consultable via la flèche (ligne "Détails" sous le ticket). */
+	@media (max-width: 1300px) {
+		.col-detail {
+			display: none;
+		}
+	}
+	@media (max-width: 1050px) {
+		.col-more {
+			display: none;
+		}
+		/* Moins de colonnes restent (Ticket/Estimé/Conso. seulement, + Avancement masqué aussi ici) :
+		   le plancher de 820px (dimensionné pour le tableau complet) forcerait un débordement pour
+		   rien, alors que les colonnes visibles à ce palier tiennent dans moins large. */
+		table.tk {
+			min-width: 560px;
+		}
 	}
 	.tk thead th {
 		font-size: 11px;
@@ -1157,9 +1273,11 @@
 	}
 	.tk .key {
 		font-size: 11px;
-		font-weight: 600;
-		color: var(--text-mute);
+		font-weight: 700;
+		color: var(--text);
 		padding-left: 7px;
+		white-space: nowrap;
+		flex-shrink: 0;
 	}
 	.ttl-wrap {
 		display: flex;
@@ -1170,7 +1288,12 @@
 		flex: 1;
 		min-width: 0;
 	}
-	.tk .ttl.sub .key,
+	.key-row {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+	.tk .ttl.sub .key-row,
 	.tk .ttl.sub .title-input {
 		margin-left: 20px;
 	}
@@ -1192,6 +1315,38 @@
 		background: var(--surface);
 		border-color: var(--border-strong);
 		color: var(--text);
+	}
+	.chevron-btn {
+		flex-shrink: 0;
+		width: 22px;
+		height: 22px;
+		border-radius: 6px;
+		border: 1px solid transparent;
+		color: var(--text-mute);
+		font-size: 12px;
+		line-height: 1;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		transition: transform 0.15s, color 0.15s, background 0.15s;
+	}
+	.chevron-btn:hover:not(:disabled),
+	.chevron-btn:focus-visible {
+		background: var(--surface);
+		border-color: var(--border-strong);
+		color: var(--text);
+	}
+	.chevron-btn:disabled {
+		cursor: default;
+	}
+	.chevron-btn.open {
+		transform: rotate(90deg);
+	}
+	.icon-toggle {
+		padding: 9px 11px;
+	}
+	.icon-toggle.open {
+		transform: rotate(90deg);
 	}
 	.group-chips {
 		display: flex;
@@ -1246,6 +1401,35 @@
 	}
 	.activity-subrow .consumed {
 		font-size: 11.5px;
+	}
+	/* Distincte des .activity-subrow (détail par activité) : ligne toujours pleine largeur, teinte
+	   accent plutôt que le gris neutre, pour ne pas se confondre avec les lignes d'activité. */
+	.hidden-cols-row {
+		background: color-mix(in srgb, var(--accent) 6%, var(--surface-sunk));
+		border-top: 1px solid var(--border);
+	}
+	.hidden-cols-row td {
+		padding: 7px 14px;
+		border-top: none;
+	}
+	.hidden-cols {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 14px;
+		padding-left: 20px;
+		font-size: 11.5px;
+	}
+	.hc-label {
+		font-weight: 600;
+		color: var(--accent-ink);
+	}
+	.hc-item {
+		color: var(--text-mute);
+	}
+	.hc-item b {
+		color: var(--text-soft);
+		margin-left: 4px;
 	}
 	.dfield {
 		display: flex;
@@ -1321,6 +1505,12 @@
 	.state-select {
 		font-size: 12.5px;
 	}
+	.key-row .state-select {
+		width: 212px;
+		flex-shrink: 0;
+		padding: 0 6px;
+		font-size: 11px;
+	}
 	.prog {
 		display: flex;
 		align-items: center;
@@ -1353,7 +1543,7 @@
 		font-weight: 700;
 	}
 	.gap-neg {
-		color: var(--accent) !important;
+		color: var(--success) !important;
 		font-weight: 700;
 	}
 	.empty-row {
@@ -1426,6 +1616,21 @@
 		   barre de défilement horizontale partait en bas de page, hors de portée sans tout dérouler.
 		   Le débordement vertical est repris colonne par colonne (.kcards). */
 		height: calc(100dvh - 13rem);
+	}
+	.kanban-scope-prompt {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 6px;
+		height: calc(100dvh - 13rem);
+		text-align: center;
+		color: var(--text-mute);
+	}
+	.kanban-scope-prompt p:first-child {
+		font-size: 15px;
+		font-weight: 600;
+		color: var(--text);
 	}
 	.kcol {
 		flex: 0 0 280px;

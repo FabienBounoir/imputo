@@ -12,7 +12,15 @@ export const config = {
 	vapidSubject: env.VAPID_SUBJECT ?? 'mailto:admin@imputo.app',
 	raeStaleDays: Number(env.NOTIF_RAE_STALE_DAYS ?? '7') || 7,
 	// Chute d'humeur moyenne (sur 5) entre deux plages Team mood consécutives déclenchant le récap admin.
-	moodDropThreshold: Number(env.NOTIF_MOOD_DROP_THRESHOLD ?? '0.5') || 0.5
+	moodDropThreshold: Number(env.NOTIF_MOOD_DROP_THRESHOLD ?? '0.5') || 0.5,
+	// Synchronisation Jira — credentials Azure globales (client_credentials), PAT lui-même stocké
+	// chiffré par espace (workspace.jiraPatEncrypted). Tenant/base URL ont un défaut car non
+	// secrets ; client id/secret et la clé de chiffrement vides par défaut, comme cronSecret.
+	azureTenantId: env.AZURE_TENANT_ID ?? '8b87af7d-8647-4dc7-8df4-5f69a2011bb5',
+	azureClientId: env.AZURE_CLIENT_ID ?? '',
+	azureClientSecret: env.AZURE_CLIENT_SECRET ?? '',
+	jiraBaseUrl: env.JIRA_BASE_URL ?? 'https://jira.constellation.soprasteria.com',
+	jiraPatEncryptionKey: env.JIRA_PAT_ENCRYPTION_KEY ?? ''
 };
 
 export function emailDomain(email: string): string {

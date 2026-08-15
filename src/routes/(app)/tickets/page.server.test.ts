@@ -5,6 +5,8 @@ import { load as loadUntyped, actions } from './+page.server';
 const load = loadUntyped as (event: unknown) => Promise<Record<string, any>>;
 import { makeWorkspace, addMember } from '$lib/server/services/test-helpers';
 import { fakeLocals, formRequest } from '$lib/server/test-helpers/http';
+import { db, project } from '$lib/server/db';
+import { setTicketFiltersSnapshot, setRememberTicketFiltersPref } from '$lib/server/services/accounts';
 
 describe('tickets +page.server load', () => {
 	it('isAdmin/canEditEstimation sont false pour un USER, true pour un ADMIN', async () => {
@@ -29,9 +31,98 @@ describe('tickets +page.server load', () => {
 		const table = await load({ locals, url: new URL('http://localhost/tickets') } as never);
 
 		expect(kanban.view).toBe('kanban');
-		expect(kanban.pageCount).toBe(1);
+		expect((await kanban.ticketsPage).pageCount).toBe(1);
 		expect(table.view).toBe('table');
 		expect(table.pageSize).toBe(50);
+	});
+});
+
+describe('tickets +page.server load — mémorisation des filtres (arrivée à blanc)', () => {
+	it('URL vide + snapshot valide (remember=true par défaut) → redirect vers les filtres mémorisés', async () => {
+		const { userId, workspaceId } = await makeWorkspace('ticketsremember');
+		const [p] = await db.insert(project).values({ workspaceId, name: 'Projet A' }).returning({ id: project.id });
+		await setTicketFiltersSnapshot(userId, {
+			view: 'kanban',
+			query: null,
+			stateId: null,
+			projectId: p.id,
+			sprintId: null,
+			versionId: null
+		});
+
+		await expect(load({ locals: await fakeLocals(userId), url: new URL('http://localhost/tickets') } as never)).rejects.toMatchObject({
+			status: 303,
+			location: expect.stringContaining(`project=${p.id}`)
+		});
+	});
+
+	it('remember=false → aucune redirection même avec un snapshot valide', async () => {
+		const { userId, workspaceId } = await makeWorkspace('ticketsremember');
+		const [p] = await db.insert(project).values({ workspaceId, name: 'Projet A' }).returning({ id: project.id });
+		await setTicketFiltersSnapshot(userId, { view: 'table', query: null, stateId: null, projectId: p.id, sprintId: null, versionId: null });
+		await setRememberTicketFiltersPref(userId, false);
+
+		const result = await load({ locals: await fakeLocals(userId), url: new URL('http://localhost/tickets') } as never);
+		expect(result.filters).toMatchObject({ query: undefined, stateId: undefined, projectId: undefined });
+	});
+
+	it('projectId du snapshot appartenant à un autre espace → ignoré, jamais réinjecté dans la redirection', async () => {
+		const { userId } = await makeWorkspace('ticketsremember');
+		const { workspaceId: otherWorkspaceId } = await makeWorkspace('ticketsremember-other');
+		const [foreignProject] = await db.insert(project).values({ workspaceId: otherWorkspaceId, name: 'Projet étranger' }).returning({ id: project.id });
+		await setTicketFiltersSnapshot(userId, {
+			view: 'table',
+			query: 'US-42',
+			stateId: null,
+			projectId: foreignProject.id,
+			sprintId: null,
+			versionId: null
+		});
+
+		// query, elle, n'est pas validable contre ref (texte libre) — elle survit donc à la redirection.
+		await expect(load({ locals: await fakeLocals(userId), url: new URL('http://localhost/tickets') } as never)).rejects.toMatchObject({
+			status: 303,
+			location: expect.stringContaining('q=US-42')
+		});
+		try {
+			await load({ locals: await fakeLocals(userId), url: new URL('http://localhost/tickets') } as never);
+		} catch (e: any) {
+			expect(e.location).not.toContain('project=');
+		}
+	});
+
+	it('URL déjà paramétrée → jamais de redirection, même avec un snapshot valide', async () => {
+		const { userId, workspaceId } = await makeWorkspace('ticketsremember');
+		const [p] = await db.insert(project).values({ workspaceId, name: 'Projet A' }).returning({ id: project.id });
+		await setTicketFiltersSnapshot(userId, { view: 'table', query: null, stateId: null, projectId: p.id, sprintId: null, versionId: null });
+
+		const result = await load({ locals: await fakeLocals(userId), url: new URL('http://localhost/tickets?page=2') } as never);
+		expect(result.filters.projectId).toBeUndefined();
+	});
+
+	it("actions.rememberFilters puis arrivée à blanc → redirige vers ce qui vient d'être posté", async () => {
+		const { userId, workspaceId } = await makeWorkspace('ticketsremember');
+		const [p] = await db.insert(project).values({ workspaceId, name: 'Projet A' }).returning({ id: project.id });
+		const locals = await fakeLocals(userId);
+
+		await actions.rememberFilters({ locals, request: formRequest({ view: 'table', project: p.id }) } as never);
+
+		await expect(load({ locals, url: new URL('http://localhost/tickets') } as never)).rejects.toMatchObject({
+			status: 303,
+			location: expect.stringContaining(`project=${p.id}`)
+		});
+	});
+
+	it('un "reset" (view seule postée) efface le snapshot — plus de redirection ensuite', async () => {
+		const { userId, workspaceId } = await makeWorkspace('ticketsremember');
+		const [p] = await db.insert(project).values({ workspaceId, name: 'Projet A' }).returning({ id: project.id });
+		const locals = await fakeLocals(userId);
+
+		await actions.rememberFilters({ locals, request: formRequest({ view: 'table', project: p.id }) } as never);
+		await actions.rememberFilters({ locals, request: formRequest({ view: 'table' }) } as never); // ce que poste resetFilters()
+
+		const result = await load({ locals, url: new URL('http://localhost/tickets') } as never);
+		expect(result.filters.projectId).toBeUndefined();
 	});
 });
 
@@ -61,7 +152,8 @@ describe('tickets +page.server actions.create', () => {
 		expect(result).toEqual({ ok: true });
 
 		const table = await load({ locals: await fakeLocals(userId), url: new URL('http://localhost/tickets') } as never);
-		const created = table.tickets.find((t: any) => t.title === 'Ticket USER');
+		const { tickets } = await table.ticketsPage;
+		const created = tickets.find((t: any) => t.title === 'Ticket USER');
 		expect(created?.estimationPrev ?? null).toBeNull();
 	});
 
@@ -107,5 +199,27 @@ describe('tickets +page.server actions.groupToggle / actions.flag', () => {
 			request: formRequest({ ticketId: 'x', key: 'cypress', value: 'Oui' })
 		} as never);
 		expect(result?.status).toBe(401);
+	});
+});
+
+describe('tickets +page.server — préférence "détail par activité"', () => {
+	it('load renvoie compactTicketActivity (true par défaut sur un compte neuf)', async () => {
+		const { userId } = await makeWorkspace('ticketscompact');
+		const result = await load({ locals: await fakeLocals(userId), url: new URL('http://localhost/tickets?view=table') } as never);
+		expect(result.compactTicketActivity).toBe(true);
+	});
+
+	it('actions.compactActivityPref met à jour la préférence, 401 si non authentifié', async () => {
+		const { userId } = await makeWorkspace('ticketscompact');
+		const locals = await fakeLocals(userId);
+
+		const res = await actions.compactActivityPref({ locals, request: formRequest({ value: 'false' }) } as never);
+		expect(res).toEqual({ ok: true });
+
+		const result = await load({ locals, url: new URL('http://localhost/tickets?view=table') } as never);
+		expect(result.compactTicketActivity).toBe(false);
+
+		const unauth = await actions.compactActivityPref({ locals: { user: null }, request: formRequest({ value: 'true' }) } as never);
+		expect(unauth?.status).toBe(401);
 	});
 });

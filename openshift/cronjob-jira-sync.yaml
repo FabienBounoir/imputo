@@ -1,0 +1,41 @@
+# Pull planifié des tickets Jira (voir scripts/jira-sync.ts, src/lib/server/services/jiraSync.ts).
+# Fichier séparé de cronjobs.yaml : contrairement aux CronJobs curl existants (image publique, pas
+# de substitution), celui-ci tourne sur l'image imputo:tools et référence le registry interne du
+# namespace — `CHANGEME-namespace` substitué par sed avant `oc apply`, comme seed-job.yaml.
+#
+# Tourne dans un pod à part (pas d'appel HTTP vers le pod web) : accès DB direct via les mêmes
+# variables d'env que l'app, aucun CRON_SECRET nécessaire — voir docs/AUDIT-load-testing.md pour
+# pourquoi ce choix (le pod web sature déjà en CPU sous charge réaliste ; un job récurrent qui
+# partagerait son process ajouterait de la latence à des requêtes utilisateur sans rapport).
+#
+# Cadence par défaut : 4 fois/jour en heures ouvrées. Purement une ligne de cron, à ajuster selon
+# le besoin réel de fraîcheur vs. la charge sur la gateway Jira/Azure.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: imputo-cron-jira-sync
+  labels:
+    app: imputo
+spec:
+  timeZone: Europe/Paris
+  schedule: '0 7,11,15,19 * * *'
+  jobTemplate:
+    spec:
+      # Plus long que les 60s des CronJobs curl (cronjobs.yaml) : appels HTTP paginés vers Jira +
+      # écritures DB pour potentiellement plusieurs espaces, pas un simple aller-retour curl.
+      activeDeadlineSeconds: 300
+      # Limite les tentatives en cas d'échec répété (ex. Azure AD indisponible) plutôt que de
+      # marteler l'endpoint token à chaque restart du pod.
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: jira-sync
+              image: 'image-registry.openshift-image-registry.svc:5000/CHANGEME-namespace/imputo:tools'
+              command: ['npm', 'run', 'jira:sync']
+              envFrom:
+                - configMapRef:
+                    name: imputo-config
+                - secretRef:
+                    name: imputo-secrets

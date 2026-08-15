@@ -16,8 +16,16 @@ import {
 	setMemberCapacity,
 	setMemberCapability,
 	regenerateInvite,
-	transferOwnership
+	transferOwnership,
+	getJiraConfig,
+	setJiraSyncEnabled,
+	saveJiraConfig,
+	resetJiraUpdatedSince,
+	listJiraSyncRuns,
+	undoJiraSyncRun
 } from '$lib/server/services/accounts';
+import { syncWorkspace } from '$lib/server/services/jiraSync';
+import { config } from '$lib/server/config';
 import {
 	listRefs,
 	createRef,
@@ -79,6 +87,16 @@ const accentSchema = z.object({
 		.transform((v) => v === 'true')
 });
 const ratioSchema = z.object({ value: z.coerce.number().gt(0).lte(1) });
+const jiraConfigSchema = z.object({
+	jql: z.string().trim().max(2000),
+	pat: z.string().trim().max(500).optional().default(''),
+	conflictStrategy: z.enum(['JIRA_WINS', 'KEEP_LOCAL']),
+	regexPattern: z.string().trim().max(200).optional().default(''),
+	regexReplacement: z.string().trim().max(200).optional().default(''),
+	// Forme seulement (longueur d'un "YYYY-MM-DD") — validité réelle de la date faite dans
+	// accounts.ts/saveJiraConfig, cohérent avec regexPattern (forme ici, compilation là-bas).
+	updatedSinceDate: z.string().trim().max(10).optional().default('')
+});
 
 export const load: PageServerLoad = async ({ locals }) => {
 	if (locals.role !== 'ADMIN') redirect(303, '/imputation');
@@ -99,7 +117,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		.innerJoin(user, eq(membership.userId, user.id))
 		.where(eq(membership.workspaceId, ws.workspaceId));
 
-	const [projects, sprints, versions, categories, activities, states, ticketGroups, mood, support, supportMembers] =
+	const [projects, sprints, versions, categories, activities, states, ticketGroups, mood, support, supportMembers, jira, jiraSyncRuns] =
 		await Promise.all([
 			listRefs(ws.workspaceId, 'project'),
 			listRefs(ws.workspaceId, 'sprint'),
@@ -110,7 +128,9 @@ export const load: PageServerLoad = async ({ locals }) => {
 			listTicketGroups(ws.workspaceId),
 			getMoodConfig(ws.workspaceId),
 			getSupportConfig(ws.workspaceId),
-			listRotationMembers(ws.workspaceId)
+			listRotationMembers(ws.workspaceId),
+			getJiraConfig(ws.workspaceId),
+			listJiraSyncRuns(ws.workspaceId)
 		]);
 
 	return {
@@ -126,6 +146,8 @@ export const load: PageServerLoad = async ({ locals }) => {
 		mood,
 		support,
 		supportMembers,
+		jira,
+		jiraSyncRuns,
 		projects,
 		sprints,
 		versions,
@@ -630,5 +652,65 @@ export const actions: Actions = {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { stateOk: true };
+	},
+
+	jiraToggleEnabled: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const enabled = (await request.formData()).get('enabled') === 'true';
+		await setJiraSyncEnabled(ws.workspaceId, enabled);
+		return { jiraToggleOk: true };
+	},
+
+	jiraSave: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const parsed = jiraConfigSchema.safeParse(Object.fromEntries(await request.formData()));
+		if (!parsed.success) return fail(400, { error: parsed.error.issues[0].message });
+		try {
+			await saveJiraConfig(ws.workspaceId, {
+				...parsed.data,
+				patEncryptionKey: config.jiraPatEncryptionKey,
+				changedByUserId: locals.user!.id
+			});
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { jiraSaveOk: true };
+	},
+
+	jiraSyncNow: async ({ locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		// Volontairement indépendant de jiraSyncEnabled : seul moyen de vérifier qu'un PAT
+		// fraîchement corrigé fonctionne avant de réactiver la planification.
+		const result = await syncWorkspace(db, {
+			azureTenantId: config.azureTenantId,
+			azureClientId: config.azureClientId,
+			azureClientSecret: config.azureClientSecret,
+			jiraBaseUrl: config.jiraBaseUrl,
+			patEncryptionKey: config.jiraPatEncryptionKey
+		}, ws.workspaceId);
+		if (!result.ok) return fail(400, { error: result.error });
+		return { jiraSyncOk: true, jiraTicketsUpserted: result.ticketsUpserted };
+	},
+
+	jiraResetUpdatedSince: async ({ locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		await resetJiraUpdatedSince(ws.workspaceId);
+		return { jiraResetSinceOk: true };
+	},
+
+	jiraUndoSyncRun: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const runId = String((await request.formData()).get('runId') ?? '');
+		try {
+			const deleted = await undoJiraSyncRun(ws.workspaceId, runId, locals.user!.id);
+			return { jiraUndoOk: true, jiraUndoDeleted: deleted };
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
 	}
 };

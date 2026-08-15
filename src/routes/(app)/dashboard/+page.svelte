@@ -15,7 +15,37 @@
 	const dash = $derived(`${d.kpis.avancement * C} ${C}`);
 
 	const maxPerson = $derived(Math.max(1, ...d.byPerson.map((p) => p.total)));
-	const maxActivity = $derived(Math.max(1, ...d.byActivity.map((a) => a.total)));
+	// Répartition par activité : exclu par défaut (une catégorie non productive, ex. Congé, peut
+	// être taguée avec une activité sans que rien ne l'en empêche à la saisie — sans ce filtre, son
+	// temps se mélange silencieusement au travail productif du même libellé). Mémorisé en
+	// localStorage (pas une préférence de compte comme sortActivitiesAlpha/etc. — cf. le motif déjà
+	// utilisé pour le thème, $lib/theme.ts) : départ à `false` pour un rendu serveur cohérent, puis
+	// hydraté depuis localStorage juste après le montage (le flash est ici sans conséquence, ça ne
+	// change qu'un mode d'affichage sur des données déjà chargées, pas comme dashboardPrefs.ts/
+	// imputationPrefs.ts qui pilotent quelles données le serveur charge — eux utilisent des cookies
+	// exprès pour éviter un flash sur le mauvais jeu de données).
+	const ACTIVITY_STORAGE_KEY = 'imputo-dashboard-include-nonprod-activity';
+	let includeNonProductiveActivity = $state(false);
+	$effect(() => {
+		if (typeof localStorage === 'undefined') return;
+		includeNonProductiveActivity = localStorage.getItem(ACTIVITY_STORAGE_KEY) === 'true';
+	});
+	function setIncludeNonProductiveActivity(v: boolean) {
+		includeNonProductiveActivity = v;
+		if (typeof localStorage !== 'undefined') localStorage.setItem(ACTIVITY_STORAGE_KEY, String(v));
+	}
+	const activityRows = $derived(
+		d.byActivity
+			.map((a) => ({
+				label: a.label,
+				productive: a.productive,
+				nonProductive: a.nonProductive,
+				value: includeNonProductiveActivity ? a.total : a.productive
+			}))
+			.filter((a) => a.value > 0)
+			.sort((a, b) => b.value - a.value)
+	);
+	const maxActivity = $derived(Math.max(1, ...activityRows.map((a) => a.value)));
 	const maxState = $derived(Math.max(1, ...d.byState.map((s) => s.count)));
 	const prodTotal = $derived(d.productiveVsNot.productive + d.productiveVsNot.nonProductive);
 	const prodPct = $derived(prodTotal > 0 ? d.productiveVsNot.productive / prodTotal : 0);
@@ -25,8 +55,13 @@
 	// sinon une semaine à zéro imputation disparaît silencieusement du tableau.
 	const weekCols = $derived.by(() => {
 		const cols: [string, number][] = [];
+		const from = parseISODate(data.weekRange.from);
 		const last = mondayOf(parseISODate(data.weekRange.to));
-		for (let m = mondayOf(parseISODate(data.weekRange.from)); m <= last; m = addDays(m, 7)) {
+		for (let m = mondayOf(from); m <= last; m = addDays(m, 7)) {
+			// Ignore la semaine si son vendredi (dernier jour ouvré affiché) tombe avant le début de la
+			// période — arrive quand le 1er du mois tombe un week-end : mondayOf() remonte alors sur la
+			// semaine précédente, dont les 5 jours ouvrés (lun-ven) sont tous hors période.
+			if (addDays(m, 4) < from) continue;
 			cols.push([toISODate(m), isoWeek(m)]);
 		}
 		return cols;
@@ -38,6 +73,24 @@
 		return m;
 	});
 	const pctInt = (x: number) => Math.round(x * 100);
+
+	// Détail par SSP (mensuel) : même motif que la synthèse hebdo ci-dessus — le serveur renvoie des
+	// lignes plates (personne × ssp), le tableau croisé (lignes/colonnes/cellules/totaux) se
+	// construit ici. Pas de ré-arrondi client, même choix que prodTotal plus haut dans ce fichier.
+	const sspCell = $derived(new Map(d.bySsp.map((r) => [`${r.personName}:${r.ssp}`, r.total])));
+	const sspPersonTotal = $derived.by(() => {
+		const m = new Map<string, number>();
+		for (const r of d.bySsp) m.set(r.personName, (m.get(r.personName) ?? 0) + r.total);
+		return m;
+	});
+	const sspColTotal = $derived.by(() => {
+		const m = new Map<string, number>();
+		for (const r of d.bySsp) m.set(r.ssp, (m.get(r.ssp) ?? 0) + r.total);
+		return m;
+	});
+	const sspPersons = $derived([...sspPersonTotal.keys()].sort((a, b) => (sspPersonTotal.get(b) ?? 0) - (sspPersonTotal.get(a) ?? 0)));
+	const sspCols = $derived([...sspColTotal.keys()].sort((a, b) => (sspColTotal.get(b) ?? 0) - (sspColTotal.get(a) ?? 0)));
+	const sspGrandTotal = $derived([...sspColTotal.values()].reduce((a, b) => a + b, 0));
 
 	// Tooltip sur les en-têtes "S27" (etc) : premier → dernier jour de la semaine.
 	const weekRangeLabel = (mondayISO: string) => formatRange(parseISODate(mondayISO));
@@ -95,6 +148,38 @@
 					<circle cx="32" cy="32" r="26" fill="none" stroke="var(--surface-sunk)" stroke-width="8" />
 					<circle cx="32" cy="32" r="26" fill="none" stroke="var(--accent)" stroke-width="8" stroke-linecap="round" stroke-dasharray={dash} transform="rotate(-90 32 32)" />
 				</svg>
+			</div>
+		{:else}
+			<!-- TNF/Produit (mois) : cartes vides pour l'instant, le calcul mensuel reste à définir
+			     (contrairement à enveloppeTotale/TNF déjà suivi par ticket, jamais borné à une période). -->
+			<div class="card kpi">
+				<div class="k">TNF (mois)</div>
+				<div class="v tabnum">—</div>
+				<div class="sub">Calcul à définir</div>
+			</div>
+			<div class="card kpi">
+				<div class="k">Produit (mois)</div>
+				<div class="v tabnum">—</div>
+				<div class="sub">Calcul à définir</div>
+			</div>
+			<!-- Productif vs non productif : déplacé ici depuis .grid (même contenu, juste un autre
+			     conteneur parent) pour rejoindre la ligne de KPIs mensuels. -->
+			<div class="card kpi panel">
+				<h3>Productif vs non productif</h3>
+				{#if prodTotal === 0}
+					<p class="empty">Aucune imputation.</p>
+				{:else}
+					<div class="split">
+						<div class="split-bar">
+							<div class="prod" style="width:{prodPct * 100}%"></div>
+							<div class="nonprod" style="width:{(1 - prodPct) * 100}%"></div>
+						</div>
+						<div class="split-legend">
+							<span><i class="dot prod"></i> Productif <b class="tabnum">{d.productiveVsNot.productive} j</b></span>
+							<span><i class="dot nonprod"></i> Non productif <b class="tabnum">{d.productiveVsNot.nonProductive} j</b></span>
+						</div>
+					</div>
+				{/if}
 			</div>
 		{/if}
 	</div>
@@ -155,23 +240,55 @@
 					</div>
 				{/if}
 			</div>
+
+			<!-- Productif vs non productif : mode "Tout l'espace" seul — en mode mensuel cette même carte
+			     vit désormais dans .kpis (cf. plus haut), pas ici. -->
+			<div class="card panel">
+				<h3>Productif vs non productif</h3>
+				{#if prodTotal === 0}
+					<p class="empty">Aucune imputation.</p>
+				{:else}
+					<div class="split">
+						<div class="split-bar">
+							<div class="prod" style="width:{prodPct * 100}%"></div>
+							<div class="nonprod" style="width:{(1 - prodPct) * 100}%"></div>
+						</div>
+						<div class="split-legend">
+							<span><i class="dot prod"></i> Productif <b class="tabnum">{d.productiveVsNot.productive} j</b></span>
+							<span><i class="dot nonprod"></i> Non productif <b class="tabnum">{d.productiveVsNot.nonProductive} j</b></span>
+						</div>
+					</div>
+				{/if}
+			</div>
 		{/if}
 
-		<!-- Productif vs non productif -->
+		<!-- Par activité -->
 		<div class="card panel">
-			<h3>Productif vs non productif</h3>
-			{#if prodTotal === 0}
+			<div class="weekly-head">
+				<h3>Répartition par activité</h3>
+				<div class="seg2">
+					<button type="button" class:on={!includeNonProductiveActivity} onclick={() => setIncludeNonProductiveActivity(false)}>Productif seul</button>
+					<button type="button" class:on={includeNonProductiveActivity} onclick={() => setIncludeNonProductiveActivity(true)}>Tout inclure</button>
+				</div>
+			</div>
+			{#if activityRows.length === 0}
 				<p class="empty">Aucune imputation.</p>
 			{:else}
-				<div class="split">
-					<div class="split-bar">
-						<div class="prod" style="width:{prodPct * 100}%"></div>
-						<div class="nonprod" style="width:{(1 - prodPct) * 100}%"></div>
-					</div>
-					<div class="split-legend">
-						<span><i class="dot prod"></i> Productif <b class="tabnum">{d.productiveVsNot.productive} j</b></span>
-						<span><i class="dot nonprod"></i> Non productif <b class="tabnum">{d.productiveVsNot.nonProductive} j</b></span>
-					</div>
+				<div class="barlist">
+					{#each activityRows as a (a.label)}
+						<div class="barrow">
+							<span class="lbl">{a.label}</span>
+							{#if includeNonProductiveActivity}
+								<div class="track stacked">
+									<i class="prod" style="width:{(a.productive / maxActivity) * 100}%"></i>
+									<i class="nonprod" style="width:{(a.nonProductive / maxActivity) * 100}%"></i>
+								</div>
+							{:else}
+								<div class="track"><i style="width:{(a.value / maxActivity) * 100}%"></i></div>
+							{/if}
+							<span class="val tabnum">{a.value}</span>
+						</div>
+					{/each}
 				</div>
 			{/if}
 		</div>
@@ -196,99 +313,129 @@
 				</div>
 			{/if}
 		</div>
-
-		<!-- Par activité -->
-		<div class="card panel">
-			<h3>Répartition par activité</h3>
-			{#if d.byActivity.length === 0}
-				<p class="empty">Aucune imputation.</p>
-			{:else}
-				<div class="barlist">
-					{#each d.byActivity as a (a.label)}
-						<div class="barrow">
-							<span class="lbl">{a.label}</span>
-							<div class="track"><i style="width:{(a.total / maxActivity) * 100}%"></i></div>
-							<span class="val tabnum">{a.total}</span>
-						</div>
-					{/each}
-				</div>
-			{/if}
-		</div>
 	</div>
 
-	<!-- Synthèse hebdo par personne (% de capacité, validation d'imputation) -->
-	<div class="card panel weekly-synth">
-		<div class="weekly-head">
-			<h3>Synthèse hebdo par personne</h3>
-			<div class="seg2">
-				<button type="button" class:on={weeklyMode === 'pct'} onclick={() => (weeklyMode = 'pct')}>% de capacité</button>
-				<button type="button" class:on={weeklyMode === 'daily'} onclick={() => (weeklyMode = 'daily')}>Détail par jour</button>
+	<!-- Synthèse hebdo par personne (% de capacité, validation d'imputation) : snippet pour pouvoir
+	     la rendre soit seule pleine-largeur (Tout l'espace, inchangé), soit à côté du détail par SSP
+	     (mensuel) sans dupliquer ~70 lignes de tableau. -->
+	{#snippet weeklySynthCard()}
+		<div class="card panel weekly-synth">
+			<div class="weekly-head">
+				<h3>Synthèse hebdo par personne</h3>
+				<div class="seg2">
+					<button type="button" class:on={weeklyMode === 'pct'} onclick={() => (weeklyMode = 'pct')}>% de capacité</button>
+					<button type="button" class:on={weeklyMode === 'daily'} onclick={() => (weeklyMode = 'daily')}>Détail par jour</button>
+				</div>
 			</div>
-		</div>
-		{#if weeklyPersons.length === 0}
-			<p class="empty">Aucune imputation sur la période.</p>
-		{:else if weeklyMode === 'pct'}
-			<div class="weekly-table-wrap">
-				<table class="weekly-table">
-					<thead>
-						<tr>
-							<th>Personne</th>
-							{#each weekCols as [monday, week] (monday)}<th class="num" title={weekRangeLabel(monday)}>S{week}</th>{/each}
-						</tr>
-					</thead>
-					<tbody>
-						{#each weeklyPersons as name (name)}
+			{#if weeklyPersons.length === 0}
+				<p class="empty">Aucune imputation sur la période.</p>
+			{:else if weeklyMode === 'pct'}
+				<div class="weekly-table-wrap">
+					<table class="weekly-table">
+						<thead>
 							<tr>
-								<td>{name}</td>
-								{#each weekCols as [monday] (monday)}
-									{@const cell = weeklyCell.get(`${name}:${monday}`)}
-									<td class="num tabnum" class:over={cell?.overCapacity}>
-										{#if cell}{pctInt(cell.pct)}%{:else}·{/if}
-									</td>
+								<th>Personne</th>
+								{#each weekCols as [monday, week] (monday)}<th class="num" title={weekRangeLabel(monday)}>S{week}</th>{/each}
+							</tr>
+						</thead>
+						<tbody>
+							{#each weeklyPersons as name (name)}
+								<tr>
+									<td>{name}</td>
+									{#each weekCols as [monday] (monday)}
+										{@const cell = weeklyCell.get(`${name}:${monday}`)}
+										<td class="num tabnum" class:over={cell?.overCapacity}>
+											{#if cell}{pctInt(cell.pct)}%{:else}·{/if}
+										</td>
+									{/each}
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			{:else}
+				<div class="weekly-table-wrap">
+					<table class="weekly-table weekly-daily">
+						<thead>
+							<tr>
+								<th rowspan="2">Personne</th>
+								{#each weekCols as [monday, week] (monday)}
+									<th colspan="5" class="week-sep" title={weekRangeLabel(monday)}>S{week}</th>
 								{/each}
 							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
-		{:else}
-			<div class="weekly-table-wrap">
-				<table class="weekly-table weekly-daily">
-					<thead>
-						<tr>
-							<th rowspan="2">Personne</th>
-							{#each weekCols as [monday, week] (monday)}
-								<th colspan="5" class="week-sep" title={weekRangeLabel(monday)}>S{week}</th>
-							{/each}
-						</tr>
-						<tr>
-							{#each weekCols as [monday] (monday)}
-								{#each weekdays(monday) as iso (iso)}
-									<th class="num day-col" class:holiday={isPublicHolidayFR(iso)} title={isPublicHolidayFR(iso) ? 'Jour férié' : ''}>{dayHead(iso)}</th>
-								{/each}
-							{/each}
-						</tr>
-					</thead>
-					<tbody>
-						{#each weeklyPersons as name (name)}
 							<tr>
-								<td>{name}</td>
 								{#each weekCols as [monday] (monday)}
-									{@const cell = weeklyCell.get(`${name}:${monday}`)}
 									{#each weekdays(monday) as iso (iso)}
-										{@const v = cell?.days[iso] ?? 0}
-										<td class="num tabnum day-col" class:over={cell && v > cell.capacityPerDay}>
-											{v || '·'}
-										</td>
+										<th class="num day-col" class:holiday={isPublicHolidayFR(iso)} title={isPublicHolidayFR(iso) ? 'Jour férié' : ''}>{dayHead(iso)}</th>
 									{/each}
 								{/each}
 							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
-		{/if}
-	</div>
+						</thead>
+						<tbody>
+							{#each weeklyPersons as name (name)}
+								<tr>
+									<td>{name}</td>
+									{#each weekCols as [monday] (monday)}
+										{@const cell = weeklyCell.get(`${name}:${monday}`)}
+										{#each weekdays(monday) as iso (iso)}
+											{@const v = cell?.days[iso] ?? 0}
+											<td class="num tabnum day-col" class:over={cell && v > cell.capacityPerDay}>
+												{v || '·'}
+											</td>
+										{/each}
+									{/each}
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			{/if}
+		</div>
+	{/snippet}
+
+	{@render weeklySynthCard()}
+
+	{#if !isAll}
+		<!-- Détail par SSP : toujours sur sa propre ligne pleine largeur (jamais à côté de la
+		     synthèse hebdo) — le nombre de codes SSP rencontrés dans un espace n'est pas borné,
+		     la partager avec une autre carte finit immanquablement par déborder. -->
+		<div class="card panel ssp-detail">
+			<h3>Détail par SSP</h3>
+			{#if sspPersons.length === 0}
+				<p class="empty">Aucune imputation sur ticket avec code SSP ce mois-ci.</p>
+			{:else}
+				<div class="weekly-table-wrap">
+					<table class="weekly-table">
+						<thead>
+							<tr>
+								<th>Personne</th>
+								{#each sspCols as ssp (ssp)}<th class="num">{ssp}</th>{/each}
+								<th class="num">Total</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each sspPersons as name (name)}
+								<tr>
+									<td>{name}</td>
+									{#each sspCols as ssp (ssp)}
+										<td class="num tabnum">{sspCell.get(`${name}:${ssp}`) || '·'}</td>
+									{/each}
+									<td class="num tabnum"><b>{sspPersonTotal.get(name)}</b></td>
+								</tr>
+							{/each}
+						</tbody>
+						<tfoot>
+							<tr>
+								<td>Total</td>
+								{#each sspCols as ssp (ssp)}<td class="num tabnum"><b>{sspColTotal.get(ssp)}</b></td>{/each}
+								<td class="num tabnum"><b>{sspGrandTotal}</b></td>
+							</tr>
+						</tfoot>
+					</table>
+				</div>
+			{/if}
+		</div>
+	{/if}
 </div>
 
 <style>
@@ -373,8 +520,11 @@
 
 	.grid {
 		display: grid;
-		grid-template-columns: 1fr 1fr;
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 		gap: 16px;
+	}
+	.ssp-detail {
+		margin-top: 20px;
 	}
 	.panel {
 		padding: 20px 22px;

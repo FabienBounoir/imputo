@@ -1,0 +1,1 @@
+ALTER TABLE "workspace" ADD COLUMN "jira_updated_since" timestamp with time zone;

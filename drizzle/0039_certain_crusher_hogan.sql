@@ -1,0 +1,1 @@
+ALTER TABLE "user" ADD COLUMN "compact_ticket_activity" boolean DEFAULT true NOT NULL;

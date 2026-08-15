@@ -30,6 +30,8 @@
 	let accentRgb = $state(data.accentMode === 'RGB');
 	let accentColor = $state(data.accentColor ?? data.workspace?.accentColor ?? PRESETS[0]);
 	let sortActivitiesAlpha = $state(data.sortActivitiesAlpha);
+	let rememberTicketFilters = $state(data.rememberTicketFilters);
+	let compactTicketActivity = $state(data.compactTicketActivity);
 	const activeSeasonal = $derived(activeSeasonalEffects());
 
 	const GROUPS: { label: string; items: { key: keyof NotifPrefs; label: string }[] }[] = [
@@ -224,6 +226,30 @@
 				<div class="seg">
 					<button type="submit" name="value" value="false" class:on={!sortActivitiesAlpha} onclick={() => (sortActivitiesAlpha = false)}>Ordre des référentiels</button>
 					<button type="submit" name="value" value="true" class:on={sortActivitiesAlpha} onclick={() => (sortActivitiesAlpha = true)}>Alphabétique</button>
+				</div>
+			</form>
+		</section>
+
+		<section class="card block">
+			<h3>Filtres tickets</h3>
+			<p class="hint">Sur la vue Tickets &amp; chiffrage, retrouve tes derniers filtres (état, projet, sprint, version, recherche) à chaque retour sur la page, sur tous tes espaces. Désactive pour repartir sans filtre à chaque fois.</p>
+			{#if form?.rememberTicketFiltersOk}<div class="flash ok">Préférence enregistrée ✓</div>{/if}
+			<form method="POST" action="?/rememberTicketFiltersPref" use:enhance>
+				<div class="seg">
+					<button type="submit" name="value" value="true" class:on={rememberTicketFilters} onclick={() => (rememberTicketFilters = true)}>Garder mes filtres</button>
+					<button type="submit" name="value" value="false" class:on={!rememberTicketFilters} onclick={() => (rememberTicketFilters = false)}>Réinitialiser à chaque fois</button>
+				</div>
+			</form>
+		</section>
+
+		<section class="card block">
+			<h3>Détail par activité</h3>
+			<p class="hint">Sur la vue Tickets &amp; chiffrage (tableau), chaque ticket peut afficher le détail par activité en dessous. Choisis l'état par défaut à l'ouverture — chaque ticket reste dépliable/repliable individuellement le temps de la session.</p>
+			{#if form?.compactActivityOk}<div class="flash ok">Préférence enregistrée ✓</div>{/if}
+			<form method="POST" action="?/compactActivityPref" use:enhance>
+				<div class="seg">
+					<button type="submit" name="value" value="true" class:on={compactTicketActivity} onclick={() => (compactTicketActivity = true)}>Masquer par défaut</button>
+					<button type="submit" name="value" value="false" class:on={!compactTicketActivity} onclick={() => (compactTicketActivity = false)}>Afficher par défaut</button>
 				</div>
 			</form>
 		</section>

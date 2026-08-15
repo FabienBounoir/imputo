@@ -469,7 +469,7 @@
 		border-color: #c0392b;
 	}
 	.kpi.good {
-		border-color: var(--accent);
+		border-color: var(--success);
 	}
 	.kpi .k {
 		font-size: 12px;

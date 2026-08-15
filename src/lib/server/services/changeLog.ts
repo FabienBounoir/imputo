@@ -2,7 +2,7 @@ import { and, desc, eq, gte, ilike, lt, or } from 'drizzle-orm';
 import { db, changeLog, user, ticket } from '$lib/server/db';
 import { config } from '$lib/server/config';
 
-export type ChangeLogEntity = 'TICKET' | 'ABSENCE';
+export type ChangeLogEntity = 'TICKET' | 'ABSENCE' | 'WORKSPACE';
 export type ChangeLogAction = 'UPDATE' | 'DELETE';
 
 export type ChangeLogEntry = {

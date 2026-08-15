@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { eq } from 'drizzle-orm';
+import { db, ticket, timeEntry, jiraSyncRun } from '$lib/server/db';
 import {
 	createTicket,
 	listTickets,
@@ -7,11 +9,13 @@ import {
 	parseFlags,
 	canEditActivityField,
 	getTicketActivityBreakdown,
+	deleteUntouchedSyncedTickets,
 	NO_ACTIVITY_ID
 } from './tickets';
 import { makeWorkspace, addMember } from './test-helpers';
 import { createActivity, listActivities } from './params';
 import { setCell } from './imputation';
+import { todayInParis } from '$lib/utils/date';
 
 describe('parseFlags', () => {
 	it('renvoie les clés par défaut vides sur une valeur nulle ou corrompue', () => {
@@ -185,5 +189,67 @@ describe('setTicketFlag', () => {
 		const t = await createTicket(workspaceId, { key: 'T-9', title: 'x' });
 		await expect(setTicketFlag(workspaceId, t.id, 'unknownKey', 'Oui')).rejects.toThrow('Indicateur inconnu.');
 		await expect(setTicketFlag(workspaceId, t.id, 'cypress', 'Peut-être')).rejects.toThrow('Valeur invalide.');
+	});
+});
+
+describe('deleteUntouchedSyncedTickets', () => {
+	async function makeSyncRun(workspaceId: string) {
+		const [row] = await db
+			.insert(jiraSyncRun)
+			.values({ workspaceId, startedAt: new Date(), status: 'SUCCESS' })
+			.returning({ id: jiraSyncRun.id });
+		return row.id;
+	}
+
+	it('supprime les tickets vierges du run donné, ignore ceux des autres runs', async () => {
+		const { workspaceId } = await makeWorkspace();
+		const runId = await makeSyncRun(workspaceId);
+		const otherRunId = await makeSyncRun(workspaceId);
+		await db.insert(ticket).values([
+			{ workspaceId, key: 'S-1', title: 'A', createdBySyncRunId: runId },
+			{ workspaceId, key: 'S-2', title: 'B', createdBySyncRunId: runId },
+			{ workspaceId, key: 'S-3', title: 'Autre run', createdBySyncRunId: otherRunId }
+		]);
+
+		const deleted = await deleteUntouchedSyncedTickets(workspaceId, runId);
+
+		expect(deleted).toBe(2);
+		expect((await listTickets(workspaceId)).map((t) => t.key).sort()).toEqual(['S-3']);
+	});
+
+	it('conserve un ticket dès qu’il porte une trace humaine : champ édité, imputation, ou parent d’un autre ticket', async () => {
+		const { workspaceId, userId } = await makeWorkspace();
+		const runId = await makeSyncRun(workspaceId);
+
+		const [edited] = await db
+			.insert(ticket)
+			.values({ workspaceId, key: 'K-EDIT', title: 'x', createdBySyncRunId: runId, comment: 'note manuelle' })
+			.returning({ id: ticket.id });
+		const [withTime] = await db
+			.insert(ticket)
+			.values({ workspaceId, key: 'K-TIME', title: 'x', createdBySyncRunId: runId })
+			.returning({ id: ticket.id });
+		const [parent] = await db
+			.insert(ticket)
+			.values({ workspaceId, key: 'K-PARENT', title: 'x', createdBySyncRunId: runId })
+			.returning({ id: ticket.id });
+		await db.insert(ticket).values({ workspaceId, key: 'K-CHILD', title: 'x', parentId: parent.id });
+		await db.insert(ticket).values({ workspaceId, key: 'K-CLEAN', title: 'x', createdBySyncRunId: runId });
+
+		await db.insert(timeEntry).values({
+			workspaceId,
+			userId,
+			targetType: 'TICKET',
+			ticketId: withTime.id,
+			day: todayInParis(),
+			amount: '1'
+		});
+
+		const deleted = await deleteUntouchedSyncedTickets(workspaceId, runId);
+
+		expect(deleted).toBe(1); // seul K-CLEAN
+		const remaining = (await listTickets(workspaceId)).map((t) => t.key).sort();
+		expect(remaining).toEqual(['K-CHILD', 'K-EDIT', 'K-PARENT', 'K-TIME']);
+		expect((await db.select().from(ticket).where(eq(ticket.id, edited.id)))[0]).toBeTruthy();
 	});
 });

@@ -41,9 +41,15 @@ export const absenceTypeEnum = pgEnum('absence_type', [
 	'HORS_PROJET'
 ]);
 export const absencePeriodEnum = pgEnum('absence_period', ['FULL', 'AM', 'PM']);
-export const changeLogEntityEnum = pgEnum('change_log_entity', ['TICKET', 'ABSENCE']);
+// 'WORKSPACE' : utilisé pour tracer les changements de config Jira (ex. rotation du PAT) —
+// jamais oldValue/newValue pour ce type, voir services/jiraSync.ts.
+export const changeLogEntityEnum = pgEnum('change_log_entity', ['TICKET', 'ABSENCE', 'WORKSPACE']);
 export const changeLogActionEnum = pgEnum('change_log_action', ['UPDATE', 'DELETE']);
 export const supportCadenceEnum = pgEnum('support_cadence', ['DAY', 'WEEK', 'MONTH']);
+export const jiraSyncStatusEnum = pgEnum('jira_sync_status', ['SUCCESS', 'ERROR']);
+// KEEP_LOCAL (défaut) : un ticket déjà connu localement (créé à la main ou par un sync
+// précédent) n'est jamais écrasé par le sync. JIRA_WINS : Jira écrase title/projectId/parentId.
+export const jiraConflictStrategyEnum = pgEnum('jira_conflict_strategy', ['JIRA_WINS', 'KEEP_LOCAL']);
 
 const id = () => uuid('id').primaryKey().defaultRandom();
 const createdAt = () => timestamp('created_at', { withTimezone: true }).defaultNow().notNull();
@@ -63,7 +69,8 @@ export const workspace = pgTable('workspace', {
 	// PPR = estimationReal * pprRatio, calculé à la volée (non stocké sur le ticket).
 	pprRatio: numeric('ppr_ratio', { precision: 3, scale: 2 }).notNull().default('0.90'),
 	// Pas du champ de saisie d'imputation (0.25 = quart de jour).
-	imputationStep: numeric('imputation_step', { precision: 3, scale: 2 }).notNull().default('0.25'),
+	// scale 3 (pas 2) : nécessaire pour un pas à l'heure sur une journée type (1/8 = 0.125).
+	imputationStep: numeric('imputation_step', { precision: 4, scale: 3 }).notNull().default('0.25'),
 	// Team mood : désactivé par défaut, activable par l'admin.
 	moodEnabled: boolean('mood_enabled').notNull().default(false),
 	moodPeriodKind: moodPeriodKindEnum('mood_period_kind').notNull().default('WEEK_1'),
@@ -77,6 +84,42 @@ export const workspace = pgTable('workspace', {
 	supportRotationOffset: integer('support_rotation_offset').notNull().default(0),
 	// Le samedi compte-t-il comme un jour de perm (cadence DAY) ? Dimanche jamais inclus.
 	supportIncludeSaturday: boolean('support_include_saturday').notNull().default(false),
+
+	// ---------- Synchronisation Jira (pull planifié + forçage manuel) ----------
+	jiraSyncEnabled: boolean('jira_sync_enabled').notNull().default(false),
+	// Chiffré (AES-256-GCM, voir auth/secretCrypto.ts) — jamais en clair, jamais réaffiché.
+	jiraPatEncrypted: text('jira_pat_encrypted'),
+	// JQL libre, ex. "project = CARTEJEUNE_BLM". Ne doit jamais contenir ORDER BY (voir
+	// hasOrderByClause dans jiraClient.ts) — incompatible avec le wrapping fait pour jiraUpdatedSince.
+	jiraJql: text('jira_jql'),
+	// Plancher + watermark incrémental : ne redemander à Jira que les tickets dont `updated` est
+	// postérieur à cette date. Sert à la fois de plancher manuel (saisi par l'admin, jour près, via
+	// jiraSave) ET de valeur auto-avancée après chaque sync réussi (jiraSync.ts, précision seconde +
+	// marge de sécurité) — un seul champ, une seule sémantique : "ne rien redemander avant cette
+	// date". Null = pas de plancher (comportement historique, JQL non modifié).
+	jiraUpdatedSince: timestamp('jira_updated_since', { withTimezone: true }),
+	// Traçabilité : qui a saisi le PAT actuel et quand (mis à jour uniquement quand une nouvelle
+	// valeur est effectivement soumise, pas à chaque sauvegarde du formulaire).
+	// Pas de FK : même choix que createdByUserId ci-dessous (user est déclaré plus loin dans ce
+	// fichier), voir aussi la note sur entityId dans changeLog pour la même contrainte d'ordre.
+	jiraPatUpdatedByUserId: uuid('jira_pat_updated_by_user_id'),
+	jiraPatUpdatedAt: timestamp('jira_pat_updated_at', { withTimezone: true }),
+	// Réconciliation de clé : ex. pattern "^CARTEJEUNE_" + remplacement "" pour faire correspondre
+	// une clé Jira réelle (CARTEJEUNE_BLM-123) à une clé déjà utilisée localement (BLM-123).
+	// Remplace la 1ère occurrence uniquement (pas de flag global) ; appliqué à key ET parentKey.
+	jiraKeyRegexPattern: text('jira_key_regex_pattern'),
+	jiraKeyRegexReplacement: text('jira_key_regex_replacement'),
+	jiraConflictStrategy: jiraConflictStrategyEnum('jira_conflict_strategy').notNull().default('KEEP_LOCAL'),
+	// Statut du dernier run (planifié ou forcé) — visibilité opérationnelle pour l'admin.
+	jiraLastSyncAt: timestamp('jira_last_sync_at', { withTimezone: true }),
+	jiraLastSyncStatus: jiraSyncStatusEnum('jira_last_sync_status'),
+	jiraLastSyncError: text('jira_last_sync_error'),
+	jiraLastSyncTicketCount: integer('jira_last_sync_ticket_count'),
+	// Échecs d'authentification (401/403) consécutifs. Remis à 0 sur succès ou sur un nouveau PAT
+	// sauvegardé. À 5, le sync planifié se désactive automatiquement (jiraSyncEnabled -> false) —
+	// voir services/jiraSync.ts. N'inclut jamais les erreurs réseau/Jira non liées au PAT.
+	jiraConsecutiveFailures: integer('jira_consecutive_failures').notNull().default(0),
+
 	createdByUserId: uuid('created_by_user_id'),
 	createdAt: createdAt()
 });
@@ -92,6 +135,13 @@ export const user = pgTable('user', {
 	notifPrefs: text('notif_prefs'), // JSON sérialisé { enabled, eveningMissing, … } ; null = tout activé
 	// Répartition par activité (dashboard sprint/version) : false = ordre des référentiels (défaut), true = alphabétique.
 	sortActivitiesAlpha: boolean('sort_activities_alpha').notNull().default(false),
+	// Filtres tickets mémorisés (vue Tickets & chiffrage) : remember=true (défaut) réapplique le
+	// dernier instantané à une arrivée "à blanc" (lien de nav, favori...) ; false = repart toujours
+	// sans filtre. Snapshot nul tant qu'aucun filtre n'a jamais été touché.
+	rememberTicketFilters: boolean('remember_ticket_filters').notNull().default(true),
+	ticketFiltersSnapshot: text('ticket_filters_snapshot'), // JSON { view, query, stateId, projectId, sprintId, versionId }
+	// Détail par activité sous chaque ticket (vue tableau) : true = masqué par défaut (compact).
+	compactTicketActivity: boolean('compact_ticket_activity').notNull().default(true),
 	active: boolean('active').notNull().default(true),
 	createdAt: createdAt()
 });
@@ -250,6 +300,31 @@ export const sprint = pgTable(
 );
 
 // ---------- Tickets ----------
+// Un run de sync Jira (planifié ou forcé) — pendant du triplet jiraLastSync* sur workspace, mais en
+// historique append-only (celui-là reste, lui, écrasé à chaque run pour l'affichage "dernier run").
+// status/ticketsSeen/ticketsCreated/error ne sont écrits qu'une fois l'issue du run connue (jamais de
+// ligne "en cours" à gérer) — voir jiraSync.ts (finalizeError + fin de syncWorkspace).
+export const jiraSyncRun = pgTable(
+	'jira_sync_run',
+	{
+		id: id(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspace.id, { onDelete: 'cascade' }),
+		startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
+		status: jiraSyncStatusEnum('status').notNull(),
+		ticketsSeen: integer('tickets_seen').notNull().default(0),
+		ticketsCreated: integer('tickets_created').notNull().default(0),
+		error: text('error'),
+		// Posés ensemble par "Annuler ce lot" (cf. accounts.ts/undoJiraSyncRun) — ne supprime que les
+		// tickets de ce run encore vierges de toute trace humaine (deleteUntouchedSyncedTickets).
+		undoneAt: timestamp('undone_at', { withTimezone: true }),
+		undoneById: uuid('undone_by_id').references(() => user.id, { onDelete: 'set null' }),
+		createdAt: createdAt()
+	},
+	(t) => [index('jira_sync_run_ws_started_idx').on(t.workspaceId, t.startedAt)]
+);
+
 export const ticket = pgTable(
 	'ticket',
 	{
@@ -277,13 +352,18 @@ export const ticket = pgTable(
 		sspCode: text('ssp_code'),
 		comment: text('comment'),
 		flags: text('flags'), // jsonb léger sérialisé (cypress, docTech…) — simple au MVP
+		// Renseigné uniquement à la création par un sync Jira (jamais réécrit après) — sert de portée à
+		// "Annuler ce lot" (deleteUntouchedSyncedTickets) : seuls les tickets encore vierges de toute
+		// trace humaine, d'un run donné, peuvent être supprimés en masse depuis l'onglet admin Jira.
+		createdBySyncRunId: uuid('created_by_sync_run_id').references(() => jiraSyncRun.id, { onDelete: 'set null' }),
 		archivedAt: archivedAt(),
 		createdAt: createdAt(),
 		updatedAt: updatedAt()
 	},
 	(t) => [
 		index('ticket_ws_idx').on(t.workspaceId),
-		uniqueIndex('ticket_ws_key_uq').on(t.workspaceId, t.key)
+		uniqueIndex('ticket_ws_key_uq').on(t.workspaceId, t.key),
+		index('ticket_sync_run_idx').on(t.createdBySyncRunId)
 	]
 );
 
@@ -435,7 +515,8 @@ export const timeEntry = pgTable(
 		objectiveId: uuid('objective_id').references(() => weeklyObjective.id, { onDelete: 'set null' }),
 		activityId: uuid('activity_id').references(() => activity.id, { onDelete: 'set null' }),
 		day: date('day').notNull(),
-		amount: numeric('amount', { precision: 4, scale: 2 }).notNull(),
+		// scale 3 (pas 2) : suit imputationStep — un pas de 0.125 doit pouvoir être stocké tel quel.
+		amount: numeric('amount', { precision: 5, scale: 3 }).notNull(),
 		createdAt: createdAt(),
 		updatedAt: updatedAt()
 	},
@@ -669,6 +750,7 @@ export type Workspace = typeof workspace.$inferSelect;
 export type User = typeof user.$inferSelect;
 export type Membership = typeof membership.$inferSelect;
 export type Ticket = typeof ticket.$inferSelect;
+export type JiraSyncRun = typeof jiraSyncRun.$inferSelect;
 export type TicketActivityRae = typeof ticketActivityRae.$inferSelect;
 export type TicketGroup = typeof ticketGroup.$inferSelect;
 export type Category = typeof category.$inferSelect;

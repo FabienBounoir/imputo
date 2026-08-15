@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, or, ilike, sql, count } from 'drizzle-orm';
+import { and, eq, inArray, isNull, notExists, or, ilike, sql, count } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import {
 	db,
@@ -14,6 +14,8 @@ import {
 	ticketActivityRae,
 	ticketGroup,
 	ticketGroupMember,
+	imputationPin,
+	weeklyObjective,
 	type Role
 } from '$lib/server/db';
 import { isManagerOrAdmin } from './workspaces';
@@ -386,6 +388,51 @@ export async function deleteTicket(workspaceId: string, ticketId: string) {
 }
 
 /**
+ * Supprime les tickets d'un run de sync Jira encore vierges de toute trace humaine — appelé par
+ * "Annuler ce lot" (cf. accounts.ts/undoJiraSyncRun). Un ticket ne qualifie que si TOUS ses champs
+ * éditables sont restés à leur valeur de sync (jamais écrits par syncWorkspace, cf. jiraSync.ts) ET
+ * qu'aucune autre table ne le référence — pas seulement timeEntry (contrairement à deleteTicket) :
+ * imputationPin, ticketActivityRae, ticketGroupMember et weeklyObjective sont tous en cascade sur
+ * ticket.id (schema.ts), donc une suppression brute effacerait silencieusement des données saisies
+ * à la main. Exclut aussi tout ticket parent d'un autre (parentId n'a pas de contrainte FK/cascade —
+ * le supprimer laisserait un parentId orphelin). Un ticket touché une seule fois reste hors de portée
+ * définitivement : le lot ne "rattrape" jamais un ticket qui a bougé depuis le sync.
+ */
+export async function deleteUntouchedSyncedTickets(workspaceId: string, syncRunId: string): Promise<number> {
+	const childTicket = alias(ticket, 'child_ticket');
+	const res = await db
+		.delete(ticket)
+		.where(
+			and(
+				eq(ticket.workspaceId, workspaceId),
+				eq(ticket.createdBySyncRunId, syncRunId),
+				isNull(ticket.comment),
+				isNull(ticket.stateId),
+				isNull(ticket.sprintId),
+				isNull(ticket.versionId),
+				isNull(ticket.sspCode),
+				isNull(ticket.estimationReal),
+				isNull(ticket.raeReal),
+				isNull(ticket.estimationTest),
+				isNull(ticket.prepa),
+				isNull(ticket.raeTest),
+				isNull(ticket.estimationPrev),
+				isNull(ticket.enveloppeTotale),
+				isNull(ticket.flags),
+				isNull(ticket.archivedAt),
+				notExists(db.select({ n: sql`1` }).from(timeEntry).where(eq(timeEntry.ticketId, ticket.id))),
+				notExists(db.select({ n: sql`1` }).from(imputationPin).where(eq(imputationPin.ticketId, ticket.id))),
+				notExists(db.select({ n: sql`1` }).from(ticketActivityRae).where(eq(ticketActivityRae.ticketId, ticket.id))),
+				notExists(db.select({ n: sql`1` }).from(ticketGroupMember).where(eq(ticketGroupMember.ticketId, ticket.id))),
+				notExists(db.select({ n: sql`1` }).from(weeklyObjective).where(eq(weeklyObjective.ticketId, ticket.id))),
+				notExists(db.select({ n: sql`1` }).from(childTicket).where(eq(childTicket.parentId, ticket.id)))
+			)
+		)
+		.returning({ id: ticket.id });
+	return res.length;
+}
+
+/**
  * Version allégée de listTickets pour les sélecteurs (ex. "Ajouter un ticket" sur Mon imputation) :
  * juste id/clé/titre/sprint/version, sans l'enrichissement consommé/RAE/contributeurs/groupes
  * (4 requêtes GROUP BY en plus, inutiles pour peupler un <select>).
@@ -415,7 +462,44 @@ export type TicketFilters = {
 	versionId?: string;
 	/** Lien direct (ex. depuis un dashboard sprint/version) : isole une clé exacte, pas de substring. */
 	exactKey?: string;
+	/** Lien direct depuis l'historique de sync Jira (onglet admin) : URL-only comme exactKey, jamais
+	 *  exposé comme filtre dans la barre (cf. tickets/+page.server.ts, param ?jiraRun=). */
+	syncRunId?: string;
 };
+
+export type TicketFiltersSnapshot = {
+	view: 'table' | 'kanban';
+	query: string | null;
+	stateId: string | null;
+	projectId: string | null;
+	sprintId: string | null;
+	versionId: string | null;
+};
+
+/**
+ * Parse le JSON de filtres tickets mémorisés (préférence de compte, cf. réglages) ; jamais
+ * d'exception sur une entrée invalide (même contrat que parseNotifPrefs). Contrairement aux
+ * notifs, pas de valeurs par défaut à fusionner ici : l'absence doit rester "rien à réappliquer",
+ * pas un jeu de filtres actif.
+ */
+export function parseTicketFiltersSnapshot(raw: string | null): TicketFiltersSnapshot | null {
+	if (!raw) return null;
+	try {
+		const p = JSON.parse(raw);
+		if (!p || typeof p !== 'object') return null;
+		const str = (v: unknown) => (typeof v === 'string' && v ? v : null);
+		return {
+			view: p.view === 'kanban' ? 'kanban' : 'table',
+			query: str(p.query),
+			stateId: str(p.stateId),
+			projectId: str(p.projectId),
+			sprintId: str(p.sprintId),
+			versionId: str(p.versionId)
+		};
+	} catch {
+		return null;
+	}
+}
 
 function ticketFilterConditions(workspaceId: string, filters: TicketFilters) {
 	const conditions = [eq(ticket.workspaceId, workspaceId), isNull(ticket.archivedAt)];
@@ -424,6 +508,7 @@ function ticketFilterConditions(workspaceId: string, filters: TicketFilters) {
 	if (filters.sprintId) conditions.push(eq(ticket.sprintId, filters.sprintId));
 	if (filters.versionId) conditions.push(eq(ticket.versionId, filters.versionId));
 	if (filters.exactKey) conditions.push(eq(ticket.key, filters.exactKey));
+	if (filters.syncRunId) conditions.push(eq(ticket.createdBySyncRunId, filters.syncRunId));
 	if (filters.query?.trim()) {
 		const q = `%${filters.query.trim()}%`;
 		conditions.push(or(ilike(ticket.key, q), ilike(ticket.title, q))!);

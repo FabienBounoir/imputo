@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { formatDateTime } from '$lib/utils/date';
-	import { TICKET_FIELD_LABELS, ABSENCE_FIELD_LABELS } from '$lib/changeLogLabels';
+	import { TICKET_FIELD_LABELS, ABSENCE_FIELD_LABELS, WORKSPACE_FIELD_LABELS } from '$lib/changeLogLabels';
 
 	let { data } = $props();
 
-	type Entity = 'ALL' | 'TICKET' | 'ABSENCE';
+	type Entity = 'ALL' | 'TICKET' | 'ABSENCE' | 'WORKSPACE';
 	type Cursor = { createdAt: string; id: string };
 	type Entry = (typeof data.entries)[number];
 
@@ -15,9 +15,17 @@
 	let entityFilter = $state<Entity>('ALL');
 	let sentinel: HTMLElement | undefined = $state();
 
-	function fieldLabel(entityType: 'TICKET' | 'ABSENCE', field: string | null) {
+	function fieldLabel(entityType: 'TICKET' | 'ABSENCE' | 'WORKSPACE', field: string | null) {
 		if (!field) return '';
-		return entityType === 'TICKET' ? (TICKET_FIELD_LABELS[field] ?? field) : (ABSENCE_FIELD_LABELS[field] ?? field);
+		if (entityType === 'TICKET') return TICKET_FIELD_LABELS[field] ?? field;
+		if (entityType === 'WORKSPACE') return WORKSPACE_FIELD_LABELS[field] ?? field;
+		return ABSENCE_FIELD_LABELS[field] ?? field;
+	}
+
+	function entityLabel(entityType: 'TICKET' | 'ABSENCE' | 'WORKSPACE') {
+		if (entityType === 'TICKET') return 'Ticket';
+		if (entityType === 'WORKSPACE') return 'Configuration';
+		return 'Absence';
 	}
 
 	async function fetchPage(reset: boolean) {
@@ -65,7 +73,7 @@
 </script>
 
 <div class="topbar">
-	<h1>Historique<small>Modifications tracées : estimations tickets, absences — 30 derniers jours</small></h1>
+	<h1>Historique<small>Modifications tracées : estimations tickets, absences, configuration — 30 derniers jours</small></h1>
 </div>
 
 <div class="content">
@@ -75,6 +83,7 @@
 			<button type="button" class:active={entityFilter === 'ALL'} onclick={() => setEntityFilter('ALL')}>Tous</button>
 			<button type="button" class:active={entityFilter === 'TICKET'} onclick={() => setEntityFilter('TICKET')}>Tickets</button>
 			<button type="button" class:active={entityFilter === 'ABSENCE'} onclick={() => setEntityFilter('ABSENCE')}>Absences</button>
+			<button type="button" class:active={entityFilter === 'WORKSPACE'} onclick={() => setEntityFilter('WORKSPACE')}>Configuration</button>
 		</div>
 	</div>
 
@@ -91,11 +100,14 @@
 							{#if e.entityType === 'TICKET' && e.ticketKey}
 								<a href="/tickets?q={e.ticketKey}">{e.ticketKey}</a>
 							{:else}
-								{e.entityType === 'TICKET' ? 'Ticket' : 'Absence'}
+								{entityLabel(e.entityType)}
 							{/if}
 						</span>
 						{#if e.action === 'DELETE'}
 							<span class="hchange">Suppression — {e.oldValue}</span>
+						{:else if e.oldValue === null && e.newValue === null}
+							<span class="hfield">{fieldLabel(e.entityType, e.field)}</span>
+							<span class="hchange">Modifié</span>
 						{:else}
 							<span class="hfield">{fieldLabel(e.entityType, e.field)}</span>
 							<span class="hchange">{e.oldValue ?? '—'} → {e.newValue ?? '—'}</span>

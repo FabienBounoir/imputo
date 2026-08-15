@@ -5,6 +5,8 @@ import { createWorkspaceWithOwner } from './workspaces';
 import { listTickets, createTicket } from './tickets';
 import { setCell, getWeek } from './imputation';
 import { addObjective } from './weeklyObjectives';
+import { encryptSecret } from '../auth/secretCrypto';
+import { syncWorkspace, type JiraSyncConfig } from './jiraSync';
 
 // Test d'isolation multi-espaces : un espace ne doit JAMAIS voir les données d'un autre.
 const rnd = Math.random().toString(36).slice(2, 8);
@@ -121,5 +123,65 @@ describe('isolation multi-espaces', () => {
 				amount: 1
 			})
 		).rejects.toThrow();
+	});
+
+	it('syncWorkspace ne lit/écrit jamais la config ou les tickets Jira d’un autre espace', async () => {
+		const a = await createWorkspaceWithOwner({
+			displayName: 'A4',
+			email: `a4-${rnd}@acme.test`,
+			password: 'password123',
+			workspaceName: 'Espace A4'
+		});
+		const b = await createWorkspaceWithOwner({
+			displayName: 'B4',
+			email: `b4-${rnd}@beta.test`,
+			password: 'password123',
+			workspaceName: 'Espace B4'
+		});
+		wsIds.push(a.workspaceId, b.workspaceId);
+
+		const encKey = Buffer.alloc(32, 3).toString('base64');
+		const cfg: JiraSyncConfig = {
+			azureTenantId: 't',
+			azureClientId: 'c',
+			azureClientSecret: 's',
+			jiraBaseUrl: 'https://jira.example.test',
+			patEncryptionKey: encKey
+		};
+
+		// Seul l'espace A est configuré (PAT + JQL) ; B ne l'est jamais.
+		await db
+			.update(workspace)
+			.set({ jiraPatEncrypted: encryptSecret('pat-de-A', encKey), jiraJql: 'project = A' })
+			.where(eq(workspace.id, a.workspaceId));
+
+		const fetchImpl = (async (input: RequestInfo | URL) => {
+			const url = input.toString();
+			if (url.includes('login.microsoftonline.com')) {
+				return new Response(JSON.stringify({ access_token: 'tok', expires_in: 3600 }), { status: 200 });
+			}
+			if (url.includes('/rest/api/2/search')) {
+				const issue = {
+					key: `ISO-${rnd}`,
+					fields: { summary: 'Ticket isolation', issuetype: { name: 'Story' }, project: { name: 'X' } }
+				};
+				return new Response(JSON.stringify({ startAt: 0, total: 1, issues: [issue] }), { status: 200 });
+			}
+			throw new Error(`unexpected url: ${url}`);
+		}) as typeof fetch;
+
+		// B n'a ni PAT ni JQL -> échec de config propre, sans jamais utiliser la config de A.
+		const resB = await syncWorkspace(db, cfg, b.workspaceId, { fetchImpl });
+		expect(resB.ok).toBe(false);
+
+		// A est configuré -> sync réussi.
+		const resA = await syncWorkspace(db, cfg, a.workspaceId, { fetchImpl });
+		expect(resA.ok).toBe(true);
+
+		// Le ticket créé par le sync de A n'existe que dans A, jamais visible depuis B.
+		const ticketsA = await listTickets(a.workspaceId);
+		const ticketsB = await listTickets(b.workspaceId);
+		expect(ticketsA.map((t) => t.key)).toContain(`ISO-${rnd}`);
+		expect(ticketsB.map((t) => t.key)).not.toContain(`ISO-${rnd}`);
 	});
 });

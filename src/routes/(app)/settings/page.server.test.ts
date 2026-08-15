@@ -27,6 +27,38 @@ describe('settings accentPref action', () => {
 	});
 });
 
+describe('settings rememberTicketFiltersPref action', () => {
+	it('met à jour la préférence de mémorisation des filtres tickets', async () => {
+		const { userId } = await makeWorkspace('set3');
+		const locals = await fakeLocals(userId);
+		const event = { locals, request: formRequest({ value: 'false' }) };
+		const res = await actions.rememberTicketFiltersPref(event as never);
+		expect(res).toEqual({ rememberTicketFiltersOk: true });
+	});
+
+	it('non authentifié -> fail 401', async () => {
+		const event = { locals: { user: null }, request: formRequest({ value: 'true' }) };
+		const res = await actions.rememberTicketFiltersPref(event as never);
+		expect(res?.status).toBe(401);
+	});
+});
+
+describe('settings compactActivityPref action', () => {
+	it('met à jour la préférence de détail par activité compacté', async () => {
+		const { userId } = await makeWorkspace('set4');
+		const locals = await fakeLocals(userId);
+		const event = { locals, request: formRequest({ value: 'false' }) };
+		const res = await actions.compactActivityPref(event as never);
+		expect(res).toEqual({ compactActivityOk: true });
+	});
+
+	it('non authentifié -> fail 401', async () => {
+		const event = { locals: { user: null }, request: formRequest({ value: 'true' }) };
+		const res = await actions.compactActivityPref(event as never);
+		expect(res?.status).toBe(401);
+	});
+});
+
 describe('settings changePassword action', () => {
 	it('change le mot de passe avec le bon ancien mot de passe', async () => {
 		const { userId } = await makeWorkspace('set3');

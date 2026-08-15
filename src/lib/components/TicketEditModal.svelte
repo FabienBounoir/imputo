@@ -552,7 +552,7 @@
 		font-weight: 700;
 	}
 	.gap-neg {
-		color: var(--accent) !important;
+		color: var(--success) !important;
 		font-weight: 700;
 	}
 	.tk-history {

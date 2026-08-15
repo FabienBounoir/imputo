@@ -13,6 +13,8 @@
 	} from '$lib/utils/date';
 	import { tick } from 'svelte';
 	import { goto, afterNavigate, invalidateAll } from '$app/navigation';
+	import { beep } from '$lib/sound';
+	import { Confetti } from 'svelte-confetti';
 	import { navigating } from '$app/state';
 	import ExportModal from '$lib/components/ExportModal.svelte';
 	import TargetPicker from '$lib/components/TargetPicker.svelte';
@@ -45,8 +47,10 @@
 
 	// Pas de saisie (§7 admin) : ex. 0.25 → [0, .25, .5, .75, 1] ; 0.5 → [0, .5, 1]. Jamais
 	// figé sur .25, sinon un espace qui règle un autre pas ne change rien à la saisie réelle.
+	// Arrondi à 3 décimales (pas 2) : un pas de 0.125 (1h/jour) doit survivre intact, sinon il
+	// dérive silencieusement vers 0.13 dès la génération du cycle de clic.
 	function round(n: number) {
-		return Math.round((n + Number.EPSILON) * 100) / 100;
+		return Math.round((n + Number.EPSILON) * 1000) / 1000;
 	}
 	let CYCLE = $derived.by(() => {
 		const step = data.imputationStep > 0 ? data.imputationStep : 0.25;
@@ -121,6 +125,33 @@
 		return t;
 	});
 	let periodTotal = $derived(round(Object.values(dayTotals).reduce((a, b) => a + b, 0)));
+
+	// Célébrations (jingle du jour + confettis/fanfare de la semaine, ci-dessous) : uniquement sur
+	// sa propre feuille. Un admin peut modifier l'imputation d'un autre (readOnly ne couvre que la
+	// vue équipe/lecture seule, pas ce cas), mais ce n'est pas à lui qu'on doit "féliciter".
+	let isOwnSheet = $derived(!data.viewingTeam && !data.viewingOther);
+
+	// Petit jingle quand un jour atteint pile la capacité — seulement à la transition (pas à
+	// l'ouverture de la page si un jour est déjà complet), même timbre que l'easter egg du logo
+	// ((app)/+layout.svelte) pour rester cohérent avec le seul autre "succès" sonore de l'app.
+	let prevDayTotals: Record<string, number> | null = null;
+	$effect(() => {
+		const snapshot = { ...dayTotals };
+		if (prevDayTotals && data.capacity > 0 && isOwnSheet) {
+			for (const d of days) {
+				const justReached = snapshot[d] === data.capacity && prevDayTotals[d] !== data.capacity;
+				if (justReached) {
+					[880, 1108.73, 1318.51].forEach((freq, i) =>
+						beep(freq, { offset: i * 0.1, duration: i === 2 ? 0.3 : 0.1, type: 'triangle', volume: 0.14 })
+					);
+					break;
+				}
+			}
+		}
+		// Pas de baseline mémorisée hors de sa propre feuille — sinon, en revenant dessus après avoir
+		// consulté celle d'un autre, la comparaison porterait sur des chiffres sans rapport.
+		prevDayTotals = isOwnSheet ? snapshot : null;
+	});
 	// Capacité attendue = capacité/jour × jours ouvrés non fériés de la période (miroir de
 	// calc.ts:weeklyCapacity/capacityPct côté serveur — dupliqué ici car $lib/server n'est pas
 	// importable côté client, cf. le même motif pour totalEst/ecartVsEstime dans tickets/+page.svelte).
@@ -149,9 +180,51 @@
 	// Dernier jour de chaque semaine : sépare visuellement les blocs quand la période en couvre plusieurs.
 	let weekBoundaries = $derived(new Set(data.period.weeks.slice(0, -1).map((w) => w.days[w.days.length - 1])));
 
+	// Semaine complète (pile à la capacité, même transition-only que le jingle du jour ci-dessus) :
+	// confettis (respecte prefers-reduced-motion, même garde que l'easter egg Konami dans le layout
+	// racine) + un jingle plus fourni qu'un simple jour — gamme montante puis accord tenu.
+	const CONFETTI_DURATION = 5000;
+	let showWeekConfetti = $state(false);
+	let confettiTimer: ReturnType<typeof setTimeout>;
+	let prevWeekTotals: Record<string, number> | null = null;
+	function playWeekCompleteSound() {
+		const run = [523.25, 587.33, 659.25, 698.46, 783.99, 880, 987.77, 1046.5]; // Do5 → Do6
+		run.forEach((freq, i) => beep(freq, { offset: i * 0.06, duration: 0.1, type: 'triangle', volume: 0.12 }));
+		const chordAt = run.length * 0.06 + 0.05;
+		[523.25, 659.25, 783.99].forEach((freq) => beep(freq, { offset: chordAt, duration: 0.6, type: 'triangle', volume: 0.16 }));
+	}
+	$effect(() => {
+		const snapshot = Object.fromEntries(weekStats.map((w) => [w.days[0], w.total]));
+		if (prevWeekTotals && isOwnSheet) {
+			for (const w of weekStats) {
+				const key = w.days[0];
+				const justCompleted = w.capacity > 0 && w.total === w.capacity && prevWeekTotals[key] !== w.capacity;
+				if (justCompleted) {
+					if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+						showWeekConfetti = true;
+						clearTimeout(confettiTimer);
+						confettiTimer = setTimeout(() => (showWeekConfetti = false), CONFETTI_DURATION);
+					}
+					playWeekCompleteSound();
+					break;
+				}
+			}
+		}
+		prevWeekTotals = isOwnSheet ? snapshot : null;
+	});
+
 	function fmt(n: number | undefined) {
 		if (!n) return '·';
 		return String(n);
+	}
+
+	// Dégradé continu (0 = --warn, capacité atteinte = --success) pour le total du jour — remplace
+	// l'ancien binaire "ok dès qu'il y a quelque chose" qui affichait la même couleur pleine à 10%
+	// qu'à 100% de la capacité. Le dépassement (.over) reste géré à part, en dehors de ce dégradé.
+	function dayFillStyle(total: number, capacity: number): string | undefined {
+		if (capacity <= 0 || total > capacity) return undefined;
+		const pct = (Math.max(0, total) / capacity) * 100;
+		return `--fill: color-mix(in srgb, var(--success) ${pct}%, var(--warn)); color: var(--fill); background: color-mix(in srgb, var(--fill) 15%, transparent);`;
 	}
 
 	async function setAmount(row: Row, day: string, value: number) {
@@ -525,6 +598,27 @@
 		})
 	);
 </script>
+
+{#if showWeekConfetti}
+	<div class="week-confetti" aria-hidden="true">
+		<Confetti
+			x={[-5, 5]}
+			y={[0, 0.1]}
+			delay={[500, 2000]}
+			infinite
+			duration={CONFETTI_DURATION}
+			amount={200}
+			fallDistance="100vh"
+			rounded
+			colorArray={[
+				'var(--accent)',
+				'var(--accent-ink)',
+				'color-mix(in srgb, var(--accent) 55%, white)',
+				'color-mix(in srgb, var(--accent) 75%, black)'
+			]}
+		/>
+	</div>
+{/if}
 
 <div class="topbar">
 	<h1>{data.viewingTeam ? "Imputation de l'équipe" : data.viewingOther ? `Imputation de ${data.viewedName}` : 'Mon imputation'}<small>{data.period.label}</small></h1>
@@ -900,7 +994,7 @@
 					<td class="task foot-lab">Total / jour</td>
 					{#if showRae}<td class="estimation"></td><td class="rae"></td>{/if}
 					{#each days as d (d)}
-						<td class:wk-end={weekBoundaries.has(d)}><span class="day-tot tabnum" class:over={dayTotals[d] > data.capacity} class:ok={dayTotals[d] > 0 && dayTotals[d] <= data.capacity}>{fmt(dayTotals[d])}</span></td>
+						<td class:wk-end={weekBoundaries.has(d)}><span class="day-tot tabnum" class:over={dayTotals[d] > data.capacity} style={dayFillStyle(dayTotals[d], data.capacity)}>{fmt(dayTotals[d])}</span></td>
 					{/each}
 					<td class="sum tabnum">{periodTotal}</td>
 				</tr>
@@ -1005,6 +1099,18 @@
 />
 
 <style>
+	.week-confetti {
+		position: fixed;
+		top: -50px;
+		left: 0;
+		height: 100vh;
+		width: 100vw;
+		display: flex;
+		justify-content: center;
+		overflow: hidden;
+		pointer-events: none;
+		z-index: 9999;
+	}
 	.summary {
 		display: grid;
 		grid-template-columns: repeat(4, 1fr);
@@ -1657,13 +1763,6 @@
 		min-width: 34px;
 		padding: 3px 6px;
 		border-radius: 8px;
-	}
-	.day-tot.ok {
-		color: var(--accent-ink);
-		background: var(--accent-tint);
-	}
-	:global([data-theme='dark']) .day-tot.ok {
-		color: color-mix(in srgb, var(--accent) 75%, #fff);
 	}
 	.day-tot.over {
 		color: var(--warn);
