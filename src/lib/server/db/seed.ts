@@ -34,7 +34,8 @@ import {
 	externalMember,
 	changeLog,
 	weeklyObjective,
-	weeklyVacation
+	weeklyVacation,
+	jiraSyncRun
 } from './schema';
 import { getDb, wipeSandbox, WORKSPACE_NAME, SEED_DOMAIN, SEED_USERS, getSeedScale, type SeedScale } from './seed.shared';
 
@@ -385,6 +386,60 @@ async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, pe
 	for (const t of drafts) {
 		if (t.group) await db.insert(ticketGroupMember).values({ groupId: groupByLabel.get(t.group)!.id, ticketId: ticketByKey.get(t.key)!.id });
 	}
+
+	// ---------- Historique de sync Jira : peuple l'onglet Admin > Jira (historique + "Annuler ce
+	// lot") sans dépendre d'un PAT/JQL réel — l'historique est append-only (contrairement à
+	// workspace.jiraLastSync*), un espace peut donc très bien en avoir sans être configuré là
+	// maintenant. Import initial : tout le lot curaté (hors top-up bulk, volontairement hors
+	// périmètre) — déjà chiffré/imputé par la suite, donc plus annulable (réaliste). Run récent :
+	// quelques tickets tels qu'un vrai sync les crée (juste key/title/projectId, cf. jiraSync.ts),
+	// sans passer par TicketDraft qui leur donnerait toujours un état — sinon aucun ne serait plus
+	// jamais "vierge" et "Annuler ce lot" n'aurait jamais rien à supprimer dans la démo.
+	const [jiraInitialRun] = await db
+		.insert(jiraSyncRun)
+		.values({
+			workspaceId: ws.id,
+			startedAt: mondayWeeksAgo(sprintDefs[0].startWeeksAgo),
+			status: 'SUCCESS',
+			ticketsSeen: insertedTickets.length,
+			ticketsCreated: insertedTickets.length
+		})
+		.returning({ id: jiraSyncRun.id });
+	await db
+		.update(ticket)
+		.set({ createdBySyncRunId: jiraInitialRun.id })
+		.where(inArray(ticket.id, insertedTickets.map((t) => t.id)));
+
+	const recentTicketDefs = [
+		{ key: `SBX-${ticketNum++}`, title: 'Export audit RGPD', project: 'Backend' as const },
+		{ key: `SBX-${ticketNum++}`, title: 'Refonte formulaire contact', project: 'Web' as const },
+		{ key: `SBX-${ticketNum++}`, title: 'Correctif notif push Android', project: 'Mobile' as const }
+	];
+	const insertedRecentTickets = await db
+		.insert(ticket)
+		.values(recentTicketDefs.map((t) => ({ workspaceId: ws.id, key: t.key, title: t.title, projectId: projectByName.get(t.project)!.id })))
+		.returning({ id: ticket.id });
+	const [jiraRecentRun] = await db
+		.insert(jiraSyncRun)
+		.values({
+			workspaceId: ws.id,
+			startedAt: addDays(today, -1),
+			status: 'SUCCESS',
+			ticketsSeen: insertedRecentTickets.length,
+			ticketsCreated: insertedRecentTickets.length
+		})
+		.returning({ id: jiraSyncRun.id });
+	await db
+		.update(ticket)
+		.set({ createdBySyncRunId: jiraRecentRun.id })
+		.where(inArray(ticket.id, insertedRecentTickets.map((t) => t.id)));
+
+	await db.insert(jiraSyncRun).values({
+		workspaceId: ws.id,
+		startedAt: new Date(),
+		status: 'ERROR',
+		error: '401 Unauthorized : le token Jira (PAT) semble invalide ou expiré.'
+	});
 
 	// ---------- Top-up : tickets bulk supplémentaires pour atteindre SEED_TICKETS_PER_WS (tests de
 	// charge) — pas d'imputation/snapshot dessus, juste du volume pour stresser liste/kanban/dashboard.
@@ -825,11 +880,12 @@ async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, pe
 
 	for (const batch of chunk(changeLogRows, 500)) await db.insert(changeLog).values(batch);
 
-	const totalTickets = insertedTickets.length + Math.max(0, scale.ticketsPerWorkspace - insertedTickets.length);
+	const totalTickets =
+		insertedTickets.length + insertedRecentTickets.length + Math.max(0, scale.ticketsPerWorkspace - insertedTickets.length);
 	const totalAbsences = insertedAbsences.length + clientAbsenceRows.length;
 	console.log(
 		`✓ "${wsName}" créé — ${totalTickets} tickets sur ${sprintDefs.length} sprints / ${VERSION_NAMES.length} versions, ` +
-			`${entryDrafts.length} imputations (${allDays.length} jours ouvrés, du ${allDays[0]} au ${allDays[allDays.length - 1]}), ${snapshotRows.length} snapshots, ${moodVoteRows.length} votes team mood sur 7 semaines, ${totalAbsences} absences (dont 1 membre externe), ${changeLogRows.length} entrées d'historique, 6 objectifs de semaine (dont David en vacances la semaine prochaine, sans objectif).`
+			`${entryDrafts.length} imputations (${allDays.length} jours ouvrés, du ${allDays[0]} au ${allDays[allDays.length - 1]}), ${snapshotRows.length} snapshots, ${moodVoteRows.length} votes team mood sur 7 semaines, ${totalAbsences} absences (dont 1 membre externe), ${changeLogRows.length} entrées d'historique, 6 objectifs de semaine (dont David en vacances la semaine prochaine, sans objectif), 3 runs de sync Jira (import initial de ${insertedTickets.length} tickets, run récent de ${insertedRecentTickets.length} tickets encore annulables, 1 en échec).`
 	);
 	for (const p of personas) console.log(`  ${p.email.padEnd(32)} ${p.password.padEnd(14)} (${p.role})`);
 }

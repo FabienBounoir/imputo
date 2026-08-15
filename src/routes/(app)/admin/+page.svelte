@@ -893,6 +893,63 @@
 					</button>
 				</form>
 			</div>
+
+			<div class="jira-history">
+				<h4>Historique des synchronisations</h4>
+				{#if form?.jiraUndoOk}
+					<div class="flash ok">{form.jiraUndoDeleted} ticket{form.jiraUndoDeleted > 1 ? 's' : ''} supprimé{form.jiraUndoDeleted > 1 ? 's' : ''} ✓</div>
+				{/if}
+
+				{#if data.jiraSyncRuns.length === 0}
+					<span class="hint">Aucun run pour l'instant.</span>
+				{:else}
+					<ul class="jira-run-list">
+						{#each data.jiraSyncRuns as run (run.id)}
+							<li class="jira-run-row">
+								<div class="row-between">
+									<span>
+										<b>{formatDateTime(new Date(run.startedAt))}</b>
+										{#if run.status === 'SUCCESS'}
+											<span class="pill active">
+												✓ {run.ticketsSeen} vu{run.ticketsSeen > 1 ? 's' : ''}{#if run.ticketsCreated > 0}
+													&nbsp;· {run.ticketsCreated} ajouté{run.ticketsCreated > 1 ? 's' : ''}
+												{/if}
+											</span>
+										{:else}
+											<span class="pill pending">✗ échec</span>
+										{/if}
+									</span>
+									{#if run.ticketsCreated > 0}
+										<div class="jira-run-actions">
+											<a class="btn btn-ghost" href="/tickets?jiraRun={run.id}">Voir les tickets</a>
+											{#if run.undoneAt}
+												<span class="hint">Lot annulé le {formatDateTime(new Date(run.undoneAt))}</span>
+											{:else}
+												<form
+													method="POST"
+													action="?/jiraUndoSyncRun"
+													use:enhance={async ({ cancel }) => {
+														const ok = await confirmDialog({
+															message:
+																'Supprime les tickets de ce lot encore vierges de toute saisie (imputation, chiffrage, état…). Un ticket déjà touché depuis le sync est automatiquement conservé.',
+															confirmLabel: 'Annuler ce lot'
+														});
+														if (!ok) cancel();
+													}}
+												>
+													<input type="hidden" name="runId" value={run.id} />
+													<button type="submit" class="btn btn-ghost">Annuler ce lot</button>
+												</form>
+											{/if}
+										</div>
+									{/if}
+								</div>
+								{#if run.status === 'ERROR' && run.error}<p class="hint err-text">{run.error}</p>{/if}
+							</li>
+						{/each}
+					</ul>
+				{/if}
+			</div>
 		</section>
 	{/if}
 
@@ -1587,10 +1644,39 @@
 	.jira-pat-summary-info .hint {
 		margin: 0;
 	}
-	.jira-activation {
+	.jira-activation,
+	.jira-history {
 		margin-top: 22px;
 		padding-top: 20px;
 		border-top: 1px solid var(--border);
+	}
+	.jira-run-list {
+		list-style: none;
+		margin: 10px 0 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+	.jira-run-row {
+		padding: 10px 14px;
+		background: var(--surface-sunk);
+		border-radius: var(--r-sm);
+		font-size: 13px;
+	}
+	.jira-run-row .row-between {
+		margin-top: 0;
+		flex-wrap: wrap;
+	}
+	.jira-run-actions {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		flex-wrap: wrap;
+	}
+	.jira-run-row .btn {
+		padding: 5px 10px;
+		font-size: 12.5px;
 	}
 	.row-between {
 		display: flex;

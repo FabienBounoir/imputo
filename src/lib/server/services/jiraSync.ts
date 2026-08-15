@@ -1,6 +1,6 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { Db } from '$lib/server/db/connection';
-import { workspace, project, ticket } from '$lib/server/db/schema';
+import { workspace, project, ticket, jiraSyncRun } from '$lib/server/db/schema';
 import {
 	getAzureToken,
 	searchJiraIssues,
@@ -55,6 +55,7 @@ async function finalizeError(
 			.update(workspace)
 			.set({ jiraLastSyncAt: new Date(), jiraLastSyncStatus: 'ERROR', jiraLastSyncError: message })
 			.where(eq(workspace.id, workspaceId));
+		await db.insert(jiraSyncRun).values({ workspaceId, startedAt: new Date(), status: 'ERROR', error: message });
 		return { ok: false, workspaceId, error: message };
 	}
 
@@ -70,13 +71,17 @@ async function finalizeError(
 		.returning({ failures: workspace.jiraConsecutiveFailures });
 
 	const failures = row?.failures ?? 0;
-	if (failures < MAX_CONSECUTIVE_AUTH_FAILURES) return { ok: false, workspaceId, error: message };
+	if (failures < MAX_CONSECUTIVE_AUTH_FAILURES) {
+		await db.insert(jiraSyncRun).values({ workspaceId, startedAt: new Date(), status: 'ERROR', error: message });
+		return { ok: false, workspaceId, error: message };
+	}
 
 	const disabledMessage = `${message} — synchronisation planifiée désactivée automatiquement après ${MAX_CONSECUTIVE_AUTH_FAILURES} échecs consécutifs.`;
 	await db
 		.update(workspace)
 		.set({ jiraSyncEnabled: false, jiraLastSyncError: disabledMessage })
 		.where(eq(workspace.id, workspaceId));
+	await db.insert(jiraSyncRun).values({ workspaceId, startedAt: new Date(), status: 'ERROR', error: disabledMessage });
 	return { ok: false, workspaceId, error: disabledMessage };
 }
 
@@ -151,6 +156,9 @@ export async function syncWorkspace(
 	}
 
 	const keyToId = new Map<string, string>();
+	// Tickets réellement insérés par ce run (pas juste "vus") — sert à taguer createdBySyncRunId après
+	// coup (cf. plus bas) : plus simple que d'exiger l'id du run avant même de savoir si le run réussit.
+	const createdIds: string[] = [];
 
 	await db.transaction(async (tx) => {
 		async function findOrCreateProjectByName(name: string): Promise<string> {
@@ -180,14 +188,18 @@ export async function syncWorkspace(
 
 			let row: { id: string } | undefined;
 			if (ws.jiraConflictStrategy === 'JIRA_WINS') {
-				[row] = await tx
+				const [r] = await tx
 					.insert(ticket)
 					.values({ workspaceId, key, title: issue.summary, projectId })
 					.onConflictDoUpdate({
 						target: [ticket.workspaceId, ticket.key],
 						set: { title: issue.summary, projectId, updatedAt: new Date() }
 					})
-					.returning({ id: ticket.id });
+					// xmax = 0 : ligne réellement insérée par cette requête (pas juste mise à jour par ON
+					// CONFLICT) — seul moyen de distinguer les deux avec un upsert qui renvoie toujours une ligne.
+					.returning({ id: ticket.id, inserted: sql<boolean>`(xmax = 0)` });
+				row = r;
+				if (r?.inserted) createdIds.push(r.id);
 			} else {
 				// KEEP_LOCAL (défaut) : un ticket déjà connu (créé à la main ou par un sync précédent)
 				// n'est jamais modifié — seulement "reconnu" pour la résolution des parents ci-dessous.
@@ -196,7 +208,8 @@ export async function syncWorkspace(
 					.values({ workspaceId, key, title: issue.summary, projectId })
 					.onConflictDoNothing({ target: [ticket.workspaceId, ticket.key] })
 					.returning({ id: ticket.id });
-				if (!row) {
+				if (row) createdIds.push(row.id);
+				else {
 					[row] = await tx
 						.select({ id: ticket.id })
 						.from(ticket)
@@ -237,6 +250,20 @@ export async function syncWorkspace(
 			jiraUpdatedSince: new Date(syncStartedAt.getTime() - WATERMARK_SAFETY_MARGIN_MS)
 		})
 		.where(eq(workspace.id, workspaceId));
+
+	const [run] = await db
+		.insert(jiraSyncRun)
+		.values({
+			workspaceId,
+			startedAt: syncStartedAt,
+			status: 'SUCCESS',
+			ticketsSeen: issues.length,
+			ticketsCreated: createdIds.length
+		})
+		.returning({ id: jiraSyncRun.id });
+	if (createdIds.length > 0) {
+		await db.update(ticket).set({ createdBySyncRunId: run.id }).where(inArray(ticket.id, createdIds));
+	}
 
 	return { ok: true, workspaceId, ticketsUpserted: issues.length };
 }

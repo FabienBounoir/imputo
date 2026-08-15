@@ -79,7 +79,10 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		versionId: url.searchParams.get('version') ?? undefined,
 		// Lien direct depuis un dashboard sprint/version (SprintDashboardPanel) : clé exacte,
 		// pas de recherche substring — sinon "SBX-3" isolerait aussi SBX-30..39.
-		exactKey: url.searchParams.get('ticket') ?? undefined
+		exactKey: url.searchParams.get('ticket') ?? undefined,
+		// Lien direct depuis l'historique de sync Jira (Admin > Jira) : même principe que exactKey,
+		// URL-only — jamais un champ du formulaire de filtres (cf. TicketFilters#syncRunId).
+		syncRunId: url.searchParams.get('jiraRun') ?? undefined
 	};
 	// Lien depuis l'imputation (clic sur le sprint/version d'une ligne) : filtre sur le sprint ou la
 	// version (liste complète, pas juste ce ticket) + surbrillance du ticket d'origine dans la liste.

@@ -1,6 +1,6 @@
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { describe, it, expect } from 'vitest';
-import { db, workspace, project, ticket } from '$lib/server/db';
+import { db, workspace, project, ticket, jiraSyncRun } from '$lib/server/db';
 import { makeWorkspace } from './test-helpers';
 import { encryptSecret } from '../auth/secretCrypto';
 import { syncWorkspace, syncAllEnabledWorkspaces, WATERMARK_SAFETY_MARGIN_MS, type JiraSyncConfig } from './jiraSync';
@@ -84,6 +84,10 @@ async function makeJiraWorkspace(opts?: {
 
 async function ticketsOf(workspaceId: string) {
 	return db.select().from(ticket).where(eq(ticket.workspaceId, workspaceId));
+}
+
+async function runsOf(workspaceId: string) {
+	return db.select().from(jiraSyncRun).where(eq(jiraSyncRun.workspaceId, workspaceId)).orderBy(desc(jiraSyncRun.startedAt));
 }
 
 describe('jiraSync / syncWorkspace', () => {
@@ -344,5 +348,64 @@ describe('jiraSync / syncAllEnabledWorkspaces', () => {
 		const [offRow] = await db.select().from(workspace).where(eq(workspace.id, wsOff.workspaceId));
 		expect(onRow.jiraLastSyncAt).not.toBeNull(); // a bien tourné
 		expect(offRow.jiraLastSyncAt).toBeNull(); // jamais touché
+	});
+});
+
+describe('jiraSync / historique des runs (jiraSyncRun)', () => {
+	it('un run réussi crée une ligne d’historique (vus/créés) et tague les tickets créés', async () => {
+		const ws = await makeJiraWorkspace();
+		await syncWorkspace(db, cfg, ws.workspaceId, {
+			fetchImpl: fakeFetch({ issues: [rawIssue('T-1', 'A'), rawIssue('T-2', 'B')] })
+		});
+
+		const runs = await runsOf(ws.workspaceId);
+		expect(runs).toHaveLength(1);
+		expect(runs[0]).toMatchObject({ status: 'SUCCESS', ticketsSeen: 2, ticketsCreated: 2, error: null });
+
+		const rows = await ticketsOf(ws.workspaceId);
+		expect(rows.every((r) => r.createdBySyncRunId === runs[0].id)).toBe(true);
+	});
+
+	it('KEEP_LOCAL : un ticket déjà connu n’est ni compté ni retagué par le run suivant', async () => {
+		const ws = await makeJiraWorkspace();
+		await syncWorkspace(db, cfg, ws.workspaceId, { fetchImpl: fakeFetch({ issues: [rawIssue('T-1', 'A')] }) });
+		const [firstRun] = await runsOf(ws.workspaceId);
+
+		await syncWorkspace(db, cfg, ws.workspaceId, {
+			fetchImpl: fakeFetch({ issues: [rawIssue('T-1', 'A'), rawIssue('T-2', 'B')] })
+		});
+		const runs = await runsOf(ws.workspaceId);
+		expect(runs).toHaveLength(2);
+		const secondRun = runs.find((r) => r.id !== firstRun.id)!;
+		expect(secondRun).toMatchObject({ ticketsSeen: 2, ticketsCreated: 1 });
+
+		const rows = await ticketsOf(ws.workspaceId);
+		expect(rows.find((r) => r.key === 'T-1')?.createdBySyncRunId).toBe(firstRun.id); // pas retagué
+		expect(rows.find((r) => r.key === 'T-2')?.createdBySyncRunId).toBe(secondRun.id);
+	});
+
+	it('JIRA_WINS : une mise à jour d’un ticket déjà connu ne retague pas createdBySyncRunId', async () => {
+		const ws = await makeJiraWorkspace({ conflictStrategy: 'JIRA_WINS' });
+		await syncWorkspace(db, cfg, ws.workspaceId, { fetchImpl: fakeFetch({ issues: [rawIssue('T-1', 'Titre 1')] }) });
+		const [firstRun] = await runsOf(ws.workspaceId);
+
+		await syncWorkspace(db, cfg, ws.workspaceId, { fetchImpl: fakeFetch({ issues: [rawIssue('T-1', 'Titre 2')] }) });
+		const runs = await runsOf(ws.workspaceId);
+		const secondRun = runs.find((r) => r.id !== firstRun.id)!;
+		expect(secondRun).toMatchObject({ ticketsSeen: 1, ticketsCreated: 0 });
+
+		const [row] = await ticketsOf(ws.workspaceId);
+		expect(row.title).toBe('Titre 2'); // bien écrasé (dans le périmètre du sync)
+		expect(row.createdBySyncRunId).toBe(firstRun.id); // mais jamais retagué
+	});
+
+	it('un run en échec crée une ligne d’historique ERROR', async () => {
+		const ws = await makeJiraWorkspace();
+		await syncWorkspace(db, cfg, ws.workspaceId, { fetchImpl: fakeFetch({ searchStatus: 500 }) });
+
+		const [run] = await runsOf(ws.workspaceId);
+		expect(run.status).toBe('ERROR');
+		expect(run.ticketsCreated).toBe(0);
+		expect(run.error).toBeTruthy();
 	});
 });

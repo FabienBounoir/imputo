@@ -288,6 +288,13 @@
       "when": 1786733696821,
       "tag": "0040_bored_gravity",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1786796252730,
+      "tag": "0041_blue_jocasta",
+      "breakpoints": true
     }
   ]
 }

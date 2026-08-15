@@ -70,9 +70,10 @@
 		}
 		fetch('?/rememberFilters', { method: 'POST', body });
 	}
-	// exactKey : arrivée via un lien direct depuis un dashboard sprint/version (?ticket=…) — sans
-	// ça le bouton Réinitialiser reste invisible et on ne peut plus revenir à la liste complète.
-	const hasFilters = $derived(!!(data.filters.query || data.filters.stateId || data.filters.projectId || data.filters.sprintId || data.filters.versionId || data.filters.exactKey));
+	// exactKey/syncRunId : arrivée via un lien direct (dashboard sprint/version ?ticket=…, ou
+	// historique de sync Jira ?jiraRun=…) — sans ça le bouton Réinitialiser reste invisible et on ne
+	// peut plus revenir à la liste complète.
+	const hasFilters = $derived(!!(data.filters.query || data.filters.stateId || data.filters.projectId || data.filters.sprintId || data.filters.versionId || data.filters.exactKey || data.filters.syncRunId));
 	// Filtres/vue/pagination naviguent tous via goto() (rechargement serveur) : un fieldset désactive
 	// la barre d'un coup pendant le trajet, pour qu'on ne confonde jamais l'ancienne liste avec la nouvelle.
 	const isNavigating = $derived(!!navigating.to);

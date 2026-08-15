@@ -300,6 +300,31 @@ export const sprint = pgTable(
 );
 
 // ---------- Tickets ----------
+// Un run de sync Jira (planifié ou forcé) — pendant du triplet jiraLastSync* sur workspace, mais en
+// historique append-only (celui-là reste, lui, écrasé à chaque run pour l'affichage "dernier run").
+// status/ticketsSeen/ticketsCreated/error ne sont écrits qu'une fois l'issue du run connue (jamais de
+// ligne "en cours" à gérer) — voir jiraSync.ts (finalizeError + fin de syncWorkspace).
+export const jiraSyncRun = pgTable(
+	'jira_sync_run',
+	{
+		id: id(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspace.id, { onDelete: 'cascade' }),
+		startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
+		status: jiraSyncStatusEnum('status').notNull(),
+		ticketsSeen: integer('tickets_seen').notNull().default(0),
+		ticketsCreated: integer('tickets_created').notNull().default(0),
+		error: text('error'),
+		// Posés ensemble par "Annuler ce lot" (cf. accounts.ts/undoJiraSyncRun) — ne supprime que les
+		// tickets de ce run encore vierges de toute trace humaine (deleteUntouchedSyncedTickets).
+		undoneAt: timestamp('undone_at', { withTimezone: true }),
+		undoneById: uuid('undone_by_id').references(() => user.id, { onDelete: 'set null' }),
+		createdAt: createdAt()
+	},
+	(t) => [index('jira_sync_run_ws_started_idx').on(t.workspaceId, t.startedAt)]
+);
+
 export const ticket = pgTable(
 	'ticket',
 	{
@@ -327,13 +352,18 @@ export const ticket = pgTable(
 		sspCode: text('ssp_code'),
 		comment: text('comment'),
 		flags: text('flags'), // jsonb léger sérialisé (cypress, docTech…) — simple au MVP
+		// Renseigné uniquement à la création par un sync Jira (jamais réécrit après) — sert de portée à
+		// "Annuler ce lot" (deleteUntouchedSyncedTickets) : seuls les tickets encore vierges de toute
+		// trace humaine, d'un run donné, peuvent être supprimés en masse depuis l'onglet admin Jira.
+		createdBySyncRunId: uuid('created_by_sync_run_id').references(() => jiraSyncRun.id, { onDelete: 'set null' }),
 		archivedAt: archivedAt(),
 		createdAt: createdAt(),
 		updatedAt: updatedAt()
 	},
 	(t) => [
 		index('ticket_ws_idx').on(t.workspaceId),
-		uniqueIndex('ticket_ws_key_uq').on(t.workspaceId, t.key)
+		uniqueIndex('ticket_ws_key_uq').on(t.workspaceId, t.key),
+		index('ticket_sync_run_idx').on(t.createdBySyncRunId)
 	]
 );
 
@@ -720,6 +750,7 @@ export type Workspace = typeof workspace.$inferSelect;
 export type User = typeof user.$inferSelect;
 export type Membership = typeof membership.$inferSelect;
 export type Ticket = typeof ticket.$inferSelect;
+export type JiraSyncRun = typeof jiraSyncRun.$inferSelect;
 export type TicketActivityRae = typeof ticketActivityRae.$inferSelect;
 export type TicketGroup = typeof ticketGroup.$inferSelect;
 export type Category = typeof category.$inferSelect;

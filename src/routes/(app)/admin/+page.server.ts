@@ -20,7 +20,9 @@ import {
 	getJiraConfig,
 	setJiraSyncEnabled,
 	saveJiraConfig,
-	resetJiraUpdatedSince
+	resetJiraUpdatedSince,
+	listJiraSyncRuns,
+	undoJiraSyncRun
 } from '$lib/server/services/accounts';
 import { syncWorkspace } from '$lib/server/services/jiraSync';
 import { config } from '$lib/server/config';
@@ -115,7 +117,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		.innerJoin(user, eq(membership.userId, user.id))
 		.where(eq(membership.workspaceId, ws.workspaceId));
 
-	const [projects, sprints, versions, categories, activities, states, ticketGroups, mood, support, supportMembers, jira] =
+	const [projects, sprints, versions, categories, activities, states, ticketGroups, mood, support, supportMembers, jira, jiraSyncRuns] =
 		await Promise.all([
 			listRefs(ws.workspaceId, 'project'),
 			listRefs(ws.workspaceId, 'sprint'),
@@ -127,7 +129,8 @@ export const load: PageServerLoad = async ({ locals }) => {
 			getMoodConfig(ws.workspaceId),
 			getSupportConfig(ws.workspaceId),
 			listRotationMembers(ws.workspaceId),
-			getJiraConfig(ws.workspaceId)
+			getJiraConfig(ws.workspaceId),
+			listJiraSyncRuns(ws.workspaceId)
 		]);
 
 	return {
@@ -144,6 +147,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		support,
 		supportMembers,
 		jira,
+		jiraSyncRuns,
 		projects,
 		sprints,
 		versions,
@@ -696,5 +700,17 @@ export const actions: Actions = {
 		const ws = locals.workspace!;
 		await resetJiraUpdatedSince(ws.workspaceId);
 		return { jiraResetSinceOk: true };
+	},
+
+	jiraUndoSyncRun: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const runId = String((await request.formData()).get('runId') ?? '');
+		try {
+			const deleted = await undoJiraSyncRun(ws.workspaceId, runId, locals.user!.id);
+			return { jiraUndoOk: true, jiraUndoDeleted: deleted };
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
 	}
 };

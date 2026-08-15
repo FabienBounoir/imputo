@@ -1,6 +1,6 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { db, workspace } from '$lib/server/db';
+import { db, workspace, ticket, jiraSyncRun } from '$lib/server/db';
 import { createWorkspaceWithOwner } from './workspaces';
 import {
 	login,
@@ -11,7 +11,9 @@ import {
 	getJiraConfig,
 	setJiraSyncEnabled,
 	saveJiraConfig,
-	resetJiraUpdatedSince
+	resetJiraUpdatedSince,
+	listJiraSyncRuns,
+	undoJiraSyncRun
 } from './accounts';
 
 const rnd = Math.random().toString(36).slice(2, 8);
@@ -260,5 +262,63 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 		await resetJiraUpdatedSince(workspaceId);
 
 		expect((await getJiraConfig(workspaceId)).updatedSince).toBeNull();
+	});
+});
+
+describe('historique des runs Jira (listJiraSyncRuns / undoJiraSyncRun)', () => {
+	async function makeWs(prefix: string) {
+		const { userId, workspaceId } = await createWorkspaceWithOwner({
+			displayName: prefix,
+			email: `${prefix}-${rnd}@acme.test`,
+			password: 'password123',
+			workspaceName: `Espace ${prefix}`
+		});
+		wsIds.push(workspaceId);
+		return { userId, workspaceId };
+	}
+
+	async function makeRun(workspaceId: string, overrides?: Partial<typeof jiraSyncRun.$inferInsert>) {
+		const [row] = await db
+			.insert(jiraSyncRun)
+			.values({ workspaceId, startedAt: new Date(), status: 'SUCCESS', ticketsCreated: 0, ...overrides })
+			.returning({ id: jiraSyncRun.id });
+		return row.id;
+	}
+
+	it('listJiraSyncRuns : plus récent d’abord, scopé à l’espace', async () => {
+		const { workspaceId } = await makeWs('runs-list');
+		const { workspaceId: otherWs } = await makeWs('runs-list-other');
+		const older = await makeRun(workspaceId, { startedAt: new Date('2026-01-01T00:00:00Z') });
+		const newer = await makeRun(workspaceId, { startedAt: new Date('2026-01-02T00:00:00Z') });
+		await makeRun(otherWs, { startedAt: new Date('2026-01-03T00:00:00Z') });
+
+		const runs = await listJiraSyncRuns(workspaceId);
+		expect(runs.map((r) => r.id)).toEqual([newer, older]);
+	});
+
+	it('undoJiraSyncRun : supprime les tickets vierges du lot, marque le run annulé, renvoie le compte supprimé', async () => {
+		const { workspaceId, userId } = await makeWs('undo-ok');
+		const runId = await makeRun(workspaceId, { ticketsCreated: 2 });
+		await db.insert(ticket).values([
+			{ workspaceId, key: 'U-1', title: 'A', createdBySyncRunId: runId },
+			{ workspaceId, key: 'U-2', title: 'B', createdBySyncRunId: runId, comment: 'touché' } // conservé
+		]);
+
+		const deleted = await undoJiraSyncRun(workspaceId, runId, userId);
+
+		expect(deleted).toBe(1);
+		const [run] = await db.select().from(jiraSyncRun).where(eq(jiraSyncRun.id, runId));
+		expect(run.undoneAt).not.toBeNull();
+		expect(run.undoneById).toBe(userId);
+	});
+
+	it('rejette un run déjà annulé ou en échec', async () => {
+		const { workspaceId, userId } = await makeWs('undo-guard');
+		const okRun = await makeRun(workspaceId);
+		const failedRun = await makeRun(workspaceId, { status: 'ERROR' });
+
+		await undoJiraSyncRun(workspaceId, okRun, userId);
+		await expect(undoJiraSyncRun(workspaceId, okRun, userId)).rejects.toThrow(/déjà été annulé/);
+		await expect(undoJiraSyncRun(workspaceId, failedRun, userId)).rejects.toThrow(/réussi/);
 	});
 });

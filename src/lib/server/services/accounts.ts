@@ -1,10 +1,10 @@
-import { and, eq } from 'drizzle-orm';
-import { db, user, membership, setupToken, workspace, type Role } from '$lib/server/db';
+import { and, desc, eq } from 'drizzle-orm';
+import { db, user, membership, setupToken, workspace, jiraSyncRun, type Role } from '$lib/server/db';
 import { verifyPassword, hashPassword } from '$lib/server/auth/password';
 import { generateToken, hashToken } from '$lib/server/auth/tokens';
 import { encryptSecret } from '$lib/server/auth/secretCrypto';
 import { hasOrderByClause } from './jiraClient';
-import type { TicketFiltersSnapshot } from './tickets';
+import { deleteUntouchedSyncedTickets, type TicketFiltersSnapshot } from './tickets';
 import { parseISODate } from '$lib/utils/date';
 import { logChange } from './changeLog';
 import { config } from '$lib/server/config';
@@ -338,6 +338,35 @@ export async function setJiraSyncEnabled(workspaceId: string, enabled: boolean) 
  *  sans ambiguïté. */
 export async function resetJiraUpdatedSince(workspaceId: string) {
 	await db.update(workspace).set({ jiraUpdatedSince: null }).where(eq(workspace.id, workspaceId));
+}
+
+/** Historique des runs de sync Jira (plus récents d'abord) — pour l'onglet admin. */
+export async function listJiraSyncRuns(workspaceId: string, limit = 20) {
+	return db
+		.select()
+		.from(jiraSyncRun)
+		.where(eq(jiraSyncRun.workspaceId, workspaceId))
+		.orderBy(desc(jiraSyncRun.startedAt))
+		.limit(limit);
+}
+
+/**
+ * "Annuler ce lot" (onglet admin Jira) : supprime les tickets de ce run encore vierges de toute
+ * trace humaine (cf. deleteUntouchedSyncedTickets) et marque le run comme annulé. Un run déjà
+ * annulé, en échec (rien à annuler) ou d'un autre espace est rejeté.
+ */
+export async function undoJiraSyncRun(workspaceId: string, runId: string, actorId: string): Promise<number> {
+	const [run] = await db
+		.select()
+		.from(jiraSyncRun)
+		.where(and(eq(jiraSyncRun.id, runId), eq(jiraSyncRun.workspaceId, workspaceId)));
+	if (!run) throw new Error('Run introuvable dans cet espace.');
+	if (run.status !== 'SUCCESS') throw new Error('Seul un run réussi peut être annulé.');
+	if (run.undoneAt) throw new Error('Ce lot a déjà été annulé.');
+
+	const deleted = await deleteUntouchedSyncedTickets(workspaceId, runId);
+	await db.update(jiraSyncRun).set({ undoneAt: new Date(), undoneById: actorId }).where(eq(jiraSyncRun.id, runId));
+	return deleted;
 }
 
 /**
