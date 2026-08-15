@@ -15,7 +15,7 @@
 stages:
   - test
   - deploy
-  - seed
+  - demo-data
 
 # DB jetable pour les tests d'intégration (vraie DB, pas de mock — voir vitest-setup.ts).
 variables:
@@ -103,21 +103,16 @@ deploy:preprod:
     - oc start-build imputo-tools --follow
     - sed "s#CHANGEME-namespace#${NS}#" openshift/cronjob-jira-sync.yaml | oc apply -f -
 
-# Stage séparé (pas juste une suite de script dans deploy:preprod) : le vrai problème du quota CPU
-# (4 cores sur imputo-preprod, voir le commentaire au-dessus du wait-loop de deploy:preprod) n'est
-# pas seulement l'ancien pod du rollout — un pod de build (imputo ou imputo-tools) fraîchement
-# terminé n'a jamais le label `app=imputo` que ce wait-loop surveille, donc il pouvait continuer à
-# compter dans le quota pendant que imputo-seed tentait de démarrer juste après, sans qu'on le
-# détecte. GitLab n'enchaîne un stage que lorsque tous les jobs du précédent sont sortis (donc le
-# runner de deploy:preprod, lui, a fini) — ça laisse le temps à OpenShift de faire disparaître ces
-# pods avant que ce job ne démarre, plutôt que d'espérer un timing serré dans le même script.
+# Entièrement manuels (pas de `needs`/auto sur main) : même avec le wait-loop plus haut, la fenêtre
+# juste après un rollout reste peu fiable — le quota CPU (4 cores sur imputo-preprod) peut être
+# transitoirement "doublé" (ancien pod encore Terminating + nouveau pas encore Ready comptent tous
+# les deux), et un pod de build fraîchement terminé n'a jamais le label `app=imputo` que ce
+# wait-loop surveille. Plutôt que de viser une fenêtre de tir fiable en CI, on déclenche à la main
+# une fois le rollout visiblement stabilisé — données de démo, jamais bloquant pour un vrai déploiement.
 seed:preprod:
   extends: .oc_base
-  stage: seed
-  needs: ['deploy:preprod']
+  stage: demo-data
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
-      when: on_success
     - when: manual
       allow_failure: true
   variables:
@@ -125,18 +120,25 @@ seed:preprod:
   script:
     - NS="${OPENSHIFT_NAMESPACE_PREPROD:-imputo-preprod}"
     - oc project "$NS"
-    # Filet de sécurité complémentaire (pas de filtre par label, cf. commentaire ci-dessus — un pod
-    # de build n'en porte aucun) : attend qu'il n'y ait plus aucun pod Terminating dans le namespace
-    # avant de lancer imputo-seed, au cas où ce stage démarrerait quand même trop tôt.
-    - |
-      echo "Attente de la libération du quota CPU (pods encore en Terminating)..."
-      for i in $(seq 1 30); do
-        oc get pods --no-headers | grep -q Terminating || break
-        sleep 2
-      done
     - oc delete job/imputo-seed --ignore-not-found
     - sed "s#CHANGEME-namespace#${NS}#" openshift/seed-job.yaml | oc apply -f -
     - oc wait --for=condition=complete job/imputo-seed --timeout=320s
+
+# Symétrique de seed:preprod — vide les données de démo (voir src/lib/server/db/unseed.ts).
+unseed:preprod:
+  extends: .oc_base
+  stage: demo-data
+  rules:
+    - when: manual
+      allow_failure: true
+  variables:
+    OPENSHIFT_TOKEN: $OPENSHIFT_TOKEN_PREPROD
+  script:
+    - NS="${OPENSHIFT_NAMESPACE_PREPROD:-imputo-preprod}"
+    - oc project "$NS"
+    - oc delete job/imputo-unseed --ignore-not-found
+    - sed "s#CHANGEME-namespace#${NS}#" openshift/unseed-job.yaml | oc apply -f -
+    - oc wait --for=condition=complete job/imputo-unseed --timeout=320s
 
 deploy:production:
   extends: .oc_base

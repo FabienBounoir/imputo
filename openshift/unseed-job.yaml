@@ -1,0 +1,23 @@
+# Job ponctuel pour vider les données de démo de preprod (`npm run db:unseed`, voir
+# src/lib/server/db/unseed.ts). Jamais appliqué en production. Symétrique de seed-job.yaml,
+# déclenché à la main uniquement (cf. unseed:preprod dans .gitlab-ci.yml).
+# `CHANGEME-namespace` est substitué par la CI (sed) avant `oc apply`, comme pour seed-job.yaml.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: imputo-unseed
+  labels:
+    app: imputo
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: unseed
+          image: 'image-registry.openshift-image-registry.svc:5000/CHANGEME-namespace/imputo:tools'
+          command: ['npm', 'run', 'db:unseed']
+          envFrom:
+            - secretRef:
+                name: imputo-secrets
