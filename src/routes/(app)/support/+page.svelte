@@ -13,14 +13,6 @@
 		(data.calendar[0]?.days.length ?? 5) === 6 ? ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'] : ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven']
 	);
 
-	const initials = (name: string) =>
-		name
-			.split(/\s+/)
-			.map((p) => p[0])
-			.slice(0, 2)
-			.join('')
-			.toUpperCase();
-
 	const firstName = (name: string) => name.split(/\s+/)[0];
 
 	const fmtFull = (iso: string) =>
@@ -71,7 +63,7 @@
 		{:else}
 			<div class="header-row">
 				<div class="header-person">
-					<span class="avatar-now"><span class="glow" aria-hidden="true"></span>{initials(data.current.displayName)}</span>
+					<span class="duty-dot" aria-hidden="true"></span>
 					<div>
 						<span class="eyebrow">{eyebrow}</span>
 						<h2>{data.current.displayName}</h2>
@@ -109,11 +101,10 @@
 				<div class="cal-grid" style="--cal-cols:{WEEKDAYS.length}">
 					{#each WEEKDAYS as w (w)}<div class="cal-head">{w}</div>{/each}
 					{#each data.calendar as week (week.weekStart)}
-						{#each week.days as day (day.date)}
+						{#each week.days as day, i (day.date)}
 							{@const active = Boolean(data.current) && day.date >= data.current!.periodStart && day.date <= data.current!.periodEnd}
 							<div class="cal-cell" class:today={day.date === data.todayISO} class:active>
-								<span class="cal-daynum">{fmtCellDate(day.date)}</span>
-								<span class="cal-avatar">{initials(day.displayName)}</span>
+								<span class="cal-daynum"><span class="cal-weekday">{WEEKDAYS[i]}</span> {fmtCellDate(day.date)}</span>
 								<span class="cal-name">{firstName(day.displayName)}</span>
 							</div>
 						{/each}
@@ -154,7 +145,6 @@
 							class:sel={m.userId === current.userId}
 							disabled={m.userId === current.userId}
 						>
-							<span class="candidate-avatar">{initials(m.displayName)}</span>
 							{m.displayName}
 							{#if m.userId === current.userId}<span class="candidate-tag">actuel</span>{/if}
 						</button>
@@ -208,29 +198,27 @@
 		align-items: center;
 		gap: 20px;
 	}
-	.avatar-now {
+	/* Pastille pulsante plutôt qu'un avatar à initiales : le nom est juste à côté, l'avatar
+	   n'apportait aucune info et cassait le responsive avec sa largeur fixe. */
+	.duty-dot {
 		position: relative;
-		width: 68px;
-		height: 68px;
+		width: 12px;
+		height: 12px;
 		flex-shrink: 0;
 		border-radius: 50%;
-		display: grid;
-		place-items: center;
-		background: linear-gradient(150deg, var(--accent), color-mix(in srgb, var(--accent) 55%, #000));
-		color: #fff;
-		font-size: 20px;
-		font-weight: 700;
-		box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 45%, transparent);
+		background: var(--accent);
+		box-shadow: 0 0 0 4px var(--accent-tint-2);
 	}
-	.glow {
+	.duty-dot::after {
+		content: '';
 		position: absolute;
-		inset: -10px;
+		inset: -6px;
 		border-radius: 50%;
 		border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
 		animation: pulse 2.6s ease-out infinite;
 	}
 	@media (prefers-reduced-motion: reduce) {
-		.glow {
+		.duty-dot::after {
 			animation: none;
 		}
 	}
@@ -242,7 +230,7 @@
 		75%,
 		100% {
 			opacity: 0;
-			transform: scale(1.28);
+			transform: scale(1.8);
 		}
 	}
 	.eyebrow {
@@ -305,8 +293,6 @@
 		font-weight: 600;
 		margin-bottom: 16px;
 	}
-	/* Filet de sécurité mobile : la grille garde une largeur lisible et scrolle horizontalement
-	   plutôt que d'écraser les cellules jusqu'à l'illisible. */
 	.cal-scroll {
 		overflow-x: auto;
 	}
@@ -331,8 +317,8 @@
 		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		gap: 8px;
-		min-height: 88px;
+		gap: 6px;
+		min-height: 64px;
 		padding: 12px 8px 10px;
 		border-radius: var(--r-md);
 		background: var(--surface-sunk);
@@ -357,25 +343,11 @@
 		color: var(--accent);
 		font-weight: 700;
 	}
-	.cal-avatar {
-		width: 32px;
-		height: 32px;
-		border-radius: 50%;
-		background: var(--surface-2);
-		border: 1px solid var(--border);
-		color: var(--text-soft);
-		font-size: 11.5px;
-		font-weight: 700;
-		display: grid;
-		place-items: center;
-	}
-	.cal-cell.active .cal-avatar {
-		background: linear-gradient(150deg, var(--accent), color-mix(in srgb, var(--accent) 55%, #000));
-		border-color: transparent;
-		color: #fff;
+	.cal-weekday {
+		display: none;
 	}
 	.cal-name {
-		font-size: 11.5px;
+		font-size: 13px;
 		font-weight: 600;
 		color: var(--text-soft);
 		text-align: center;
@@ -384,6 +356,53 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		max-width: 100%;
+	}
+	.cal-cell.active .cal-name {
+		color: var(--accent-ink);
+	}
+	:global([data-theme='dark']) .cal-cell.active .cal-name {
+		color: color-mix(in srgb, var(--accent) 78%, #fff);
+	}
+
+	/* < 640px : la grille à colonnes fixes ne rentre plus (elle "dépassait" et forçait un scroll
+	   horizontal peu lisible) — on repasse en liste verticale, une ligne par jour. */
+	@media (max-width: 640px) {
+		.cal-scroll {
+			overflow-x: visible;
+		}
+		.cal-grid {
+			grid-template-columns: 1fr;
+			min-width: 0;
+			gap: 6px;
+		}
+		.cal-head {
+			display: none;
+		}
+		.cal-cell {
+			flex-direction: row;
+			align-items: center;
+			justify-content: flex-start;
+			gap: 12px;
+			min-height: auto;
+			padding: 11px 14px;
+		}
+		.cal-daynum {
+			position: static;
+			flex-shrink: 0;
+			white-space: nowrap;
+			font-size: 12.5px;
+		}
+		.cal-weekday {
+			display: inline;
+			color: var(--text);
+			font-weight: 700;
+		}
+		.cal-name {
+			flex: 1;
+			min-width: 0;
+			margin-left: auto;
+			text-align: right;
+		}
 	}
 
 	/* ---------- Modale de remplacement ---------- */
@@ -444,19 +463,6 @@
 	}
 	.candidate-row.sel {
 		background: var(--accent-tint-2);
-	}
-	.candidate-avatar {
-		width: 30px;
-		height: 30px;
-		border-radius: 50%;
-		background: var(--surface-sunk);
-		border: 1px solid var(--border);
-		color: var(--text-soft);
-		font-size: 11px;
-		font-weight: 700;
-		display: grid;
-		place-items: center;
-		flex-shrink: 0;
 	}
 	.candidate-tag {
 		margin-left: auto;
