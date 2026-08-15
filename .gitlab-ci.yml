@@ -88,6 +88,17 @@ deploy:preprod:
     - oc patch configmap imputo-config --type merge -p "{\"data\":{\"BASE_URL\":\"https://${HOST}\",\"ORIGIN\":\"https://${HOST}\"}}"
     - oc start-build imputo --build-arg=APP_VERSION="v$CI_COMMIT_SHORT_SHA" --follow
     - oc rollout status deployment/imputo --timeout=5m
+    # `rollout status` ne garantit que le scale-down de l'ancien ReplicaSet, pas la disparition
+    # effective du pod (un pod Terminating compte encore dans le quota CPU du namespace, capé à
+    # 4 cores sur imputo-preprod). Sans cette pause, le build imputo-tools puis le Job imputo-seed
+    # qui suivent immédiatement se font régulièrement rejeter par l'admission (quota exceeded),
+    # et imputo-seed reste bloqué à 0 pod jusqu'au timeout du `oc wait` plus bas.
+    - |
+      echo "Attente de la libération du quota CPU (ancien pod du rollout encore en Terminating)..."
+      for i in $(seq 1 30); do
+        oc get pods -l app=imputo --no-headers | grep -q Terminating || break
+        sleep 2
+      done
     - oc start-build imputo-tools --follow
     - sed "s#CHANGEME-namespace#${NS}#" openshift/cronjob-jira-sync.yaml | oc apply -f -
     - oc delete job/imputo-seed --ignore-not-found
