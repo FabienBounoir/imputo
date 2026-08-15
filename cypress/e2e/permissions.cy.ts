@@ -6,6 +6,7 @@ describe('permissions : un rôle USER ne peut pas accéder à /admin', () => {
 
 		cy.registerAndLogin().then(() => {
 			cy.visit('/admin');
+			cy.clickReliably(() => cy.contains('.tabs button', 'Membres'), '#dn');
 			cy.get('#dn').type('Membre USER E2E');
 			cy.get('#em').type(memberEmail);
 			// Le select #ro a déjà "USER" (Membre) comme première option/valeur par défaut.
