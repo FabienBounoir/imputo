@@ -102,6 +102,29 @@
 		fetch('?/compactActivityPref', { method: 'POST', body });
 	}
 
+	// Tableau responsive : sous cette largeur, les colonnes les moins essentielles se masquent
+	// plutôt que de faire déborder le tableau — leurs valeurs restent consultables via la flèche
+	// (rejoint le détail par activité), sur une ligne dédiée. Les seuils doivent rester synchronisés
+	// avec les @media du même nom en CSS ci-dessous.
+	let hideDetailCols = $state(false);
+	let hideMoreCols = $state(false);
+	$effect(() => {
+		const mqDetail = window.matchMedia('(max-width: 1300px)');
+		const mqMore = window.matchMedia('(max-width: 1050px)');
+		const update = () => {
+			hideDetailCols = mqDetail.matches;
+			hideMoreCols = mqMore.matches;
+		};
+		update();
+		mqDetail.addEventListener('change', update);
+		mqMore.addEventListener('change', update);
+		return () => {
+			mqDetail.removeEventListener('change', update);
+			mqMore.removeEventListener('change', update);
+		};
+	});
+	const hasHiddenCols = $derived(hideDetailCols || hideMoreCols);
+
 	type Row = {
 		id: string;
 		key: string;
@@ -606,17 +629,17 @@
 					</div>
 				</div>
 			</td>
-			{#if data.isAdmin}<td class="num"><div class="cell-input num-input skeleton-bar" style="height:16px;"></div></td>{/if}
+			{#if data.isAdmin}<td class="num col-detail"><div class="cell-input num-input skeleton-bar" style="height:16px;"></div></td>{/if}
 			<td class="num"><div class="cell-input num-input skeleton-bar" style="height:16px;"></div></td>
-			<td class="num"><div class="cell-input num-input skeleton-bar" style="height:16px;"></div></td>
+			<td class="num col-more"><div class="cell-input num-input skeleton-bar" style="height:16px;"></div></td>
 			{#if data.testPhase}
-				<td class="num"><div class="cell-input num-input skeleton-bar" style="height:16px;"></div></td>
-				<td class="num"><div class="cell-input num-input skeleton-bar" style="height:16px;"></div></td>
+				<td class="num col-detail"><div class="cell-input num-input skeleton-bar" style="height:16px;"></div></td>
+				<td class="num col-detail"><div class="cell-input num-input skeleton-bar" style="height:16px;"></div></td>
 			{/if}
 			<td class="num tabnum"><div class="skeleton-bar" style="width:32px;height:13px;margin-left:auto;border-radius:4px;"></div></td>
-			{#if data.isAdmin}<td class="num"><div class="skeleton-bar" style="width:40px;height:13px;margin-left:auto;border-radius:4px;"></div></td>{/if}
-			<td class="num"><div class="skeleton-bar" style="width:40px;height:13px;margin-left:auto;border-radius:4px;"></div></td>
-			<td>
+			{#if data.isAdmin}<td class="num col-detail"><div class="skeleton-bar" style="width:40px;height:13px;margin-left:auto;border-radius:4px;"></div></td>{/if}
+			<td class="num col-more"><div class="skeleton-bar" style="width:40px;height:13px;margin-left:auto;border-radius:4px;"></div></td>
+			<td class="col-more">
 				<div class="prog">
 					<div class="bar skeleton-bar"></div>
 					<span class="skeleton-bar" style="width:28px;height:12px;border-radius:4px;"></span>
@@ -630,11 +653,11 @@
 			<thead>
 				<tr>
 					<th>Ticket</th>
-					{#if data.isAdmin}<th class="num">Budget</th>{/if}
-					<th class="num">Estimé</th><th class="num">RAE Réal</th>
-					{#if data.testPhase}<th class="num">Est. Test</th><th class="num">RAE Test</th>{/if}<th class="num">Conso.</th>
-					{#if data.isAdmin}<th class="num" title="Écart vs budget : RAE Réel + consommé − Budget">Écart vs budget</th>{/if}
-					<th class="num" title="Écart vs estimé : RAE Réel + consommé − Estimé">Écart vs estimé</th><th class="num" style="width:130px;">Avancement</th>
+					{#if data.isAdmin}<th class="num col-detail">Budget</th>{/if}
+					<th class="num">Estimé</th><th class="num col-more">RAE Réal</th>
+					{#if data.testPhase}<th class="num col-detail">Est. Test</th><th class="num col-detail">RAE Test</th>{/if}<th class="num">Conso.</th>
+					{#if data.isAdmin}<th class="num col-detail" title="Écart vs budget : RAE Réel + consommé − Budget">Écart vs budget</th>{/if}
+					<th class="num col-more" title="Écart vs estimé : RAE Réel + consommé − Estimé">Écart vs estimé</th><th class="num col-more" style="width:130px;">Avancement</th>
 				</tr>
 			</thead>
 			<tbody>
@@ -646,13 +669,13 @@
 								<button
 									type="button"
 									class="chevron-btn"
-									class:open={r.activityBreakdown.length > 0 && isExpanded(r.id)}
-									disabled={r.activityBreakdown.length === 0}
+									class:open={(r.activityBreakdown.length > 0 || hasHiddenCols) && isExpanded(r.id)}
+									disabled={r.activityBreakdown.length === 0 && !hasHiddenCols}
 									onclick={() => toggleTicket(r.id)}
 									aria-label="Détail par activité"
-									aria-expanded={r.activityBreakdown.length > 0 ? isExpanded(r.id) : undefined}
+									aria-expanded={r.activityBreakdown.length > 0 || hasHiddenCols ? isExpanded(r.id) : undefined}
 								>
-									{#if r.activityBreakdown.length > 0}
+									{#if r.activityBreakdown.length > 0 || hasHiddenCols}
 										<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6" /></svg>
 									{/if}
 								</button>
@@ -678,7 +701,7 @@
 							</div>
 						</td>
 						{#if data.isAdmin}
-							<td class="num">
+							<td class="num col-detail">
 								<input
 									class="cell-input num-input"
 									type="number"
@@ -701,7 +724,7 @@
 								onchange={() => debouncedSave(`est-${r.id}-real`, () => saveEst(r, 'real'))}
 							/>
 						</td>
-						<td class="num">
+						<td class="num col-more">
 							<input
 								class="cell-input num-input"
 								type="number"
@@ -713,15 +736,15 @@
 							/>
 						</td>
 						{#if data.testPhase}
-							<td class="num"><input class="cell-input num-input" type="number" step="0.25" min="0" bind:value={r.estimationTest} disabled={!data.canEditEstimation} title={estTitle} onchange={() => debouncedSave(`est-${r.id}-test`, () => saveEst(r, 'test'))} /></td>
-							<td class="num"><input class="cell-input num-input" type="number" step="0.25" min="0" value={r.raeTest} disabled title="RAE Test = compilation des RAE par activité ci-dessous (non éditable ici)" /></td>
+							<td class="num col-detail"><input class="cell-input num-input" type="number" step="0.25" min="0" bind:value={r.estimationTest} disabled={!data.canEditEstimation} title={estTitle} onchange={() => debouncedSave(`est-${r.id}-test`, () => saveEst(r, 'test'))} /></td>
+							<td class="num col-detail"><input class="cell-input num-input" type="number" step="0.25" min="0" value={r.raeTest} disabled title="RAE Test = compilation des RAE par activité ci-dessous (non éditable ici)" /></td>
 						{/if}
 						<td class="num tabnum consumed">{r.consumed || '—'}</td>
 						{#if data.isAdmin}
-							<td class="num tabnum" class:gap-pos={(ecartVsBudget(r) ?? 0) > 0} class:gap-neg={(ecartVsBudget(r) ?? 0) < 0}>{ecartVsBudget(r) == null ? '—' : `${ecartVsBudget(r)! > 0 ? '+' : ''}${ecartVsBudget(r) || 0}`}</td>
+							<td class="num tabnum col-detail" class:gap-pos={(ecartVsBudget(r) ?? 0) > 0} class:gap-neg={(ecartVsBudget(r) ?? 0) < 0}>{ecartVsBudget(r) == null ? '—' : `${ecartVsBudget(r)! > 0 ? '+' : ''}${ecartVsBudget(r) || 0}`}</td>
 						{/if}
-						<td class="num tabnum" class:gap-pos={ecartVsEstime(r) > 0} class:gap-neg={ecartVsEstime(r) < 0}>{ecartVsEstime(r) > 0 ? '+' : ''}{ecartVsEstime(r) || 0}</td>
-						<td>
+						<td class="num tabnum col-more" class:gap-pos={ecartVsEstime(r) > 0} class:gap-neg={ecartVsEstime(r) < 0}>{ecartVsEstime(r) > 0 ? '+' : ''}{ecartVsEstime(r) || 0}</td>
+						<td class="col-more">
 							<div class="prog">
 								<div class="bar"><i style="width:{pct(avancement(r))}%"></i></div>
 								<span class="pct tabnum">{pct(avancement(r))}%</span>
@@ -729,6 +752,31 @@
 						</td>
 					</tr>
 					{#if isExpanded(r.id)}
+					{#if hasHiddenCols}
+						<!-- Fenêtre étroite : reprend ici les colonnes masquées sur la ligne principale
+						     (cf. .col-detail/.col-more), pour qu'aucune info ne soit perdue — juste
+						     déplacée derrière la flèche. Lecture seule (édition via le crayon). -->
+						<tr class="hidden-cols-row" transition:slide={{ duration: 150 }}>
+							<td colspan={colCount}>
+								<div class="hidden-cols">
+									<span class="hc-label">Détails</span>
+									{#if data.isAdmin && hideDetailCols}<span class="hc-item">Budget <b class="tabnum">{r.enveloppeTotale ?? '—'}</b></span>{/if}
+									{#if hideMoreCols}<span class="hc-item">RAE Réal <b class="tabnum">{r.raeReal}</b></span>{/if}
+									{#if data.testPhase && hideDetailCols}
+										<span class="hc-item">Est. Test <b class="tabnum">{r.estimationTest}</b></span>
+										<span class="hc-item">RAE Test <b class="tabnum">{r.raeTest}</b></span>
+									{/if}
+									{#if data.isAdmin && hideDetailCols}
+										<span class="hc-item">Écart vs budget <b class="tabnum" class:gap-pos={(ecartVsBudget(r) ?? 0) > 0} class:gap-neg={(ecartVsBudget(r) ?? 0) < 0}>{ecartVsBudget(r) == null ? '—' : `${ecartVsBudget(r)! > 0 ? '+' : ''}${ecartVsBudget(r) || 0}`}</b></span>
+									{/if}
+									{#if hideMoreCols}
+										<span class="hc-item">Écart vs estimé <b class="tabnum" class:gap-pos={ecartVsEstime(r) > 0} class:gap-neg={ecartVsEstime(r) < 0}>{ecartVsEstime(r) > 0 ? '+' : ''}{ecartVsEstime(r) || 0}</b></span>
+										<span class="hc-item">Avancement <b class="tabnum">{pct(avancement(r))}%</b></span>
+									{/if}
+								</div>
+							</td>
+						</tr>
+					{/if}
 					{#each r.activityBreakdown as ar (ar.activityId)}
 						{@const canRae = canEditRae(ar)}
 						{@const isOther = ar.activityId === NO_ACTIVITY_ID}
@@ -739,7 +787,7 @@
 								{/if}
 							</td>
 							{#if data.isAdmin}
-								<td class="num">
+								<td class="num col-detail">
 									{#if isOther}
 										<span class="cell-readonly" title={NO_ACTIVITY_HINT}>—</span>
 									{:else}
@@ -776,7 +824,7 @@
 									/>
 								{/if}
 							</td>
-							<td class="num">
+							<td class="num col-more">
 								{#if isOther}
 									<span class="cell-readonly" title={NO_ACTIVITY_HINT}>—</span>
 								{:else}
@@ -796,8 +844,8 @@
 								{/if}
 							</td>
 							{#if data.testPhase}
-								<td></td>
-								<td class="num">
+								<td class="col-detail"></td>
+								<td class="num col-detail">
 									{#if isOther}
 										<span class="cell-readonly" title={NO_ACTIVITY_HINT}>—</span>
 									{:else}
@@ -818,9 +866,9 @@
 								</td>
 							{/if}
 							<td class="num tabnum consumed">{round(ar.contributors.reduce((s, c) => s + c.consumed, 0)) || '—'}</td>
-							{#if data.isAdmin}<td></td>{/if}
-							<td></td>
-							<td></td>
+							{#if data.isAdmin}<td class="col-detail"></td>{/if}
+							<td class="col-more"></td>
+							<td class="col-more"></td>
 						</tr>
 					{/each}
 					{/if}
@@ -1143,35 +1191,35 @@
 	   reste local à .tk-scroll (overflow-y:visible, même raison). */
 	.tk-card {
 		overflow: clip;
-		position: relative;
 	}
 	.tk-scroll {
 		overflow-x: auto;
 		overflow-y: visible;
-	}
-	/* < 900px : le tableau dépasse toujours (colonnes fixes) — dégradé indiquant qu'on peut swiper
-	   à droite, sinon rien ne le montre (coupé net au bord de l'écran). */
-	.tk-card::after {
-		content: '';
-		display: none;
-		position: absolute;
-		top: 0;
-		right: 0;
-		bottom: 0;
-		width: 28px;
-		pointer-events: none;
-		background: linear-gradient(to right, transparent, var(--surface) 70%);
-	}
-	@media (max-width: 900px) {
-		.tk-card::after {
-			display: block;
-		}
 	}
 	table.tk {
 		width: 100%;
 		min-width: 820px;
 		border-collapse: separate;
 		border-spacing: 0;
+	}
+	/* Seuils synchronisés avec le matchMedia du script (hideDetailCols/hideMoreCols) : au lieu de
+	   ne plus dépendre que du scroll horizontal ci-dessus, les colonnes les moins essentielles se
+	   masquent — leur valeur reste consultable via la flèche (ligne "Détails" sous le ticket). */
+	@media (max-width: 1300px) {
+		.col-detail {
+			display: none;
+		}
+	}
+	@media (max-width: 1050px) {
+		.col-more {
+			display: none;
+		}
+		/* Moins de colonnes restent (Ticket/Estimé/Conso. seulement, + Avancement masqué aussi ici) :
+		   le plancher de 820px (dimensionné pour le tableau complet) forcerait un débordement pour
+		   rien, alors que les colonnes visibles à ce palier tiennent dans moins large. */
+		table.tk {
+			min-width: 560px;
+		}
 	}
 	.tk thead th {
 		font-size: 11px;
@@ -1224,8 +1272,8 @@
 	}
 	.tk .key {
 		font-size: 11px;
-		font-weight: 600;
-		color: var(--text-mute);
+		font-weight: 700;
+		color: var(--text);
 		padding-left: 7px;
 		white-space: nowrap;
 		flex-shrink: 0;
@@ -1352,6 +1400,35 @@
 	}
 	.activity-subrow .consumed {
 		font-size: 11.5px;
+	}
+	/* Distincte des .activity-subrow (détail par activité) : ligne toujours pleine largeur, teinte
+	   accent plutôt que le gris neutre, pour ne pas se confondre avec les lignes d'activité. */
+	.hidden-cols-row {
+		background: color-mix(in srgb, var(--accent) 6%, var(--surface-sunk));
+		border-top: 1px solid var(--border);
+	}
+	.hidden-cols-row td {
+		padding: 7px 14px;
+		border-top: none;
+	}
+	.hidden-cols {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 14px;
+		padding-left: 20px;
+		font-size: 11.5px;
+	}
+	.hc-label {
+		font-weight: 600;
+		color: var(--accent-ink);
+	}
+	.hc-item {
+		color: var(--text-mute);
+	}
+	.hc-item b {
+		color: var(--text-soft);
+		margin-left: 4px;
 	}
 	.dfield {
 		display: flex;
