@@ -576,8 +576,8 @@
 	.pill.unanimous {
 		font-size: 11px;
 		font-weight: 700;
-		color: #22c55e;
-		background: color-mix(in srgb, #22c55e 15%, transparent);
+		color: var(--success);
+		background: var(--success-tint);
 		padding: 2px 8px;
 		border-radius: 20px;
 	}
