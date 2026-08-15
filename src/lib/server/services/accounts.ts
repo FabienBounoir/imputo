@@ -148,17 +148,28 @@ export async function setSortActivitiesAlphaPref(userId: string, value: boolean)
 }
 
 /** Préférence + dernier instantané de filtres tickets (compte, pas espace — cf. réglages). */
-export async function getTicketFiltersPref(userId: string): Promise<{ remember: boolean; snapshotRaw: string | null }> {
+export async function getTicketFiltersPref(
+	userId: string
+): Promise<{ remember: boolean; rememberSearch: boolean; snapshotRaw: string | null }> {
 	const [row] = await db
-		.select({ remember: user.rememberTicketFilters, snapshotRaw: user.ticketFiltersSnapshot })
+		.select({
+			remember: user.rememberTicketFilters,
+			rememberSearch: user.rememberTicketSearch,
+			snapshotRaw: user.ticketFiltersSnapshot
+		})
 		.from(user)
 		.where(eq(user.id, userId));
-	return { remember: row?.remember ?? true, snapshotRaw: row?.snapshotRaw ?? null };
+	return { remember: row?.remember ?? true, rememberSearch: row?.rememberSearch ?? true, snapshotRaw: row?.snapshotRaw ?? null };
 }
 
 /** Active/désactive la mémorisation des filtres tickets (le snapshot n'est pas effacé : réactiver retrouve le dernier état). */
 export async function setRememberTicketFiltersPref(userId: string, value: boolean) {
 	await db.update(user).set({ rememberTicketFilters: value }).where(eq(user.id, userId));
+}
+
+/** Sous-option : la recherche fait-elle partie de ce qui est réappliqué (cf. getTicketFiltersPref). */
+export async function setRememberTicketSearchPref(userId: string, value: boolean) {
+	await db.update(user).set({ rememberTicketSearch: value }).where(eq(user.id, userId));
 }
 
 /** Détail par activité replié par défaut sous chaque ticket (vue tableau) — préférence de compte. */

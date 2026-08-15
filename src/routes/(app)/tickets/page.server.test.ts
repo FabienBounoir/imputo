@@ -6,7 +6,7 @@ const load = loadUntyped as (event: unknown) => Promise<Record<string, any>>;
 import { makeWorkspace, addMember } from '$lib/server/services/test-helpers';
 import { fakeLocals, formRequest } from '$lib/server/test-helpers/http';
 import { db, project } from '$lib/server/db';
-import { setTicketFiltersSnapshot, setRememberTicketFiltersPref } from '$lib/server/services/accounts';
+import { setTicketFiltersSnapshot, setRememberTicketFiltersPref, setRememberTicketSearchPref } from '$lib/server/services/accounts';
 
 describe('tickets +page.server load', () => {
 	it('isAdmin/canEditEstimation sont false pour un USER, true pour un ADMIN', async () => {
@@ -64,6 +64,23 @@ describe('tickets +page.server load — mémorisation des filtres (arrivée à b
 
 		const result = await load({ locals: await fakeLocals(userId), url: new URL('http://localhost/tickets') } as never);
 		expect(result.filters).toMatchObject({ query: undefined, stateId: undefined, projectId: undefined });
+	});
+
+	it('rememberSearch=false → la recherche du snapshot est ignorée à la redirection, mais les autres filtres restent', async () => {
+		const { userId, workspaceId } = await makeWorkspace('ticketsremember');
+		const [p] = await db.insert(project).values({ workspaceId, name: 'Projet A' }).returning({ id: project.id });
+		await setTicketFiltersSnapshot(userId, { view: 'table', query: 'US-42', stateId: null, projectId: p.id, sprintId: null, versionId: null });
+		await setRememberTicketSearchPref(userId, false);
+
+		await expect(load({ locals: await fakeLocals(userId), url: new URL('http://localhost/tickets') } as never)).rejects.toMatchObject({
+			status: 303,
+			location: expect.stringContaining(`project=${p.id}`)
+		});
+		try {
+			await load({ locals: await fakeLocals(userId), url: new URL('http://localhost/tickets') } as never);
+		} catch (e: any) {
+			expect(e.location).not.toContain('q=');
+		}
 	});
 
 	it('projectId du snapshot appartenant à un autre espace → ignoré, jamais réinjecté dans la redirection', async () => {

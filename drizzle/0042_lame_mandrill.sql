@@ -1,0 +1,1 @@
+ALTER TABLE "user" ADD COLUMN "remember_ticket_search" boolean DEFAULT true NOT NULL;

@@ -139,6 +139,10 @@ export const user = pgTable('user', {
 	// dernier instantané à une arrivée "à blanc" (lien de nav, favori...) ; false = repart toujours
 	// sans filtre. Snapshot nul tant qu'aucun filtre n'a jamais été touché.
 	rememberTicketFilters: boolean('remember_ticket_filters').notNull().default(true),
+	// Sous-option de rememberTicketFilters : la recherche est souvent ponctuelle (ex. retrouver un
+	// ticket précis) contrairement aux filtres état/projet/sprint/version qui reflètent un contexte
+	// de travail durable — permet de garder ces derniers sans se retaper la recherche à chaque fois.
+	rememberTicketSearch: boolean('remember_ticket_search').notNull().default(true),
 	ticketFiltersSnapshot: text('ticket_filters_snapshot'), // JSON { view, query, stateId, projectId, sprintId, versionId }
 	// Détail par activité sous chaque ticket (vue tableau) : true = masqué par défaut (compact).
 	compactTicketActivity: boolean('compact_ticket_activity').notNull().default(true),

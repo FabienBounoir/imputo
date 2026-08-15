@@ -15,6 +15,7 @@
 stages:
   - test
   - deploy
+  - seed
 
 # DB jetable pour les tests d'intégration (vraie DB, pas de mock — voir vitest-setup.ts).
 variables:
@@ -101,6 +102,38 @@ deploy:preprod:
       done
     - oc start-build imputo-tools --follow
     - sed "s#CHANGEME-namespace#${NS}#" openshift/cronjob-jira-sync.yaml | oc apply -f -
+
+# Stage séparé (pas juste une suite de script dans deploy:preprod) : le vrai problème du quota CPU
+# (4 cores sur imputo-preprod, voir le commentaire au-dessus du wait-loop de deploy:preprod) n'est
+# pas seulement l'ancien pod du rollout — un pod de build (imputo ou imputo-tools) fraîchement
+# terminé n'a jamais le label `app=imputo` que ce wait-loop surveille, donc il pouvait continuer à
+# compter dans le quota pendant que imputo-seed tentait de démarrer juste après, sans qu'on le
+# détecte. GitLab n'enchaîne un stage que lorsque tous les jobs du précédent sont sortis (donc le
+# runner de deploy:preprod, lui, a fini) — ça laisse le temps à OpenShift de faire disparaître ces
+# pods avant que ce job ne démarre, plutôt que d'espérer un timing serré dans le même script.
+seed:preprod:
+  extends: .oc_base
+  stage: seed
+  needs: ['deploy:preprod']
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: on_success
+    - when: manual
+      allow_failure: true
+  variables:
+    OPENSHIFT_TOKEN: $OPENSHIFT_TOKEN_PREPROD
+  script:
+    - NS="${OPENSHIFT_NAMESPACE_PREPROD:-imputo-preprod}"
+    - oc project "$NS"
+    # Filet de sécurité complémentaire (pas de filtre par label, cf. commentaire ci-dessus — un pod
+    # de build n'en porte aucun) : attend qu'il n'y ait plus aucun pod Terminating dans le namespace
+    # avant de lancer imputo-seed, au cas où ce stage démarrerait quand même trop tôt.
+    - |
+      echo "Attente de la libération du quota CPU (pods encore en Terminating)..."
+      for i in $(seq 1 30); do
+        oc get pods --no-headers | grep -q Terminating || break
+        sleep 2
+      done
     - oc delete job/imputo-seed --ignore-not-found
     - sed "s#CHANGEME-namespace#${NS}#" openshift/seed-job.yaml | oc apply -f -
     - oc wait --for=condition=complete job/imputo-seed --timeout=320s

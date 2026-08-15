@@ -9,6 +9,7 @@ import {
 	setAccentPref,
 	setSortActivitiesAlphaPref,
 	setRememberTicketFiltersPref,
+	setRememberTicketSearchPref,
 	setCompactTicketActivityPref,
 	changePassword
 } from '$lib/server/services/accounts';
@@ -25,6 +26,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		.select({
 			notifPrefs: user.notifPrefs,
 			rememberTicketFilters: user.rememberTicketFilters,
+			rememberTicketSearch: user.rememberTicketSearch,
 			compactTicketActivity: user.compactTicketActivity
 		})
 		.from(user)
@@ -37,6 +39,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		accentColor: locals.user.accentColor,
 		sortActivitiesAlpha: locals.user.sortActivitiesAlpha,
 		rememberTicketFilters: u?.rememberTicketFilters ?? true,
+		rememberTicketSearch: u?.rememberTicketSearch ?? true,
 		compactTicketActivity: u?.compactTicketActivity ?? true,
 		role: locals.role
 	};
@@ -63,6 +66,13 @@ export const actions: Actions = {
 		const f = await request.formData();
 		await setRememberTicketFiltersPref(locals.user.id, f.get('value') === 'true');
 		return { rememberTicketFiltersOk: true };
+	},
+
+	rememberTicketSearchPref: async ({ request, locals }) => {
+		if (!locals.user) return fail(401);
+		const f = await request.formData();
+		await setRememberTicketSearchPref(locals.user.id, f.get('value') === 'true');
+		return { rememberTicketSearchOk: true };
 	},
 
 	compactActivityPref: async ({ request, locals }) => {

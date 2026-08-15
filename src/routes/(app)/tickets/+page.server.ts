@@ -50,7 +50,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	// (jamais un état caché côté serveur) : tout ce qui porte déjà un paramètre — reset, pagination,
 	// deep-link ?ticket=/?highlight=, ?new=1 — n'est donc jamais réécrit ici.
 	if (!url.search) {
-		const { remember, snapshotRaw } = await getTicketFiltersPref(locals.user!.id);
+		const { remember, rememberSearch, snapshotRaw } = await getTicketFiltersPref(locals.user!.id);
 		const snapshot = remember ? parseTicketFiltersSnapshot(snapshotRaw) : null;
 		if (snapshot) {
 			// Un compte peut appartenir à plusieurs espaces : état/projet/sprint/version sont propres
@@ -60,7 +60,9 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 			const ref = await getRefData(ws.workspaceId);
 			const target = new URLSearchParams();
 			if (snapshot.view === 'kanban') target.set('view', 'kanban');
-			if (snapshot.query) target.set('q', snapshot.query);
+			// La recherche a sa propre sous-préférence (cf. réglages) : le snapshot la garde toujours
+			// à jour, seule sa réapplication à l'arrivée est conditionnelle.
+			if (snapshot.query && rememberSearch) target.set('q', snapshot.query);
 			if (snapshot.stateId && ref.states.some((s) => s.id === snapshot.stateId)) target.set('state', snapshot.stateId);
 			if (snapshot.projectId && ref.projects.some((p) => p.id === snapshot.projectId)) target.set('project', snapshot.projectId);
 			if (snapshot.sprintId && ref.sprints.some((s) => s.id === snapshot.sprintId)) target.set('sprint', snapshot.sprintId);

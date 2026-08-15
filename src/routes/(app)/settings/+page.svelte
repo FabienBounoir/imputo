@@ -31,6 +31,7 @@
 	let accentColor = $state(data.accentColor ?? data.workspace?.accentColor ?? PRESETS[0]);
 	let sortActivitiesAlpha = $state(data.sortActivitiesAlpha);
 	let rememberTicketFilters = $state(data.rememberTicketFilters);
+	let rememberTicketSearch = $state(data.rememberTicketSearch);
 	let compactTicketActivity = $state(data.compactTicketActivity);
 	const activeSeasonal = $derived(activeSeasonalEffects());
 
@@ -240,6 +241,17 @@
 					<button type="submit" name="value" value="false" class:on={!rememberTicketFilters} onclick={() => (rememberTicketFilters = false)}>Réinitialiser à chaque fois</button>
 				</div>
 			</form>
+
+			{#if rememberTicketFilters}
+				<p class="hint" style="margin-top:14px;">Inclure aussi le texte tapé dans la recherche, ou ne garder que l'état/projet/sprint/version.</p>
+				{#if form?.rememberTicketSearchOk}<div class="flash ok">Préférence enregistrée ✓</div>{/if}
+				<form method="POST" action="?/rememberTicketSearchPref" use:enhance>
+					<div class="seg">
+						<button type="submit" name="value" value="true" class:on={rememberTicketSearch} onclick={() => (rememberTicketSearch = true)}>Garder aussi la recherche</button>
+						<button type="submit" name="value" value="false" class:on={!rememberTicketSearch} onclick={() => (rememberTicketSearch = false)}>Sans la recherche</button>
+					</div>
+				</form>
+			{/if}
 		</section>
 
 		<section class="card block">
