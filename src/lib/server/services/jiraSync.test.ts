@@ -1,6 +1,6 @@
 import { and, desc, eq } from 'drizzle-orm';
 import { describe, it, expect } from 'vitest';
-import { db, workspace, project, ticket, jiraSyncRun } from '$lib/server/db';
+import { db, workspace, project, sprint, ticket, jiraSyncRun } from '$lib/server/db';
 import { makeWorkspace } from './test-helpers';
 import { encryptSecret } from '../auth/secretCrypto';
 import { syncWorkspace, syncAllEnabledWorkspaces, WATERMARK_SAFETY_MARGIN_MS, type JiraSyncConfig } from './jiraSync';
@@ -16,13 +16,20 @@ const cfg: JiraSyncConfig = {
 
 type RawIssue = {
 	key: string;
-	fields: { summary: string; issuetype?: { name: string }; parent?: { key: string }; project?: { name: string } };
+	fields: {
+		summary: string;
+		issuetype?: { name: string };
+		parent?: { key: string };
+		project?: { name: string };
+		fixVersions?: Array<{ name: string }>;
+		customfield_10105?: string[];
+	};
 };
 
 function rawIssue(
 	key: string,
 	summary: string,
-	opts?: { parentKey?: string; projectName?: string }
+	opts?: { parentKey?: string; projectName?: string; versionName?: string; sprintName?: string }
 ): RawIssue {
 	return {
 		key,
@@ -30,7 +37,11 @@ function rawIssue(
 			summary,
 			issuetype: { name: 'Story' },
 			...(opts?.parentKey ? { parent: { key: opts.parentKey } } : {}),
-			project: { name: opts?.projectName ?? 'Projet Test' }
+			project: { name: opts?.projectName ?? 'Projet Test' },
+			...(opts?.versionName ? { fixVersions: [{ name: opts.versionName }] } : {}),
+			...(opts?.sprintName
+				? { customfield_10105: [`com.atlassian.greenhopper.service.sprint.Sprint@x[name=${opts.sprintName},state=ACTIVE]`] }
+				: {})
 		}
 	};
 }
@@ -66,6 +77,11 @@ async function makeJiraWorkspace(opts?: {
 	conflictStrategy?: 'JIRA_WINS' | 'KEEP_LOCAL';
 	regexPattern?: string | null;
 	regexReplacement?: string | null;
+	syncTitle?: boolean;
+	syncProject?: boolean;
+	syncParent?: boolean;
+	syncSprint?: boolean;
+	syncVersion?: boolean;
 }) {
 	const ws = await makeWorkspace('jira');
 	await db
@@ -76,7 +92,12 @@ async function makeJiraWorkspace(opts?: {
 			jiraConflictStrategy: opts?.conflictStrategy ?? 'KEEP_LOCAL',
 			jiraKeyRegexPattern: opts?.regexPattern ?? null,
 			jiraKeyRegexReplacement: opts?.regexReplacement ?? null,
-			jiraSyncEnabled: true
+			jiraSyncEnabled: true,
+			...(opts?.syncTitle !== undefined ? { jiraSyncTitle: opts.syncTitle } : {}),
+			...(opts?.syncProject !== undefined ? { jiraSyncProject: opts.syncProject } : {}),
+			...(opts?.syncParent !== undefined ? { jiraSyncParent: opts.syncParent } : {}),
+			...(opts?.syncSprint !== undefined ? { jiraSyncSprint: opts.syncSprint } : {}),
+			...(opts?.syncVersion !== undefined ? { jiraSyncVersion: opts.syncVersion } : {})
 		})
 		.where(eq(workspace.id, ws.workspaceId));
 	return ws;
@@ -220,6 +241,139 @@ describe('jiraSync / syncWorkspace', () => {
 		expect(projects).toHaveLength(1);
 		const rows = await ticketsOf(ws.workspaceId);
 		expect(rows.every((r) => r.projectId === projects[0].id)).toBe(true);
+	});
+
+	describe('sprint / version', () => {
+		it('crée le sprint et la version s’ils n’existent pas, les réutilise sinon (insensible à la casse, tables séparées par kind)', async () => {
+			const ws = await makeJiraWorkspace();
+			await syncWorkspace(db, cfg, ws.workspaceId, {
+				fetchImpl: fakeFetch({
+					issues: [
+						rawIssue('T-1', 'A', { versionName: 'V36', sprintName: 'Sprint V36' }),
+						rawIssue('T-2', 'B', { versionName: 'v36', sprintName: 'sprint v36' })
+					]
+				})
+			});
+
+			const versions = await db.select().from(sprint).where(and(eq(sprint.workspaceId, ws.workspaceId), eq(sprint.kind, 'VERSION')));
+			const sprints = await db.select().from(sprint).where(and(eq(sprint.workspaceId, ws.workspaceId), eq(sprint.kind, 'SPRINT')));
+			expect(versions).toHaveLength(1); // "V36" et "v36" -> la même ligne
+			expect(sprints).toHaveLength(1);
+
+			const rows = await ticketsOf(ws.workspaceId);
+			expect(rows.every((r) => r.versionId === versions[0].id)).toBe(true);
+			expect(rows.every((r) => r.sprintId === sprints[0].id)).toBe(true);
+		});
+
+		it('pas de sprint/version sur l’issue -> sprintId/versionId restent null', async () => {
+			const ws = await makeJiraWorkspace();
+			await syncWorkspace(db, cfg, ws.workspaceId, { fetchImpl: fakeFetch({ issues: [rawIssue('T-1', 'A')] }) });
+
+			const [row] = await ticketsOf(ws.workspaceId);
+			expect(row.sprintId).toBeNull();
+			expect(row.versionId).toBeNull();
+		});
+
+		it('JIRA_WINS écrase sprintId/versionId d’un ticket déjà connu', async () => {
+			const ws = await makeJiraWorkspace({ conflictStrategy: 'JIRA_WINS' });
+			await syncWorkspace(db, cfg, ws.workspaceId, {
+				fetchImpl: fakeFetch({ issues: [rawIssue('T-1', 'A', { versionName: 'V1', sprintName: 'Sprint 1' })] })
+			});
+			await syncWorkspace(db, cfg, ws.workspaceId, {
+				fetchImpl: fakeFetch({ issues: [rawIssue('T-1', 'A', { versionName: 'V2', sprintName: 'Sprint 2' })] })
+			});
+
+			const [row] = await ticketsOf(ws.workspaceId);
+			const [v2] = await db
+				.select()
+				.from(sprint)
+				.where(and(eq(sprint.workspaceId, ws.workspaceId), eq(sprint.kind, 'VERSION'), eq(sprint.name, 'V2')));
+			expect(row.versionId).toBe(v2.id);
+		});
+
+		it('KEEP_LOCAL ne modifie jamais sprintId/versionId d’un ticket déjà connu', async () => {
+			const ws = await makeJiraWorkspace({ conflictStrategy: 'KEEP_LOCAL' });
+			await syncWorkspace(db, cfg, ws.workspaceId, {
+				fetchImpl: fakeFetch({ issues: [rawIssue('T-1', 'A', { versionName: 'V1', sprintName: 'Sprint 1' })] })
+			});
+			const [before] = await ticketsOf(ws.workspaceId);
+
+			await syncWorkspace(db, cfg, ws.workspaceId, {
+				fetchImpl: fakeFetch({ issues: [rawIssue('T-1', 'A', { versionName: 'V2', sprintName: 'Sprint 2' })] })
+			});
+
+			const [after] = await ticketsOf(ws.workspaceId);
+			expect(after.versionId).toBe(before.versionId);
+			expect(after.sprintId).toBe(before.sprintId);
+		});
+
+		it('KEEP_LOCAL sur un ticket déjà connu ne crée pas de projet/sprint/version orphelin (repéré en test réel)', async () => {
+			const ws = await makeJiraWorkspace({ conflictStrategy: 'KEEP_LOCAL' });
+			// Ticket déjà connu (créé à la main, jamais synced) — KEEP_LOCAL ne le touchera pas.
+			await db.insert(ticket).values({ workspaceId: ws.workspaceId, key: 'T-1', title: 'Titre manuel' });
+
+			await syncWorkspace(db, cfg, ws.workspaceId, {
+				fetchImpl: fakeFetch({
+					issues: [rawIssue('T-1', 'A', { projectName: 'Projet Jamais Utilisé', versionName: 'V-jamais', sprintName: 'Sprint-jamais' })]
+				})
+			});
+
+			// Le ticket n'a pas bougé...
+			const [row] = await ticketsOf(ws.workspaceId);
+			expect(row.title).toBe('Titre manuel');
+			expect(row.projectId).toBeNull();
+			expect(row.sprintId).toBeNull();
+			expect(row.versionId).toBeNull();
+			// ...et surtout, rien n'a été créé en base pour des valeurs qui ne servent à rien.
+			expect(await db.select().from(project).where(eq(project.workspaceId, ws.workspaceId))).toHaveLength(0);
+			expect(await db.select().from(sprint).where(eq(sprint.workspaceId, ws.workspaceId))).toHaveLength(0);
+		});
+	});
+
+	describe('cases d’inclusion par champ (jiraSyncXxx)', () => {
+		it('jiraSyncTitle=false : un nouveau ticket reçoit quand même le titre (NOT NULL), mais n’est plus mis à jour ensuite', async () => {
+			const ws = await makeJiraWorkspace({ conflictStrategy: 'JIRA_WINS', syncTitle: false });
+			await syncWorkspace(db, cfg, ws.workspaceId, { fetchImpl: fakeFetch({ issues: [rawIssue('T-1', 'Titre initial')] }) });
+			const [created] = await ticketsOf(ws.workspaceId);
+			expect(created.title).toBe('Titre initial'); // posé à la création malgré la case décochée
+
+			await syncWorkspace(db, cfg, ws.workspaceId, { fetchImpl: fakeFetch({ issues: [rawIssue('T-1', 'Titre modifié')] }) });
+			const [after] = await ticketsOf(ws.workspaceId);
+			expect(after.title).toBe('Titre initial'); // jamais mis à jour, même en JIRA_WINS
+		});
+
+		it('jiraSyncProject=false : projectId reste null même à la création', async () => {
+			const ws = await makeJiraWorkspace({ syncProject: false });
+			await syncWorkspace(db, cfg, ws.workspaceId, {
+				fetchImpl: fakeFetch({ issues: [rawIssue('T-1', 'A', { projectName: 'Devrait être ignoré' })] })
+			});
+
+			const [row] = await ticketsOf(ws.workspaceId);
+			expect(row.projectId).toBeNull();
+			expect(await db.select().from(project).where(eq(project.workspaceId, ws.workspaceId))).toHaveLength(0);
+		});
+
+		it('jiraSyncSprint=false et jiraSyncVersion=false : sprintId/versionId restent null même à la création', async () => {
+			const ws = await makeJiraWorkspace({ syncSprint: false, syncVersion: false });
+			await syncWorkspace(db, cfg, ws.workspaceId, {
+				fetchImpl: fakeFetch({ issues: [rawIssue('T-1', 'A', { versionName: 'V1', sprintName: 'Sprint 1' })] })
+			});
+
+			const [row] = await ticketsOf(ws.workspaceId);
+			expect(row.sprintId).toBeNull();
+			expect(row.versionId).toBeNull();
+			expect(await db.select().from(sprint).where(eq(sprint.workspaceId, ws.workspaceId))).toHaveLength(0); // pas créés pour rien
+		});
+
+		it('jiraSyncParent=false : le lien parent n’est jamais résolu, même présent sur l’issue', async () => {
+			const ws = await makeJiraWorkspace({ syncParent: false });
+			await syncWorkspace(db, cfg, ws.workspaceId, {
+				fetchImpl: fakeFetch({ issues: [rawIssue('T-1', 'Parent'), rawIssue('T-2', 'Enfant', { parentKey: 'T-1' })] })
+			});
+
+			const rows = await ticketsOf(ws.workspaceId);
+			expect(rows.find((r) => r.key === 'T-2')?.parentId).toBeNull();
+		});
 	});
 
 	describe('circuit breaker (échecs d’authentification)', () => {

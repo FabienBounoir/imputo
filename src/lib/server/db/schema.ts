@@ -110,6 +110,16 @@ export const workspace = pgTable('workspace', {
 	jiraKeyRegexPattern: text('jira_key_regex_pattern'),
 	jiraKeyRegexReplacement: text('jira_key_regex_replacement'),
 	jiraConflictStrategy: jiraConflictStrategyEnum('jira_conflict_strategy').notNull().default('KEEP_LOCAL'),
+	// Quels champs le sync a le droit de toucher, par espace — indépendant de jiraConflictStrategy
+	// (qui ne dit que "écraser ou pas" un champ déjà inclus ici). Défaut à true partout : décoché
+	// nulle part, comportement identique à avant l'existence de ces colonnes. Un champ décoché
+	// n'est jamais écrit, création comprise — sauf jiraSyncTitle (titre NOT NULL sur ticket, un
+	// ticket ne peut pas exister sans titre, cf. jiraSync.ts).
+	jiraSyncTitle: boolean('jira_sync_title').notNull().default(true),
+	jiraSyncProject: boolean('jira_sync_project').notNull().default(true),
+	jiraSyncParent: boolean('jira_sync_parent').notNull().default(true),
+	jiraSyncSprint: boolean('jira_sync_sprint').notNull().default(true),
+	jiraSyncVersion: boolean('jira_sync_version').notNull().default(true),
 	// Statut du dernier run (planifié ou forcé) — visibilité opérationnelle pour l'admin.
 	jiraLastSyncAt: timestamp('jira_last_sync_at', { withTimezone: true }),
 	jiraLastSyncStatus: jiraSyncStatusEnum('jira_last_sync_status'),

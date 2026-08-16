@@ -87,10 +87,21 @@ const accentSchema = z.object({
 		.transform((v) => v === 'true')
 });
 const ratioSchema = z.object({ value: z.coerce.number().gt(0).lte(1) });
+// Cases à cocher natives : absentes du FormData si décochées (jamais "false"), présentes ("on")
+// si cochées — d'où le .optional().transform sur la présence plutôt que sur la valeur.
+const jiraCheckbox = z
+	.string()
+	.optional()
+	.transform((v) => v !== undefined);
 const jiraConfigSchema = z.object({
 	jql: z.string().trim().max(2000),
 	pat: z.string().trim().max(500).optional().default(''),
 	conflictStrategy: z.enum(['JIRA_WINS', 'KEEP_LOCAL']),
+	syncTitle: jiraCheckbox,
+	syncProject: jiraCheckbox,
+	syncParent: jiraCheckbox,
+	syncSprint: jiraCheckbox,
+	syncVersion: jiraCheckbox,
 	regexPattern: z.string().trim().max(200).optional().default(''),
 	regexReplacement: z.string().trim().max(200).optional().default(''),
 	// Forme seulement (longueur d'un "YYYY-MM-DD") — validité réelle de la date faite dans

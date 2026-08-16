@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { db, ticket, timeEntry, jiraSyncRun } from '$lib/server/db';
+import { db, ticket, timeEntry, jiraSyncRun, sprint } from '$lib/server/db';
 import {
 	createTicket,
 	listTickets,
@@ -251,5 +251,26 @@ describe('deleteUntouchedSyncedTickets', () => {
 		const remaining = (await listTickets(workspaceId)).map((t) => t.key).sort();
 		expect(remaining).toEqual(['K-CHILD', 'K-EDIT', 'K-PARENT', 'K-TIME']);
 		expect((await db.select().from(ticket).where(eq(ticket.id, edited.id)))[0]).toBeTruthy();
+	});
+
+	it('supprime un ticket avec sprintId/versionId posés par le sync — pas un signe de trace humaine (régression)', async () => {
+		const { workspaceId } = await makeWorkspace();
+		const runId = await makeSyncRun(workspaceId);
+		const [ver] = await db.insert(sprint).values({ workspaceId, kind: 'VERSION', name: 'V36' }).returning({ id: sprint.id });
+		const [spr] = await db.insert(sprint).values({ workspaceId, kind: 'SPRINT', name: 'Sprint V36' }).returning({ id: sprint.id });
+
+		await db.insert(ticket).values({
+			workspaceId,
+			key: 'K-SPRINTVER',
+			title: 'x',
+			createdBySyncRunId: runId,
+			versionId: ver.id,
+			sprintId: spr.id
+		});
+
+		const deleted = await deleteUntouchedSyncedTickets(workspaceId, runId);
+
+		expect(deleted).toBe(1);
+		expect(await listTickets(workspaceId)).toHaveLength(0);
 	});
 });

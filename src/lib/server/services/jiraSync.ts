@@ -1,6 +1,6 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { Db } from '$lib/server/db/connection';
-import { workspace, project, ticket, jiraSyncRun } from '$lib/server/db/schema';
+import { workspace, project, sprint, ticket, jiraSyncRun } from '$lib/server/db/schema';
 import {
 	getAzureToken,
 	searchJiraIssues,
@@ -179,21 +179,63 @@ export async function syncWorkspace(
 			}
 		}
 
-		// Passe 1 : upsert de chaque ticket par (workspaceId, key transformée). Seuls title/projectId
-		// sont jamais écrits ici — jamais estimationReal/raeReal/comment/sspCode/stateId/flags, qui
-		// restent la propriété exclusive de la saisie humaine, quelle que soit la stratégie ci-dessous.
+		/** Même logique que findOrCreateProjectByName, sur la table sprint (kind SPRINT ou VERSION —
+		 *  même table, discriminée par kind). Protégé côté DB par l'index unique
+		 *  sprint_ws_kind_name_uq (workspaceId, kind, lower(name)) sur les lignes non archivées. */
+		async function findOrCreateSprintRow(kind: 'SPRINT' | 'VERSION', name: string): Promise<string> {
+			const trimmed = name.trim();
+			const match = and(
+				eq(sprint.workspaceId, workspaceId),
+				eq(sprint.kind, kind),
+				sql`lower(${sprint.name}) = ${trimmed.toLowerCase()}`
+			);
+			const [existing] = await tx.select({ id: sprint.id }).from(sprint).where(match);
+			if (existing) return existing.id;
+
+			try {
+				const [created] = await tx.insert(sprint).values({ workspaceId, kind, name: trimmed }).returning({ id: sprint.id });
+				return created.id;
+			} catch {
+				const [raced] = await tx.select({ id: sprint.id }).from(sprint).where(match);
+				if (raced) return raced.id;
+				throw new Error(`Impossible de créer ou trouver ${kind === 'VERSION' ? 'la version' : 'le sprint'} "${trimmed}".`);
+			}
+		}
+
+		// Passe 1 : upsert de chaque ticket par (workspaceId, key transformée). estimationReal/raeReal/
+		// comment/sspCode/stateId/flags restent la propriété exclusive de la saisie humaine, quelle que
+		// soit la stratégie ci-dessous — jamais écrits ici. title/projectId/sprintId/versionId passent
+		// en plus par les cases jiraSyncXxx de l'espace : décoché, un champ n'est jamais écrit, ni à la
+		// création ni à la mise à jour — sauf le titre, toujours posé à la création (ticket.title est
+		// NOT NULL, un ticket ne peut pas exister sans, cf. docs/SPECS-jira-sprint-version.md §6).
 		for (const issue of issues) {
 			const key = transformKey(issue.key);
-			const projectId = issue.projectName ? await findOrCreateProjectByName(issue.projectName) : null;
 
 			let row: { id: string } | undefined;
 			if (ws.jiraConflictStrategy === 'JIRA_WINS') {
+				// JIRA_WINS : la valeur sert toujours (création ou écrasement), on la résout dans tous
+				// les cas.
+				const projectId = ws.jiraSyncProject && issue.projectName ? await findOrCreateProjectByName(issue.projectName) : null;
+				const versionId = ws.jiraSyncVersion && issue.versionName ? await findOrCreateSprintRow('VERSION', issue.versionName) : null;
+				const sprintId = ws.jiraSyncSprint && issue.sprintName ? await findOrCreateSprintRow('SPRINT', issue.sprintName) : null;
+
+				const insertValues: typeof ticket.$inferInsert = { workspaceId, key, title: issue.summary };
+				if (ws.jiraSyncProject) insertValues.projectId = projectId;
+				if (ws.jiraSyncSprint) insertValues.sprintId = sprintId;
+				if (ws.jiraSyncVersion) insertValues.versionId = versionId;
+
+				const updateSet: Partial<typeof ticket.$inferInsert> = { updatedAt: new Date() };
+				if (ws.jiraSyncTitle) updateSet.title = issue.summary;
+				if (ws.jiraSyncProject) updateSet.projectId = projectId;
+				if (ws.jiraSyncSprint) updateSet.sprintId = sprintId;
+				if (ws.jiraSyncVersion) updateSet.versionId = versionId;
+
 				const [r] = await tx
 					.insert(ticket)
-					.values({ workspaceId, key, title: issue.summary, projectId })
+					.values(insertValues)
 					.onConflictDoUpdate({
 						target: [ticket.workspaceId, ticket.key],
-						set: { title: issue.summary, projectId, updatedAt: new Date() }
+						set: updateSet
 					})
 					// xmax = 0 : ligne réellement insérée par cette requête (pas juste mise à jour par ON
 					// CONFLICT) — seul moyen de distinguer les deux avec un upsert qui renvoie toujours une ligne.
@@ -202,14 +244,31 @@ export async function syncWorkspace(
 				if (r?.inserted) createdIds.push(r.id);
 			} else {
 				// KEEP_LOCAL (défaut) : un ticket déjà connu (créé à la main ou par un sync précédent)
-				// n'est jamais modifié — seulement "reconnu" pour la résolution des parents ci-dessous.
-				[row] = await tx
+				// n'est jamais modifié. Titre d'abord, seul champ dont on a besoin avant de savoir si le
+				// ticket est nouveau — surtout ne PAS résoudre project/sprint/version avant de le savoir :
+				// pour un ticket déjà connu, la valeur ne sera jamais utilisée, et findOrCreate* a l'effet
+				// de bord de créer la ligne project/sprint/version en base même si elle ne sert à rien
+				// (repéré en test réel : ça polluait la DB de versions/sprints sans aucun ticket rattaché).
+				const [inserted] = await tx
 					.insert(ticket)
-					.values({ workspaceId, key, title: issue.summary, projectId })
+					.values({ workspaceId, key, title: issue.summary })
 					.onConflictDoNothing({ target: [ticket.workspaceId, ticket.key] })
 					.returning({ id: ticket.id });
-				if (row) createdIds.push(row.id);
-				else {
+
+				if (inserted) {
+					// Genuinely nouveau : là seulement, résoudre et poser project/sprint/version.
+					createdIds.push(inserted.id);
+					const projectId = ws.jiraSyncProject && issue.projectName ? await findOrCreateProjectByName(issue.projectName) : null;
+					const versionId = ws.jiraSyncVersion && issue.versionName ? await findOrCreateSprintRow('VERSION', issue.versionName) : null;
+					const sprintId = ws.jiraSyncSprint && issue.sprintName ? await findOrCreateSprintRow('SPRINT', issue.sprintName) : null;
+					const extra: Partial<typeof ticket.$inferInsert> = {};
+					if (ws.jiraSyncProject) extra.projectId = projectId;
+					if (ws.jiraSyncSprint) extra.sprintId = sprintId;
+					if (ws.jiraSyncVersion) extra.versionId = versionId;
+					if (Object.keys(extra).length > 0) await tx.update(ticket).set(extra).where(eq(ticket.id, inserted.id));
+					row = inserted;
+				} else {
+					// Ticket déjà connu : jamais modifié, project/sprint/version compris — rien à résoudre.
 					[row] = await tx
 						.select({ id: ticket.id })
 						.from(ticket)
@@ -220,22 +279,26 @@ export async function syncWorkspace(
 		}
 
 		// Passe 2 : résolution des liens parent (clés déjà transformées), après upsert de tous les
-		// tickets du run — un parent peut apparaître après son enfant dans une réponse paginée.
-		for (const issue of issues) {
-			if (!issue.parentKey) continue;
-			const childId = keyToId.get(transformKey(issue.key));
-			if (!childId) continue;
+		// tickets du run — un parent peut apparaître après son enfant dans une réponse paginée. Jamais
+		// gouvernée par jiraConflictStrategy (comportement historique inchangé) — jiraSyncParent permet
+		// juste de la sauter entièrement si décoché.
+		if (ws.jiraSyncParent) {
+			for (const issue of issues) {
+				if (!issue.parentKey) continue;
+				const childId = keyToId.get(transformKey(issue.key));
+				if (!childId) continue;
 
-			const parentKey = transformKey(issue.parentKey);
-			let parentId = keyToId.get(parentKey);
-			if (!parentId) {
-				const [parentRow] = await tx
-					.select({ id: ticket.id })
-					.from(ticket)
-					.where(and(eq(ticket.workspaceId, workspaceId), eq(ticket.key, parentKey)));
-				parentId = parentRow?.id;
+				const parentKey = transformKey(issue.parentKey);
+				let parentId = keyToId.get(parentKey);
+				if (!parentId) {
+					const [parentRow] = await tx
+						.select({ id: ticket.id })
+						.from(ticket)
+						.where(and(eq(ticket.workspaceId, workspaceId), eq(ticket.key, parentKey)));
+					parentId = parentRow?.id;
+				}
+				if (parentId) await tx.update(ticket).set({ parentId }).where(eq(ticket.id, childId));
 			}
-			if (parentId) await tx.update(ticket).set({ parentId }).where(eq(ticket.id, childId));
 		}
 	});
 

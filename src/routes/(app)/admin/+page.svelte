@@ -759,11 +759,40 @@
 							<div class="field">
 								<select id="jira-conflict" name="conflictStrategy" value={data.jira.conflictStrategy}>
 									<option value="KEEP_LOCAL">Garder les tickets existants tels quels</option>
-									<option value="JIRA_WINS">Jira fait autorité (écrase titre/projet)</option>
+									<option value="JIRA_WINS">Jira fait autorité (écrase les champs cochés ci-dessous)</option>
 								</select>
 								<p class="hint" style="margin:6px 0 0;">
-									S'applique uniquement au titre et au projet — l'estimation, le RAE et le workflow restent
-									toujours saisis à la main, quelle que soit l'option.
+									L'estimation, le RAE et le workflow restent toujours saisis à la main, quelle que soit
+									l'option — seuls les champs cochés ci-dessous peuvent venir de Jira.
+								</p>
+							</div>
+							<div class="field">
+								<label for="jira-sync-title">Champs synchronisés depuis Jira</label>
+								<div class="jira-sync-fields">
+									<label class="jira-sync-field">
+										<input id="jira-sync-title" type="checkbox" name="syncTitle" checked={data.jira.syncTitle} />
+										<span>Titre</span>
+									</label>
+									<label class="jira-sync-field">
+										<input type="checkbox" name="syncProject" checked={data.jira.syncProject} />
+										<span>Projet</span>
+									</label>
+									<label class="jira-sync-field">
+										<input type="checkbox" name="syncParent" checked={data.jira.syncParent} />
+										<span>Parent (sous-tâche)</span>
+									</label>
+									<label class="jira-sync-field">
+										<input type="checkbox" name="syncSprint" checked={data.jira.syncSprint} />
+										<span>Sprint</span>
+									</label>
+									<label class="jira-sync-field">
+										<input type="checkbox" name="syncVersion" checked={data.jira.syncVersion} />
+										<span>Version</span>
+									</label>
+								</div>
+								<p class="hint" style="margin:6px 0 0;">
+									Un champ décoché n'est plus jamais mis à jour par le sync — sauf le titre, toujours posé
+									à la création d'un nouveau ticket (impossible d'en créer un sans titre).
 								</p>
 							</div>
 						</div>
@@ -1617,6 +1646,25 @@
 		display: flex;
 		gap: 10px;
 		margin-left: 46px;
+	}
+	.jira-sync-fields {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px 18px;
+		margin-top: 4px;
+	}
+	.jira-sync-field {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 13.5px;
+		color: var(--text-soft);
+		cursor: pointer;
+	}
+	.jira-sync-field input {
+		width: 16px;
+		height: 16px;
+		accent-color: var(--accent);
 	}
 	.jira-config-summary {
 		display: flex;

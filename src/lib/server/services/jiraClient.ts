@@ -100,7 +100,19 @@ export type JiraIssue = {
 	/** fields.parent.key — sous-tâche Jira native (cf. SPECS.md §2.A), pas un Epic Link. */
 	parentKey: string | null;
 	projectName: string;
+	/** Première entrée de fixVersions (pas "versions"/affectedVersion, un champ différent — voir
+	 *  docs/SPECS-jira-sprint-version.md §3). Un ticket a rarement plusieurs fix versions en
+	 *  pratique ; la première suffit tant qu'aucune règle de choix n'a été demandée. */
+	versionName: string | null;
+	/** Dernière entrée du customfield Sprint (Jira ajoute en fin de tableau à chaque déplacement de
+	 *  sprint, donc la dernière est la plus récente) — voir parseSprintName ci-dessous. */
+	sprintName: string | null;
 };
+
+// Sprint = champ custom du plugin Jira Software (Greenhopper), spécifique à cette instance —
+// identifié via GET /rest/api/2/field le 2026-08-16 (voir docs/SPECS-jira-sprint-version.md §4).
+// Pas de découverte dynamique : YAGNI tant qu'une seule instance Jira est visée par ce sync.
+const SPRINT_CUSTOM_FIELD_ID = 'customfield_10105';
 
 type JiraSearchResponse = {
 	startAt: number;
@@ -112,9 +124,25 @@ type JiraSearchResponse = {
 			issuetype?: { name: string };
 			parent?: { key: string };
 			project?: { name: string };
+			fixVersions?: Array<{ name: string }>;
+			// Champ custom, clé dynamique (SPRINT_CUSTOM_FIELD_ID) — voir parseSprintName.
+			[customFieldId: string]: unknown;
 		};
 	}>;
 };
+
+/**
+ * Le customfield Sprint (Server/DC, plugin Greenhopper) n'est pas du JSON dans /rest/api/2/search
+ * mais le toString() Java de l'objet, ex. :
+ * "com.atlassian.greenhopper.service.sprint.Sprint@715e...[...,name=Sprint V36,state=ACTIVE,...]"
+ * — confirmé en direct le 2026-08-16 (docs/SPECS-jira-sprint-version.md §4). Regex ciblée sur la
+ * clé `name=` plutôt qu'un split sur les virgules : `goal` est un texte libre qui pourrait en
+ * contenir une et décalerait un split naïf — une regex par clé reste correcte indépendamment.
+ */
+function parseSprintName(raw: string): string | null {
+	const match = /\bname=([^,\]]+)/.exec(raw);
+	return match ? match[1].trim() : null;
+}
 
 /** Littéral date JQL pour "updated >= ...", ex. "2026-08-13 10:05". JQL n'a pas de marqueur de
  *  fuseau dans ses littéraux : Jira les interprète selon un fuseau configuré côté serveur, pas
@@ -152,7 +180,7 @@ export async function searchJiraIssues(
 		url.searchParams.set('jql', jql);
 		url.searchParams.set('startAt', String(startAt));
 		url.searchParams.set('maxResults', String(PAGE_SIZE));
-		url.searchParams.set('fields', 'summary,issuetype,parent,project');
+		url.searchParams.set('fields', `summary,issuetype,parent,project,fixVersions,${SPRINT_CUSTOM_FIELD_ID}`);
 
 		const { status, body, text } = await fetchJson<JiraSearchResponse>(fetchImpl, url.toString(), {
 			headers: { JTOKEN: `Bearer ${pat}`, Authorization: `Bearer ${azureToken}` }
@@ -166,12 +194,16 @@ export async function searchJiraIssues(
 		}
 
 		for (const issue of body.issues) {
+			const sprintRaw = issue.fields[SPRINT_CUSTOM_FIELD_ID];
+			const sprintEntries = Array.isArray(sprintRaw) ? sprintRaw.filter((s): s is string => typeof s === 'string') : [];
 			issues.push({
 				key: issue.key,
 				summary: issue.fields.summary ?? '',
 				issueTypeName: issue.fields.issuetype?.name ?? '',
 				parentKey: issue.fields.parent?.key ?? null,
-				projectName: issue.fields.project?.name ?? ''
+				projectName: issue.fields.project?.name ?? '',
+				versionName: issue.fields.fixVersions?.[0]?.name ?? null,
+				sprintName: sprintEntries.length > 0 ? parseSprintName(sprintEntries[sprintEntries.length - 1]) : null
 			});
 		}
 

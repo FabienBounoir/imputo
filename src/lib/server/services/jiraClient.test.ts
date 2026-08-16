@@ -131,7 +131,9 @@ describe('jiraClient / searchJiraIssues', () => {
 			summary: 'Corriger le bouton',
 			issueTypeName: 'Sous-tâche',
 			parentKey: 'BLM-1',
-			projectName: 'Application Mobile'
+			projectName: 'Application Mobile',
+			versionName: null,
+			sprintName: null
 		});
 	});
 
@@ -147,6 +149,114 @@ describe('jiraClient / searchJiraIssues', () => {
 
 		const [issue] = await searchJiraIssues(baseCfg, 'azure-tok', 'pat', 'project = BLM', fetchImpl);
 		expect(issue.parentKey).toBeNull();
+	});
+
+	it('fields= inclut fixVersions et le customfield Sprint', async () => {
+		let requestedFields = '';
+		const fetchImpl = (async (input: RequestInfo | URL) => {
+			requestedFields = new URL(input.toString()).searchParams.get('fields') ?? '';
+			return jsonResponse(200, { startAt: 0, total: 0, issues: [] });
+		}) as typeof fetch;
+
+		await searchJiraIssues(baseCfg, 'azure-tok', 'pat', 'project = BLM', fetchImpl);
+
+		expect(requestedFields).toContain('fixVersions');
+		expect(requestedFields).toContain('customfield_10105');
+	});
+
+	it('extrait fixVersions[0] en versionName (pas plusieurs, pas "versions"/affectedVersion)', async () => {
+		const { fetchImpl } = makeFakeFetch({
+			search: () =>
+				jsonResponse(200, {
+					startAt: 0,
+					total: 1,
+					issues: [
+						{
+							key: 'BLM-1',
+							fields: {
+								summary: 'x',
+								project: { name: 'P' },
+								fixVersions: [{ name: 'V36' }, { name: 'V37' }],
+								versions: [{ name: 'PAS_CELLE_LA' }]
+							}
+						}
+					]
+				})
+		});
+
+		const [issue] = await searchJiraIssues(baseCfg, 'azure-tok', 'pat', 'project = BLM', fetchImpl);
+		expect(issue.versionName).toBe('V36');
+	});
+
+	it('pas de fixVersions -> versionName null', async () => {
+		const { fetchImpl } = makeFakeFetch({
+			search: () =>
+				jsonResponse(200, {
+					startAt: 0,
+					total: 1,
+					issues: [{ key: 'BLM-1', fields: { summary: 'x', project: { name: 'P' } } }]
+				})
+		});
+
+		const [issue] = await searchJiraIssues(baseCfg, 'azure-tok', 'pat', 'project = BLM', fetchImpl);
+		expect(issue.versionName).toBeNull();
+	});
+
+	it('parse le format toString() Java du Sprint (Server/DC, plugin Greenhopper)', async () => {
+		// Chaîne réelle observée en direct le 2026-08-16 contre jira.constellation.soprasteria.com.
+		const raw =
+			'com.atlassian.greenhopper.service.sprint.Sprint@715e3c72[activatedDate=2026-06-19T17:35:03.865+02:00,autoStartStop=false,completeDate=<null>,endDate=2026-10-26T17:35:00.000+01:00,goal=,id=59928,incompleteIssuesDestinationId=<null>,name=Sprint V36,rapidViewId=18632,sequence=59928,startDate=2026-06-19T17:35:00.000+02:00,state=ACTIVE,synced=false]';
+		const { fetchImpl } = makeFakeFetch({
+			search: () =>
+				jsonResponse(200, {
+					startAt: 0,
+					total: 1,
+					issues: [{ key: 'BLM-1', fields: { summary: 'x', project: { name: 'P' }, customfield_10105: [raw] } }]
+				})
+		});
+
+		const [issue] = await searchJiraIssues(baseCfg, 'azure-tok', 'pat', 'project = BLM', fetchImpl);
+		expect(issue.sprintName).toBe('Sprint V36');
+	});
+
+	it('plusieurs sprints dans le tableau -> prend le dernier (le plus récent)', async () => {
+		const { fetchImpl } = makeFakeFetch({
+			search: () =>
+				jsonResponse(200, {
+					startAt: 0,
+					total: 1,
+					issues: [
+						{
+							key: 'BLM-1',
+							fields: {
+								summary: 'x',
+								project: { name: 'P' },
+								customfield_10105: [
+									'com.atlassian.greenhopper.service.sprint.Sprint@a[name=Sprint 1,state=CLOSED]',
+									'com.atlassian.greenhopper.service.sprint.Sprint@b[name=Sprint 2,state=ACTIVE]'
+								]
+							}
+						}
+					]
+				})
+		});
+
+		const [issue] = await searchJiraIssues(baseCfg, 'azure-tok', 'pat', 'project = BLM', fetchImpl);
+		expect(issue.sprintName).toBe('Sprint 2');
+	});
+
+	it('pas de customfield Sprint -> sprintName null', async () => {
+		const { fetchImpl } = makeFakeFetch({
+			search: () =>
+				jsonResponse(200, {
+					startAt: 0,
+					total: 1,
+					issues: [{ key: 'BLM-1', fields: { summary: 'x', project: { name: 'P' } } }]
+				})
+		});
+
+		const [issue] = await searchJiraIssues(baseCfg, 'azure-tok', 'pat', 'project = BLM', fetchImpl);
+		expect(issue.sprintName).toBeNull();
 	});
 
 	it('401 -> JiraAuthError (PAT)', async () => {

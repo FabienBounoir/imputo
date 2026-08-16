@@ -397,6 +397,13 @@ export async function deleteTicket(workspaceId: string, ticketId: string) {
  * à la main. Exclut aussi tout ticket parent d'un autre (parentId n'a pas de contrainte FK/cascade —
  * le supprimer laisserait un parentId orphelin). Un ticket touché une seule fois reste hors de portée
  * définitivement : le lot ne "rattrape" jamais un ticket qui a bougé depuis le sync.
+ *
+ * title/projectId/sprintId/versionId sont volontairement absents de cette liste malgré leur case
+ * dédiée dans EDITABLE_FIELDS (éditables à la main) : ce sont aussi des champs que syncWorkspace
+ * écrit lui-même dès la création si l'espace a coché leur synchronisation (jiraSyncSprint/Version)
+ * — les exiger NULL rendrait quasi tout ticket avec un sprint/version Jira non-annulable dès sa
+ * création, avant même qu'un humain n'y touche. Un vrai signe d'usage humain reste ailleurs
+ * (commentaire, état, imputation, RAE, groupe, objectif…) — c'est ce qui compte ici.
  */
 export async function deleteUntouchedSyncedTickets(workspaceId: string, syncRunId: string): Promise<number> {
 	const childTicket = alias(ticket, 'child_ticket');
@@ -408,8 +415,6 @@ export async function deleteUntouchedSyncedTickets(workspaceId: string, syncRunI
 				eq(ticket.createdBySyncRunId, syncRunId),
 				isNull(ticket.comment),
 				isNull(ticket.stateId),
-				isNull(ticket.sprintId),
-				isNull(ticket.versionId),
 				isNull(ticket.sspCode),
 				isNull(ticket.estimationReal),
 				isNull(ticket.raeReal),

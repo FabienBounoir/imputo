@@ -326,6 +326,11 @@ export async function getJiraConfig(workspaceId: string) {
 		jql: row.jiraJql ?? '',
 		patConfigured: !!row.jiraPatEncrypted,
 		conflictStrategy: row.jiraConflictStrategy,
+		syncTitle: row.jiraSyncTitle,
+		syncProject: row.jiraSyncProject,
+		syncParent: row.jiraSyncParent,
+		syncSprint: row.jiraSyncSprint,
+		syncVersion: row.jiraSyncVersion,
 		regexPattern: row.jiraKeyRegexPattern ?? '',
 		regexReplacement: row.jiraKeyRegexReplacement ?? '',
 		patUpdatedByName,
@@ -392,6 +397,11 @@ export async function saveJiraConfig(
 	input: {
 		jql: string;
 		conflictStrategy: 'JIRA_WINS' | 'KEEP_LOCAL';
+		syncTitle: boolean;
+		syncProject: boolean;
+		syncParent: boolean;
+		syncSprint: boolean;
+		syncVersion: boolean;
 		regexPattern: string;
 		regexReplacement: string;
 		pat: string;
@@ -417,6 +427,11 @@ export async function saveJiraConfig(
 	const updates: Partial<typeof workspace.$inferInsert> = {
 		jiraJql: input.jql || null,
 		jiraConflictStrategy: input.conflictStrategy,
+		jiraSyncTitle: input.syncTitle,
+		jiraSyncProject: input.syncProject,
+		jiraSyncParent: input.syncParent,
+		jiraSyncSprint: input.syncSprint,
+		jiraSyncVersion: input.syncVersion,
 		jiraKeyRegexPattern: input.regexPattern || null,
 		jiraKeyRegexReplacement: input.regexReplacement || null
 	};
