@@ -490,6 +490,69 @@ describe('jiraSync / watermark incrémental (jiraUpdatedSince)', () => {
 	});
 });
 
+describe('jiraSync / plancher fixe de création (jiraCreatedSince)', () => {
+	it('le JQL envoyé à Jira inclut "created >=" quand jiraCreatedSince est défini', async () => {
+		const ws = await makeJiraWorkspace({ jql: 'project = X' });
+		await db
+			.update(workspace)
+			.set({ jiraCreatedSince: new Date('2023-01-01T00:00:00Z') })
+			.where(eq(workspace.id, ws.workspaceId));
+
+		let capturedJql = '';
+		await syncWorkspace(db, cfg, ws.workspaceId, {
+			fetchImpl: fakeFetch({ issues: [], onSearchRequest: (jql) => (capturedJql = jql) })
+		});
+
+		expect(capturedJql).toBe('(project = X) AND created >= "2023-01-01 00:00"');
+	});
+
+	it('combine "updated >=" et "created >=" quand les deux planchers sont définis', async () => {
+		const ws = await makeJiraWorkspace({ jql: 'project = X' });
+		await db
+			.update(workspace)
+			.set({
+				jiraUpdatedSince: new Date('2026-01-01T00:00:00Z'),
+				jiraCreatedSince: new Date('2023-01-01T00:00:00Z')
+			})
+			.where(eq(workspace.id, ws.workspaceId));
+
+		let capturedJql = '';
+		await syncWorkspace(db, cfg, ws.workspaceId, {
+			fetchImpl: fakeFetch({ issues: [], onSearchRequest: (jql) => (capturedJql = jql) })
+		});
+
+		expect(capturedJql).toBe('(project = X) AND updated >= "2026-01-01 00:00" AND created >= "2023-01-01 00:00"');
+	});
+
+	it('ne s’auto-avance jamais, contrairement à jiraUpdatedSince', async () => {
+		const ws = await makeJiraWorkspace();
+		const before = new Date('2023-01-01T00:00:00Z');
+		await db.update(workspace).set({ jiraCreatedSince: before }).where(eq(workspace.id, ws.workspaceId));
+
+		await syncWorkspace(db, cfg, ws.workspaceId, { fetchImpl: fakeFetch({ issues: [] }) });
+
+		const [row] = await db.select().from(workspace).where(eq(workspace.id, ws.workspaceId));
+		expect(row.jiraCreatedSince?.getTime()).toBe(before.getTime());
+	});
+
+	it('JQL avec ORDER BY + seul jiraCreatedSince défini -> échec propre, endpoint jamais appelé', async () => {
+		const ws = await makeJiraWorkspace({ jql: 'project = X ORDER BY updated DESC' });
+		await db
+			.update(workspace)
+			.set({ jiraCreatedSince: new Date('2023-01-01T00:00:00Z') })
+			.where(eq(workspace.id, ws.workspaceId));
+
+		let searchCalled = false;
+		const res = await syncWorkspace(db, cfg, ws.workspaceId, {
+			fetchImpl: fakeFetch({ issues: [], onSearchRequest: () => (searchCalled = true) })
+		});
+
+		expect(res.ok).toBe(false);
+		if (!res.ok) expect(res.error).toMatch(/ORDER BY/);
+		expect(searchCalled).toBe(false);
+	});
+});
+
 describe('jiraSync / syncAllEnabledWorkspaces', () => {
 	it('ignore les espaces désactivés (manuellement ou par le circuit breaker)', async () => {
 		const wsOn = await makeJiraWorkspace();

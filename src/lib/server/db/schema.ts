@@ -101,6 +101,12 @@ export const workspace = pgTable('workspace', {
 	// marge de sécurité) — un seul champ, une seule sémantique : "ne rien redemander avant cette
 	// date". Null = pas de plancher (comportement historique, JQL non modifié).
 	jiraUpdatedSince: timestamp('jira_updated_since', { withTimezone: true }),
+	// Plancher fixe (jamais auto-avancé, contrairement à jiraUpdatedSince ci-dessus) : n'inclure que
+	// les tickets dont `created` est postérieur à cette date. Sans ça, un vieux ticket (ex. 2020)
+	// juste retouché repasse indéfiniment le filtre `updated >=` à chaque run incrémental — ce champ
+	// permet de l'exclure une bonne fois pour toutes. Purement manuel, saisi par l'admin (jiraSave).
+	// Null = pas de plancher (comportement historique).
+	jiraCreatedSince: timestamp('jira_created_since', { withTimezone: true }),
 	// Traçabilité : qui a saisi le PAT actuel et quand (mis à jour uniquement quand une nouvelle
 	// valeur est effectivement soumise, pas à chaque sauvegarde du formulaire).
 	// Pas de FK : même choix que createdByUserId ci-dessous (user est déclaré plus loin dans ce

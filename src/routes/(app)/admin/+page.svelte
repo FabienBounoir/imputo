@@ -693,8 +693,8 @@
 		<section class="card block">
 			<h3>Intégration Jira</h3>
 			<p class="hint">Pull planifié + forçage manuel des tickets Jira, propre à cet espace.</p>
-			{#if form?.error}<div class="flash error">{form.error}</div>{/if}
-			{#if form?.jiraSaveOk}<div class="flash ok">Configuration enregistrée ✓</div>{/if}
+			{#if form?.error}<div class="flash error jira-save-toast" role="alert">{form.error}</div>{/if}
+			{#if form?.jiraSaveOk}<div class="flash ok jira-save-toast" role="status">Configuration enregistrée ✓</div>{/if}
 
 			{#if !jiraConfigured || jiraEditing}
 				<form
@@ -718,16 +718,29 @@
 								<input id="jira-jql" name="jql" value={data.jira.jql} placeholder="project = CARTEJEUNE_BLM" />
 								<p class="hint" style="margin:6px 0 0;">Ne doit pas contenir ORDER BY (inutile ici, incompatible avec la date minimum ci-dessous).</p>
 							</div>
-							<div class="field">
-								<label for="jira-updated-since">Date minimum (optionnel)</label>
-								<input id="jira-updated-since" name="updatedSinceDate" type="date" />
-								<p class="hint pat-meta">
-									{#if data.jira.updatedSince}
-										Valeur actuelle : <b>{formatDateTime(new Date(data.jira.updatedSince))}</b> — laisser vide pour ne pas modifier.
-									{:else}
-										Aucune limite actuellement — laisser vide pour ne pas modifier.
-									{/if}
-								</p>
+							<div class="field-row">
+								<div class="field">
+									<label for="jira-updated-since">Date minimum de mise à jour (optionnel)</label>
+									<input id="jira-updated-since" name="updatedSinceDate" type="date" />
+									<p class="hint pat-meta">
+										{#if data.jira.updatedSince}
+											Actuelle : <b>{formatDateTime(new Date(data.jira.updatedSince))}</b>
+										{:else}
+											Aucune limite
+										{/if}
+									</p>
+								</div>
+								<div class="field">
+									<label for="jira-created-since">Date de création minimum (optionnel)</label>
+									<input id="jira-created-since" name="createdSinceDate" type="date" />
+									<p class="hint pat-meta">
+										{#if data.jira.createdSince}
+											Actuelle : <b>{formatDateTime(new Date(data.jira.createdSince))}</b>
+										{:else}
+											Exclut les tickets créés avant cette date, même mis à jour depuis
+										{/if}
+									</p>
+								</div>
 							</div>
 							<div class="field">
 								<label for="jira-pat">Token Jira (PAT)</label>
@@ -802,31 +815,33 @@
 					<div class="step">
 						<div class="step-num">3</div>
 						<div class="step-body">
-							<h4>Réconciliation des clés <span class="step-optional">optionnel</span></h4>
-							<p class="hint">
-								Si la clé renvoyée par Jira ne correspond pas à celle déjà utilisée dans l'app (ex.
-								<code>CARTEJEUNE_BLM-123</code> côté Jira vs <code>BLM-123</code> ici), un motif à
-								rechercher/remplacer les fait correspondre avant tout rapprochement.
-							</p>
-							<div class="field">
-								<label for="jira-regex-pattern">Motif à rechercher (regex)</label>
-								<input id="jira-regex-pattern" name="regexPattern" bind:value={jiraRegexPattern} placeholder="^CARTEJEUNE_" />
-							</div>
-							<div class="field">
-								<label for="jira-regex-replacement">Remplacement</label>
-								<input id="jira-regex-replacement" name="regexReplacement" bind:value={jiraRegexReplacement} placeholder="(laisser vide pour supprimer)" />
-							</div>
-							<div class="field">
-								<label for="jira-regex-sample">Tester avec une clé exemple</label>
-								<input id="jira-regex-sample" bind:value={jiraSampleKey} />
-							</div>
-							<p class="regex-preview">
-								{#if jiraSampleResult === null}
-									<span class="err-text">Regex invalide.</span>
-								{:else}
-									→ <b>{jiraSampleResult}</b>
-								{/if}
-							</p>
+							<details class="step-details" open={!!data.jira.regexPattern}>
+								<summary>Réconciliation des clés <span class="step-optional">optionnel</span></summary>
+								<p class="hint">
+									Si la clé renvoyée par Jira ne correspond pas à celle déjà utilisée dans l'app (ex.
+									<code>CARTEJEUNE_BLM-123</code> côté Jira vs <code>BLM-123</code> ici), un motif à
+									rechercher/remplacer les fait correspondre avant tout rapprochement.
+								</p>
+								<div class="field">
+									<label for="jira-regex-pattern">Motif à rechercher (regex)</label>
+									<input id="jira-regex-pattern" name="regexPattern" bind:value={jiraRegexPattern} placeholder="^CARTEJEUNE_" />
+								</div>
+								<div class="field">
+									<label for="jira-regex-replacement">Remplacement</label>
+									<input id="jira-regex-replacement" name="regexReplacement" bind:value={jiraRegexReplacement} placeholder="(laisser vide pour supprimer)" />
+								</div>
+								<div class="field">
+									<label for="jira-regex-sample">Tester avec une clé exemple</label>
+									<input id="jira-regex-sample" bind:value={jiraSampleKey} />
+								</div>
+								<p class="regex-preview">
+									{#if jiraSampleResult === null}
+										<span class="err-text">Regex invalide.</span>
+									{:else}
+										→ <b>{jiraSampleResult}</b>
+									{/if}
+								</p>
+							</details>
 						</div>
 					</div>
 
@@ -843,143 +858,154 @@
 					<button type="button" class="btn btn-ghost" onclick={() => (jiraEditing = true)}>Éditer la configuration</button>
 				</div>
 			{/if}
+		</section>
 
-			<div class="jira-activation">
-				<h4>Activation</h4>
+		<section class="card block">
+			<h3>Activation</h3>
 
-				{#if jiraAutoDisabled}
-					<div class="flash warn">
-						Synchronisation désactivée automatiquement après {data.jira.consecutiveFailures} échecs
-						d'authentification consécutifs. Vérifie/renouvelle le token ci-dessus, puis réactive-la.
-					</div>
-				{/if}
-				{#if form?.jiraToggleOk}<div class="flash ok">Réglage mis à jour ✓</div>{/if}
-
-				<form method="POST" action="?/jiraToggleEnabled" use:enhance>
-					<input type="hidden" name="enabled" value={String(!data.jira.enabled)} />
-					<div class="row-between">
-						<span>Synchronisation planifiée actuellement <b>{data.jira.enabled ? 'activée' : 'désactivée'}</b></span>
-						<button class="btn {data.jira.enabled ? 'btn-ghost' : 'btn-primary'}" type="submit">
-							{data.jira.enabled ? 'Désactiver' : 'Activer'}
-						</button>
-					</div>
-				</form>
-
-				<div class="sync-status">
-					{#if data.jira.lastSyncAt}
-						<span>
-							Dernier run : <b>{formatDateTime(new Date(data.jira.lastSyncAt))}</b>
-							{#if data.jira.lastSyncStatus === 'SUCCESS'}
-								<span class="pill active">✓ {data.jira.lastSyncTicketCount} ticket{(data.jira.lastSyncTicketCount ?? 0) > 1 ? 's' : ''}</span>
-							{:else}
-								<span class="pill pending">✗ échec</span>
-							{/if}
-						</span>
-						{#if data.jira.lastSyncStatus === 'ERROR' && data.jira.lastSyncError}
-							<p class="hint err-text">{data.jira.lastSyncError}</p>
-						{/if}
-					{:else}
-						<span class="hint">Aucun run pour l'instant.</span>
-					{/if}
-					<p class="hint" style="margin:8px 0 0;">
-						Filtré depuis :
-						<b>{data.jira.updatedSince ? formatDateTime(new Date(data.jira.updatedSince)) : "aucune limite pour l'instant"}</b>
-					</p>
+			{#if jiraAutoDisabled}
+				<div class="flash warn">
+					Synchronisation désactivée automatiquement après {data.jira.consecutiveFailures} échecs
+					d'authentification consécutifs. Vérifie/renouvelle le token ci-dessus, puis réactive-la.
 				</div>
+			{/if}
+			{#if form?.jiraToggleOk}<div class="flash ok">Réglage mis à jour ✓</div>{/if}
 
-				{#if form?.jiraResetSinceOk}<div class="flash ok">Réinitialisé ✓</div>{/if}
-				{#if form?.jiraSyncOk}<div class="flash ok">Sync manuel terminé ✓ ({form.jiraTicketsUpserted} ticket{form.jiraTicketsUpserted > 1 ? 's' : ''})</div>{/if}
-				<div class="jira-force-actions">
-					{#if data.jira.updatedSince}
-						<form
-							method="POST"
-							action="?/jiraResetUpdatedSince"
-							use:enhance={async ({ cancel }) => {
-								const ok = await confirmDialog({
-									message: 'Le prochain run Jira re-téléchargera tous les tickets du filtre JQL. Continuer ?',
-									confirmLabel: 'Réinitialiser'
-								});
-								if (!ok) cancel();
-							}}
-						>
-							<button type="submit" class="btn btn-ghost">Réinitialiser le filtre</button>
-						</form>
+			<form method="POST" action="?/jiraToggleEnabled" use:enhance>
+				<input type="hidden" name="enabled" value={String(!data.jira.enabled)} />
+				<div class="row-between">
+					<span>Synchronisation planifiée actuellement <b>{data.jira.enabled ? 'activée' : 'désactivée'}</b></span>
+					<button class="btn {data.jira.enabled ? 'btn-ghost' : 'btn-primary'}" type="submit">
+						{data.jira.enabled ? 'Désactiver' : 'Activer'}
+					</button>
+				</div>
+			</form>
+
+			<div class="sync-status">
+				{#if data.jira.lastSyncAt}
+					<span>
+						Dernier run : <b>{formatDateTime(new Date(data.jira.lastSyncAt))}</b>
+						{#if data.jira.lastSyncStatus === 'SUCCESS'}
+							<span class="pill active">✓ {data.jira.lastSyncTicketCount} ticket{(data.jira.lastSyncTicketCount ?? 0) > 1 ? 's' : ''}</span>
+						{:else}
+							<span class="pill pending">✗ échec</span>
+						{/if}
+					</span>
+					{#if data.jira.lastSyncStatus === 'ERROR' && data.jira.lastSyncError}
+						<p class="hint err-text">{data.jira.lastSyncError}</p>
 					{/if}
+				{:else}
+					<span class="hint">Aucun run pour l'instant.</span>
+				{/if}
+				<p class="hint" style="margin:8px 0 0;">
+					Filtré depuis :
+					<b>{data.jira.updatedSince ? formatDateTime(new Date(data.jira.updatedSince)) : "aucune limite pour l'instant"}</b>
+				</p>
+				<p class="hint" style="margin:4px 0 0;">
+					Créés depuis :
+					<b>{data.jira.createdSince ? formatDateTime(new Date(data.jira.createdSince)) : "aucune limite pour l'instant"}</b>
+				</p>
+			</div>
 
+			{#if form?.jiraResetSinceOk}<div class="flash ok">Réinitialisé ✓</div>{/if}
+			{#if form?.jiraResetCreatedSinceOk}<div class="flash ok">Réinitialisé ✓</div>{/if}
+			{#if form?.jiraSyncOk}<div class="flash ok">Sync manuel terminé ✓ ({form.jiraTicketsUpserted} ticket{form.jiraTicketsUpserted > 1 ? 's' : ''})</div>{/if}
+			<div class="jira-force-actions">
+				{#if data.jira.updatedSince}
 					<form
 						method="POST"
-						action="?/jiraSyncNow"
-						use:enhance={() => {
-							jiraSyncing = true;
-							return async ({ update }) => {
-								await update();
-								jiraSyncing = false;
-							};
+						action="?/jiraResetUpdatedSince"
+						use:enhance={async ({ cancel }) => {
+							const ok = await confirmDialog({
+								message: 'Le prochain run Jira re-téléchargera tous les tickets du filtre JQL. Continuer ?',
+								confirmLabel: 'Réinitialiser'
+							});
+							if (!ok) cancel();
 						}}
 					>
-						<button class="btn btn-ghost" type="submit" disabled={jiraSyncing}>
-							{jiraSyncing ? 'Synchronisation…' : 'Forcer le sync maintenant'}
-						</button>
+						<button type="submit" class="btn btn-ghost">Réinitialiser le filtre de date</button>
 					</form>
-				</div>
-			</div>
-
-			<div class="jira-history">
-				<h4>Historique des synchronisations</h4>
-				{#if form?.jiraUndoOk}
-					<div class="flash ok">{form.jiraUndoDeleted} ticket{form.jiraUndoDeleted > 1 ? 's' : ''} supprimé{form.jiraUndoDeleted > 1 ? 's' : ''} ✓</div>
 				{/if}
 
-				{#if data.jiraSyncRuns.length === 0}
-					<span class="hint">Aucun run pour l'instant.</span>
-				{:else}
-					<ul class="jira-run-list">
-						{#each data.jiraSyncRuns as run (run.id)}
-							<li class="jira-run-row">
-								<div class="row-between">
-									<span>
-										<b>{formatDateTime(new Date(run.startedAt))}</b>
-										{#if run.status === 'SUCCESS'}
-											<span class="pill active">
-												✓ {run.ticketsSeen} vu{run.ticketsSeen > 1 ? 's' : ''}{#if run.ticketsCreated > 0}
-													&nbsp;· {run.ticketsCreated} ajouté{run.ticketsCreated > 1 ? 's' : ''}
-												{/if}
-											</span>
-										{:else}
-											<span class="pill pending">✗ échec</span>
-										{/if}
-									</span>
-									{#if run.ticketsCreated > 0}
-										<div class="jira-run-actions">
-											<a class="btn btn-ghost" href="/tickets?jiraRun={run.id}">Voir les tickets</a>
-											{#if run.undoneAt}
-												<span class="hint" style="margin:0;">Lot annulé le {formatDateTime(new Date(run.undoneAt))}</span>
-											{:else}
-												<form
-													method="POST"
-													action="?/jiraUndoSyncRun"
-													use:enhance={async ({ cancel }) => {
-														const ok = await confirmDialog({
-															message:
-																'Supprime les tickets de ce lot encore vierges de toute saisie (imputation, chiffrage, état…). Un ticket déjà touché depuis le sync est automatiquement conservé.',
-															confirmLabel: 'Annuler ce lot'
-														});
-														if (!ok) cancel();
-													}}
-												>
-													<input type="hidden" name="runId" value={run.id} />
-													<button type="submit" class="btn btn-ghost">Annuler ce lot</button>
-												</form>
+				{#if data.jira.createdSince}
+					<form method="POST" action="?/jiraResetCreatedSince" use:enhance>
+						<button type="submit" class="btn btn-ghost">Retirer la date de création minimum</button>
+					</form>
+				{/if}
+
+				<form
+					method="POST"
+					action="?/jiraSyncNow"
+					use:enhance={() => {
+						jiraSyncing = true;
+						return async ({ update }) => {
+							await update();
+							jiraSyncing = false;
+						};
+					}}
+				>
+					<button class="btn btn-ghost" type="submit" disabled={jiraSyncing}>
+						{jiraSyncing ? 'Synchronisation…' : 'Forcer le sync maintenant'}
+					</button>
+				</form>
+			</div>
+		</section>
+
+		<section class="card block">
+			<h3>Historique des synchronisations</h3>
+			{#if form?.jiraUndoOk}
+				<div class="flash ok">{form.jiraUndoDeleted} ticket{form.jiraUndoDeleted > 1 ? 's' : ''} supprimé{form.jiraUndoDeleted > 1 ? 's' : ''} ✓</div>
+			{/if}
+
+			{#if data.jiraSyncRuns.length === 0}
+				<span class="hint">Aucun run pour l'instant.</span>
+			{:else}
+				<ul class="jira-run-list">
+					{#each data.jiraSyncRuns as run (run.id)}
+						<li class="jira-run-row">
+							<div class="row-between">
+								<span>
+									<b>{formatDateTime(new Date(run.startedAt))}</b>
+									{#if run.status === 'SUCCESS'}
+										<span class="pill active">
+											✓ {run.ticketsSeen} vu{run.ticketsSeen > 1 ? 's' : ''}{#if run.ticketsCreated > 0}
+												&nbsp;· {run.ticketsCreated} ajouté{run.ticketsCreated > 1 ? 's' : ''}
 											{/if}
-										</div>
+										</span>
+									{:else}
+										<span class="pill pending">✗ échec</span>
 									{/if}
-								</div>
-								{#if run.status === 'ERROR' && run.error}<p class="hint err-text">{run.error}</p>{/if}
-							</li>
-						{/each}
-					</ul>
-				{/if}
-			</div>
+								</span>
+								{#if run.ticketsCreated > 0}
+									<div class="jira-run-actions">
+										<a class="btn btn-ghost" href="/tickets?jiraRun={run.id}">Voir les tickets</a>
+										{#if run.undoneAt}
+											<span class="hint" style="margin:0;">Lot annulé le {formatDateTime(new Date(run.undoneAt))}</span>
+										{:else}
+											<form
+												method="POST"
+												action="?/jiraUndoSyncRun"
+												use:enhance={async ({ cancel }) => {
+													const ok = await confirmDialog({
+														message:
+															'Supprime les tickets de ce lot encore vierges de toute saisie (imputation, chiffrage, état…). Un ticket déjà touché depuis le sync est automatiquement conservé.',
+														confirmLabel: 'Annuler ce lot'
+													});
+													if (!ok) cancel();
+												}}
+											>
+												<input type="hidden" name="runId" value={run.id} />
+												<button type="submit" class="btn btn-ghost">Annuler ce lot</button>
+											</form>
+										{/if}
+									</div>
+								{/if}
+							</div>
+							{#if run.status === 'ERROR' && run.error}<p class="hint err-text">{run.error}</p>{/if}
+						</li>
+					{/each}
+				</ul>
+			{/if}
 		</section>
 	{/if}
 
@@ -1598,9 +1624,41 @@
 	}
 
 	/* ---------- Jira ---------- */
+	/* Flottant plutôt qu'en tête de carte : le formulaire est long et se replie en résumé au succès
+	   (jiraEditing = false), donc un flash resté dans le flux du document finit hors-champ ou décalé
+	   par le repli. Fixe, il reste visible quel que soit le scroll. */
+	.jira-save-toast {
+		position: fixed;
+		top: 20px;
+		right: 20px;
+		z-index: 50;
+		max-width: min(360px, calc(100vw - 40px));
+		box-shadow: var(--shadow-lg, 0 12px 30px rgba(0, 0, 0, 0.25));
+		animation: jira-toast-in 0.15s ease-out;
+	}
+	@keyframes jira-toast-in {
+		from {
+			opacity: 0;
+			transform: translateY(-6px);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0);
+		}
+	}
 	.jira-steps {
 		display: flex;
 		flex-direction: column;
+	}
+	.field-row {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 0 14px;
+	}
+	@media (max-width: 560px) {
+		.field-row {
+			grid-template-columns: 1fr;
+		}
 	}
 	.step {
 		display: grid;
@@ -1632,8 +1690,7 @@
 		flex-shrink: 0;
 		z-index: 1;
 	}
-	.step-body h4,
-	.jira-activation h4 {
+	.step-body h4 {
 		margin: 0 0 8px;
 		font-family: var(--font-display);
 		font-weight: 600;
@@ -1644,6 +1701,19 @@
 		font-weight: 500;
 		color: var(--text-mute);
 		margin-left: 6px;
+	}
+	.step-details summary {
+		cursor: pointer;
+		margin: 0 0 8px;
+		font-family: var(--font-display);
+		font-weight: 600;
+		font-size: 14.5px;
+	}
+	.step-details:not([open]) summary {
+		margin-bottom: 0;
+	}
+	.step-details[open] summary {
+		margin-bottom: 14px;
 	}
 	.jira-form-actions {
 		display: flex;
@@ -1694,12 +1764,6 @@
 	}
 	.jira-pat-summary-info .hint {
 		margin: 0;
-	}
-	.jira-activation,
-	.jira-history {
-		margin-top: 22px;
-		padding-top: 20px;
-		border-top: 1px solid var(--border);
 	}
 	.jira-run-list {
 		list-style: none;

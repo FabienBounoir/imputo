@@ -336,6 +336,7 @@ export async function getJiraConfig(workspaceId: string) {
 		patUpdatedByName,
 		patUpdatedAt: row.jiraPatUpdatedAt,
 		updatedSince: row.jiraUpdatedSince,
+		createdSince: row.jiraCreatedSince,
 		lastSyncAt: row.jiraLastSyncAt,
 		lastSyncStatus: row.jiraLastSyncStatus,
 		lastSyncError: row.jiraLastSyncError,
@@ -354,6 +355,13 @@ export async function setJiraSyncEnabled(workspaceId: string, enabled: boolean) 
  *  sans ambiguïté. */
 export async function resetJiraUpdatedSince(workspaceId: string) {
 	await db.update(workspace).set({ jiraUpdatedSince: null }).where(eq(workspace.id, workspaceId));
+}
+
+/** Retire le plancher de date de création. Contrairement à resetJiraUpdatedSince, ne force aucune
+ *  resynchronisation : jiraCreatedSince ne s'auto-avance jamais, ce n'est qu'un filtre en moins au
+ *  prochain run (les tickets encore exclus par jiraUpdatedSince le restent). */
+export async function resetJiraCreatedSince(workspaceId: string) {
+	await db.update(workspace).set({ jiraCreatedSince: null }).where(eq(workspace.id, workspaceId));
 }
 
 /** Historique des runs de sync Jira (plus récents d'abord) — pour l'onglet admin. */
@@ -386,11 +394,11 @@ export async function undoJiraSyncRun(workspaceId: string, runId: string, actorI
 }
 
 /**
- * Enregistre JQL/stratégie/mapping de clé/date minimum, et remplace le PAT (chiffré) si une
- * nouvelle valeur est fournie — un PAT vide laisse l'existant intact, une date vide idem (même
- * convention, voir resetJiraUpdatedSince ci-dessus pour la remettre à zéro). Un changement de PAT
- * trace qui/quand via changeLog (jamais oldValue/newValue, voir jiraSync.ts) et remet le circuit
- * breaker à zéro.
+ * Enregistre JQL/stratégie/mapping de clé/dates minimum (mise à jour ET création), et remplace le
+ * PAT (chiffré) si une nouvelle valeur est fournie — un PAT vide laisse l'existant intact, une date
+ * vide idem pour chacune des deux (même convention, voir resetJiraUpdatedSince/resetJiraCreatedSince
+ * ci-dessus pour les remettre à zéro). Un changement de PAT trace qui/quand via changeLog (jamais
+ * oldValue/newValue, voir jiraSync.ts) et remet le circuit breaker à zéro.
  */
 export async function saveJiraConfig(
 	workspaceId: string,
@@ -406,6 +414,7 @@ export async function saveJiraConfig(
 		regexReplacement: string;
 		pat: string;
 		updatedSinceDate: string;
+		createdSinceDate: string;
 		patEncryptionKey: string;
 		changedByUserId: string;
 	}
@@ -421,7 +430,7 @@ export async function saveJiraConfig(
 	// condition ici, pas seulement quand une date est fournie cette fois : le watermark s'auto-avance
 	// après le premier sync réussi même sans intervention de l'admin (voir jiraSync.ts).
 	if (input.jql && hasOrderByClause(input.jql)) {
-		throw new Error('Le filtre JQL ne doit pas contenir ORDER BY (inutile ici, et incompatible avec la date minimum).');
+		throw new Error('Le filtre JQL ne doit pas contenir ORDER BY (inutile ici, et incompatible avec les dates minimum).');
 	}
 
 	const updates: Partial<typeof workspace.$inferInsert> = {
@@ -450,6 +459,11 @@ export async function saveJiraConfig(
 		const parsed = parseISODate(input.updatedSinceDate);
 		if (Number.isNaN(parsed.getTime())) throw new Error('Date minimum invalide.');
 		updates.jiraUpdatedSince = parsed;
+	}
+	if (input.createdSinceDate) {
+		const parsedCreated = parseISODate(input.createdSinceDate);
+		if (Number.isNaN(parsedCreated.getTime())) throw new Error('Date de création minimum invalide.');
+		updates.jiraCreatedSince = parsedCreated;
 	}
 
 	await db.update(workspace).set(updates).where(eq(workspace.id, workspaceId));

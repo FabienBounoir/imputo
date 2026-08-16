@@ -21,6 +21,7 @@ import {
 	setJiraSyncEnabled,
 	saveJiraConfig,
 	resetJiraUpdatedSince,
+	resetJiraCreatedSince,
 	listJiraSyncRuns,
 	undoJiraSyncRun
 } from '$lib/server/services/accounts';
@@ -110,7 +111,8 @@ const jiraConfigSchema = z.object({
 	regexReplacement: z.string().trim().max(200).optional().default(''),
 	// Forme seulement (longueur d'un "YYYY-MM-DD") — validité réelle de la date faite dans
 	// accounts.ts/saveJiraConfig, cohérent avec regexPattern (forme ici, compilation là-bas).
-	updatedSinceDate: z.string().trim().max(10).optional().default('')
+	updatedSinceDate: z.string().trim().max(10).optional().default(''),
+	createdSinceDate: z.string().trim().max(10).optional().default('')
 });
 
 export const load: PageServerLoad = async ({ locals }) => {
@@ -716,6 +718,13 @@ export const actions: Actions = {
 		const ws = locals.workspace!;
 		await resetJiraUpdatedSince(ws.workspaceId);
 		return { jiraResetSinceOk: true };
+	},
+
+	jiraResetCreatedSince: async ({ locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		await resetJiraCreatedSince(ws.workspaceId);
+		return { jiraResetCreatedSinceOk: true };
 	},
 
 	jiraUndoSyncRun: async ({ request, locals }) => {

@@ -114,15 +114,21 @@ export async function syncWorkspace(
 	// garde-fou, un espace concerné échouerait en silence à chaque run planifié, indéfiniment).
 	// saveJiraConfig (accounts.ts) rejette déjà ORDER BY à l'enregistrement ; ce contrôle protège
 	// en plus les lignes enregistrées avant l'existence de cette validation.
-	if (ws.jiraUpdatedSince && hasOrderByClause(jql)) {
+	if ((ws.jiraUpdatedSince || ws.jiraCreatedSince) && hasOrderByClause(jql)) {
 		return finalizeError(
 			db,
 			workspaceId,
-			"Le filtre JQL contient ORDER BY, incompatible avec la date minimum (le tri n'est pas utilisé par le sync — retirez-le).",
+			"Le filtre JQL contient ORDER BY, incompatible avec les dates minimum (le tri n'est pas utilisé par le sync — retirez-le).",
 			false
 		);
 	}
-	const effectiveJql = ws.jiraUpdatedSince ? `(${jql}) AND updated >= "${formatJqlDateTime(ws.jiraUpdatedSince)}"` : jql;
+	// jiraCreatedSince (plancher fixe sur `created`) se combine à jiraUpdatedSince (watermark sur
+	// `updated`) sans lien entre les deux — chacun filtre indépendamment, le sync n'envoie que les
+	// clauses effectivement définies.
+	const dateFilters: string[] = [];
+	if (ws.jiraUpdatedSince) dateFilters.push(`updated >= "${formatJqlDateTime(ws.jiraUpdatedSince)}"`);
+	if (ws.jiraCreatedSince) dateFilters.push(`created >= "${formatJqlDateTime(ws.jiraCreatedSince)}"`);
+	const effectiveJql = dateFilters.length > 0 ? `(${jql}) AND ${dateFilters.join(' AND ')}` : jql;
 
 	let keyRegex: RegExp | null = null;
 	if (ws.jiraKeyRegexPattern) {

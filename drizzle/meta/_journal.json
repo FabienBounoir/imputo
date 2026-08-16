@@ -316,6 +316,13 @@
       "when": 1786903376564,
       "tag": "0044_lyrical_johnny_blaze",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1786904045052,
+      "tag": "0045_thin_obadiah_stane",
+      "breakpoints": true
     }
   ]
 }

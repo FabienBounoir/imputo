@@ -343,4 +343,41 @@ describe('admin jiraToggleEnabled / jiraSave / jiraSyncNow', () => {
 
 	// Pas de test 403 dédié pour jiraResetUpdatedSince : déjà couvert gratuitement par
 	// ROLE_GATED_ACTIONS ci-dessus (Object.keys(actions)), sa garde étant la première ligne.
+
+	it('jiraSave transmet createdSinceDate au service', async () => {
+		const { userId, workspaceId } = await makeWorkspace('jira-created-since');
+		const locals = await fakeLocals(userId);
+		const res = await actions.jiraSave({
+			locals,
+			request: formRequest({
+				jql: 'project = X',
+				conflictStrategy: 'KEEP_LOCAL',
+				regexPattern: '',
+				regexReplacement: '',
+				createdSinceDate: '2023-01-01'
+			})
+		} as never);
+		expect(res).toEqual({ jiraSaveOk: true });
+		expect((await getJiraConfig(workspaceId)).createdSince?.toISOString()).toBe('2023-01-01T00:00:00.000Z');
+	});
+
+	it('jiraResetCreatedSince vide la date de création minimum', async () => {
+		const { userId, workspaceId } = await makeWorkspace('jira-created-reset');
+		const locals = await fakeLocals(userId);
+		await actions.jiraSave({
+			locals,
+			request: formRequest({
+				jql: 'project = X',
+				conflictStrategy: 'KEEP_LOCAL',
+				regexPattern: '',
+				regexReplacement: '',
+				createdSinceDate: '2023-01-01'
+			})
+		} as never);
+
+		const res = await actions.jiraResetCreatedSince({ locals } as never);
+
+		expect(res).toEqual({ jiraResetCreatedSinceOk: true });
+		expect((await getJiraConfig(workspaceId)).createdSince).toBeNull();
+	});
 });
