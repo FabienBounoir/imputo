@@ -1186,7 +1186,7 @@
 		font-size: 13px;
 		width: 100%;
 	}
-	/* Coins arrondis de .card : overflow:hidden casserait le thead sticky (le clip devient le
+	/* Coins arrondis de .card : overflow:hidden/auto casserait le thead sticky (le clip devient le
 	   référentiel de la position sticky au lieu de .main) — on arrondit directement les 2 cellules
 	   d'angle du thead pour suivre les coins de la carte sans toucher au clipping. */
 	.tk thead th:first-child {
@@ -1196,14 +1196,28 @@
 		border-top-right-radius: var(--r-lg);
 	}
 	/* `clip`, pas de scroll ici : le rognage suit le rayon de la card sans créer de 2e ancêtre
-	   scrollable, qui casserait le sticky du thead ci-dessous (vise .main). Le scroll horizontal
-	   reste local à .tk-scroll (overflow-y:visible, même raison). */
+	   scrollable, qui casserait le sticky du thead ci-dessous (vise .main, le vrai scroll de page). */
 	.tk-card {
 		overflow: clip;
 	}
+	/* Le header sticky (thead th, plus bas) doit rester relatif à .main — toute la page défile, pas
+	   un panneau interne. Ça n'est compatible avec le scroll horizontal de secours ci-dessous que
+	   si .tk-scroll reste réellement overflow-visible sur les deux axes : dès que overflow-x passe à
+	   `auto`, la spec CSS force aussi le calcul de overflow-y à `auto` (même écrit `visible`), et
+	   .tk-scroll devient alors l'ancêtre scrollable le plus proche — le sticky s'accroche à lui au
+	   lieu de .main et ne suit plus le scroll de page (vérifié en direct).
+	   D'où le scroll horizontal limité aux largeurs où il sert réellement : en dessous de 1140px de
+	   fenêtre, min-width (820/560px selon palier, voir @media plus bas) peut dépasser l'espace
+	   dispo (fenêtre − sidebar ~256px − padding carte 60px) — au-delà, la table tient toujours,
+	   .tk-scroll reste visible sur les deux axes et le sticky-vers-.main fonctionne. */
 	.tk-scroll {
-		overflow-x: auto;
+		overflow-x: visible;
 		overflow-y: visible;
+	}
+	@media (max-width: 1140px) {
+		.tk-scroll {
+			overflow-x: auto;
+		}
 	}
 	table.tk {
 		width: 100%;
