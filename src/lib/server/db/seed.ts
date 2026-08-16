@@ -13,7 +13,16 @@ import { eq, inArray } from 'drizzle-orm';
 import { hashPassword } from '../auth/password';
 import { DEFAULT_STATES, DEFAULT_ACTIVITIES, DEFAULT_CATEGORIES } from '../services/defaults';
 import { round } from '../services/calc';
-import { toISODate, addDays, mondayOf, parseISODate, todayInParis, isPublicHolidayFR } from '../../utils/date';
+import {
+	toISODate,
+	addDays,
+	mondayOf,
+	parseISODate,
+	todayInParis,
+	isPublicHolidayFR,
+	currentSupportPeriod,
+	supportPeriodIndex
+} from '../../utils/date';
 import {
 	workspace,
 	user,
@@ -35,7 +44,9 @@ import {
 	changeLog,
 	weeklyObjective,
 	weeklyVacation,
-	jiraSyncRun
+	jiraSyncRun,
+	supportRotationMember,
+	supportOverride
 } from './schema';
 import { getDb, wipeSandbox, WORKSPACE_NAME, SEED_DOMAIN, SEED_USERS, getSeedScale, type SeedScale } from './seed.shared';
 
@@ -649,6 +660,24 @@ async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, pe
 	}
 	await db.insert(moodVote).values(moodVoteRows);
 
+	// ---------- Perm support (rotation "qui regarde les tickets") : activée, tous les personas dans
+	// la chaîne (dans leur ordre habituel), + un override sur la période courante pour voir ce cas
+	// (badge "remplacé") à l'écran sans attendre une vraie absence. Cadence WEEK = le défaut colonne,
+	// jamais changée explicitement ici. ----------
+	await db.update(workspace).set({ supportEnabled: true }).where(eq(workspace.id, ws.id));
+
+	const rotationUserIds = personas.map((p) => userByEmail.get(p.email)!.id);
+	await db
+		.insert(supportRotationMember)
+		.values(rotationUserIds.map((userId, i) => ({ workspaceId: ws.id, userId, sortOrder: i })));
+
+	const currentPeriodStart = currentSupportPeriod('WEEK', toISODate(today), false).start;
+	const normalIndex =
+		((supportPeriodIndex('WEEK', currentPeriodStart, false) % rotationUserIds.length) + rotationUserIds.length) %
+		rotationUserIds.length;
+	const overrideUserId = rotationUserIds[(normalIndex + 1) % rotationUserIds.length];
+	await db.insert(supportOverride).values({ workspaceId: ws.id, periodStart: currentPeriodStart, userId: overrideUserId });
+
 	// ---------- Absences : congés/formations passés (déjà pris) et à venir (prévisionnels) ----------
 	const absenceRows: (typeof absence.$inferInsert)[] = [];
 	for (const p of personas) {
@@ -885,7 +914,7 @@ async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, pe
 	const totalAbsences = insertedAbsences.length + clientAbsenceRows.length;
 	console.log(
 		`✓ "${wsName}" créé — ${totalTickets} tickets sur ${sprintDefs.length} sprints / ${VERSION_NAMES.length} versions, ` +
-			`${entryDrafts.length} imputations (${allDays.length} jours ouvrés, du ${allDays[0]} au ${allDays[allDays.length - 1]}), ${snapshotRows.length} snapshots, ${moodVoteRows.length} votes team mood sur 7 semaines, ${totalAbsences} absences (dont 1 membre externe), ${changeLogRows.length} entrées d'historique, 6 objectifs de semaine (dont David en vacances la semaine prochaine, sans objectif), 3 runs de sync Jira (import initial de ${insertedTickets.length} tickets, run récent de ${insertedRecentTickets.length} tickets encore annulables, 1 en échec).`
+			`${entryDrafts.length} imputations (${allDays.length} jours ouvrés, du ${allDays[0]} au ${allDays[allDays.length - 1]}), ${snapshotRows.length} snapshots, ${moodVoteRows.length} votes team mood sur 7 semaines, ${totalAbsences} absences (dont 1 membre externe), ${changeLogRows.length} entrées d'historique, 6 objectifs de semaine (dont David en vacances la semaine prochaine, sans objectif), 3 runs de sync Jira (import initial de ${insertedTickets.length} tickets, run récent de ${insertedRecentTickets.length} tickets encore annulables, 1 en échec), perm support activée (${rotationUserIds.length} personnes en rotation, 1 override sur la période courante).`
 	);
 	for (const p of personas) console.log(`  ${p.email.padEnd(32)} ${p.password.padEnd(14)} (${p.role})`);
 }
