@@ -599,6 +599,45 @@
 	);
 </script>
 
+{#snippet ticketIcon()}
+	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+		<path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4Z" />
+		<path d="M13 6v2M13 11v2M13 16v2" />
+	</svg>
+{/snippet}
+
+{#snippet taskIcon()}
+	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+		<rect x="5" y="4" width="14" height="16" rx="2" />
+		<path d="M9 9h6M9 13h6M9 17h3" />
+	</svg>
+{/snippet}
+
+{#snippet coffeeIcon()}
+	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+		<path d="M6 8h10v7a4 4 0 0 1-4 4h-2a4 4 0 0 1-4-4V8Z" />
+		<path d="M16 10h1.5a2.5 2.5 0 0 1 0 5H16" />
+	</svg>
+{/snippet}
+
+{#snippet lifeRingIcon()}
+	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+		<circle cx="12" cy="12" r="9" />
+		<circle cx="12" cy="12" r="4" />
+		<path d="m7.5 7.5 3 3M13.5 13.5 16.5 16.5M16.5 7.5l-3 3M10.5 13.5l-3 3" />
+	</svg>
+{/snippet}
+
+{#snippet rowIcon(row: Row)}
+	{#if row.targetType === 'TICKET'}
+		{@render ticketIcon()}
+	{:else if row.targetType === 'CATEGORY'}
+		{#if row.nonProductive}{@render coffeeIcon()}{:else}{@render lifeRingIcon()}{/if}
+	{:else}
+		{@render taskIcon()}
+	{/if}
+{/snippet}
+
 {#if showWeekConfetti}
 	<div class="week-confetti" aria-hidden="true">
 		<Confetti
@@ -733,7 +772,7 @@
 							<tr class="team-detail-row">
 								<td class="task">
 									<div class="task-cell">
-										<span class="pill">{row.emoji}</span>
+										<span class="pill pill-ico">{@render rowIcon(row)}</span>
 										<div class="tt">
 											<b>{row.label}</b>
 											<span class="sub">{row.sublabel}</span>
@@ -870,7 +909,7 @@
 					<tr>
 						<td class="task">
 							<div class="task-cell">
-								<span class="pill">{row.emoji}</span>
+								<span class="pill pill-ico">{@render rowIcon(row)}</span>
 								<div class="tt">
 									<b>{row.label}</b>
 									<span class="sub">
@@ -1606,6 +1645,20 @@
 		display: flex;
 		align-items: center;
 		gap: 11px;
+	}
+	/* Icône de type (ticket/tâche/catégorie) dans son rond — un peu plus grande que la même icône
+	   utilisée sur la page Objectifs, cette pastille est un repère visuel plus proéminent en tête
+	   de ligne du tableau. */
+	.pill-ico {
+		width: 28px;
+		height: 28px;
+		padding: 0;
+		flex-shrink: 0;
+		justify-content: center;
+	}
+	.pill-ico svg {
+		width: 17px;
+		height: 17px;
 	}
 	.task-cell .tt {
 		flex: 1;
