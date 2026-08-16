@@ -28,6 +28,7 @@
 	const PRESETS = ['#16A34A', '#4F46E5', '#9333EA', '#0EA5E9', '#E11D48', '#EA580C', '#0D9488', '#CA8A04'];
 	let accentOverride = $state(data.accentMode !== 'WORKSPACE');
 	let accentRgb = $state(data.accentMode === 'RGB');
+	let accentDisco = $state(data.accentMode === 'DISCO');
 	let accentColor = $state(data.accentColor ?? data.workspace?.accentColor ?? PRESETS[0]);
 	let sortActivitiesAlpha = $state(data.sortActivitiesAlpha);
 	let rememberTicketFilters = $state(data.rememberTicketFilters);
@@ -210,10 +211,14 @@
 				</div>
 				{#if accentOverride}
 					<div style="margin-top:14px;">
-						<AccentPicker bind:color={accentColor} bind:rgbMode={accentRgb} presets={PRESETS} />
+						<AccentPicker bind:color={accentColor} bind:rgbMode={accentRgb} bind:discoMode={accentDisco} presets={PRESETS} />
 					</div>
 				{/if}
-				<input type="hidden" name="mode" value={!accentOverride ? 'WORKSPACE' : accentRgb ? 'RGB' : 'CUSTOM'} />
+				<input
+					type="hidden"
+					name="mode"
+					value={!accentOverride ? 'WORKSPACE' : accentRgb ? 'RGB' : accentDisco ? 'DISCO' : 'CUSTOM'}
+				/>
 				<input type="hidden" name="color" value={accentColor} />
 				<button class="btn btn-primary" type="submit" style="margin-top:14px;">Enregistrer</button>
 			</form>

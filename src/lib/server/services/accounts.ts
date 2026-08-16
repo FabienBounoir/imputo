@@ -138,7 +138,7 @@ export async function setThemePref(userId: string, pref: 'LIGHT' | 'DARK' | 'SYS
 }
 
 /** Force (ou non) une couleur d'accent personnelle, indépendante de celle de l'espace. */
-export async function setAccentPref(userId: string, mode: 'WORKSPACE' | 'CUSTOM' | 'RGB', color: string | null) {
+export async function setAccentPref(userId: string, mode: 'WORKSPACE' | 'CUSTOM' | 'RGB' | 'DISCO', color: string | null) {
 	await db.update(user).set({ accentMode: mode, accentColor: mode === 'CUSTOM' ? color : null }).where(eq(user.id, userId));
 }
 
@@ -189,8 +189,8 @@ export async function setTicketFiltersSnapshot(userId: string, snapshot: TicketF
 }
 
 /** Met à jour la couleur d'accent d'un espace (réservé ADMIN). */
-export async function setAccentColor(workspaceId: string, color: string, rgb: boolean) {
-	await db.update(workspace).set({ accentColor: color, accentRgb: rgb }).where(eq(workspace.id, workspaceId));
+export async function setAccentColor(workspaceId: string, color: string, rgb: boolean, disco: boolean) {
+	await db.update(workspace).set({ accentColor: color, accentRgb: rgb, accentDisco: disco }).where(eq(workspace.id, workspaceId));
 }
 
 export async function setTestPhase(workspaceId: string, enabled: boolean) {

@@ -17,7 +17,7 @@ import { relations, sql } from 'drizzle-orm';
 export const roleEnum = pgEnum('role', ['USER', 'ADMIN', 'MANAGER']);
 export const themePrefEnum = pgEnum('theme_pref', ['LIGHT', 'DARK', 'SYSTEM']);
 // Couleur d'accent personnelle : suit l'espace, ou forcée (fixe ou défilante) indépendamment de l'admin.
-export const accentModeEnum = pgEnum('accent_mode', ['WORKSPACE', 'CUSTOM', 'RGB']);
+export const accentModeEnum = pgEnum('accent_mode', ['WORKSPACE', 'CUSTOM', 'RGB', 'DISCO']);
 export const categoryKindEnum = pgEnum('category_kind', ['PRODUCTIVE', 'NON_PRODUCTIVE']);
 export const targetTypeEnum = pgEnum('target_type', ['TICKET', 'CATEGORY', 'OBJECTIVE']);
 export const objectiveKindEnum = pgEnum('objective_kind', ['TICKET', 'CUSTOM']);
@@ -64,6 +64,9 @@ export const workspace = pgTable('workspace', {
 	accentColor: text('accent_color').notNull().default('#16A34A'),
 	// Accent qui défile en continu (arc-en-ciel) au lieu d'une couleur fixe.
 	accentRgb: boolean('accent_rgb').notNull().default(false),
+	// Accent qui saute aléatoirement de couleur (sans transition) au lieu de défiler en douceur.
+	// Exclusif avec accentRgb (l'UI ne permet jamais d'activer les deux).
+	accentDisco: boolean('accent_disco').notNull().default(false),
 	// Phase Test activée (Est./RAE Test, Prépa, flags qualité). Désactivable par l'admin.
 	testPhase: boolean('test_phase').notNull().default(true),
 	// PPR = estimationReal * pprRatio, calculé à la volée (non stocké sur le ticket).

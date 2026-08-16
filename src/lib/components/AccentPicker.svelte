@@ -2,8 +2,9 @@
 	let {
 		color = $bindable(),
 		rgbMode = $bindable(),
+		discoMode = $bindable(),
 		presets
-	}: { color: string; rgbMode: boolean; presets: string[] } = $props();
+	}: { color: string; rgbMode: boolean; discoMode: boolean; presets: string[] } = $props();
 </script>
 
 <div class="swatches">
@@ -11,10 +12,11 @@
 		<button
 			type="button"
 			class="sw"
-			class:sel={!rgbMode && color.toLowerCase() === c.toLowerCase()}
+			class:sel={!rgbMode && !discoMode && color.toLowerCase() === c.toLowerCase()}
 			style="background:{c}"
 			onclick={() => {
 				rgbMode = false;
+				discoMode = false;
 				color = c;
 			}}
 			aria-label={c}
@@ -24,11 +26,25 @@
 		type="button"
 		class="sw rgb-sw"
 		class:sel={rgbMode}
-		onclick={() => (rgbMode = !rgbMode)}
+		onclick={() => {
+			rgbMode = !rgbMode;
+			discoMode = false;
+		}}
 		aria-label="RGB (couleur défilante)"
 		title="RGB (couleur défilante)"
 	>🌈</button>
-	<input class="hex" type="color" bind:value={color} disabled={rgbMode} aria-label="Couleur personnalisée" />
+	<button
+		type="button"
+		class="sw rgb-sw"
+		class:sel={discoMode}
+		onclick={() => {
+			discoMode = !discoMode;
+			rgbMode = false;
+		}}
+		aria-label="Disco (couleur aléatoire sans transition)"
+		title="Disco (couleur aléatoire sans transition)"
+	>🪩</button>
+	<input class="hex" type="color" bind:value={color} disabled={rgbMode || discoMode} aria-label="Couleur personnalisée" />
 </div>
 
 <style>

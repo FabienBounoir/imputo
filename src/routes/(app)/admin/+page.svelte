@@ -73,6 +73,7 @@
 	// initialisé depuis la valeur enregistrée : le défilement lui-même vit dans le layout racine
 	// (toujours monté), donc il continue de tourner en changeant de page et après un rechargement.
 	let rgbMode = $state(data.accentRgb);
+	let discoMode = $state(data.accentDisco);
 
 	const WEEKDAYS = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
 	const MOOD_PERIODS: { value: string; label: string }[] = [
@@ -997,10 +998,12 @@
 				<p class="hint">Personnalise l'accent de toute l'interface pour cet espace.</p>
 				{#if form?.accentOk}<div class="flash ok">Couleur mise à jour ✓ (rechargez pour l'appliquer partout)</div>{/if}
 				<form method="POST" action="?/accent" use:enhance>
-					<AccentPicker bind:color={accent} bind:rgbMode presets={PRESETS} />
+					<AccentPicker bind:color={accent} bind:rgbMode bind:discoMode presets={PRESETS} />
 					<input type="hidden" name="color" value={accent} />
 					<input type="hidden" name="rgb" value={rgbMode} />
+					<input type="hidden" name="disco" value={discoMode} />
 					{#if rgbMode}<p class="hint" style="margin:8px 0 0;">Le mode RGB fait défiler l'accent en continu sur toute l'interface, une fois enregistré.</p>{/if}
+					{#if discoMode}<p class="hint" style="margin:8px 0 0;">Le mode Disco fait sauter l'accent à une couleur aléatoire, sans transition, une fois enregistré.</p>{/if}
 					<button class="btn btn-primary" type="submit" style="margin-top:14px;">Enregistrer la couleur</button>
 				</form>
 			</section>

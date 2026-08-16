@@ -135,9 +135,15 @@
 	// l'ouverture de la page si un jour est déjà complet), même timbre que l'easter egg du logo
 	// ((app)/+layout.svelte) pour rester cohérent avec le seul autre "succès" sonore de l'app.
 	let prevDayTotals: Record<string, number> | null = null;
+	// Clé de la feuille au moment du dernier snapshot — sans ça, changer de semaine compare les
+	// totaux de la nouvelle période à un snapshot indexé par les dates de l'ancienne : aucune clé ne
+	// matche, `prevDayTotals[d]` vaut `undefined`, et "undefined !== capacité" se lit à tort comme
+	// une transition tout juste franchie (bug constaté : jingle/confettis en changeant juste de
+	// semaine, sans avoir rien rempli).
+	let prevDaySheetKey: string | null = null;
 	$effect(() => {
 		const snapshot = { ...dayTotals };
-		if (prevDayTotals && data.capacity > 0 && isOwnSheet) {
+		if (prevDayTotals && prevDaySheetKey === sheetKey && data.capacity > 0 && isOwnSheet) {
 			for (const d of days) {
 				const justReached = snapshot[d] === data.capacity && prevDayTotals[d] !== data.capacity;
 				if (justReached) {
@@ -151,6 +157,7 @@
 		// Pas de baseline mémorisée hors de sa propre feuille — sinon, en revenant dessus après avoir
 		// consulté celle d'un autre, la comparaison porterait sur des chiffres sans rapport.
 		prevDayTotals = isOwnSheet ? snapshot : null;
+		prevDaySheetKey = sheetKey;
 	});
 	// Capacité attendue = capacité/jour × jours ouvrés non fériés de la période (miroir de
 	// calc.ts:weeklyCapacity/capacityPct côté serveur — dupliqué ici car $lib/server n'est pas
@@ -187,6 +194,9 @@
 	let showWeekConfetti = $state(false);
 	let confettiTimer: ReturnType<typeof setTimeout>;
 	let prevWeekTotals: Record<string, number> | null = null;
+	// Même garde que prevDaySheetKey ci-dessus, même raison : sans elle, arriver sur une semaine déjà
+	// complète en changeant simplement de période se lit comme "vient d'être complétée".
+	let prevWeekSheetKey: string | null = null;
 	function playWeekCompleteSound() {
 		const run = [523.25, 587.33, 659.25, 698.46, 783.99, 880, 987.77, 1046.5]; // Do5 → Do6
 		run.forEach((freq, i) => beep(freq, { offset: i * 0.06, duration: 0.1, type: 'triangle', volume: 0.12 }));
@@ -195,7 +205,7 @@
 	}
 	$effect(() => {
 		const snapshot = Object.fromEntries(weekStats.map((w) => [w.days[0], w.total]));
-		if (prevWeekTotals && isOwnSheet) {
+		if (prevWeekTotals && prevWeekSheetKey === sheetKey && isOwnSheet) {
 			for (const w of weekStats) {
 				const key = w.days[0];
 				const justCompleted = w.capacity > 0 && w.total === w.capacity && prevWeekTotals[key] !== w.capacity;
@@ -211,6 +221,7 @@
 			}
 		}
 		prevWeekTotals = isOwnSheet ? snapshot : null;
+		prevWeekSheetKey = sheetKey;
 	});
 
 	function fmt(n: number | undefined) {

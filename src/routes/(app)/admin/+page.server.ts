@@ -84,6 +84,10 @@ const accentSchema = z.object({
 	rgb: z
 		.string()
 		.optional()
+		.transform((v) => v === 'true'),
+	disco: z
+		.string()
+		.optional()
 		.transform((v) => v === 'true')
 });
 const ratioSchema = z.object({ value: z.coerce.number().gt(0).lte(1) });
@@ -151,6 +155,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		allowedDomain: ws.allowedDomain,
 		accentColor: ws.accentColor,
 		accentRgb: ws.accentRgb,
+		accentDisco: ws.accentDisco,
 		testPhase: ws.testPhase,
 		pprRatio: ws.pprRatio,
 		imputationStep: ws.imputationStep,
@@ -201,7 +206,7 @@ export const actions: Actions = {
 		const ws = locals.workspace!;
 		const parsed = accentSchema.safeParse(Object.fromEntries(await request.formData()));
 		if (!parsed.success) return fail(400, { error: parsed.error.issues[0].message });
-		await setAccentColor(ws.workspaceId, parsed.data.color, parsed.data.rgb);
+		await setAccentColor(ws.workspaceId, parsed.data.color, parsed.data.rgb, parsed.data.disco);
 		return { accentOk: true };
 	},
 

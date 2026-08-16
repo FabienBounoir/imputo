@@ -16,7 +16,7 @@ import {
 import { changePasswordSchema } from '$lib/server/validation/auth';
 
 const accentPrefSchema = z.object({
-	mode: z.enum(['WORKSPACE', 'CUSTOM', 'RGB']),
+	mode: z.enum(['WORKSPACE', 'CUSTOM', 'RGB', 'DISCO']),
 	color: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Couleur invalide (hex)')
 });
 

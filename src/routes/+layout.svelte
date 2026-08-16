@@ -26,7 +26,14 @@
 	$effect(() => {
 		const ws = data.workspace;
 		const u = data.user;
-		const mode = u?.accentMode === 'WORKSPACE' || !u ? (ws?.accentRgb ? 'RGB' : 'STATIC') : u.accentMode;
+		const mode =
+			u?.accentMode === 'WORKSPACE' || !u
+				? ws?.accentDisco
+					? 'DISCO'
+					: ws?.accentRgb
+						? 'RGB'
+						: 'STATIC'
+				: u.accentMode;
 		const color = mode === 'CUSTOM' ? u!.accentColor : ws?.accentColor;
 
 		if (mode === 'RGB') {
@@ -35,6 +42,13 @@
 				hue = (hue + 1) % 360;
 				document.documentElement.style.setProperty('--accent', hslToHex(hue, 70, 50));
 			}, 120);
+			return () => clearInterval(id);
+		}
+		if (mode === 'DISCO') {
+			// Saut direct (pas d'incrément progressif comme RGB) : c'est ça qui donne l'effet "sans transition".
+			const id = setInterval(() => {
+				document.documentElement.style.setProperty('--accent', hslToHex(Math.random() * 360, 70, 50));
+			}, 400);
 			return () => clearInterval(id);
 		}
 		if (color) {
