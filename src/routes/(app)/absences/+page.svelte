@@ -11,7 +11,7 @@
 		type AbsenceType,
 		type AbsencePeriod
 	} from '$lib/absenceTypes';
-	import { parseISODate, formatDayRange, formatDateTime } from '$lib/utils/date';
+	import { parseISODate, formatDayRange, formatDateTime, isPublicHolidayFR } from '$lib/utils/date';
 	import { SCHOOL_ZONES, SCHOOL_ZONE_LABELS, SCHOOL_ZONE_COLORS, isSchoolHoliday } from '$lib/schoolZones';
 	import { downloadSvgAsPng } from '$lib/utils/svgToPng';
 
@@ -266,7 +266,12 @@
 						</tr>
 						<tr>
 							{#each data.days as d (d)}
-								<th class:weekend={isWeekend(d)} class:today={d === data.todayISO}>{parseISODate(d).getUTCDate()}</th>
+								<th
+									class:weekend={isWeekend(d)}
+									class:today={d === data.todayISO}
+									class:holiday={isPublicHolidayFR(d)}
+									title={isPublicHolidayFR(d) ? 'Jour férié' : undefined}>{parseISODate(d).getUTCDate()}</th
+								>
 							{/each}
 						</tr>
 						{#each SCHOOL_ZONES as zone (zone)}
@@ -298,6 +303,7 @@
 									<td
 										class:weekend={isWeekend(d)}
 										class:today={d === data.todayISO}
+										class:holiday={isPublicHolidayFR(d)}
 										class:cell-editable={editable}
 										style={cellStyle(cell)}
 										title={cell ? `${m.displayName} — ${ABSENCE_TYPE_LABELS[cell.type]}${cell.period !== 'FULL' ? ' (' + ABSENCE_PERIOD_LABELS[cell.period] + ')' : ''}${data.canManageOthers ? ' · imputé le ' + formatDateTime(cell.createdAt) : ''}${editable ? ' · cliquer pour les actions' : ''}` : ''}
@@ -986,24 +992,38 @@
 	.grid th.weekend {
 		background: var(--surface-sunk);
 	}
+	.grid td.holiday,
+	.grid th.holiday {
+		background: color-mix(in srgb, var(--danger, #c0392b) 14%, var(--surface));
+	}
+	.grid th.holiday {
+		color: var(--danger, #c0392b);
+	}
 	.grid td.today,
 	.grid th.today {
 		box-shadow: inset 0 0 0 2px var(--accent);
 	}
 	/* Ligne d'un membre externe : teinte très légère, distincte des couleurs de type d'absence. */
 	.grid tr.external-row td,
-	.grid tr.external-row td.weekend,
-	.grid tr.external-row td.name-col {
+	.grid tr.external-row td.weekend {
 		background: rgba(148, 163, 184, 0.12);
+	}
+	/* name-col est sticky au-dessus des colonnes de jours qui défilent dessous : il lui faut un fond
+	   opaque (composé via color-mix, pas un rgba translucide) sinon les couleurs d'absence scrollées
+	   en dessous transparaissent à travers la teinte. */
+	.grid tr.external-row td.name-col {
+		background: color-mix(in srgb, var(--surface) 88%, rgb(148 163 184) 12%);
 	}
 	/* Survol : bascule en bleu + le title du <tr> explique que ce n'est pas un vrai membre. */
 	.grid tr.external-row:hover {
 		cursor: help;
 	}
 	.grid tr.external-row:hover td,
-	.grid tr.external-row:hover td.weekend,
-	.grid tr.external-row:hover td.name-col {
+	.grid tr.external-row:hover td.weekend {
 		background: rgba(59, 130, 246, 0.16);
+	}
+	.grid tr.external-row:hover td.name-col {
+		background: color-mix(in srgb, var(--surface) 84%, rgb(59 130 246) 16%);
 	}
 	.grid td.cell-editable {
 		cursor: pointer;
