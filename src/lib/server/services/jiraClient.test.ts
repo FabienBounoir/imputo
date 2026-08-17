@@ -164,7 +164,7 @@ describe('jiraClient / searchJiraIssues', () => {
 		expect(requestedFields).toContain('customfield_10105');
 	});
 
-	it('extrait fixVersions[0] en versionName (pas plusieurs, pas "versions"/affectedVersion)', async () => {
+	it('extrait la dernière entrée de fixVersions en versionName (pas "versions"/affectedVersion)', async () => {
 		const { fetchImpl } = makeFakeFetch({
 			search: () =>
 				jsonResponse(200, {
@@ -185,7 +185,7 @@ describe('jiraClient / searchJiraIssues', () => {
 		});
 
 		const [issue] = await searchJiraIssues(baseCfg, 'azure-tok', 'pat', 'project = BLM', fetchImpl);
-		expect(issue.versionName).toBe('V36');
+		expect(issue.versionName).toBe('V37');
 	});
 
 	it('pas de fixVersions -> versionName null', async () => {

@@ -100,9 +100,10 @@ export type JiraIssue = {
 	/** fields.parent.key — sous-tâche Jira native (cf. SPECS.md §2.A), pas un Epic Link. */
 	parentKey: string | null;
 	projectName: string;
-	/** Première entrée de fixVersions (pas "versions"/affectedVersion, un champ différent — voir
-	 *  docs/SPECS-jira-sprint-version.md §3). Un ticket a rarement plusieurs fix versions en
-	 *  pratique ; la première suffit tant qu'aucune règle de choix n'a été demandée. */
+	/** Dernière entrée de fixVersions (pas "versions"/affectedVersion, un champ différent — voir
+	 *  docs/SPECS-jira-sprint-version.md §3), même logique que sprintName : quand un ticket est
+	 *  déplacé de version, Jira ajoute en fin de tableau plutôt que de remplacer, donc la dernière
+	 *  est la version courante. */
 	versionName: string | null;
 	/** Dernière entrée du customfield Sprint (Jira ajoute en fin de tableau à chaque déplacement de
 	 *  sprint, donc la dernière est la plus récente) — voir parseSprintName ci-dessous. */
@@ -202,7 +203,7 @@ export async function searchJiraIssues(
 				issueTypeName: issue.fields.issuetype?.name ?? '',
 				parentKey: issue.fields.parent?.key ?? null,
 				projectName: issue.fields.project?.name ?? '',
-				versionName: issue.fields.fixVersions?.[0]?.name ?? null,
+				versionName: issue.fields.fixVersions?.at(-1)?.name ?? null,
 				sprintName: sprintEntries.length > 0 ? parseSprintName(sprintEntries[sprintEntries.length - 1]) : null
 			});
 		}
