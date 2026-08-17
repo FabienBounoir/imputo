@@ -31,10 +31,15 @@ export const DEFAULT_ACTIVITIES: string[] = [
 	'Aide'
 ];
 
-export const DEFAULT_CATEGORIES: { label: string; kind: 'PRODUCTIVE' | 'NON_PRODUCTIVE' }[] = [
+export const DEFAULT_CATEGORIES: {
+	label: string;
+	kind: 'PRODUCTIVE' | 'NON_PRODUCTIVE';
+	// Reçoit les imputations générées depuis les absences validées de ce type, cf. absences.ts.
+	linkedAbsenceType?: 'CONGE_VALIDE' | 'FORMATION' | 'HORS_PROJET';
+}[] = [
 	{ label: 'MCO', kind: 'PRODUCTIVE' },
-	{ label: 'Hors-projet', kind: 'PRODUCTIVE' },
-	{ label: 'Congé', kind: 'NON_PRODUCTIVE' },
+	{ label: 'Hors-projet', kind: 'PRODUCTIVE', linkedAbsenceType: 'HORS_PROJET' },
+	{ label: 'Congé', kind: 'NON_PRODUCTIVE', linkedAbsenceType: 'CONGE_VALIDE' },
 	{ label: 'Jour férié', kind: 'NON_PRODUCTIVE' },
-	{ label: 'Formation', kind: 'NON_PRODUCTIVE' }
+	{ label: 'Formation', kind: 'NON_PRODUCTIVE', linkedAbsenceType: 'FORMATION' }
 ];

@@ -134,6 +134,9 @@
 		return t;
 	});
 	let periodTotal = $derived(round(Object.values(dayTotals).reduce((a, b) => a + b, 0)));
+	// Congé prévisionnel sur la période affichée : pas encore imputé (cf. absences.ts
+	// syncAbsenceEntries, qui exclut CONGE_PREVISIONNEL) — juste un signal visuel sur "Saisi".
+	let hasPendingAbsence = $derived(Object.values(data.absences).some((a) => a.type === 'CONGE_PREVISIONNEL'));
 
 	// Célébrations (jingle du jour + confettis/fanfare de la semaine, ci-dessous) : uniquement sur
 	// sa propre feuille. Un admin peut modifier l'imputation d'un autre (readOnly ne couvre que la
@@ -831,7 +834,12 @@
 	</div>
 	{:else}
 	<div class="summary">
-		<div class="card stat">
+		<div
+			class="card stat"
+			class:pending-stat={hasPendingAbsence}
+			style={hasPendingAbsence ? `--absence-color:${ABSENCE_TYPE_COLORS.CONGE_PREVISIONNEL}` : undefined}
+			title={hasPendingAbsence ? 'Congé prévisionnel en attente de validation — pas encore comptabilisé' : undefined}
+		>
 			<div class="k">Saisi · {data.period.shortLabel}</div>
 			<div class="v tabnum">{periodTotal} <small>j</small></div>
 		</div>
@@ -1182,6 +1190,9 @@
 	}
 	.warn-stat {
 		border-color: #c0392b;
+	}
+	.pending-stat .v {
+		color: var(--absence-color);
 	}
 	.cap-warn {
 		margin-top: 4px;

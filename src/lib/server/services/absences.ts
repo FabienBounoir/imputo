@@ -1,9 +1,141 @@
 import { and, asc, desc, eq, gte, isNull, lte, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
-import { db, absence, user, externalMember } from '$lib/server/db';
+import { db, absence, user, externalMember, category, timeEntry } from '$lib/server/db';
 import type { AbsenceType, AbsencePeriod } from '$lib/absenceTypes';
-import { parseISODate, toISODate, addDays } from '$lib/utils/date';
+import { parseISODate, toISODate, addDays, workdaysBetween, isPublicHolidayFR } from '$lib/utils/date';
 import { logChange } from './changeLog';
+
+// Autorise de passer soit `db`, soit un `tx` de `db.transaction(...)` — sync et création de
+// catégorie doivent s'exécuter dans la même transaction que la mutation de l'absence (cf.
+// createAbsenceFor/updateAbsence/validateAbsence) : sans ça, un échec du sync laisserait une
+// absence "orpheline" déjà commitée en base, jamais répercutée sur l'imputation.
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+type Dbx = typeof db | Tx;
+
+/**
+ * Types d'absence répercutés automatiquement dans "Mon imputation" (cf. syncAbsenceEntries) —
+ * CONGE_PREVISIONNEL en est exclu tant qu'il n'est pas validé.
+ */
+const SYNCED_ABSENCE_TYPES = ['CONGE_VALIDE', 'FORMATION', 'HORS_PROJET'] as const;
+type SyncedAbsenceType = (typeof SYNCED_ABSENCE_TYPES)[number];
+
+const SYNCED_CATEGORY_DEFAULTS: Record<SyncedAbsenceType, { label: string; kind: 'PRODUCTIVE' | 'NON_PRODUCTIVE' }> = {
+	CONGE_VALIDE: { label: 'Congé', kind: 'NON_PRODUCTIVE' },
+	FORMATION: { label: 'Formation', kind: 'NON_PRODUCTIVE' },
+	HORS_PROJET: { label: 'Hors-projet', kind: 'PRODUCTIVE' }
+};
+
+function isSyncedType(type: AbsenceType): type is SyncedAbsenceType {
+	return (SYNCED_ABSENCE_TYPES as readonly string[]).includes(type);
+}
+
+/** Code SQLSTATE Postgres d'une violation de contrainte unique. */
+const UNIQUE_VIOLATION = '23505';
+
+/**
+ * Catégorie liée à ce type d'absence — réutilise une catégorie déjà taguée, sinon une catégorie
+ * active du même nom (espace créé avant cette fonctionnalité), sinon en crée une. Verrouillée
+ * contre l'archivage une fois taguée (cf. params.ts setCategoryArchived).
+ */
+async function getOrCreateLinkedCategory(dbx: Dbx, workspaceId: string, type: SyncedAbsenceType): Promise<string> {
+	const [tagged] = await dbx
+		.select({ id: category.id })
+		.from(category)
+		.where(and(eq(category.workspaceId, workspaceId), eq(category.linkedAbsenceType, type)));
+	if (tagged) return tagged.id;
+
+	const def = SYNCED_CATEGORY_DEFAULTS[type];
+	const [byLabel] = await dbx
+		.select({ id: category.id })
+		.from(category)
+		.where(
+			and(
+				eq(category.workspaceId, workspaceId),
+				isNull(category.archivedAt),
+				sql`lower(${category.label}) = ${def.label.toLowerCase()}`
+			)
+		);
+	if (byLabel) {
+		await dbx.update(category).set({ linkedAbsenceType: type }).where(eq(category.id, byLabel.id));
+		return byLabel.id;
+	}
+
+	try {
+		// Savepoint (transaction imbriquée) : sur une violation de contrainte unique, Postgres met
+		// le reste de la transaction en échec ("current transaction is aborted") tant qu'on ne
+		// revient pas à un point de reprise — sans lui, le SELECT de récupération ci-dessous
+		// échouerait à son tour et ferait échouer tout createAbsenceFor/updateAbsence/validateAbsence.
+		const [created] = await dbx.transaction((tx2) =>
+			tx2.insert(category).values({ workspaceId, label: def.label, kind: def.kind, linkedAbsenceType: type }).returning({ id: category.id })
+		);
+		return created.id;
+	} catch (e) {
+		// Deux absences synchronisées pour la toute première fois au même instant sur cet espace :
+		// l'autre a gagné la course sur la contrainte unique (workspace_id, linked_absence_type) —
+		// on récupère la sienne plutôt que de faire échouer cette validation.
+		if ((e as { cause?: { code?: string } })?.cause?.code === UNIQUE_VIOLATION) {
+			const [winner] = await dbx
+				.select({ id: category.id })
+				.from(category)
+				.where(and(eq(category.workspaceId, workspaceId), eq(category.linkedAbsenceType, type)));
+			if (winner) return winner.id;
+		}
+		throw e;
+	}
+}
+
+/**
+ * Répercute une absence (créée, modifiée ou validée) sur "Mon imputation" : une ligne par jour
+ * ouvré non férié de la plage, sur la catégorie liée au type. Purge + recrée à chaque appel —
+ * l'absence reste la source de vérité, pas les cases éventuellement éditées à la main depuis.
+ * Sans effet pour un membre externe (pas de compte imputation) ou un congé encore prévisionnel.
+ * Les jours fériés sont exclus : ils sont déjà hors capacité (cf. imputation/+page.svelte
+ * periodCapacity), les compter en plus fausserait le total saisi et le % de capacité affichés.
+ */
+async function syncAbsenceEntries(
+	dbx: Dbx,
+	workspaceId: string,
+	row: { id: string; userId: string | null; startDate: string; endDate: string; type: AbsenceType; period: AbsencePeriod }
+) {
+	await dbx.delete(timeEntry).where(eq(timeEntry.absenceId, row.id));
+	if (!row.userId || !isSyncedType(row.type)) return;
+
+	const categoryId = await getOrCreateLinkedCategory(dbx, workspaceId, row.type);
+	const days = workdaysBetween(row.startDate, row.endDate).filter((d) => !isPublicHolidayFR(d));
+	if (days.length === 0) return;
+	const amount = String(row.period === 'FULL' ? 1 : 0.5);
+
+	for (const day of days) {
+		const [existing] = await dbx
+			.select({ id: timeEntry.id })
+			.from(timeEntry)
+			.where(
+				and(
+					eq(timeEntry.workspaceId, workspaceId),
+					eq(timeEntry.userId, row.userId),
+					eq(timeEntry.day, day),
+					eq(timeEntry.categoryId, categoryId),
+					isNull(timeEntry.activityId)
+				)
+			);
+		if (existing) {
+			await dbx
+				.update(timeEntry)
+				.set({ amount, absenceId: row.id, updatedAt: new Date() })
+				.where(eq(timeEntry.id, existing.id));
+		} else {
+			await dbx.insert(timeEntry).values({
+				workspaceId,
+				userId: row.userId,
+				targetType: 'CATEGORY',
+				categoryId,
+				day,
+				amount,
+				absenceId: row.id
+			});
+		}
+	}
+}
 
 const validator = alias(user, 'absence_validator');
 
@@ -107,19 +239,31 @@ export async function createAbsenceFor(
 		throw new Error("Un membre externe ne peut avoir qu'un congé validé (pas de congé prévisionnel).");
 	// La demi-journée n'a de sens que pour une plage d'un seul jour.
 	const period = input.startDate === input.endDate ? input.period : 'FULL';
-	const [inserted] = await db
-		.insert(absence)
-		.values({
-			workspaceId,
-			userId: 'userId' in subject ? subject.userId : null,
-			externalMemberId: 'externalMemberId' in subject ? subject.externalMemberId : null,
-			startDate: input.startDate,
-			endDate: input.endDate,
-			type: input.type,
-			period
-		})
-		.returning({ id: absence.id });
-	return inserted.id;
+	// Transaction : si le sync échoue (cf. syncAbsenceEntries), l'absence ne doit pas rester
+	// commitée sans ses imputations — sinon elle apparaîtrait créée alors que l'appel a échoué.
+	return db.transaction(async (tx) => {
+		const [inserted] = await tx
+			.insert(absence)
+			.values({
+				workspaceId,
+				userId: 'userId' in subject ? subject.userId : null,
+				externalMemberId: 'externalMemberId' in subject ? subject.externalMemberId : null,
+				startDate: input.startDate,
+				endDate: input.endDate,
+				type: input.type,
+				period
+			})
+			.returning({
+				id: absence.id,
+				userId: absence.userId,
+				startDate: absence.startDate,
+				endDate: absence.endDate,
+				type: absence.type,
+				period: absence.period
+			});
+		await syncAbsenceEntries(tx, workspaceId, inserted);
+		return inserted.id;
+	});
 }
 
 /** Supprime une absence — son auteur (réel), ou un admin/manager (`canManageOthers`, seul moyen pour un membre externe). */
@@ -179,12 +323,24 @@ export async function updateAbsence(
 
 	const conditions = [eq(absence.workspaceId, workspaceId), eq(absence.id, id)];
 	if (!canManageOthers) conditions.push(eq(absence.userId, requesterId));
-	const updated = await db
-		.update(absence)
-		.set({ startDate: input.startDate, endDate: input.endDate, type: input.type, period, updatedAt: new Date() })
-		.where(and(...conditions))
-		.returning({ id: absence.id });
-	if (updated.length === 0) throw new Error('Absence introuvable ou non autorisée.');
+	// Transaction : voir createAbsenceFor — un échec du sync ne doit pas laisser la modification
+	// commitée sans ses imputations à jour.
+	await db.transaction(async (tx) => {
+		const updated = await tx
+			.update(absence)
+			.set({ startDate: input.startDate, endDate: input.endDate, type: input.type, period, updatedAt: new Date() })
+			.where(and(...conditions))
+			.returning({
+				id: absence.id,
+				userId: absence.userId,
+				startDate: absence.startDate,
+				endDate: absence.endDate,
+				type: absence.type,
+				period: absence.period
+			});
+		if (updated.length === 0) throw new Error('Absence introuvable ou non autorisée.');
+		await syncAbsenceEntries(tx, workspaceId, updated[0]);
+	});
 
 	if (existing) {
 		const changes: { field: string; oldValue: string; newValue: string }[] = [
@@ -211,13 +367,25 @@ export async function updateAbsence(
 /** Passe un congé prévisionnel en validé — réservé admin/manager (vérifié par l'appelant). */
 export async function validateAbsence(workspaceId: string, id: string, validatedById: string) {
 	const now = new Date();
-	const updated = await db
-		.update(absence)
-		.set({ type: 'CONGE_VALIDE', validatedById, validatedAt: now, updatedAt: now })
-		.where(and(eq(absence.workspaceId, workspaceId), eq(absence.id, id), eq(absence.type, 'CONGE_PREVISIONNEL')))
-		.returning({ id: absence.id, userId: absence.userId, startDate: absence.startDate, endDate: absence.endDate });
-	if (updated.length === 0) throw new Error('Absence introuvable ou déjà traitée.');
-	return updated[0];
+	// Transaction : voir createAbsenceFor — un échec du sync ne doit pas laisser la validation
+	// commitée sans l'imputation rétroactive qui va avec.
+	return db.transaction(async (tx) => {
+		const updated = await tx
+			.update(absence)
+			.set({ type: 'CONGE_VALIDE', validatedById, validatedAt: now, updatedAt: now })
+			.where(and(eq(absence.workspaceId, workspaceId), eq(absence.id, id), eq(absence.type, 'CONGE_PREVISIONNEL')))
+			.returning({
+				id: absence.id,
+				userId: absence.userId,
+				startDate: absence.startDate,
+				endDate: absence.endDate,
+				type: absence.type,
+				period: absence.period
+			});
+		if (updated.length === 0) throw new Error('Absence introuvable ou déjà traitée.');
+		await syncAbsenceEntries(tx, workspaceId, updated[0]);
+		return updated[0];
+	});
 }
 
 /** Une cellule de la grille porte toute l'absence (pas juste type/période) pour permettre l'édition en un clic. */

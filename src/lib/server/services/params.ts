@@ -8,6 +8,8 @@ export type CategoryItem = {
 	kind: CategoryKind;
 	archived: boolean;
 	usage: number;
+	/** Requise par le suivi des absences (cf. absences.ts) — ne peut pas être archivée. */
+	locked: boolean;
 };
 export type ActivityItem = { id: string; label: string; archived: boolean; usage: number };
 
@@ -43,19 +45,21 @@ export async function listCategories(workspaceId: string): Promise<CategoryItem[
 			label: category.label,
 			kind: category.kind,
 			archivedAt: category.archivedAt,
+			linkedAbsenceType: category.linkedAbsenceType,
 			usage: count(timeEntry.id)
 		})
 		.from(category)
 		.leftJoin(timeEntry, eq(timeEntry.categoryId, category.id))
 		.where(eq(category.workspaceId, workspaceId))
-		.groupBy(category.id, category.label, category.kind, category.archivedAt)
+		.groupBy(category.id, category.label, category.kind, category.archivedAt, category.linkedAbsenceType)
 		.orderBy(category.label);
 	return rows.map((r) => ({
 		id: r.id,
 		label: r.label,
 		kind: kindOf(r.kind),
 		archived: r.archivedAt !== null,
-		usage: r.usage
+		usage: r.usage,
+		locked: r.linkedAbsenceType !== null
 	}));
 }
 
@@ -88,6 +92,13 @@ export async function setCategoryKind(workspaceId: string, id: string, kind: Cat
 }
 
 export async function setCategoryArchived(workspaceId: string, id: string, archived: boolean) {
+	if (archived) {
+		const [existing] = await db
+			.select({ linkedAbsenceType: category.linkedAbsenceType })
+			.from(category)
+			.where(and(eq(category.id, id), eq(category.workspaceId, workspaceId)));
+		if (existing?.linkedAbsenceType) throw new Error('Catégorie requise par le suivi des absences — impossible à archiver.');
+	}
 	const res = await db
 		.update(category)
 		.set({ archivedAt: archived ? new Date() : null })

@@ -252,7 +252,14 @@ async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, pe
 		.returning();
 	const insertedCategories = await db
 		.insert(category)
-		.values(DEFAULT_CATEGORIES.map((c) => ({ workspaceId: ws.id, label: c.label, kind: c.kind })))
+		.values(
+			DEFAULT_CATEGORIES.map((c) => ({
+				workspaceId: ws.id,
+				label: c.label,
+				kind: c.kind,
+				linkedAbsenceType: c.linkedAbsenceType ?? null
+			}))
+		)
 		.returning();
 
 	const stateByLabel = new Map(insertedStates.map((s) => [s.label, s]));
