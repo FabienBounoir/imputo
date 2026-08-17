@@ -66,7 +66,7 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 			vacationWeeks(ws.workspaceId, viewedId, weekMondays),
 			listAbsencesForRange(ws.workspaceId, period.firstDay, period.lastDay),
 			viewingTeam ? getTeamTimesheet(ws.workspaceId, period.days) : Promise.resolve(null),
-			listPinnedRows(ws.workspaceId, viewedId)
+			listPinnedRows(ws.workspaceId, viewedId, period.firstDay, period.lastDay)
 		]);
 	// Congés/formation/hors-projet du membre affiché sur la période — remonté depuis la page Absences
 	// pour voir d'un coup d'œil, sans y aller, pourquoi une case n'a pas d'imputation attendue.
@@ -214,8 +214,9 @@ export const actions: Actions = {
 		const targetType = String(f.get('targetType')) as 'TICKET' | 'CATEGORY' | 'OBJECTIVE';
 		const targetId = String(f.get('targetId'));
 		const activityId = (f.get('activityId') as string) || null;
+		const anchor = String(f.get('anchor') ?? '');
 
-		if (!['TICKET', 'CATEGORY', 'OBJECTIVE'].includes(targetType) || !targetId)
+		if (!['TICKET', 'CATEGORY', 'OBJECTIVE'].includes(targetType) || !targetId || !anchor)
 			return fail(400, { error: 'Données invalides.' });
 
 		const subjectId = await resolveSubjectId(
@@ -226,8 +227,16 @@ export const actions: Actions = {
 		);
 		if (!subjectId) return fail(403, { error: 'Accès refusé.' });
 
+		// Même reconstruction serveur de la période que deleteRow/reassignActivity : c'est elle qui
+		// scope l'épingle (cf. pinRow) à la période affichée au clic sur "+ Ajouter".
+		const period = buildPeriod(
+			parseGranularity(f.get('g') as string) ?? 'WEEK',
+			parsePeriodMode(f.get('mode') as string) ?? 'FIXED',
+			anchor
+		);
+
 		try {
-			await pinRow(ws.workspaceId, subjectId, { targetType, targetId, activityId });
+			await pinRow(ws.workspaceId, subjectId, { targetType, targetId, activityId, firstDay: period.firstDay, lastDay: period.lastDay });
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}

@@ -446,15 +446,27 @@ export async function reassignActivity(
 				? eq(timeEntry.categoryId, input.targetId)
 				: eq(timeEntry.objectiveId, input.targetId);
 
-	// Si la ligne était épinglée (cf. pinRow) sur l'ancienne activité, l'épingle suit vers la
-	// nouvelle — sinon changer l'activité d'une ligne vide (jamais remplie) ne ferait rien du tout.
-	const wasPinned = await db
-		.select({ id: imputationPin.id })
+	// Si la ligne était épinglée (cf. pinRow) sur l'ancienne activité, chaque épingle qui touche la
+	// période affichée suit vers la nouvelle activité, en conservant sa propre plage — sinon changer
+	// l'activité d'une ligne vide (jamais remplie) ne ferait rien du tout.
+	const pinsToMove = await db
+		.select({ id: imputationPin.id, firstDay: imputationPin.firstDay, lastDay: imputationPin.lastDay })
 		.from(imputationPin)
-		.where(pinMatch(workspaceId, userId, { targetType: input.targetType, targetId: input.targetId, activityId: input.fromActivityId }));
-	if (wasPinned[0]) {
-		await unpinRow(workspaceId, userId, { targetType: input.targetType, targetId: input.targetId, activityId: input.fromActivityId });
-		await pinRow(workspaceId, userId, { targetType: input.targetType, targetId: input.targetId, activityId: input.toActivityId });
+		.where(
+			and(
+				pinTargetMatch(workspaceId, userId, { targetType: input.targetType, targetId: input.targetId, activityId: input.fromActivityId }),
+				pinOverlaps(input.fromISO, input.toISO)
+			)
+		);
+	for (const p of pinsToMove) {
+		await db.delete(imputationPin).where(eq(imputationPin.id, p.id));
+		await pinRow(workspaceId, userId, {
+			targetType: input.targetType,
+			targetId: input.targetId,
+			activityId: input.toActivityId,
+			firstDay: p.firstDay,
+			lastDay: p.lastDay
+		});
 	}
 
 	const rows = await db
@@ -551,7 +563,8 @@ function pinTargetColumns(targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE', targe
 	};
 }
 
-function pinMatch(
+/** Cible + activité d'une épingle, sans notion de période — matche potentiellement plusieurs lignes. */
+function pinTargetMatch(
 	workspaceId: string,
 	userId: string,
 	input: { targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE'; targetId: string; activityId: string | null }
@@ -568,10 +581,19 @@ function pinMatch(
 	);
 }
 
+/** Une épingle touche la plage [fromISO, toISO] dès que son intervalle [firstDay, lastDay] la chevauche. */
+function pinOverlaps(fromISO: string, toISO: string) {
+	return and(lte(imputationPin.firstDay, toISO), gte(imputationPin.lastDay, fromISO));
+}
+
 export type PinnedRow = { targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE'; targetId: string; activityId: string | null };
 
-/** Lignes épinglées sur "Mon imputation" — visibles même sans aucune heure saisie (cf. imputationPin). */
-export async function listPinnedRows(workspaceId: string, userId: string): Promise<PinnedRow[]> {
+/**
+ * Lignes épinglées sur "Mon imputation" et visibles pour la période affichée — même sans aucune
+ * heure saisie (cf. imputationPin). Une épingle créée pour une autre période (une autre semaine,
+ * un autre mois) ne remonte pas ici : c'est ce qui la scope à la période où elle a été ajoutée.
+ */
+export async function listPinnedRows(workspaceId: string, userId: string, fromISO: string, toISO: string): Promise<PinnedRow[]> {
 	const rows = await db
 		.select({
 			targetType: imputationPin.targetType,
@@ -581,7 +603,7 @@ export async function listPinnedRows(workspaceId: string, userId: string): Promi
 			activityId: imputationPin.activityId
 		})
 		.from(imputationPin)
-		.where(and(eq(imputationPin.workspaceId, workspaceId), eq(imputationPin.userId, userId)));
+		.where(and(eq(imputationPin.workspaceId, workspaceId), eq(imputationPin.userId, userId), pinOverlaps(fromISO, toISO)));
 	return rows
 		.map((r) => ({
 			targetType: r.targetType,
@@ -591,28 +613,51 @@ export async function listPinnedRows(workspaceId: string, userId: string): Promi
 		.filter((r): r is PinnedRow => !!r.targetId);
 }
 
-/** Épingle une ligne (cible + activité) — reste affichée tant qu'aucun clic sur la poubelle. Idempotent. */
+/**
+ * Épingle une ligne (cible + activité) pour la période affichée — reste affichée tant qu'aucun
+ * clic sur la poubelle, mais seulement pour les périodes qui chevauchent [firstDay, lastDay].
+ * Idempotent pour une même période (ajouter deux fois la même ligne dans la même semaine ne crée
+ * qu'une épingle) ; ajouter la même cible dans une autre période crée une épingle séparée.
+ */
 export async function pinRow(
 	workspaceId: string,
 	userId: string,
-	input: { targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE'; targetId: string; activityId: string | null }
+	input: {
+		targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE';
+		targetId: string;
+		activityId: string | null;
+		firstDay: string;
+		lastDay: string;
+	}
 ) {
 	await assertTargetInWorkspace(workspaceId, userId, input.targetType, input.targetId);
-	const existing = await db.select({ id: imputationPin.id }).from(imputationPin).where(pinMatch(workspaceId, userId, input));
+	const existing = await db
+		.select({ id: imputationPin.id })
+		.from(imputationPin)
+		.where(
+			and(
+				pinTargetMatch(workspaceId, userId, input),
+				eq(imputationPin.firstDay, input.firstDay),
+				eq(imputationPin.lastDay, input.lastDay)
+			)
+		);
 	if (existing[0]) return;
 	await db.insert(imputationPin).values({
 		workspaceId,
 		userId,
 		targetType: input.targetType,
 		...pinTargetColumns(input.targetType, input.targetId),
-		activityId: input.activityId
+		activityId: input.activityId,
+		firstDay: input.firstDay,
+		lastDay: input.lastDay
 	});
 }
 
+/** Retire toutes les épingles d'une ligne qui chevauchent [fromISO, toISO] — la période affichée au clic sur la poubelle. */
 export async function unpinRow(
 	workspaceId: string,
 	userId: string,
-	input: { targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE'; targetId: string; activityId: string | null }
+	input: { targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE'; targetId: string; activityId: string | null; fromISO: string; toISO: string }
 ) {
-	await db.delete(imputationPin).where(pinMatch(workspaceId, userId, input));
+	await db.delete(imputationPin).where(and(pinTargetMatch(workspaceId, userId, input), pinOverlaps(input.fromISO, input.toISO)));
 }

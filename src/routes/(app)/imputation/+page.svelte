@@ -65,6 +65,15 @@
 		return map;
 	});
 
+	// Clé de ligne d'un objectif (même format que Row.rowKey) — comparer sur targetId seul confond
+	// deux objectifs du même ticket sur deux activités différentes (chacun doit rester traçable
+	// indépendamment : présent/absent, ajouté/supprimé, sans effet sur l'autre).
+	function objectiveRowKey(o: (typeof data.weeklyObjectives)[number]) {
+		const targetType = o.kind === 'TICKET' ? 'TICKET' : 'OBJECTIVE';
+		const targetId = o.kind === 'TICKET' ? (o.ticketId ?? '') : o.id;
+		return `${targetType}:${targetId}:${o.activityId ?? ''}`;
+	}
+
 	// Lignes de la feuille + tâches attribuées absentes du tableau, fusionnées : appelée dès l'état
 	// initial (pas seulement dans l'$effect) pour que le premier rendu ait déjà les lignes attribuées
 	// et que le bandeau de rappel ne clignote pas avant de disparaître.
@@ -74,7 +83,7 @@
 			for (const o of data.weeklyObjectives) {
 				const targetType: 'TICKET' | 'OBJECTIVE' = o.kind === 'TICKET' ? 'TICKET' : 'OBJECTIVE';
 				const targetId = o.kind === 'TICKET' ? (o.ticketId ?? '') : o.id;
-				if (!targetId || next.some((r) => r.targetType === targetType && r.targetId === targetId)) continue;
+				if (!targetId || next.some((r) => r.rowKey === objectiveRowKey(o))) continue;
 				next.push(buildRow(targetType, targetId, o.activityId ?? null));
 			}
 			// Lignes ajoutées via "+ Ajouter" mais jamais remplies (cf. pinRow) : sans ça elles
@@ -583,10 +592,15 @@
 
 		// Épinglée en base tout de suite : sans imputation dessus, la ligne ne survivrait pas
 		// au prochain chargement (cf. syncedRows/pinRow). Seule la poubelle la fait disparaître.
+		// anchor/g/mode : le serveur en reconstruit la période pour scoper l'épingle à la période
+		// affichée (même principe que doDeleteRow/doReassignActivity).
 		const body = new FormData();
 		body.set('targetType', targetType);
 		body.set('targetId', targetId);
 		if (activityId) body.set('activityId', activityId);
+		body.set('anchor', data.period.anchorISO);
+		body.set('g', data.period.granularity);
+		body.set('mode', data.period.mode);
 		body.set('targetUserId', data.viewedId);
 		await fetch('?/pinRow', { method: 'POST', body });
 	}
@@ -595,18 +609,14 @@
 	function quickAddObjective(o: (typeof data.weeklyObjectives)[number]) {
 		const targetType: 'TICKET' | 'OBJECTIVE' = o.kind === 'TICKET' ? 'TICKET' : 'OBJECTIVE';
 		const targetId = o.kind === 'TICKET' ? (o.ticketId ?? '') : o.id;
-		if (!targetId || rows.some((r) => r.targetType === targetType && r.targetId === targetId)) return;
+		if (!targetId || rows.some((r) => r.rowKey === objectiveRowKey(o))) return;
 		rows = [...rows, buildRow(targetType, targetId, o.activityId ?? null)];
 	}
 
 	// Tâches attribuées auto-ajoutées au chargement mais absentes du tableau (supprimées depuis) :
 	// c'est elles seules que le bandeau de rappel doit remonter.
 	let missingObjectives = $derived(
-		data.weeklyObjectives.filter((o) => {
-			const targetType = o.kind === 'TICKET' ? 'TICKET' : 'OBJECTIVE';
-			const targetId = o.kind === 'TICKET' ? o.ticketId : o.id;
-			return !rows.some((r) => r.targetType === targetType && r.targetId === targetId);
-		})
+		data.weeklyObjectives.filter((o) => !rows.some((r) => r.rowKey === objectiveRowKey(o)))
 	);
 </script>
 

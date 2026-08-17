@@ -553,6 +553,9 @@ export const timeEntry = pgTable(
 // table, la ligne n'a aucune trace en base et disparaît au prochain chargement/changement de
 // période (aucun time_entry associé). Retirée uniquement via la poubelle (unpinRow), jamais par
 // un simple retour à 0 des cases — contrairement à un time_entry, pas de notion de jour/montant.
+// firstDay/lastDay bornent la période affichée au moment de l'ajout (semaine/quinzaine/mois selon
+// la granularité active) : la ligne n'est visible que dans les périodes qui chevauchent cette
+// plage, elle ne doit pas fuiter sur toutes les semaines (cf. listPinnedRows).
 export const imputationPin = pgTable(
 	'imputation_pin',
 	{
@@ -568,6 +571,8 @@ export const imputationPin = pgTable(
 		categoryId: uuid('category_id').references(() => category.id, { onDelete: 'cascade' }),
 		objectiveId: uuid('objective_id').references(() => weeklyObjective.id, { onDelete: 'cascade' }),
 		activityId: uuid('activity_id').references(() => activity.id, { onDelete: 'set null' }),
+		firstDay: date('first_day').notNull(),
+		lastDay: date('last_day').notNull(),
 		createdAt: createdAt()
 	},
 	(t) => [index('imputation_pin_ws_user_idx').on(t.workspaceId, t.userId)]

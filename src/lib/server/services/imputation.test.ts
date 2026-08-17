@@ -14,6 +14,11 @@ import { listCategories, createActivity, listActivities } from './params';
 import { makeWorkspace } from './test-helpers';
 
 const MONDAY = '2026-06-22'; // lundi (même date que isolation.test.ts)
+const FRIDAY = '2026-06-26'; // vendredi de la même semaine
+const NEXT_MONDAY = '2026-06-29'; // lundi suivant — période disjointe de [MONDAY, FRIDAY]
+const NEXT_FRIDAY = '2026-07-03';
+const WEEK = { firstDay: MONDAY, lastDay: FRIDAY };
+const NEXT_WEEK = { firstDay: NEXT_MONDAY, lastDay: NEXT_FRIDAY };
 
 describe('setCell / getWeek', () => {
 	it('pose une imputation sur une catégorie et la retrouve dans la semaine', async () => {
@@ -103,8 +108,8 @@ describe('deleteRow', () => {
 		const { workspaceId, userId } = await makeWorkspace();
 		const [category] = await listCategories(workspaceId);
 
-		await pinRow(workspaceId, userId, { targetType: 'CATEGORY', targetId: category.id, activityId: null });
-		expect(await listPinnedRows(workspaceId, userId)).toHaveLength(1);
+		await pinRow(workspaceId, userId, { targetType: 'CATEGORY', targetId: category.id, activityId: null, ...WEEK });
+		expect(await listPinnedRows(workspaceId, userId, WEEK.firstDay, WEEK.lastDay)).toHaveLength(1);
 
 		await deleteRow(workspaceId, userId, {
 			targetType: 'CATEGORY',
@@ -114,7 +119,7 @@ describe('deleteRow', () => {
 			toISO: MONDAY
 		});
 
-		expect(await listPinnedRows(workspaceId, userId)).toHaveLength(0);
+		expect(await listPinnedRows(workspaceId, userId, WEEK.firstDay, WEEK.lastDay)).toHaveLength(0);
 	});
 });
 
@@ -123,38 +128,59 @@ describe('pinRow / unpinRow / listPinnedRows', () => {
 		const { workspaceId, userId } = await makeWorkspace();
 		const t = await createTicket(workspaceId, { key: 'P-1', title: 'x' });
 
-		await pinRow(workspaceId, userId, { targetType: 'TICKET', targetId: t.id, activityId: null });
-		const pinned = await listPinnedRows(workspaceId, userId);
+		await pinRow(workspaceId, userId, { targetType: 'TICKET', targetId: t.id, activityId: null, ...WEEK });
+		const pinned = await listPinnedRows(workspaceId, userId, WEEK.firstDay, WEEK.lastDay);
 		expect(pinned).toEqual([{ targetType: 'TICKET', targetId: t.id, activityId: null }]);
 	});
 
-	it('idempotent : épingler deux fois la même ligne ne crée pas de doublon', async () => {
+	it("scopée à la période où elle a été ajoutée : n'apparaît pas sur une autre semaine", async () => {
+		const { workspaceId, userId } = await makeWorkspace();
+		const t = await createTicket(workspaceId, { key: 'P-SCOPE', title: 'x' });
+
+		await pinRow(workspaceId, userId, { targetType: 'TICKET', targetId: t.id, activityId: null, ...WEEK });
+
+		expect(await listPinnedRows(workspaceId, userId, WEEK.firstDay, WEEK.lastDay)).toHaveLength(1);
+		expect(await listPinnedRows(workspaceId, userId, NEXT_WEEK.firstDay, NEXT_WEEK.lastDay)).toHaveLength(0);
+	});
+
+	it('idempotent : épingler deux fois la même ligne sur la même période ne crée pas de doublon', async () => {
 		const { workspaceId, userId } = await makeWorkspace();
 		const t = await createTicket(workspaceId, { key: 'P-2', title: 'x' });
 
-		await pinRow(workspaceId, userId, { targetType: 'TICKET', targetId: t.id, activityId: null });
-		await pinRow(workspaceId, userId, { targetType: 'TICKET', targetId: t.id, activityId: null });
+		await pinRow(workspaceId, userId, { targetType: 'TICKET', targetId: t.id, activityId: null, ...WEEK });
+		await pinRow(workspaceId, userId, { targetType: 'TICKET', targetId: t.id, activityId: null, ...WEEK });
 
-		expect(await listPinnedRows(workspaceId, userId)).toHaveLength(1);
+		expect(await listPinnedRows(workspaceId, userId, WEEK.firstDay, WEEK.lastDay)).toHaveLength(1);
 	});
 
-	it('unpinRow retire uniquement la ligne visée', async () => {
+	it('épingler la même ligne sur une autre période crée une épingle séparée', async () => {
+		const { workspaceId, userId } = await makeWorkspace();
+		const t = await createTicket(workspaceId, { key: 'P-MULTI', title: 'x' });
+
+		await pinRow(workspaceId, userId, { targetType: 'TICKET', targetId: t.id, activityId: null, ...WEEK });
+		await pinRow(workspaceId, userId, { targetType: 'TICKET', targetId: t.id, activityId: null, ...NEXT_WEEK });
+
+		expect(await listPinnedRows(workspaceId, userId, WEEK.firstDay, WEEK.lastDay)).toHaveLength(1);
+		expect(await listPinnedRows(workspaceId, userId, NEXT_WEEK.firstDay, NEXT_WEEK.lastDay)).toHaveLength(1);
+	});
+
+	it('unpinRow retire uniquement la ligne visée, sur la période affichée', async () => {
 		const { workspaceId, userId } = await makeWorkspace();
 		const t1 = await createTicket(workspaceId, { key: 'P-3', title: 'x' });
 		const t2 = await createTicket(workspaceId, { key: 'P-4', title: 'y' });
-		await pinRow(workspaceId, userId, { targetType: 'TICKET', targetId: t1.id, activityId: null });
-		await pinRow(workspaceId, userId, { targetType: 'TICKET', targetId: t2.id, activityId: null });
+		await pinRow(workspaceId, userId, { targetType: 'TICKET', targetId: t1.id, activityId: null, ...WEEK });
+		await pinRow(workspaceId, userId, { targetType: 'TICKET', targetId: t2.id, activityId: null, ...WEEK });
 
-		await unpinRow(workspaceId, userId, { targetType: 'TICKET', targetId: t1.id, activityId: null });
+		await unpinRow(workspaceId, userId, { targetType: 'TICKET', targetId: t1.id, activityId: null, fromISO: WEEK.firstDay, toISO: WEEK.lastDay });
 
-		const pinned = await listPinnedRows(workspaceId, userId);
+		const pinned = await listPinnedRows(workspaceId, userId, WEEK.firstDay, WEEK.lastDay);
 		expect(pinned.map((p) => p.targetId)).toEqual([t2.id]);
 	});
 
 	it("refuse d'épingler une cible qui n'existe pas dans l'espace", async () => {
 		const { workspaceId, userId } = await makeWorkspace();
 		await expect(
-			pinRow(workspaceId, userId, { targetType: 'TICKET', targetId: 'ffffffff-ffff-ffff-ffff-ffffffffffff', activityId: null })
+			pinRow(workspaceId, userId, { targetType: 'TICKET', targetId: 'ffffffff-ffff-ffff-ffff-ffffffffffff', activityId: null, ...WEEK })
 		).rejects.toThrow('Ticket introuvable dans cet espace.');
 	});
 });
@@ -249,7 +275,7 @@ describe('reassignActivity', () => {
 		await createActivity(workspaceId, `Dev-${t.id}`);
 		const [dev] = (await listActivities(workspaceId)).filter((a) => a.label === `Dev-${t.id}`);
 
-		await pinRow(workspaceId, userId, { targetType: 'TICKET', targetId: t.id, activityId: null });
+		await pinRow(workspaceId, userId, { targetType: 'TICKET', targetId: t.id, activityId: null, ...WEEK });
 		await reassignActivity(workspaceId, userId, {
 			targetType: 'TICKET',
 			targetId: t.id,
@@ -259,7 +285,9 @@ describe('reassignActivity', () => {
 			toISO: MONDAY
 		});
 
-		expect(await listPinnedRows(workspaceId, userId)).toEqual([{ targetType: 'TICKET', targetId: t.id, activityId: dev.id }]);
+		expect(await listPinnedRows(workspaceId, userId, WEEK.firstDay, WEEK.lastDay)).toEqual([
+			{ targetType: 'TICKET', targetId: t.id, activityId: dev.id }
+		]);
 	});
 });
 
