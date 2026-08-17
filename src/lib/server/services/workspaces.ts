@@ -88,7 +88,14 @@ export async function seedDefaults(tx: Tx, workspaceId: string) {
 		.values(DEFAULT_ACTIVITIES.map((label, i) => ({ workspaceId, label, sortOrder: i })));
 	await tx
 		.insert(category)
-		.values(DEFAULT_CATEGORIES.map((c) => ({ workspaceId, label: c.label, kind: c.kind })));
+		.values(
+			DEFAULT_CATEGORIES.map((c) => ({
+				workspaceId,
+				label: c.label,
+				kind: c.kind,
+				linkedAbsenceType: c.linkedAbsenceType ?? null
+			}))
+		);
 }
 
 export type MembershipInfo = {

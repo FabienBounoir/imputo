@@ -370,22 +370,26 @@
 								</select>
 							</form>
 							{#if c.archived}<span class="tag-arch">archivé</span>{/if}
-							<form
-								method="POST"
-								action="?/catArchive"
-								use:enhance={async ({ cancel }) => {
-									if (!c.archived && c.usage > 0) {
-										const ok = await confirmDialog(
-											`${c.usage} imputation${c.usage > 1 ? 's' : ''} seront supprimées à terme. Archiver quand même ?`
-										);
-										if (!ok) cancel();
-									}
-								}}
-							>
-								<input type="hidden" name="id" value={c.id} />
-								<input type="hidden" name="archived" value={c.archived ? 'false' : 'true'} />
-								<button class="ref-btn" type="submit">{c.archived ? '↺ Restaurer' : '🗄 Archiver'}</button>
-							</form>
+							{#if c.locked}
+								<span class="tag-usage" title="Requise par le suivi des absences — ne peut pas être archivée">🔒 requis</span>
+							{:else}
+								<form
+									method="POST"
+									action="?/catArchive"
+									use:enhance={async ({ cancel }) => {
+										if (!c.archived && c.usage > 0) {
+											const ok = await confirmDialog(
+												`${c.usage} imputation${c.usage > 1 ? 's' : ''} seront supprimées à terme. Archiver quand même ?`
+											);
+											if (!ok) cancel();
+										}
+									}}
+								>
+									<input type="hidden" name="id" value={c.id} />
+									<input type="hidden" name="archived" value={c.archived ? 'false' : 'true'} />
+									<button class="ref-btn" type="submit">{c.archived ? '↺ Restaurer' : '🗄 Archiver'}</button>
+								</form>
+							{/if}
 						</div>
 					{/each}
 					{#if data.categories.length === 0}<p class="hint" style="margin:0;">Aucune catégorie.</p>{/if}

@@ -289,6 +289,10 @@ export const category = pgTable(
 		label: text('label').notNull(),
 		kind: categoryKindEnum('kind').notNull().default('PRODUCTIVE'),
 		projectId: uuid('project_id').references(() => project.id, { onDelete: 'set null' }),
+		// Catégorie système qui reçoit les imputations générées depuis les absences validées (cf.
+		// absences.ts) — non-null uniquement pour CONGE_VALIDE/FORMATION/HORS_PROJET (jamais
+		// CONGE_PREVISIONNEL, pas encore imputable). Verrouille la suppression admin (cf. params.ts).
+		linkedAbsenceType: absenceTypeEnum('linked_absence_type'),
 		archivedAt: archivedAt(),
 		createdAt: createdAt()
 	},
@@ -296,7 +300,10 @@ export const category = pgTable(
 		index('category_ws_idx').on(t.workspaceId),
 		uniqueIndex('category_ws_name_uq')
 			.on(t.workspaceId, sql`lower(${t.label})`)
-			.where(sql`${t.archivedAt} is null`)
+			.where(sql`${t.archivedAt} is null`),
+		uniqueIndex('category_ws_linked_absence_uq')
+			.on(t.workspaceId, t.linkedAbsenceType)
+			.where(sql`${t.linkedAbsenceType} is not null`)
 	]
 );
 
@@ -537,6 +544,10 @@ export const timeEntry = pgTable(
 		// l'admin après coup, sa suppression ne doit jamais effacer des heures déjà saisies.
 		objectiveId: uuid('objective_id').references(() => weeklyObjective.id, { onDelete: 'set null' }),
 		activityId: uuid('activity_id').references(() => activity.id, { onDelete: 'set null' }),
+		// Renseigné uniquement pour une ligne générée depuis une absence validée (congé/formation/
+		// hors-projet, cf. absences.ts syncAbsenceEntries) — cascade : l'absence supprimée efface
+		// automatiquement ses lignes d'imputation.
+		absenceId: uuid('absence_id').references(() => absence.id, { onDelete: 'cascade' }),
 		day: date('day').notNull(),
 		// scale 3 (pas 2) : suit imputationStep — un pas de 0.125 doit pouvoir être stocké tel quel.
 		amount: numeric('amount', { precision: 5, scale: 3 }).notNull(),
@@ -545,7 +556,8 @@ export const timeEntry = pgTable(
 	},
 	(t) => [
 		index('time_entry_ws_user_day_idx').on(t.workspaceId, t.userId, t.day),
-		index('time_entry_ticket_idx').on(t.ticketId)
+		index('time_entry_ticket_idx').on(t.ticketId),
+		index('time_entry_absence_idx').on(t.absenceId)
 	]
 );
 
