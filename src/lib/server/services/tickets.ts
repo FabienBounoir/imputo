@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, notExists, or, ilike, sql, count } from 'drizzle-orm';
+import { and, eq, exists, inArray, isNull, notExists, or, ilike, sql, count } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import {
 	db,
@@ -14,12 +14,14 @@ import {
 	ticketActivityRae,
 	ticketGroup,
 	ticketGroupMember,
+	ticketSprintMember,
 	imputationPin,
 	weeklyObjective,
 	type Role
 } from '$lib/server/db';
 import { isManagerOrAdmin } from './workspaces';
 import { logChange } from './changeLog';
+import { setTicketSprintMember } from './ticketSprints';
 import {
 	num,
 	round,
@@ -76,9 +78,10 @@ export type TicketRow = {
 	title: string;
 	parentId: string | null;
 	stateId: string | null;
-	sprintId: string | null;
-	sprintName: string | null;
-	versionId: string | null;
+	sprintIds: string[];
+	sprintNames: string[];
+	versionIds: string[];
+	versionNames: string[];
 	projectId: string | null;
 	projectName: string | null;
 	prepa: number;
@@ -120,9 +123,6 @@ const TICKET_BASE_SELECT = {
 	title: ticket.title,
 	parentId: ticket.parentId,
 	stateId: ticket.stateId,
-	sprintId: ticket.sprintId,
-	sprintName: sprint.name,
-	versionId: ticket.versionId,
 	projectId: ticket.projectId,
 	projectName: project.name,
 	prepa: ticket.prepa,
@@ -146,7 +146,6 @@ function baseTicketsQuery() {
 		.select(TICKET_BASE_SELECT)
 		.from(ticket)
 		.leftJoin(state, eq(ticket.stateId, state.id))
-		.leftJoin(sprint, eq(ticket.sprintId, sprint.id))
 		.leftJoin(project, eq(ticket.projectId, project.id));
 }
 async function fetchBaseTickets(where: ReturnType<typeof and>) {
@@ -296,6 +295,29 @@ async function enrichTickets(
 		groupIdsMap.get(r.ticketId)!.push(r.groupId);
 	}
 
+	// Sprints/versions many-to-many : une seule requête (jointure sur sprint pour le kind + le nom),
+	// distribuée dans 4 maps ensuite — même table de jointure pour les deux, cf. schema.ts.
+	const sprintMemberRows =
+		ticketIds.length === 0
+			? []
+			: await db
+					.select({ ticketId: ticketSprintMember.ticketId, sprintId: ticketSprintMember.sprintId, name: sprint.name, kind: sprint.kind })
+					.from(ticketSprintMember)
+					.innerJoin(sprint, eq(ticketSprintMember.sprintId, sprint.id))
+					.where(inArray(ticketSprintMember.ticketId, ticketIds));
+	const sprintIdsMap = new Map<string, string[]>();
+	const sprintNamesMap = new Map<string, string[]>();
+	const versionIdsMap = new Map<string, string[]>();
+	const versionNamesMap = new Map<string, string[]>();
+	for (const r of sprintMemberRows) {
+		const idsMap = r.kind === 'VERSION' ? versionIdsMap : sprintIdsMap;
+		const namesMap = r.kind === 'VERSION' ? versionNamesMap : sprintNamesMap;
+		if (!idsMap.has(r.ticketId)) idsMap.set(r.ticketId, []);
+		if (!namesMap.has(r.ticketId)) namesMap.set(r.ticketId, []);
+		idsMap.get(r.ticketId)!.push(r.sprintId);
+		namesMap.get(r.ticketId)!.push(r.name);
+	}
+
 	return tickets.map((t) => {
 		const activityRows = activityRaeMap.get(t.id) ?? [];
 		const resolved = resolvedRae(t.raeReal, t.raeTest, activityRows);
@@ -310,9 +332,10 @@ async function enrichTickets(
 			title: t.title,
 			parentId: t.parentId,
 			stateId: t.stateId,
-			sprintId: t.sprintId,
-			sprintName: t.sprintName,
-			versionId: t.versionId,
+			sprintIds: sprintIdsMap.get(t.id) ?? [],
+			sprintNames: sprintNamesMap.get(t.id) ?? [],
+			versionIds: versionIdsMap.get(t.id) ?? [],
+			versionNames: versionNamesMap.get(t.id) ?? [],
 			projectId: t.projectId,
 			projectName: t.projectName,
 			prepa: num(t.prepa),
@@ -442,21 +465,34 @@ export async function deleteUntouchedSyncedTickets(workspaceId: string, syncRunI
  * juste id/clé/titre/sprint/version, sans l'enrichissement consommé/RAE/contributeurs/groupes
  * (4 requêtes GROUP BY en plus, inutiles pour peupler un <select>).
  */
-export async function listTicketSummaries(
-	workspaceId: string
-): Promise<{ id: string; key: string; title: string; sprintId: string | null; versionId: string | null; sprintName: string | null }[]> {
-	return db
-		.select({
-			id: ticket.id,
-			key: ticket.key,
-			title: ticket.title,
-			sprintId: ticket.sprintId,
-			versionId: ticket.versionId,
-			sprintName: sprint.name
-		})
+export async function listTicketSummaries(workspaceId: string): Promise<
+	{ id: string; key: string; title: string; sprints: { id: string; name: string }[]; versions: { id: string; name: string }[] }[]
+> {
+	const tickets = await db
+		.select({ id: ticket.id, key: ticket.key, title: ticket.title })
 		.from(ticket)
-		.leftJoin(sprint, eq(ticket.sprintId, sprint.id))
 		.where(and(eq(ticket.workspaceId, workspaceId), isNull(ticket.archivedAt)));
+	const ticketIds = tickets.map((t) => t.id);
+	const sprintMemberRows =
+		ticketIds.length === 0
+			? []
+			: await db
+					.select({ ticketId: ticketSprintMember.ticketId, id: ticketSprintMember.sprintId, name: sprint.name, kind: sprint.kind })
+					.from(ticketSprintMember)
+					.innerJoin(sprint, eq(ticketSprintMember.sprintId, sprint.id))
+					.where(inArray(ticketSprintMember.ticketId, ticketIds));
+	const sprintsMap = new Map<string, { id: string; name: string }[]>();
+	const versionsMap = new Map<string, { id: string; name: string }[]>();
+	for (const r of sprintMemberRows) {
+		const map = r.kind === 'VERSION' ? versionsMap : sprintsMap;
+		if (!map.has(r.ticketId)) map.set(r.ticketId, []);
+		map.get(r.ticketId)!.push({ id: r.id, name: r.name });
+	}
+	return tickets.map((t) => ({
+		...t,
+		sprints: sprintsMap.get(t.id) ?? [],
+		versions: versionsMap.get(t.id) ?? []
+	}));
 }
 
 export type TicketFilters = {
@@ -510,8 +546,28 @@ function ticketFilterConditions(workspaceId: string, filters: TicketFilters) {
 	const conditions = [eq(ticket.workspaceId, workspaceId), isNull(ticket.archivedAt)];
 	if (filters.stateId) conditions.push(eq(ticket.stateId, filters.stateId));
 	if (filters.projectId) conditions.push(eq(ticket.projectId, filters.projectId));
-	if (filters.sprintId) conditions.push(eq(ticket.sprintId, filters.sprintId));
-	if (filters.versionId) conditions.push(eq(ticket.versionId, filters.versionId));
+	if (filters.sprintId) {
+		const sprintId = filters.sprintId;
+		conditions.push(
+			exists(
+				db
+					.select({ n: sql`1` })
+					.from(ticketSprintMember)
+					.where(and(eq(ticketSprintMember.ticketId, ticket.id), eq(ticketSprintMember.sprintId, sprintId)))
+			)
+		);
+	}
+	if (filters.versionId) {
+		const versionId = filters.versionId;
+		conditions.push(
+			exists(
+				db
+					.select({ n: sql`1` })
+					.from(ticketSprintMember)
+					.where(and(eq(ticketSprintMember.ticketId, ticket.id), eq(ticketSprintMember.sprintId, versionId)))
+			)
+		);
+	}
 	if (filters.exactKey) conditions.push(eq(ticket.key, filters.exactKey));
 	if (filters.syncRunId) conditions.push(eq(ticket.createdBySyncRunId, filters.syncRunId));
 	if (filters.query?.trim()) {
@@ -638,15 +694,7 @@ export async function getRefData(workspaceId: string, sortActivitiesAlpha = fals
 }
 
 /** Descriptif du ticket — éditable par tout membre de l'espace. */
-const EDITABLE_FIELDS = new Set([
-	'title',
-	'comment',
-	'stateId',
-	'projectId',
-	'sprintId',
-	'versionId',
-	'sspCode'
-]);
+const EDITABLE_FIELDS = new Set(['title', 'comment', 'stateId', 'projectId', 'sspCode']);
 /**
  * Chiffrage global du ticket — ADMIN/MANAGER seulement (retour utilisateur : un USER ne doit
  * toucher ni l'estimation globale ni le RAE des autres). Le RAE fin se saisit par activité, via
@@ -975,9 +1023,12 @@ export async function createTicket(
 		enveloppeTotale?: string | null;
 	}
 ) {
+	const { sprintId, versionId, ...ticketData } = data;
 	const [row] = await db
 		.insert(ticket)
-		.values({ workspaceId, ...data, raeUpdatedAt: new Date() })
+		.values({ workspaceId, ...ticketData, raeUpdatedAt: new Date() })
 		.returning({ id: ticket.id });
+	if (sprintId) await setTicketSprintMember(workspaceId, row.id, sprintId, 'SPRINT', true);
+	if (versionId) await setTicketSprintMember(workspaceId, row.id, versionId, 'VERSION', true);
 	return row;
 }

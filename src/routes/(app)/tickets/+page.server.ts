@@ -12,6 +12,7 @@ import {
 	type TicketFilters
 } from '$lib/server/services/tickets';
 import { setTicketInGroup } from '$lib/server/services/ticketGroups';
+import { setTicketSprintMember } from '$lib/server/services/ticketSprints';
 import { isManagerOrAdmin } from '$lib/server/services/workspaces';
 import {
 	getTicketFiltersPref,
@@ -228,6 +229,38 @@ export const actions: Actions = {
 		if (!ticketId || !groupId) return fail(400, { error: 'Données invalides.' });
 		try {
 			await setTicketInGroup(ws.workspaceId, ticketId, groupId, member);
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { ok: true };
+	},
+
+	sprintToggle: async ({ request, locals }) => {
+		const ws = locals.workspace;
+		if (!ws) return fail(401, { error: 'Non authentifié.' });
+		const f = await request.formData();
+		const ticketId = String(f.get('ticketId') ?? '');
+		const sprintId = String(f.get('sprintId') ?? '');
+		const member = f.get('member') === 'true';
+		if (!ticketId || !sprintId) return fail(400, { error: 'Données invalides.' });
+		try {
+			await setTicketSprintMember(ws.workspaceId, ticketId, sprintId, 'SPRINT', member);
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { ok: true };
+	},
+
+	versionToggle: async ({ request, locals }) => {
+		const ws = locals.workspace;
+		if (!ws) return fail(401, { error: 'Non authentifié.' });
+		const f = await request.formData();
+		const ticketId = String(f.get('ticketId') ?? '');
+		const versionId = String(f.get('versionId') ?? '');
+		const member = f.get('member') === 'true';
+		if (!ticketId || !versionId) return fail(400, { error: 'Données invalides.' });
+		try {
+			await setTicketSprintMember(ws.workspaceId, ticketId, versionId, 'VERSION', member);
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}

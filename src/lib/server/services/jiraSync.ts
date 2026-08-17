@@ -1,6 +1,6 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { Db } from '$lib/server/db/connection';
-import { workspace, project, sprint, ticket, jiraSyncRun } from '$lib/server/db/schema';
+import { workspace, project, sprint, ticket, ticketSprintMember, jiraSyncRun } from '$lib/server/db/schema';
 import {
 	getAzureToken,
 	searchJiraIssues,
@@ -208,9 +208,25 @@ export async function syncWorkspace(
 			}
 		}
 
+		/** Remplace tout le jeu de sprints OU versions d'un ticket par la liste donnée (many-to-many,
+		 *  table partagée entre les deux kind) — la source Jira écrase, ne merge jamais avec une
+		 *  affectation manuelle existante, même comportement que l'ancien champ scalaire. */
+		async function replaceTicketSprintMembers(ticketId: string, kind: 'SPRINT' | 'VERSION', sprintIds: string[]) {
+			const kindSprintIds = tx.select({ id: sprint.id }).from(sprint).where(eq(sprint.kind, kind));
+			await tx
+				.delete(ticketSprintMember)
+				.where(and(eq(ticketSprintMember.ticketId, ticketId), inArray(ticketSprintMember.sprintId, kindSprintIds)));
+			if (sprintIds.length > 0) {
+				await tx
+					.insert(ticketSprintMember)
+					.values(sprintIds.map((sprintId) => ({ ticketId, sprintId })))
+					.onConflictDoNothing();
+			}
+		}
+
 		// Passe 1 : upsert de chaque ticket par (workspaceId, key transformée). estimationReal/raeReal/
 		// comment/sspCode/stateId/flags restent la propriété exclusive de la saisie humaine, quelle que
-		// soit la stratégie ci-dessous — jamais écrits ici. title/projectId/sprintId/versionId passent
+		// soit la stratégie ci-dessous — jamais écrits ici. title/projectId/sprints/versions passent
 		// en plus par les cases jiraSyncXxx de l'espace : décoché, un champ n'est jamais écrit, ni à la
 		// création ni à la mise à jour — sauf le titre, toujours posé à la création (ticket.title est
 		// NOT NULL, un ticket ne peut pas exister sans, cf. docs/SPECS-jira-sprint-version.md §6).
@@ -222,19 +238,19 @@ export async function syncWorkspace(
 				// JIRA_WINS : la valeur sert toujours (création ou écrasement), on la résout dans tous
 				// les cas.
 				const projectId = ws.jiraSyncProject && issue.projectName ? await findOrCreateProjectByName(issue.projectName) : null;
-				const versionId = ws.jiraSyncVersion && issue.versionName ? await findOrCreateSprintRow('VERSION', issue.versionName) : null;
-				const sprintId = ws.jiraSyncSprint && issue.sprintName ? await findOrCreateSprintRow('SPRINT', issue.sprintName) : null;
+				const versionIds = ws.jiraSyncVersion
+					? await Promise.all(issue.versionNames.map((name) => findOrCreateSprintRow('VERSION', name)))
+					: [];
+				const sprintIds = ws.jiraSyncSprint
+					? await Promise.all(issue.sprintNames.map((name) => findOrCreateSprintRow('SPRINT', name)))
+					: [];
 
 				const insertValues: typeof ticket.$inferInsert = { workspaceId, key, title: issue.summary };
 				if (ws.jiraSyncProject) insertValues.projectId = projectId;
-				if (ws.jiraSyncSprint) insertValues.sprintId = sprintId;
-				if (ws.jiraSyncVersion) insertValues.versionId = versionId;
 
 				const updateSet: Partial<typeof ticket.$inferInsert> = { updatedAt: new Date() };
 				if (ws.jiraSyncTitle) updateSet.title = issue.summary;
 				if (ws.jiraSyncProject) updateSet.projectId = projectId;
-				if (ws.jiraSyncSprint) updateSet.sprintId = sprintId;
-				if (ws.jiraSyncVersion) updateSet.versionId = versionId;
 
 				const [r] = await tx
 					.insert(ticket)
@@ -248,6 +264,10 @@ export async function syncWorkspace(
 					.returning({ id: ticket.id, inserted: sql<boolean>`(xmax = 0)` });
 				row = r;
 				if (r?.inserted) createdIds.push(r.id);
+				if (r) {
+					if (ws.jiraSyncSprint) await replaceTicketSprintMembers(r.id, 'SPRINT', sprintIds);
+					if (ws.jiraSyncVersion) await replaceTicketSprintMembers(r.id, 'VERSION', versionIds);
+				}
 			} else {
 				// KEEP_LOCAL (défaut) : un ticket déjà connu (créé à la main ou par un sync précédent)
 				// n'est jamais modifié. Titre d'abord, seul champ dont on a besoin avant de savoir si le
@@ -265,13 +285,17 @@ export async function syncWorkspace(
 					// Genuinely nouveau : là seulement, résoudre et poser project/sprint/version.
 					createdIds.push(inserted.id);
 					const projectId = ws.jiraSyncProject && issue.projectName ? await findOrCreateProjectByName(issue.projectName) : null;
-					const versionId = ws.jiraSyncVersion && issue.versionName ? await findOrCreateSprintRow('VERSION', issue.versionName) : null;
-					const sprintId = ws.jiraSyncSprint && issue.sprintName ? await findOrCreateSprintRow('SPRINT', issue.sprintName) : null;
+					const versionIds = ws.jiraSyncVersion
+						? await Promise.all(issue.versionNames.map((name) => findOrCreateSprintRow('VERSION', name)))
+						: [];
+					const sprintIds = ws.jiraSyncSprint
+						? await Promise.all(issue.sprintNames.map((name) => findOrCreateSprintRow('SPRINT', name)))
+						: [];
 					const extra: Partial<typeof ticket.$inferInsert> = {};
 					if (ws.jiraSyncProject) extra.projectId = projectId;
-					if (ws.jiraSyncSprint) extra.sprintId = sprintId;
-					if (ws.jiraSyncVersion) extra.versionId = versionId;
 					if (Object.keys(extra).length > 0) await tx.update(ticket).set(extra).where(eq(ticket.id, inserted.id));
+					if (ws.jiraSyncSprint) await replaceTicketSprintMembers(inserted.id, 'SPRINT', sprintIds);
+					if (ws.jiraSyncVersion) await replaceTicketSprintMembers(inserted.id, 'VERSION', versionIds);
 					row = inserted;
 				} else {
 					// Ticket déjà connu : jamais modifié, project/sprint/version compris — rien à résoudre.

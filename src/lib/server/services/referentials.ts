@@ -1,5 +1,5 @@
-import { and, eq, ne, isNull, count, sql } from 'drizzle-orm';
-import { db, project, sprint, ticket } from '$lib/server/db';
+import { and, eq, ne, isNull, count, countDistinct, sql } from 'drizzle-orm';
+import { db, project, sprint, ticket, ticketSprintMember } from '$lib/server/db';
 
 export type RefType = 'project' | 'sprint' | 'version';
 
@@ -26,7 +26,6 @@ export async function listRefs(workspaceId: string, type: RefType): Promise<RefI
 			.orderBy(project.name);
 		return rows.map((r) => ({ id: r.id, name: r.name, archived: r.archivedAt !== null, usage: r.usage, createdAt: r.createdAt }));
 	}
-	const refCol = type === 'version' ? ticket.versionId : ticket.sprintId;
 	const rows = await db
 		.select({
 			id: sprint.id,
@@ -34,10 +33,11 @@ export async function listRefs(workspaceId: string, type: RefType): Promise<RefI
 			archivedAt: sprint.archivedAt,
 			createdAt: sprint.createdAt,
 			sortOrder: sprint.sortOrder,
-			usage: count(ticket.id)
+			usage: countDistinct(ticket.id)
 		})
 		.from(sprint)
-		.leftJoin(ticket, and(eq(refCol, sprint.id), isNull(ticket.archivedAt)))
+		.leftJoin(ticketSprintMember, eq(ticketSprintMember.sprintId, sprint.id))
+		.leftJoin(ticket, and(eq(ticket.id, ticketSprintMember.ticketId), isNull(ticket.archivedAt)))
 		.where(and(eq(sprint.workspaceId, workspaceId), eq(sprint.kind, sprintKind(type))))
 		.groupBy(sprint.id, sprint.name, sprint.archivedAt, sprint.createdAt, sprint.sortOrder)
 		.orderBy(sprint.sortOrder, sprint.name);

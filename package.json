@@ -18,6 +18,7 @@
 		"db:unseed": "tsx src/lib/server/db/unseed.ts",
 		"db:pull:prod": "./scripts/db-pull.sh prod",
 		"db:pull:preprod": "./scripts/db-pull.sh preprod",
+		"db:prod-to-preprod": "./scripts/db-pull.sh prod --to=preprod",
 		"jira:sync": "tsx scripts/jira-sync.ts",
 		"test": "vitest run",
 		"test:watch": "vitest",

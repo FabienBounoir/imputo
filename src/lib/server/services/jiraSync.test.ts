@@ -1,6 +1,6 @@
 import { and, desc, eq } from 'drizzle-orm';
 import { describe, it, expect } from 'vitest';
-import { db, workspace, project, sprint, ticket, jiraSyncRun } from '$lib/server/db';
+import { db, workspace, project, sprint, ticket, ticketSprintMember, jiraSyncRun } from '$lib/server/db';
 import { makeWorkspace } from './test-helpers';
 import { encryptSecret } from '../auth/secretCrypto';
 import { syncWorkspace, syncAllEnabledWorkspaces, WATERMARK_SAFETY_MARGIN_MS, type JiraSyncConfig } from './jiraSync';
@@ -109,6 +109,17 @@ async function ticketsOf(workspaceId: string) {
 
 async function runsOf(workspaceId: string) {
 	return db.select().from(jiraSyncRun).where(eq(jiraSyncRun.workspaceId, workspaceId)).orderBy(desc(jiraSyncRun.startedAt));
+}
+
+/** Ids de sprint/version rattachés à un ticket (many-to-many) — remplace l'ancienne lecture
+ *  scalaire ticket.sprintId/versionId depuis le passage en table de jointure. */
+async function ticketSprintIds(ticketId: string, kind: 'SPRINT' | 'VERSION'): Promise<string[]> {
+	const rows = await db
+		.select({ sprintId: ticketSprintMember.sprintId })
+		.from(ticketSprintMember)
+		.innerJoin(sprint, eq(ticketSprintMember.sprintId, sprint.id))
+		.where(and(eq(ticketSprintMember.ticketId, ticketId), eq(sprint.kind, kind)));
+	return rows.map((r) => r.sprintId);
 }
 
 describe('jiraSync / syncWorkspace', () => {
@@ -261,20 +272,22 @@ describe('jiraSync / syncWorkspace', () => {
 			expect(sprints).toHaveLength(1);
 
 			const rows = await ticketsOf(ws.workspaceId);
-			expect(rows.every((r) => r.versionId === versions[0].id)).toBe(true);
-			expect(rows.every((r) => r.sprintId === sprints[0].id)).toBe(true);
+			for (const r of rows) {
+				expect(await ticketSprintIds(r.id, 'VERSION')).toEqual([versions[0].id]);
+				expect(await ticketSprintIds(r.id, 'SPRINT')).toEqual([sprints[0].id]);
+			}
 		});
 
-		it('pas de sprint/version sur l’issue -> sprintId/versionId restent null', async () => {
+		it('pas de sprint/version sur l’issue -> aucun rattachement', async () => {
 			const ws = await makeJiraWorkspace();
 			await syncWorkspace(db, cfg, ws.workspaceId, { fetchImpl: fakeFetch({ issues: [rawIssue('T-1', 'A')] }) });
 
 			const [row] = await ticketsOf(ws.workspaceId);
-			expect(row.sprintId).toBeNull();
-			expect(row.versionId).toBeNull();
+			expect(await ticketSprintIds(row.id, 'SPRINT')).toEqual([]);
+			expect(await ticketSprintIds(row.id, 'VERSION')).toEqual([]);
 		});
 
-		it('JIRA_WINS écrase sprintId/versionId d’un ticket déjà connu', async () => {
+		it('JIRA_WINS écrase le rattachement sprint/version d’un ticket déjà connu', async () => {
 			const ws = await makeJiraWorkspace({ conflictStrategy: 'JIRA_WINS' });
 			await syncWorkspace(db, cfg, ws.workspaceId, {
 				fetchImpl: fakeFetch({ issues: [rawIssue('T-1', 'A', { versionName: 'V1', sprintName: 'Sprint 1' })] })
@@ -288,23 +301,25 @@ describe('jiraSync / syncWorkspace', () => {
 				.select()
 				.from(sprint)
 				.where(and(eq(sprint.workspaceId, ws.workspaceId), eq(sprint.kind, 'VERSION'), eq(sprint.name, 'V2')));
-			expect(row.versionId).toBe(v2.id);
+			expect(await ticketSprintIds(row.id, 'VERSION')).toEqual([v2.id]);
 		});
 
-		it('KEEP_LOCAL ne modifie jamais sprintId/versionId d’un ticket déjà connu', async () => {
+		it('KEEP_LOCAL ne modifie jamais le rattachement sprint/version d’un ticket déjà connu', async () => {
 			const ws = await makeJiraWorkspace({ conflictStrategy: 'KEEP_LOCAL' });
 			await syncWorkspace(db, cfg, ws.workspaceId, {
 				fetchImpl: fakeFetch({ issues: [rawIssue('T-1', 'A', { versionName: 'V1', sprintName: 'Sprint 1' })] })
 			});
 			const [before] = await ticketsOf(ws.workspaceId);
+			const beforeVersionIds = await ticketSprintIds(before.id, 'VERSION');
+			const beforeSprintIds = await ticketSprintIds(before.id, 'SPRINT');
 
 			await syncWorkspace(db, cfg, ws.workspaceId, {
 				fetchImpl: fakeFetch({ issues: [rawIssue('T-1', 'A', { versionName: 'V2', sprintName: 'Sprint 2' })] })
 			});
 
 			const [after] = await ticketsOf(ws.workspaceId);
-			expect(after.versionId).toBe(before.versionId);
-			expect(after.sprintId).toBe(before.sprintId);
+			expect(await ticketSprintIds(after.id, 'VERSION')).toEqual(beforeVersionIds);
+			expect(await ticketSprintIds(after.id, 'SPRINT')).toEqual(beforeSprintIds);
 		});
 
 		it('KEEP_LOCAL sur un ticket déjà connu ne crée pas de projet/sprint/version orphelin (repéré en test réel)', async () => {
@@ -322,8 +337,8 @@ describe('jiraSync / syncWorkspace', () => {
 			const [row] = await ticketsOf(ws.workspaceId);
 			expect(row.title).toBe('Titre manuel');
 			expect(row.projectId).toBeNull();
-			expect(row.sprintId).toBeNull();
-			expect(row.versionId).toBeNull();
+			expect(await ticketSprintIds(row.id, 'SPRINT')).toEqual([]);
+			expect(await ticketSprintIds(row.id, 'VERSION')).toEqual([]);
 			// ...et surtout, rien n'a été créé en base pour des valeurs qui ne servent à rien.
 			expect(await db.select().from(project).where(eq(project.workspaceId, ws.workspaceId))).toHaveLength(0);
 			expect(await db.select().from(sprint).where(eq(sprint.workspaceId, ws.workspaceId))).toHaveLength(0);
@@ -353,15 +368,15 @@ describe('jiraSync / syncWorkspace', () => {
 			expect(await db.select().from(project).where(eq(project.workspaceId, ws.workspaceId))).toHaveLength(0);
 		});
 
-		it('jiraSyncSprint=false et jiraSyncVersion=false : sprintId/versionId restent null même à la création', async () => {
+		it('jiraSyncSprint=false et jiraSyncVersion=false : aucun rattachement même à la création', async () => {
 			const ws = await makeJiraWorkspace({ syncSprint: false, syncVersion: false });
 			await syncWorkspace(db, cfg, ws.workspaceId, {
 				fetchImpl: fakeFetch({ issues: [rawIssue('T-1', 'A', { versionName: 'V1', sprintName: 'Sprint 1' })] })
 			});
 
 			const [row] = await ticketsOf(ws.workspaceId);
-			expect(row.sprintId).toBeNull();
-			expect(row.versionId).toBeNull();
+			expect(await ticketSprintIds(row.id, 'SPRINT')).toEqual([]);
+			expect(await ticketSprintIds(row.id, 'VERSION')).toEqual([]);
 			expect(await db.select().from(sprint).where(eq(sprint.workspaceId, ws.workspaceId))).toHaveLength(0); // pas créés pour rien
 		});
 

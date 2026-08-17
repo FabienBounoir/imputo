@@ -2,9 +2,9 @@
 	// Combobox custom "Ajouter un ticket ou une catégorie" (remplace le <select> natif) :
 	// état par défaut = 3-4 tickets suggérés (plus récemment imputés) + catégories complètes ;
 	// la recherche filtre en temps réel sur la liste complète des tickets, côté client.
-	// `versionId` optionnel : le filtre par version n'apparaît que si l'appelant fournit `versions`
+	// `versions` optionnel : le filtre par version n'apparaît que si l'appelant fournit `versions`
 	// (Mon imputation) ; les autres usages (objectifs admin) gardent la liste telle quelle.
-	type Ticket = { id: string; key: string; title: string; versionId?: string | null };
+	type Ticket = { id: string; key: string; title: string; versions?: { id: string; name: string }[] };
 	type Category = { id: string; label: string };
 	type Version = { id: string; name: string };
 	type Objective = {
@@ -56,7 +56,7 @@
 	// recherche texte, on continuerait d'afficher 4 tickets hors version et le filtre paraîtrait mort.
 	const filteredTickets = $derived.by(() => {
 		const q = query.trim().toLowerCase();
-		const base = versionFilter ? tickets.filter((t) => t.versionId === versionFilter) : tickets;
+		const base = versionFilter ? tickets.filter((t) => t.versions?.some((v) => v.id === versionFilter)) : tickets;
 		if (!q) return versionFilter ? base : suggested;
 		return base.filter((t) => t.key.toLowerCase().includes(q) || t.title.toLowerCase().includes(q));
 	});

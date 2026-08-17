@@ -6,6 +6,7 @@
 	import { TICKET_FIELD_LABELS } from '$lib/changeLogLabels';
 	import { confirmDialog } from '$lib/confirm.svelte';
 	import ModalErrorToast from '$lib/components/ModalErrorToast.svelte';
+	import MultiSelectField from '$lib/components/MultiSelectField.svelte';
 	import { slide } from 'svelte/transition';
 	let { data, form } = $props();
 
@@ -133,8 +134,8 @@
 		isChild: boolean;
 		stateId: string | null;
 		projectId: string | null;
-		sprintId: string | null;
-		versionId: string | null;
+		sprintIds: string[];
+		versionIds: string[];
 		prepa: number;
 		comment: string | null;
 		flags: Record<string, string>;
@@ -225,8 +226,8 @@
 			isChild: t.isChild,
 			stateId: t.stateId,
 			projectId: t.projectId,
-			sprintId: t.sprintId,
-			versionId: t.versionId,
+			sprintIds: [...t.sprintIds],
+			versionIds: [...t.versionIds],
 			prepa: t.prepa,
 			comment: t.comment,
 			flags: { ...t.flags },
@@ -499,6 +500,26 @@
 		body.set('groupId', groupId);
 		body.set('member', String(member));
 		await fetch('?/groupToggle', { method: 'POST', body });
+		flash();
+	}
+	async function toggleSprint(row: Row, sprintId: string) {
+		const member = !row.sprintIds.includes(sprintId);
+		row.sprintIds = member ? [...row.sprintIds, sprintId] : row.sprintIds.filter((s) => s !== sprintId);
+		const body = new FormData();
+		body.set('ticketId', row.id);
+		body.set('sprintId', sprintId);
+		body.set('member', String(member));
+		await fetch('?/sprintToggle', { method: 'POST', body });
+		flash();
+	}
+	async function toggleVersion(row: Row, versionId: string) {
+		const member = !row.versionIds.includes(versionId);
+		row.versionIds = member ? [...row.versionIds, versionId] : row.versionIds.filter((v) => v !== versionId);
+		const body = new FormData();
+		body.set('ticketId', row.id);
+		body.set('versionId', versionId);
+		body.set('member', String(member));
+		await fetch('?/versionToggle', { method: 'POST', body });
 		flash();
 	}
 	function flash() {
@@ -986,14 +1007,10 @@
 					</select>
 				</label>
 				<label class="dfield"><span>Sprint</span>
-					<select class="cell-select" bind:value={editRow.sprintId} onchange={() => save(editRow!, 'sprintId', editRow!.sprintId)}>
-						<option value={null}>—</option>{#each data.ref.sprints as s (s.id)}<option value={s.id}>{s.name}</option>{/each}
-					</select>
+					<MultiSelectField options={data.ref.sprints} selectedIds={editRow.sprintIds} onToggle={(id) => toggleSprint(editRow!, id)} ariaLabel="Sprints" />
 				</label>
 				<label class="dfield"><span>Version</span>
-					<select class="cell-select" bind:value={editRow.versionId} onchange={() => save(editRow!, 'versionId', editRow!.versionId)}>
-						<option value={null}>—</option>{#each data.ref.versions as v (v.id)}<option value={v.id}>{v.name}</option>{/each}
-					</select>
+					<MultiSelectField options={data.ref.versions} selectedIds={editRow.versionIds} onToggle={(id) => toggleVersion(editRow!, id)} ariaLabel="Versions" />
 				</label>
 				<label class="dfield"><span>Estimé</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationReal} disabled={!data.canEditEstimation || editRow.hasActivityEstimation} title={editRow.hasActivityEstimation ? "Estimé = compilation des Estimés par activité ci-dessous (non éditable ici)" : estTitle} onchange={() => debouncedSave(`est-${editRow!.id}-real`, () => saveEst(editRow!, 'real'))} /></label>
 				<label class="dfield"><span>RAE Réal</span><input class="cell-input" type="number" step="0.25" min="0" value={editRow.raeReal} disabled title="Compilation des RAE par activité (voir le tableau)" /></label>

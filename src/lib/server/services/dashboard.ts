@@ -167,7 +167,6 @@ export async function getDashboard(
 	const sprintAgg = new Map<string, GroupProgress>();
 	const versionAgg = new Map<string, GroupProgress>();
 	const groupAgg = new Map<string, GroupProgress>();
-	const versionName = new Map(ref.versions.map((v) => [v.id, v.name]));
 	const groupName = new Map(groups.map((g) => [g.id, g.label]));
 	const accumulate = (
 		map: Map<string, GroupProgress>,
@@ -191,14 +190,11 @@ export async function getDashboard(
 		consumedTotal += t.consumed;
 		stateCount.set(t.stateId ?? null, (stateCount.get(t.stateId ?? null) ?? 0) + 1);
 		accumulate(projAgg, t.projectName ?? 'Sans projet', est, rae, t.consumed);
-		accumulate(sprintAgg, t.sprintName ?? 'Sans sprint', est, rae, t.consumed);
-		accumulate(
-			versionAgg,
-			(t.versionId && versionName.get(t.versionId)) || 'Sans version',
-			est,
-			rae,
-			t.consumed
-		);
+		// Many-to-many (sprint/version) : un ticket sans aucun sprint/version tombe dans le bucket
+		// "Sans X" ; un ticket qui en a plusieurs alimente chacun des buckets correspondants (chaque
+		// sous-total reste exact, ne pas les additionner entre eux — même remarque que groupAgg).
+		for (const name of t.sprintNames.length ? t.sprintNames : ['Sans sprint']) accumulate(sprintAgg, name, est, rae, t.consumed);
+		for (const name of t.versionNames.length ? t.versionNames : ['Sans version']) accumulate(versionAgg, name, est, rae, t.consumed);
 		// Many-to-many : un ticket peut alimenter 0..N groupes (pas de fallback "Sans groupe").
 		for (const gid of t.groupIds) {
 			const label = groupName.get(gid);

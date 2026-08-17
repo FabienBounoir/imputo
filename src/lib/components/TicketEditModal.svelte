@@ -4,6 +4,7 @@
 	import { TICKET_FIELD_LABELS } from '$lib/changeLogLabels';
 	import { confirmDialog } from '$lib/confirm.svelte';
 	import ModalErrorToast from './ModalErrorToast.svelte';
+	import MultiSelectField from './MultiSelectField.svelte';
 
 	// Même modal d'édition que Tickets & chiffrage (tickets/+page.svelte), rendue utilisable depuis
 	// n'importe quelle page (ex. Mon imputation) : elle se charge elle-même par id plutôt que de
@@ -38,7 +39,7 @@
 		onClose: () => void;
 		/** Appelé après chaque sauvegarde — permet à l'appelant de patcher son propre affichage
 		 * (ex. la ligne de Mon imputation) sans recharger toute la page. */
-		onSaved?: (ticket: { id: string; title: string; sprintId: string | null; versionId: string | null }) => void;
+		onSaved?: (ticket: { id: string; title: string; sprintIds: string[]; versionIds: string[] }) => void;
 		/** Appelé après une suppression réussie — permet à l'appelant de retirer le ticket de son affichage. */
 		onDeleted?: (ticketId: string) => void;
 	} = $props();
@@ -49,8 +50,8 @@
 		title: string;
 		stateId: string | null;
 		projectId: string | null;
-		sprintId: string | null;
-		versionId: string | null;
+		sprintIds: string[];
+		versionIds: string[];
 		prepa: number;
 		comment: string | null;
 		flags: Record<string, string>;
@@ -192,11 +193,33 @@
 		await fetch('/tickets?/groupToggle', { method: 'POST', body });
 		flash();
 	}
+	async function toggleSprint(sprintId: string) {
+		if (!ticket) return;
+		const member = !ticket.sprintIds.includes(sprintId);
+		ticket.sprintIds = member ? [...ticket.sprintIds, sprintId] : ticket.sprintIds.filter((s) => s !== sprintId);
+		const body = new FormData();
+		body.set('ticketId', ticket.id);
+		body.set('sprintId', sprintId);
+		body.set('member', String(member));
+		await fetch('/tickets?/sprintToggle', { method: 'POST', body });
+		flash();
+	}
+	async function toggleVersion(versionId: string) {
+		if (!ticket) return;
+		const member = !ticket.versionIds.includes(versionId);
+		ticket.versionIds = member ? [...ticket.versionIds, versionId] : ticket.versionIds.filter((v) => v !== versionId);
+		const body = new FormData();
+		body.set('ticketId', ticket.id);
+		body.set('versionId', versionId);
+		body.set('member', String(member));
+		await fetch('/tickets?/versionToggle', { method: 'POST', body });
+		flash();
+	}
 	function flash() {
 		savedFlash = true;
 		clearTimeout(flashTimer);
 		flashTimer = setTimeout(() => (savedFlash = false), 1400);
-		if (ticket) onSaved?.({ id: ticket.id, title: ticket.title, sprintId: ticket.sprintId, versionId: ticket.versionId });
+		if (ticket) onSaved?.({ id: ticket.id, title: ticket.title, sprintIds: ticket.sprintIds, versionIds: ticket.versionIds });
 	}
 
 	// Bloque si des imputations sont liées (pas de popup dans ce cas — juste le message), sinon
@@ -261,14 +284,10 @@
 						</select>
 					</label>
 					<label class="dfield"><span>Sprint</span>
-						<select class="cell-select" bind:value={ticket.sprintId} onchange={() => save('sprintId', ticket!.sprintId)}>
-							<option value={null}>—</option>{#each sprints as s (s.id)}<option value={s.id}>{s.name}</option>{/each}
-						</select>
+						<MultiSelectField options={sprints} selectedIds={ticket.sprintIds} onToggle={toggleSprint} ariaLabel="Sprints" />
 					</label>
 					<label class="dfield"><span>Version</span>
-						<select class="cell-select" bind:value={ticket.versionId} onchange={() => save('versionId', ticket!.versionId)}>
-							<option value={null}>—</option>{#each versions as v (v.id)}<option value={v.id}>{v.name}</option>{/each}
-						</select>
+						<MultiSelectField options={versions} selectedIds={ticket.versionIds} onToggle={toggleVersion} ariaLabel="Versions" />
 					</label>
 					<label class="dfield"><span>Estimé</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={ticket.estimationReal} disabled={!canEditEstimation || ticket.hasActivityEstimation} title={estRealTitle} onchange={() => debouncedSave(`est-${ticket!.id}-real`, () => saveEst('real'))} /></label>
 					<label class="dfield"><span>RAE Réal</span><input class="cell-input" type="number" step="0.25" min="0" value={ticket.raeReal} disabled title="Compilation des RAE par activité (voir le tableau)" /></label>

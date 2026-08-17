@@ -1,5 +1,4 @@
 import { and, eq, gte, inArray, lte, isNotNull, isNull, sql } from 'drizzle-orm';
-import { alias } from 'drizzle-orm/pg-core';
 import {
 	db,
 	timeEntry,
@@ -7,6 +6,7 @@ import {
 	category,
 	activity,
 	sprint,
+	ticketSprintMember,
 	ticketActivityRae,
 	weeklyObjective,
 	imputationPin,
@@ -25,9 +25,11 @@ export type ImputationRow = {
 	sublabel: string;
 	emoji: string | null;
 	nonProductive: boolean;
-	/** Sprint/version du ticket (null hors ticket ou non rattaché) — affichés en puces sur la ligne. */
-	sprintName: string | null;
-	versionName: string | null;
+	/** Sprints/versions du ticket, avec id (tableau vide hors ticket ou non rattaché) — affichés en
+	 *  puces cliquables sur la ligne (cf. goToTicketFilter, imputation/+page.svelte) : l'id est
+	 *  nécessaire pour le lien, pas juste le nom affiché. */
+	sprints: { id: string; name: string }[];
+	versions: { id: string; name: string }[];
 	/**
 	 * RAE réel de la paire (ticket, activité). null quand la ligne ne porte pas d'activité :
 	 * le RAE est stocké par activité, il n'est alors ni affichable ni saisissable ici.
@@ -64,8 +66,8 @@ type RawEntry = {
 	amount: string | number | null;
 	ticketKey: string | null;
 	ticketTitle: string | null;
-	sprintName: string | null;
-	versionName: string | null;
+	sprints: { id: string; name: string }[];
+	versions: { id: string; name: string }[];
 	categoryLabel: string | null;
 	categoryKind: string | null;
 	objectiveLabel: string | null;
@@ -78,14 +80,10 @@ type RawEntry = {
  * `getTeamTimesheet` — seule la clause `userId` change.
  */
 async function queryEntries(workspaceId: string, firstDay: string, lastDay: string, userId?: string): Promise<RawEntry[]> {
-	// `version` et `sprint` vivent dans la même table, discriminés par `kind` : ticket.sprintId et
-	// ticket.versionId pointent tous deux dessus, d'où l'alias pour les joindre en même temps.
-	const versionSprint = alias(sprint, 'version_sprint');
-
 	const conditions = [eq(timeEntry.workspaceId, workspaceId), gte(timeEntry.day, firstDay), lte(timeEntry.day, lastDay)];
 	if (userId) conditions.push(eq(timeEntry.userId, userId));
 
-	return db
+	const rows = await db
 		.select({
 			userId: timeEntry.userId,
 			userName: user.displayName,
@@ -98,8 +96,6 @@ async function queryEntries(workspaceId: string, firstDay: string, lastDay: stri
 			amount: timeEntry.amount,
 			ticketKey: ticket.key,
 			ticketTitle: ticket.title,
-			sprintName: sprint.name,
-			versionName: versionSprint.name,
 			categoryLabel: category.label,
 			categoryKind: category.kind,
 			objectiveLabel: weeklyObjective.label,
@@ -108,12 +104,36 @@ async function queryEntries(workspaceId: string, firstDay: string, lastDay: stri
 		.from(timeEntry)
 		.innerJoin(user, eq(timeEntry.userId, user.id))
 		.leftJoin(ticket, eq(timeEntry.ticketId, ticket.id))
-		.leftJoin(sprint, eq(ticket.sprintId, sprint.id))
-		.leftJoin(versionSprint, eq(ticket.versionId, versionSprint.id))
 		.leftJoin(category, eq(timeEntry.categoryId, category.id))
 		.leftJoin(weeklyObjective, eq(timeEntry.objectiveId, weeklyObjective.id))
 		.leftJoin(activity, eq(timeEntry.activityId, activity.id))
 		.where(and(...conditions));
+
+	// Sprints/versions many-to-many : requête séparée + Map, jamais un JOIN direct sur la table de
+	// jointure ici — ça ferait un fan-out qui dupliquerait `amount` pour un ticket sur plusieurs
+	// sprints/versions (contrairement aux dashboards, ce résultat alimente directement des totaux).
+	const ticketIds = [...new Set(rows.map((r) => r.ticketId).filter((id): id is string => !!id))];
+	const memberRows =
+		ticketIds.length === 0
+			? []
+			: await db
+					.select({ ticketId: ticketSprintMember.ticketId, id: ticketSprintMember.sprintId, name: sprint.name, kind: sprint.kind })
+					.from(ticketSprintMember)
+					.innerJoin(sprint, eq(ticketSprintMember.sprintId, sprint.id))
+					.where(inArray(ticketSprintMember.ticketId, ticketIds));
+	const sprintsMap = new Map<string, { id: string; name: string }[]>();
+	const versionsMap = new Map<string, { id: string; name: string }[]>();
+	for (const r of memberRows) {
+		const map = r.kind === 'VERSION' ? versionsMap : sprintsMap;
+		if (!map.has(r.ticketId)) map.set(r.ticketId, []);
+		map.get(r.ticketId)!.push({ id: r.id, name: r.name });
+	}
+
+	return rows.map((r) => ({
+		...r,
+		sprints: r.ticketId ? (sprintsMap.get(r.ticketId) ?? []) : [],
+		versions: r.ticketId ? (versionsMap.get(r.ticketId) ?? []) : []
+	}));
 }
 
 /** Squelette de ligne (sans montants) à partir d'une imputation brute — partagé par les deux vues. */
@@ -144,8 +164,8 @@ function rowSkeleton(e: RawEntry, targetId: string, key: string): ImputationRow 
 		sublabel,
 		emoji,
 		nonProductive: e.targetType === 'CATEGORY' && e.categoryKind === 'NON_PRODUCTIVE',
-		sprintName: e.targetType === 'TICKET' ? e.sprintName : null,
-		versionName: e.targetType === 'TICKET' ? e.versionName : null,
+		sprints: e.targetType === 'TICKET' ? e.sprints : [],
+		versions: e.targetType === 'TICKET' ? e.versions : [],
 		raeReal: null,
 		estimation: null,
 		amounts: {},

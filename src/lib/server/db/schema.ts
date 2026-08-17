@@ -359,8 +359,6 @@ export const ticket = pgTable(
 		title: text('title').notNull(),
 		projectId: uuid('project_id').references(() => project.id, { onDelete: 'set null' }),
 		parentId: uuid('parent_id'),
-		sprintId: uuid('sprint_id').references(() => sprint.id, { onDelete: 'set null' }),
-		versionId: uuid('version_id').references(() => sprint.id, { onDelete: 'set null' }),
 		stateId: uuid('state_id').references(() => state.id, { onDelete: 'set null' }),
 		estimationReal: numeric('estimation_real', { precision: 7, scale: 2 }),
 		raeReal: numeric('rae_real', { precision: 7, scale: 2 }),
@@ -447,6 +445,23 @@ export const ticketGroupMember = pgTable(
 			.references(() => ticket.id, { onDelete: 'cascade' })
 	},
 	(t) => [uniqueIndex('ticket_group_member_uq').on(t.groupId, t.ticketId)]
+);
+
+// Sprint/version d'un ticket — many-to-many, une seule table réutilisée pour les deux (comme
+// sprint elle-même, discriminée par kind) : pas de séparation ticketVersionMember, le kind est
+// toujours connu par construction côté appelant (sélecteur sprint ou version).
+export const ticketSprintMember = pgTable(
+	'ticket_sprint_member',
+	{
+		id: id(),
+		ticketId: uuid('ticket_id')
+			.notNull()
+			.references(() => ticket.id, { onDelete: 'cascade' }),
+		sprintId: uuid('sprint_id')
+			.notNull()
+			.references(() => sprint.id, { onDelete: 'cascade' })
+	},
+	(t) => [uniqueIndex('ticket_sprint_member_uq').on(t.ticketId, t.sprintId)]
 );
 
 // Snapshot quotidien (cron) — alimente la courbe d'évolution conso/RAE des dashboards
@@ -763,7 +778,6 @@ export const ticketRelations = relations(ticket, ({ one, many }) => ({
 	parent: one(ticket, { fields: [ticket.parentId], references: [ticket.id], relationName: 'parent' }),
 	children: many(ticket, { relationName: 'parent' }),
 	state: one(state, { fields: [ticket.stateId], references: [state.id] }),
-	sprint: one(sprint, { fields: [ticket.sprintId], references: [sprint.id] }),
 	project: one(project, { fields: [ticket.projectId], references: [project.id] })
 }));
 

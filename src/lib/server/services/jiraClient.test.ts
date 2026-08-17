@@ -132,8 +132,8 @@ describe('jiraClient / searchJiraIssues', () => {
 			issueTypeName: 'Sous-tâche',
 			parentKey: 'BLM-1',
 			projectName: 'Application Mobile',
-			versionName: null,
-			sprintName: null
+			versionNames: [],
+			sprintNames: []
 		});
 	});
 
@@ -164,7 +164,7 @@ describe('jiraClient / searchJiraIssues', () => {
 		expect(requestedFields).toContain('customfield_10105');
 	});
 
-	it('extrait fixVersions[0] en versionName (pas plusieurs, pas "versions"/affectedVersion)', async () => {
+	it('extrait toutes les entrées de fixVersions en versionNames (pas "versions"/affectedVersion)', async () => {
 		const { fetchImpl } = makeFakeFetch({
 			search: () =>
 				jsonResponse(200, {
@@ -185,10 +185,10 @@ describe('jiraClient / searchJiraIssues', () => {
 		});
 
 		const [issue] = await searchJiraIssues(baseCfg, 'azure-tok', 'pat', 'project = BLM', fetchImpl);
-		expect(issue.versionName).toBe('V36');
+		expect(issue.versionNames).toEqual(['V36', 'V37']);
 	});
 
-	it('pas de fixVersions -> versionName null', async () => {
+	it('pas de fixVersions -> versionNames vide', async () => {
 		const { fetchImpl } = makeFakeFetch({
 			search: () =>
 				jsonResponse(200, {
@@ -199,7 +199,7 @@ describe('jiraClient / searchJiraIssues', () => {
 		});
 
 		const [issue] = await searchJiraIssues(baseCfg, 'azure-tok', 'pat', 'project = BLM', fetchImpl);
-		expect(issue.versionName).toBeNull();
+		expect(issue.versionNames).toEqual([]);
 	});
 
 	it('parse le format toString() Java du Sprint (Server/DC, plugin Greenhopper)', async () => {
@@ -216,10 +216,10 @@ describe('jiraClient / searchJiraIssues', () => {
 		});
 
 		const [issue] = await searchJiraIssues(baseCfg, 'azure-tok', 'pat', 'project = BLM', fetchImpl);
-		expect(issue.sprintName).toBe('Sprint V36');
+		expect(issue.sprintNames).toEqual(['Sprint V36']);
 	});
 
-	it('plusieurs sprints dans le tableau -> prend le dernier (le plus récent)', async () => {
+	it('plusieurs sprints dans le tableau -> toutes extraites, dans l\'ordre', async () => {
 		const { fetchImpl } = makeFakeFetch({
 			search: () =>
 				jsonResponse(200, {
@@ -242,10 +242,10 @@ describe('jiraClient / searchJiraIssues', () => {
 		});
 
 		const [issue] = await searchJiraIssues(baseCfg, 'azure-tok', 'pat', 'project = BLM', fetchImpl);
-		expect(issue.sprintName).toBe('Sprint 2');
+		expect(issue.sprintNames).toEqual(['Sprint 1', 'Sprint 2']);
 	});
 
-	it('pas de customfield Sprint -> sprintName null', async () => {
+	it('pas de customfield Sprint -> sprintNames vide', async () => {
 		const { fetchImpl } = makeFakeFetch({
 			search: () =>
 				jsonResponse(200, {
@@ -256,7 +256,7 @@ describe('jiraClient / searchJiraIssues', () => {
 		});
 
 		const [issue] = await searchJiraIssues(baseCfg, 'azure-tok', 'pat', 'project = BLM', fetchImpl);
-		expect(issue.sprintName).toBeNull();
+		expect(issue.sprintNames).toEqual([]);
 	});
 
 	it('401 -> JiraAuthError (PAT)', async () => {

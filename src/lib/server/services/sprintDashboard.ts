@@ -82,8 +82,8 @@ export async function getSprintDashboard(
 	const allTickets = await listTickets(workspaceId, testPhase, isAdmin);
 	const tickets =
 		sprintRow.kind === 'VERSION'
-			? allTickets.filter((t) => t.versionId === sprintId)
-			: allTickets.filter((t) => t.sprintId === sprintId);
+			? allTickets.filter((t) => t.versionIds.includes(sprintId))
+			: allTickets.filter((t) => t.sprintIds.includes(sprintId));
 	const ticketIds = tickets.map((t) => t.id);
 
 	let estTotal = 0;

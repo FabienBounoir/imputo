@@ -1,12 +1,12 @@
 import ExcelJS from 'exceljs';
 import { and, eq, isNull, sql, gte, lte } from 'drizzle-orm';
-import { alias } from 'drizzle-orm/pg-core';
 import {
 	db,
 	ticket,
 	state,
 	user,
 	sprint,
+	ticketSprintMember,
 	project,
 	category,
 	activity,
@@ -19,9 +19,6 @@ import { parseFlags } from '$lib/server/services/tickets';
 import { num, ecartVsEstime, avancement, round, resolvedRae, resolvedEstimation } from '$lib/server/services/calc';
 import { getWeeklySynthesis } from '$lib/server/services/weeklySynthesis';
 import { countWorkdaysNonHoliday, parseISODate, addDays, dayNum, toISODate } from '$lib/utils/date';
-
-/** Alias de la table sprint pour joindre séparément les versions sur un ticket. */
-const versionTbl = alias(sprint, 'version');
 
 const SEP_FILL = 'FFB7AE9B'; // gris/taupe (séparateur Synthèse US)
 const OVER_RED = 'FFC2410C';
@@ -192,7 +189,7 @@ export async function buildWorkbook(
 
 	// --- Récupération des données (toutes scopées workspace) ---
 	const [
-		tickets,
+		ticketRows,
 		members,
 		ticketUser,
 		catUser,
@@ -202,7 +199,8 @@ export async function buildWorkbook(
 		wsRow,
 		activityRaeRows,
 		activities,
-		ticketActivityUserRows
+		ticketActivityUserRows,
+		sprintMemberRows
 	] = await Promise.all([
 		db
 			.select({
@@ -217,15 +215,11 @@ export async function buildWorkbook(
 				stateLabel: state.label,
 				stateEmoji: state.emoji,
 				projectName: project.name,
-				sprintName: sprint.name,
-				versionName: versionTbl.name,
 				flags: ticket.flags
 			})
 			.from(ticket)
 			.leftJoin(state, eq(ticket.stateId, state.id))
 			.leftJoin(project, eq(ticket.projectId, project.id))
-			.leftJoin(sprint, eq(ticket.sprintId, sprint.id))
-			.leftJoin(versionTbl, eq(ticket.versionId, versionTbl.id))
 			.where(and(eq(ticket.workspaceId, workspaceId), isNull(ticket.archivedAt))),
 		db
 			.select({ id: user.id, name: user.displayName, capacity: membership.capacityPerDay })
@@ -325,8 +319,29 @@ export async function buildWorkbook(
 			.from(timeEntry)
 			.innerJoin(user, eq(timeEntry.userId, user.id))
 			.where(and(eq(timeEntry.workspaceId, workspaceId), eq(timeEntry.targetType, 'TICKET'), inPeriod))
-			.groupBy(timeEntry.ticketId, timeEntry.activityId, timeEntry.userId, user.displayName)
+			.groupBy(timeEntry.ticketId, timeEntry.activityId, timeEntry.userId, user.displayName),
+		// Sprints/versions many-to-many : requête séparée (pas de JOIN direct sur la requête ticket
+		// principale — ça ferait un fan-out qui dupliquerait les lignes en aval).
+		db
+			.select({ ticketId: ticketSprintMember.ticketId, name: sprint.name, kind: sprint.kind })
+			.from(ticketSprintMember)
+			.innerJoin(ticket, eq(ticketSprintMember.ticketId, ticket.id))
+			.innerJoin(sprint, eq(ticketSprintMember.sprintId, sprint.id))
+			.where(and(eq(ticket.workspaceId, workspaceId), isNull(ticket.archivedAt)))
 	]);
+
+	const sprintNamesByTicket = new Map<string, string[]>();
+	const versionNamesByTicket = new Map<string, string[]>();
+	for (const r of sprintMemberRows) {
+		const map = r.kind === 'VERSION' ? versionNamesByTicket : sprintNamesByTicket;
+		if (!map.has(r.ticketId)) map.set(r.ticketId, []);
+		map.get(r.ticketId)!.push(r.name);
+	}
+	const tickets = ticketRows.map((t) => ({
+		...t,
+		sprintNames: sprintNamesByTicket.get(t.id) ?? [],
+		versionNames: versionNamesByTicket.get(t.id) ?? []
+	}));
 
 	// Thème dérivé de l'accent de l'espace (fallback vert). Contraste texte auto.
 	const theme = buildTheme(wsRow[0]?.accentColor ?? '#16A34A');
@@ -403,13 +418,15 @@ export async function buildWorkbook(
 		const rae = round(resolved0.real + (testPhase ? resolved0.test : 0));
 		const consumed = ticketConsumed(t.id);
 		const projName = t.projectName ?? 'Sans projet';
-		const sprName = t.sprintName ?? 'Sans sprint';
 		projectNames.add(projName);
 		estTotal += est;
 		raeTotalSum += rae;
 		consumedTickets += consumed;
 		bumpGroup(projAgg, projName, est, rae, consumed);
-		bumpGroup(sprintAgg, sprName, est, rae, consumed);
+		// Many-to-many : un ticket sans sprint tombe dans "Sans sprint" ; un ticket qui en a
+		// plusieurs alimente chacun des buckets (chaque sous-total reste exact, ne pas les
+		// additionner entre eux — même remarque que dashboard.ts).
+		for (const sprName of t.sprintNames.length ? t.sprintNames : ['Sans sprint']) bumpGroup(sprintAgg, sprName, est, rae, consumed);
 		const stKey = t.stateLabel ? `${t.stateEmoji ?? ''} ${t.stateLabel}`.trim() : 'Sans état';
 		stateCount.set(stKey, (stateCount.get(stKey) ?? 0) + 1);
 		const perUser = consumedByTicketUser.get(t.id);
@@ -570,8 +587,8 @@ export async function buildWorkbook(
 			key: t.key,
 			title: t.title,
 			project: t.projectName ?? '',
-			sprint: t.sprintName ?? '',
-			version: t.versionName ?? '',
+			sprint: t.sprintNames.join(', '),
+			version: t.versionNames.join(', '),
 			state: t.stateLabel ? `${t.stateEmoji ?? ''} ${t.stateLabel}`.trim() : '',
 			// Personnes distinctes ayant imputé sur ce ticket (période exportée), pas de détail par activité ici.
 			assignee: [...perUser.keys()].map((uid) => memberName.get(uid) ?? '?').sort().join(', '),

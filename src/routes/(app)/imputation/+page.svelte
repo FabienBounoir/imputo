@@ -32,8 +32,8 @@
 		sublabel: string;
 		emoji: string | null;
 		nonProductive: boolean;
-		sprintName: string | null;
-		versionName: string | null;
+		sprints: { id: string; name: string }[];
+		versions: { id: string; name: string }[];
 		raeReal: number | null;
 		estimation: number | null;
 		amounts: Record<string, number>;
@@ -115,14 +115,10 @@
 		}
 	});
 
-	// Clic sur le sprint/version d'une ligne ticket : va sur Tickets & chiffrage filtré sur ce
-	// sprint/version, avec le ticket d'origine mis en surbrillance dans la liste.
-	function goToTicketFilter(row: Row, kind: 'sprint' | 'version') {
-		const t = data.tickets.find((x) => x.id === row.targetId);
-		if (!t) return;
-		const id = kind === 'sprint' ? t.sprintId : t.versionId;
-		if (!id) return;
-		goto(`/tickets?${kind}=${id}&highlight=${encodeURIComponent(t.key)}`);
+	// Clic sur un sprint/version (puce) d'une ligne ticket : va sur Tickets & chiffrage filtré sur
+	// ce sprint/version précis, avec le ticket d'origine mis en surbrillance dans la liste.
+	function goToTicketFilter(row: Row, kind: 'sprint' | 'version', id: string) {
+		goto(`/tickets?${kind}=${id}&highlight=${encodeURIComponent(row.sublabel)}`);
 	}
 
 	const today = todayInParis();
@@ -411,14 +407,18 @@
 	function onTicketDeleted() {
 		invalidateAll();
 	}
-	function onTicketSaved(ticket: { id: string; title: string; sprintId: string | null; versionId: string | null }) {
-		const sprintName = data.sprints.find((s) => s.id === ticket.sprintId)?.name ?? null;
-		const versionName = data.versions.find((v) => v.id === ticket.versionId)?.name ?? null;
+	function onTicketSaved(ticket: { id: string; title: string; sprintIds: string[]; versionIds: string[] }) {
+		const sprints = ticket.sprintIds
+			.map((id) => data.sprints.find((s) => s.id === id))
+			.filter((s): s is { id: string; name: string } => !!s);
+		const versions = ticket.versionIds
+			.map((id) => data.versions.find((v) => v.id === id))
+			.filter((v): v is { id: string; name: string } => !!v);
 		for (const row of rows) {
 			if (row.targetType === 'TICKET' && row.targetId === ticket.id) {
 				row.label = ticket.title;
-				row.sprintName = sprintName;
-				row.versionName = versionName;
+				row.sprints = sprints;
+				row.versions = versions;
 			}
 		}
 	}
@@ -536,12 +536,12 @@
 		let sublabel = '';
 		let emoji = '🎫';
 		let nonProductive = false;
-		let sprintName: string | null = null;
+		let sprints: { id: string; name: string }[] = [];
 		if (targetType === 'TICKET') {
 			const t = data.tickets.find((x) => x.id === targetId);
 			label = t?.title ?? '—';
 			sublabel = t?.key ?? '';
-			sprintName = t?.sprintName ?? null;
+			sprints = t?.sprints ?? [];
 		} else if (targetType === 'CATEGORY') {
 			const c = data.categories.find((x) => x.id === targetId);
 			label = c?.label ?? '—';
@@ -554,7 +554,7 @@
 			emoji = '📝';
 			sublabel = 'Tâche assignée';
 		}
-		// versionName / raeReal ne sont pas connus côté client : la ligne n'existe pas encore en base,
+		// versions / raeReal ne sont pas connus côté client : la ligne n'existe pas encore en base,
 		// ils se peupleront au prochain chargement (le RAE part vide et la première saisie l'écrit).
 		return {
 			rowKey,
@@ -565,8 +565,8 @@
 			sublabel,
 			emoji,
 			nonProductive,
-			sprintName,
-			versionName: null,
+			sprints,
+			versions: [],
 			raeReal: targetType === 'TICKET' && activityId ? 0 : null,
 			estimation: targetType === 'TICKET' && activityId ? 0 : null,
 			amounts
@@ -954,22 +954,22 @@
 										{:else if activityLabel(row)}
 											<span class="tag-activity">{activityLabel(row)}</span>
 										{/if}
-										{#if row.sprintName}
+										{#each row.sprints as s (s.id)}
 											<button
 												type="button"
 												class="tag-activity tag-link"
-												onclick={() => goToTicketFilter(row, 'sprint')}
-												title="Voir les tickets du sprint {row.sprintName}"
-											>{row.sprintName}</button>
-										{/if}
-										{#if row.versionName}
+												onclick={() => goToTicketFilter(row, 'sprint', s.id)}
+												title="Voir les tickets du sprint {s.name}"
+											>{s.name}</button>
+										{/each}
+										{#each row.versions as v (v.id)}
 											<button
 												type="button"
 												class="tag-activity tag-link"
-												onclick={() => goToTicketFilter(row, 'version')}
-												title="Voir les tickets de la version {row.versionName}"
-											>{row.versionName}</button>
-										{/if}
+												onclick={() => goToTicketFilter(row, 'version', v.id)}
+												title="Voir les tickets de la version {v.name}"
+											>{v.name}</button>
+										{/each}
 									</span>
 								</div>
 								{#if row.targetType === 'TICKET'}

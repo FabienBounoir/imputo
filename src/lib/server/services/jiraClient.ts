@@ -100,13 +100,12 @@ export type JiraIssue = {
 	/** fields.parent.key — sous-tâche Jira native (cf. SPECS.md §2.A), pas un Epic Link. */
 	parentKey: string | null;
 	projectName: string;
-	/** Première entrée de fixVersions (pas "versions"/affectedVersion, un champ différent — voir
-	 *  docs/SPECS-jira-sprint-version.md §3). Un ticket a rarement plusieurs fix versions en
-	 *  pratique ; la première suffit tant qu'aucune règle de choix n'a été demandée. */
-	versionName: string | null;
-	/** Dernière entrée du customfield Sprint (Jira ajoute en fin de tableau à chaque déplacement de
-	 *  sprint, donc la dernière est la plus récente) — voir parseSprintName ci-dessous. */
-	sprintName: string | null;
+	/** Toutes les entrées de fixVersions (pas "versions"/affectedVersion, un champ différent — voir
+	 *  docs/SPECS-jira-sprint-version.md §3). Un ticket peut avoir plusieurs fix versions Jira. */
+	versionNames: string[];
+	/** Toutes les entrées du customfield Sprint, mappées via parseSprintName ci-dessous — un ticket
+	 *  peut appartenir à plusieurs sprints (historique de déplacement + sprints actifs multiples). */
+	sprintNames: string[];
 };
 
 // Sprint = champ custom du plugin Jira Software (Greenhopper), spécifique à cette instance —
@@ -202,8 +201,8 @@ export async function searchJiraIssues(
 				issueTypeName: issue.fields.issuetype?.name ?? '',
 				parentKey: issue.fields.parent?.key ?? null,
 				projectName: issue.fields.project?.name ?? '',
-				versionName: issue.fields.fixVersions?.[0]?.name ?? null,
-				sprintName: sprintEntries.length > 0 ? parseSprintName(sprintEntries[sprintEntries.length - 1]) : null
+				versionNames: (issue.fields.fixVersions ?? []).map((v) => v.name).filter(Boolean),
+				sprintNames: sprintEntries.map(parseSprintName).filter((n): n is string => !!n)
 			});
 		}
 
