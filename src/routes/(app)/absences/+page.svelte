@@ -32,6 +32,15 @@
 	let imgBusy = $state(false);
 	let editingId = $state<string | null>(null);
 	let cellPopover = $state<{ top: number; left: number; displayName: string; cell: ClickableCell } | null>(null);
+
+	// Arrivée depuis "Mon imputation" (clic sur une case verrouillée par une absence, cf. ?highlight=
+	// sur imputation/+page.svelte) : amène l'absence d'origine dans le viewport, la surbrillance
+	// elle-même est en CSS pur (même principe que tickets/+page.svelte ?highlight=).
+	$effect(() => {
+		if (!data.highlightId) return;
+		document.getElementById(`abs-${data.highlightId}`)?.scrollIntoView({ block: 'center' });
+	});
+
 	const sameDay = $derived(startDate === endDate);
 	const targetsExternal = $derived(subject.startsWith('ext:'));
 	// Un membre ne déclare qu'en prévisionnel — "Congé validé" n'est atteignable que via le bouton
@@ -361,7 +370,7 @@
 		{:else}
 			<div class="abs-list">
 				{#each data.myAbsences as a (a.id)}
-					<div class="abs-item">
+					<div class="abs-item" id="abs-{a.id}" class:highlighted={a.id === data.highlightId}>
 						<span class="swatch" style={cellStyle({ type: a.type, period: a.period })}></span>
 						<span class="abs-range">{formatDayRange(a.startDate, a.endDate)}</span>
 						<span class="pill">{ABSENCE_TYPE_LABELS[a.type]}</span>
@@ -806,6 +815,20 @@
 		align-items: center;
 		gap: 10px;
 		font-size: 13.5px;
+		border-radius: var(--r-md, 10px);
+		padding: 4px 6px;
+		margin: -4px -6px;
+	}
+	/* Arrivée depuis "Mon imputation" (?highlight=, cf. l'effet plus haut) — même principe que
+	   tickets/+page.svelte tr.highlighted. */
+	.abs-item.highlighted {
+		background: color-mix(in srgb, var(--accent) 28%, transparent);
+		animation: abs-highlight-fade 2.5s ease-out 1;
+	}
+	@keyframes abs-highlight-fade {
+		from {
+			background: color-mix(in srgb, var(--accent) 50%, transparent);
+		}
 	}
 	.abs-range {
 		flex: 1;

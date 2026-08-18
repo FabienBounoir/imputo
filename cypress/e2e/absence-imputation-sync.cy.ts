@@ -83,6 +83,32 @@ describe('absences → "Mon imputation" : synchronisation automatique', () => {
 		});
 	});
 
+	it('une case verrouillée par une absence est grisée, colorée selon le type, et redirige vers Absences en surbrillance', () => {
+		cy.registerAndLogin().then(() => {
+			openDeclareWizard();
+			fillDatesAndNext(MONDAY, MONDAY);
+			selectTypeAndSubmit('CONGE_VALIDE');
+
+			cy.visit(`/imputation?w=${MONDAY}`);
+			// Fonction (pas .as()) : chaque appel requête le DOM à neuf, cf. admin-referentials.cy.ts.
+			const row = () => cy.get('table.imp').contains('tr', 'Congé');
+
+			// Fond grisé, chiffre coloré selon le type (#C00000 pour CONGE_VALIDE = rgb(192, 0, 0)) —
+			// jamais la teinte accent normalement posée sur une case remplie (.cell.val). Un vrai lien
+			// <a href>, pas un bouton + goto() (cf. absenceHref sur +page.svelte).
+			row().find('a.cell.locked').should('have.length', 1).and('have.css', 'color', 'rgb(192, 0, 0)');
+
+			// Ligne entièrement verrouillée : pas de "Supprimer la ligne", un cadenas à la place.
+			row().find('button[aria-label="Supprimer la ligne"]').should('not.exist');
+			row().find('a[aria-label="Ligne verrouillée par une absence"]').should('exist');
+
+			row().find('a.cell.locked').click();
+			cy.location('pathname').should('eq', '/absences');
+			cy.location('search').should('include', 'highlight=');
+			cy.get('.abs-item.highlighted').should('exist').and('contain.text', 'Congé validé');
+		});
+	});
+
 	it('la catégorie "Congé" (requise par le suivi des absences) ne peut pas être archivée depuis l\'admin', () => {
 		cy.registerAndLogin().then(() => {
 			cy.visit('/admin');
