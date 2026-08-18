@@ -334,12 +334,19 @@ export async function getRecentTicketIds(workspaceId: string, userId: string, li
 	return rows.map((r) => r.ticketId!).filter(Boolean);
 }
 
-/** Vérifie qu'une cible appartient bien à l'espace (anti-fuite inter-espaces). */
+/**
+ * Vérifie qu'une cible appartient bien à l'espace (anti-fuite inter-espaces). `blockLinkedCategory` :
+ * refuse une catégorie liée à un type d'absence (Congé/Formation/Hors-projet, cf.
+ * absences.ts syncAbsenceEntries) — ces lignes ne sont alimentées que depuis la page Absences,
+ * jamais manuellement (setCell/pinRow), sous peine d'entrées fantômes que la prochaine
+ * synchronisation ne saura jamais nettoyer.
+ */
 async function assertTargetInWorkspace(
 	workspaceId: string,
 	userId: string,
 	targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE',
-	targetId: string
+	targetId: string,
+	opts: { blockLinkedCategory?: boolean } = {}
 ) {
 	if (targetType === 'TICKET') {
 		const r = await db
@@ -349,10 +356,12 @@ async function assertTargetInWorkspace(
 		if (!r[0]) throw new Error('Ticket introuvable dans cet espace.');
 	} else if (targetType === 'CATEGORY') {
 		const r = await db
-			.select({ id: category.id })
+			.select({ id: category.id, linkedAbsenceType: category.linkedAbsenceType })
 			.from(category)
 			.where(and(eq(category.id, targetId), eq(category.workspaceId, workspaceId)));
 		if (!r[0]) throw new Error('Catégorie introuvable dans cet espace.');
+		if (opts.blockLinkedCategory && r[0].linkedAbsenceType)
+			throw new Error('Cette catégorie est alimentée automatiquement depuis les absences validées — modifiez-la depuis la page Absences.');
 	} else {
 		// Un objectif n'est imputable que par la personne à qui il a été assigné.
 		const r = await db
@@ -381,7 +390,7 @@ export async function setCell(
 		amount: number;
 	}
 ) {
-	await assertTargetInWorkspace(workspaceId, userId, input.targetType, input.targetId);
+	await assertTargetInWorkspace(workspaceId, userId, input.targetType, input.targetId, { blockLinkedCategory: true });
 
 	const ticketId = input.targetType === 'TICKET' ? input.targetId : null;
 	const categoryId = input.targetType === 'CATEGORY' ? input.targetId : null;
@@ -658,7 +667,7 @@ export async function pinRow(
 		lastDay: string;
 	}
 ) {
-	await assertTargetInWorkspace(workspaceId, userId, input.targetType, input.targetId);
+	await assertTargetInWorkspace(workspaceId, userId, input.targetType, input.targetId, { blockLinkedCategory: true });
 	const existing = await db
 		.select({ id: imputationPin.id })
 		.from(imputationPin)

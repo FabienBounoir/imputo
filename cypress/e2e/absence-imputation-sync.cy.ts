@@ -109,6 +109,22 @@ describe('absences → "Mon imputation" : synchronisation automatique', () => {
 		});
 	});
 
+	it('le sélecteur "+ Ajouter" de Mon imputation n\'propose plus les catégories liées à une absence', () => {
+		cy.registerAndLogin().then(() => {
+			cy.visit('/imputation');
+			cy.clickReliably(() => cy.get('.tp-trigger'), '.tp-search');
+
+			// MCO (catégorie non liée) doit rester proposée — seules Congé/Formation/Hors-projet, alimentées
+			// uniquement depuis les absences validées (cf. syncAbsenceEntries), sont retirées du picker.
+			cy.contains('.tp-section', 'Catégories').within(() => {
+				cy.contains('.tp-item', 'MCO').should('exist');
+				cy.contains('.tp-item', 'Congé').should('not.exist');
+				cy.contains('.tp-item', 'Formation').should('not.exist');
+				cy.contains('.tp-item', 'Hors-projet').should('not.exist');
+			});
+		});
+	});
+
 	it('la catégorie "Congé" (requise par le suivi des absences) ne peut pas être archivée depuis l\'admin', () => {
 		cy.registerAndLogin().then(() => {
 			cy.visit('/admin');

@@ -23,7 +23,10 @@ describe('getDashboard', () => {
 			amount: 2
 		});
 
-		const conge = (await listCategories(ws.workspaceId)).find((c) => c.label === 'Congé')!;
+		// 'Congé' est désormais alimenté uniquement depuis les absences validées (cf. imputation.ts,
+		// assertTargetInWorkspace(blockLinkedCategory)) — 'Jour férié' sert ici juste d'exemple de
+		// catégorie non productive non liée, ce qui est tout ce dont ce test a besoin.
+		const conge = (await listCategories(ws.workspaceId)).find((c) => c.label === 'Jour férié')!;
 		await setCell(ws.workspaceId, ws.userId, {
 			targetType: 'CATEGORY',
 			targetId: conge.id,
@@ -77,8 +80,9 @@ describe('getDashboard', () => {
 		});
 
 		// Une catégorie non productive peut être taguée avec une activité — rien ne l'en empêche à la
-		// saisie (cf. imputation/+page.svelte, formulaire d'ajout de ligne).
-		const conge = (await listCategories(ws.workspaceId)).find((c) => c.label === 'Congé')!;
+		// saisie (cf. imputation/+page.svelte, formulaire d'ajout de ligne). 'Jour férié' plutôt que
+		// 'Congé' : cette dernière est désormais réservée aux absences validées (blockLinkedCategory).
+		const conge = (await listCategories(ws.workspaceId)).find((c) => c.label === 'Jour férié')!;
 		await setCell(ws.workspaceId, ws.userId, {
 			targetType: 'CATEGORY',
 			targetId: conge.id,
