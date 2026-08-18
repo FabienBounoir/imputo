@@ -11,6 +11,7 @@ import {
 } from './imputation';
 import { createTicket } from './tickets';
 import { listCategories, createActivity, listActivities } from './params';
+import { createAbsenceFor } from './absences';
 import { makeWorkspace } from './test-helpers';
 
 const MONDAY = '2026-06-22'; // lundi (même date que isolation.test.ts)
@@ -120,6 +121,104 @@ describe('deleteRow', () => {
 		});
 
 		expect(await listPinnedRows(workspaceId, userId, WEEK.firstDay, WEEK.lastDay)).toHaveLength(0);
+	});
+});
+
+describe('cases verrouillées par une absence (cf. absences.ts syncAbsenceEntries)', () => {
+	async function makeLockedCongeCell(prefix: string) {
+		const { workspaceId, userId } = await makeWorkspace(prefix);
+		await createAbsenceFor(
+			workspaceId,
+			{ userId },
+			{ startDate: MONDAY, endDate: MONDAY, type: 'CONGE_VALIDE', period: 'FULL' }
+		);
+		const [conge] = (await listCategories(workspaceId)).filter((c) => c.label === 'Congé');
+		return { workspaceId, userId, conge };
+	}
+
+	it('getWeek expose le jour verrouillé (lockedDays) avec l\'id de l\'absence source, et le type d\'absence de la ligne', async () => {
+		const { workspaceId, userId, conge } = await makeLockedCongeCell('lock-read');
+
+		const week = await getWeek(workspaceId, userId, MONDAY);
+		const row = week.rows.find((r) => r.targetId === conge.id)!;
+		expect(row.lockedDays[MONDAY]).toEqual(expect.any(String));
+		expect(row.lockedDays[FRIDAY]).toBeUndefined();
+		expect(row.absenceType).toBe('CONGE_VALIDE');
+	});
+
+	it("absenceType reste null sur une ligne catégorie sans lien avec une absence", async () => {
+		const { workspaceId, userId } = await makeWorkspace('lock-no-link');
+		const mco = (await listCategories(workspaceId)).find((c) => c.label === 'MCO')!;
+		await setCell(workspaceId, userId, { targetType: 'CATEGORY', targetId: mco.id, activityId: null, day: MONDAY, amount: 1 });
+
+		const week = await getWeek(workspaceId, userId, MONDAY);
+		const row = week.rows.find((r) => r.targetId === mco.id)!;
+		expect(row.absenceType).toBeNull();
+		expect(row.lockedDays[MONDAY]).toBeUndefined();
+	});
+
+	it('setCell refuse de modifier une case verrouillée', async () => {
+		const { workspaceId, userId, conge } = await makeLockedCongeCell('lock-setcell');
+
+		await expect(
+			setCell(workspaceId, userId, { targetType: 'CATEGORY', targetId: conge.id, activityId: null, day: MONDAY, amount: 0.5 })
+		).rejects.toThrow();
+		// Idem pour la remise à zéro (suppression) — même garde-fou.
+		await expect(
+			setCell(workspaceId, userId, { targetType: 'CATEGORY', targetId: conge.id, activityId: null, day: MONDAY, amount: 0 })
+		).rejects.toThrow();
+
+		const week = await getWeek(workspaceId, userId, MONDAY);
+		expect(week.rows.find((r) => r.targetId === conge.id)?.amounts[MONDAY]).toBe(1);
+	});
+
+	it("setCell reste utilisable sur un jour non verrouillé de la même ligne", async () => {
+		const { workspaceId, userId, conge } = await makeLockedCongeCell('lock-setcell-other-day');
+
+		await setCell(workspaceId, userId, { targetType: 'CATEGORY', targetId: conge.id, activityId: null, day: FRIDAY, amount: 1 });
+
+		const week = await getWeek(workspaceId, userId, MONDAY);
+		const row = week.rows.find((r) => r.targetId === conge.id)!;
+		expect(row.amounts[MONDAY]).toBe(1);
+		expect(row.amounts[FRIDAY]).toBe(1);
+	});
+
+	it("deleteRow retire les cases non verrouillées mais laisse intacte celle de l'absence", async () => {
+		const { workspaceId, userId, conge } = await makeLockedCongeCell('lock-deleterow');
+		// Une case manuelle sur un autre jour de la même ligne, à côté de la case verrouillée.
+		await setCell(workspaceId, userId, { targetType: 'CATEGORY', targetId: conge.id, activityId: null, day: FRIDAY, amount: 1 });
+
+		await deleteRow(workspaceId, userId, { targetType: 'CATEGORY', targetId: conge.id, activityId: null, fromISO: MONDAY, toISO: FRIDAY });
+
+		const week = await getWeek(workspaceId, userId, MONDAY);
+		const row = week.rows.find((r) => r.targetId === conge.id);
+		// La ligne existe encore (portée par la case verrouillée), mais la case manuelle a disparu.
+		expect(row?.amounts[MONDAY]).toBe(1);
+		expect(row?.amounts[FRIDAY]).toBeUndefined();
+	});
+
+	it("reassignActivity ignore les cases verrouillées et ne déplace que les cases manuelles", async () => {
+		const { workspaceId, userId, conge } = await makeLockedCongeCell('lock-reassign');
+		await setCell(workspaceId, userId, { targetType: 'CATEGORY', targetId: conge.id, activityId: null, day: FRIDAY, amount: 1 });
+		await createActivity(workspaceId, 'Astreinte');
+		const activity = (await listActivities(workspaceId)).find((a) => a.label === 'Astreinte')!;
+
+		await reassignActivity(workspaceId, userId, {
+			targetType: 'CATEGORY',
+			targetId: conge.id,
+			fromActivityId: null,
+			toActivityId: activity.id,
+			fromISO: MONDAY,
+			toISO: FRIDAY
+		});
+
+		const week = await getWeek(workspaceId, userId, MONDAY);
+		// La case verrouillée reste sur la ligne sans activité (id d'origine, activityId null).
+		const lockedRow = week.rows.find((r) => r.targetId === conge.id && r.activityId === null);
+		expect(lockedRow?.amounts[MONDAY]).toBe(1);
+		// La case manuelle a bien suivi vers la nouvelle activité.
+		const movedRow = week.rows.find((r) => r.targetId === conge.id && r.activityId === activity.id);
+		expect(movedRow?.amounts[FRIDAY]).toBe(1);
 	});
 });
 

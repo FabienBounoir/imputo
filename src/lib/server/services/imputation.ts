@@ -14,6 +14,7 @@ import {
 } from '$lib/server/db';
 import { num, round } from './calc';
 import { toISODate, workWeek, parseISODate } from '$lib/utils/date';
+import type { AbsenceType } from '$lib/absenceTypes';
 
 export type ImputationCell = { day: string; amount: number };
 export type ImputationRow = {
@@ -36,6 +37,15 @@ export type ImputationRow = {
 	/** Estimé de la paire (ticket, activité) — même granularité que raeReal, modifiable par tous. */
 	estimation: number | null;
 	amounts: Record<string, number>; // day ISO → amount
+	/**
+	 * Jours verrouillés : day ISO → id de l'absence source (cf. absences.ts syncAbsenceEntries).
+	 * Non modifiable/supprimable depuis "Mon imputation" — seule l'absence source y change quelque
+	 * chose (cf. setCell/deleteRow/reassignActivity ci-dessous).
+	 */
+	lockedDays: Record<string, string>;
+	/** Type d'absence lié à la catégorie de cette ligne (cf. category.linkedAbsenceType) — pilote la
+	 * couleur des cases verrouillées, null pour une ligne ticket/tâche ou une catégorie non liée. */
+	absenceType: AbsenceType | null;
 	total: number;
 };
 
@@ -60,6 +70,7 @@ type RawEntry = {
 	categoryId: string | null;
 	objectiveId: string | null;
 	activityId: string | null;
+	absenceId: string | null;
 	day: string;
 	amount: string | number | null;
 	ticketKey: string | null;
@@ -68,6 +79,7 @@ type RawEntry = {
 	versionName: string | null;
 	categoryLabel: string | null;
 	categoryKind: string | null;
+	categoryLinkedAbsenceType: AbsenceType | null;
 	objectiveLabel: string | null;
 	activityLabel: string | null;
 };
@@ -94,6 +106,7 @@ async function queryEntries(workspaceId: string, firstDay: string, lastDay: stri
 			categoryId: timeEntry.categoryId,
 			objectiveId: timeEntry.objectiveId,
 			activityId: timeEntry.activityId,
+			absenceId: timeEntry.absenceId,
 			day: timeEntry.day,
 			amount: timeEntry.amount,
 			ticketKey: ticket.key,
@@ -102,6 +115,7 @@ async function queryEntries(workspaceId: string, firstDay: string, lastDay: stri
 			versionName: versionSprint.name,
 			categoryLabel: category.label,
 			categoryKind: category.kind,
+			categoryLinkedAbsenceType: category.linkedAbsenceType,
 			objectiveLabel: weeklyObjective.label,
 			activityLabel: activity.label
 		})
@@ -149,6 +163,8 @@ function rowSkeleton(e: RawEntry, targetId: string, key: string): ImputationRow 
 		raeReal: null,
 		estimation: null,
 		amounts: {},
+		lockedDays: {},
+		absenceType: e.targetType === 'CATEGORY' ? e.categoryLinkedAbsenceType : null,
 		total: 0
 	};
 }
@@ -181,6 +197,7 @@ export async function getTimesheet(
 		const r = rows.get(key)!;
 		const amount = num(e.amount);
 		r.amounts[e.day] = amount;
+		if (e.absenceId) r.lockedDays[e.day] = e.absenceId;
 		r.total = round(r.total + amount);
 		dayTotals[e.day] = round(dayTotals[e.day] + amount);
 	}
@@ -232,6 +249,7 @@ export async function getTeamTimesheet(workspaceId: string, days: string[]): Pro
 		const r = m.rows.get(key)!;
 		const amount = num(e.amount);
 		r.amounts[e.day] = amount;
+		if (e.absenceId) r.lockedDays[e.day] = e.absenceId;
 		r.total = round(r.total + amount);
 		m.dayTotals[e.day] = round(m.dayTotals[e.day] + amount);
 		dayTotals[e.day] = round(dayTotals[e.day] + amount);
@@ -384,7 +402,10 @@ export async function setCell(
 		input.activityId ? eq(timeEntry.activityId, input.activityId) : undefined
 	);
 
-	const existing = await db.select({ id: timeEntry.id }).from(timeEntry).where(match);
+	const existing = await db.select({ id: timeEntry.id, absenceId: timeEntry.absenceId }).from(timeEntry).where(match);
+	// Case verrouillée : générée par une absence validée (cf. absences.ts syncAbsenceEntries), à
+	// modifier uniquement depuis la page Absences — sinon la prochaine modif de l'absence l'écraserait.
+	if (existing[0]?.absenceId) throw new Error("Cette case vient d'une absence validée — modifiez-la depuis la page Absences.");
 
 	if (input.amount <= 0) {
 		if (existing[0]) await db.delete(timeEntry).where(eq(timeEntry.id, existing[0].id));
@@ -479,7 +500,10 @@ export async function reassignActivity(
 				gte(timeEntry.day, input.fromISO),
 				lte(timeEntry.day, input.toISO),
 				targetMatch,
-				input.fromActivityId ? eq(timeEntry.activityId, input.fromActivityId) : isNull(timeEntry.activityId)
+				input.fromActivityId ? eq(timeEntry.activityId, input.fromActivityId) : isNull(timeEntry.activityId),
+				// Verrouillées (cf. deleteRow) : une absence validée reste sur son activité d'origine
+				// (null), la réassignation ne doit pas y toucher.
+				isNull(timeEntry.absenceId)
 			)
 		);
 	if (rows.length === 0) return;
@@ -547,7 +571,11 @@ export async function deleteRow(
 				gte(timeEntry.day, input.fromISO),
 				lte(timeEntry.day, input.toISO),
 				targetMatch,
-				input.activityId ? eq(timeEntry.activityId, input.activityId) : isNull(timeEntry.activityId)
+				input.activityId ? eq(timeEntry.activityId, input.activityId) : isNull(timeEntry.activityId),
+				// Verrouillées : générées par une absence validée (cf. absences.ts), à retirer uniquement
+				// depuis la page Absences — sinon la prochaine modif de l'absence les recréerait quand
+				// même, donnant l'impression que la suppression n'a pas marché.
+				isNull(timeEntry.absenceId)
 			)
 		);
 	// La poubelle est le seul moyen de faire disparaître une ligne épinglée (cf. pinRow) — sans ça,

@@ -76,7 +76,10 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		nextAnchor: addMonths(anchorISO, span),
 		todayISO: todayInParis(),
 		canManageOthers,
-		selfId: user.id
+		selfId: user.id,
+		// Arrivée depuis "Mon imputation" (clic sur une case verrouillée par une absence, cf.
+		// ?highlight= sur imputation/+page.svelte) : id à surligner dans "Mes absences".
+		highlightId: url.searchParams.get('highlight') ?? undefined
 	};
 };
 

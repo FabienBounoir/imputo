@@ -19,7 +19,7 @@
 	import ExportModal from '$lib/components/ExportModal.svelte';
 	import TargetPicker from '$lib/components/TargetPicker.svelte';
 	import TicketEditModal from '$lib/components/TicketEditModal.svelte';
-	import { ABSENCE_TYPE_COLORS, ABSENCE_TYPE_LABELS, ABSENCE_PERIOD_LABELS } from '$lib/absenceTypes';
+	import { ABSENCE_TYPE_COLORS, ABSENCE_TYPE_LABELS, ABSENCE_PERIOD_LABELS, type AbsenceType } from '$lib/absenceTypes';
 
 	let { data } = $props();
 
@@ -37,6 +37,10 @@
 		raeReal: number | null;
 		estimation: number | null;
 		amounts: Record<string, number>;
+		/** Jours issus d'une absence validée (day ISO → id de l'absence) — non éditables ici. */
+		lockedDays: Record<string, string>;
+		/** Type d'absence lié à la catégorie de cette ligne — pilote la couleur des cases verrouillées. */
+		absenceType: AbsenceType | null;
 	};
 
 	const TASK_COL_W = 320;
@@ -270,6 +274,17 @@
 		setAmount(row, day, next);
 	}
 
+	function hasLockedDay(row: Row) {
+		return Object.keys(row.lockedDays).length > 0;
+	}
+
+	/** Case/ligne verrouillée (cf. lockedDays) : lien vers l'absence source sur la page Absences —
+	 * un vrai `<a href>` plutôt qu'un `goto()` programmatique (qui n'aboutit pas de façon fiable
+	 * depuis un handler délégué Svelte 5, cf. le même choix sur les flèches ‹›  de période). */
+	function absenceHref(absenceId: string) {
+		return `/absences?highlight=${encodeURIComponent(absenceId)}`;
+	}
+
 	// --- Saisie clavier ---
 	const MOVES: Record<string, [number, number]> = {
 		ArrowRight: [0, 1],
@@ -365,6 +380,12 @@
 	// affichée avec la nouvelle sélection pendant que le backend répond.
 	const isNavigating = $derived(!!navigating.to);
 	function onCellKey(e: KeyboardEvent, ri: number, di: number, row: Row, day: string) {
+		// Verrouillée (lien <a> natif, cf. absenceHref) : les touches d'édition ne font rien — Enter
+		// suit le lien nativement, la navigation (flèches) reste normale, gérée plus bas.
+		if (row.lockedDays[day] && (e.key in KEYMAP || e.key === 'Backspace' || e.key === 'Delete')) {
+			e.preventDefault();
+			return;
+		}
 		if (e.key in KEYMAP) {
 			e.preventDefault();
 			setAmount(row, day, KEYMAP[e.key]);
@@ -572,7 +593,9 @@
 			versionName: null,
 			raeReal: targetType === 'TICKET' && activityId ? 0 : null,
 			estimation: targetType === 'TICKET' && activityId ? 0 : null,
-			amounts
+			amounts,
+			lockedDays: {},
+			absenceType: null
 		};
 	}
 
@@ -986,9 +1009,20 @@
 									</button>
 								{/if}
 								{#if !data.readOnly}
-									<button class="row-del" onclick={() => requestDeleteRow(row)} aria-label="Supprimer la ligne">
-										<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg>
-									</button>
+									{#if hasLockedDay(row)}
+										<a
+											class="row-del row-del-locked"
+											href={absenceHref(Object.values(row.lockedDays)[0])}
+											aria-label="Ligne verrouillée par une absence"
+											title="Cette ligne contient des jours issus d'une absence validée — à retirer depuis la page Absences."
+										>
+											<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+										</a>
+									{:else}
+										<button class="row-del" onclick={() => requestDeleteRow(row)} aria-label="Supprimer la ligne">
+											<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg>
+										</button>
+									{/if}
 								{/if}
 							</div>
 						</td>
@@ -1035,9 +1069,20 @@
 							</td>
 						{/if}
 						{#each days as d, di (d)}
+							{@const lockedAbsenceId = row.lockedDays[d]}
 							<td class="day" class:today={d === today} class:wk-end={weekBoundaries.has(d)}>
 								{#if data.readOnly}
 									<span class="cell ro" class:val={(row.amounts[d] ?? 0) > 0} class:empty={!(row.amounts[d] ?? 0)}>{fmt(row.amounts[d])}</span>
+								{:else if lockedAbsenceId}
+									<a
+										class="cell locked"
+										class:val={(row.amounts[d] ?? 0) > 0}
+										data-cell="{ri}-{di}"
+										href={absenceHref(lockedAbsenceId)}
+										style={row.absenceType ? `--absence-color:${ABSENCE_TYPE_COLORS[row.absenceType]}` : undefined}
+										onkeydown={(e) => onCellKey(e, ri, di, row, d)}
+										title="Imputé automatiquement depuis une absence validée — à modifier depuis la page Absences."
+									>{fmt(row.amounts[d])}</a>
 								{:else}
 									<button
 										class="cell"
@@ -1737,6 +1782,11 @@
 		background: color-mix(in srgb, var(--danger, #c0392b) 12%, transparent);
 		color: var(--danger, #c0392b);
 	}
+	.row-del-locked:hover,
+	.row-del-locked:focus-visible {
+		background: color-mix(in srgb, var(--text-mute) 18%, transparent);
+		color: var(--text);
+	}
 	.row-edit:hover,
 	.row-edit:focus-visible {
 		background: var(--accent-tint-2);
@@ -1780,6 +1830,25 @@
 	}
 	.cell.ro {
 		cursor: default;
+	}
+	/* Verrouillée par une absence validée (cf. Row.lockedDays) : fond grisé (jamais la teinte accent
+	   de .cell.val), mais le chiffre reprend la couleur du type d'absence (--absence-color, posée en
+	   inline style) pour identifier le type d'un coup d'œil — repli sur le gris si l'absence n'a pas
+	   de type résolu (ne devrait pas arriver, cf. server). Répété sous le sélecteur `[data-theme=
+	   'dark']` du dessus (même spécificité que lui, 3 sélecteurs) : sans ça, la case locked+val garde
+	   la teinte accent en thème sombre, `:global([data-theme='dark']) .cell.val` étant plus spécifique
+	   qu'un simple `.cell.locked`. */
+	.cell.locked,
+	:global([data-theme='dark']) .cell.locked {
+		color: var(--absence-color, var(--text-mute));
+		background: color-mix(in srgb, var(--text-mute) 12%, transparent);
+		border-color: transparent;
+		text-decoration: none;
+	}
+	a.cell.locked:hover {
+		border-color: var(--text-mute);
+		background: color-mix(in srgb, var(--text-mute) 20%, transparent);
+		transform: none;
 	}
 	.team-toggle {
 		display: flex;
