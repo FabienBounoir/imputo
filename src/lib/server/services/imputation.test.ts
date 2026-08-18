@@ -13,6 +13,7 @@ import { createTicket } from './tickets';
 import { listCategories, createActivity, listActivities } from './params';
 import { createAbsenceFor } from './absences';
 import { makeWorkspace } from './test-helpers';
+import { db, timeEntry } from '$lib/server/db';
 
 const MONDAY = '2026-06-22'; // lundi (même date que isolation.test.ts)
 const FRIDAY = '2026-06-26'; // vendredi de la même semaine
@@ -24,7 +25,9 @@ const NEXT_WEEK = { firstDay: NEXT_MONDAY, lastDay: NEXT_FRIDAY };
 describe('setCell / getWeek', () => {
 	it('pose une imputation sur une catégorie et la retrouve dans la semaine', async () => {
 		const { workspaceId, userId } = await makeWorkspace();
-		const [category] = await listCategories(workspaceId);
+		// 'MCO', pas juste la première catégorie (alphabétique = 'Congé', désormais réservée aux
+		// absences validées — cf. assertTargetInWorkspace(blockLinkedCategory)).
+		const category = (await listCategories(workspaceId)).find((c) => c.label === 'MCO')!;
 
 		await setCell(workspaceId, userId, {
 			targetType: 'CATEGORY',
@@ -43,7 +46,9 @@ describe('setCell / getWeek', () => {
 
 	it('un amount <= 0 supprime la cellule existante au lieu de la mettre à 0', async () => {
 		const { workspaceId, userId } = await makeWorkspace();
-		const [category] = await listCategories(workspaceId);
+		// 'MCO', pas juste la première catégorie (alphabétique = 'Congé', désormais réservée aux
+		// absences validées — cf. assertTargetInWorkspace(blockLinkedCategory)).
+		const category = (await listCategories(workspaceId)).find((c) => c.label === 'MCO')!;
 		const cell = { targetType: 'CATEGORY' as const, targetId: category.id, activityId: null, day: MONDAY };
 
 		await setCell(workspaceId, userId, { ...cell, amount: 1.5 });
@@ -55,7 +60,9 @@ describe('setCell / getWeek', () => {
 
 	it('un second setCell le même jour met à jour la cellule (upsert), pas de doublon', async () => {
 		const { workspaceId, userId } = await makeWorkspace();
-		const [category] = await listCategories(workspaceId);
+		// 'MCO', pas juste la première catégorie (alphabétique = 'Congé', désormais réservée aux
+		// absences validées — cf. assertTargetInWorkspace(blockLinkedCategory)).
+		const category = (await listCategories(workspaceId)).find((c) => c.label === 'MCO')!;
 		const cell = { targetType: 'CATEGORY' as const, targetId: category.id, activityId: null, day: MONDAY };
 
 		await setCell(workspaceId, userId, { ...cell, amount: 1 });
@@ -84,7 +91,9 @@ describe('setCell / getWeek', () => {
 describe('deleteRow', () => {
 	it('supprime toutes les imputations de la ligne sur la période donnée', async () => {
 		const { workspaceId, userId } = await makeWorkspace();
-		const [category] = await listCategories(workspaceId);
+		// 'MCO', pas juste la première catégorie (alphabétique = 'Congé', désormais réservée aux
+		// absences validées — cf. assertTargetInWorkspace(blockLinkedCategory)).
+		const category = (await listCategories(workspaceId)).find((c) => c.label === 'MCO')!;
 
 		await setCell(workspaceId, userId, {
 			targetType: 'CATEGORY',
@@ -107,7 +116,9 @@ describe('deleteRow', () => {
 
 	it('retire aussi l’épingle de la ligne (cf. pinRow) — sinon elle reviendrait au prochain chargement malgré la suppression', async () => {
 		const { workspaceId, userId } = await makeWorkspace();
-		const [category] = await listCategories(workspaceId);
+		// 'MCO', pas juste la première catégorie (alphabétique = 'Congé', désormais réservée aux
+		// absences validées — cf. assertTargetInWorkspace(blockLinkedCategory)).
+		const category = (await listCategories(workspaceId)).find((c) => c.label === 'MCO')!;
 
 		await pinRow(workspaceId, userId, { targetType: 'CATEGORY', targetId: category.id, activityId: null, ...WEEK });
 		expect(await listPinnedRows(workspaceId, userId, WEEK.firstDay, WEEK.lastDay)).toHaveLength(1);
@@ -172,21 +183,33 @@ describe('cases verrouillées par une absence (cf. absences.ts syncAbsenceEntrie
 		expect(week.rows.find((r) => r.targetId === conge.id)?.amounts[MONDAY]).toBe(1);
 	});
 
-	it("setCell reste utilisable sur un jour non verrouillé de la même ligne", async () => {
+	it("setCell refuse toute saisie manuelle sur une catégorie liée à un type d'absence, même un jour non verrouillé", async () => {
 		const { workspaceId, userId, conge } = await makeLockedCongeCell('lock-setcell-other-day');
 
-		await setCell(workspaceId, userId, { targetType: 'CATEGORY', targetId: conge.id, activityId: null, day: FRIDAY, amount: 1 });
+		await expect(
+			setCell(workspaceId, userId, { targetType: 'CATEGORY', targetId: conge.id, activityId: null, day: FRIDAY, amount: 1 })
+		).rejects.toThrow();
 
 		const week = await getWeek(workspaceId, userId, MONDAY);
 		const row = week.rows.find((r) => r.targetId === conge.id)!;
 		expect(row.amounts[MONDAY]).toBe(1);
-		expect(row.amounts[FRIDAY]).toBe(1);
+		expect(row.amounts[FRIDAY]).toBeUndefined();
 	});
 
-	it("deleteRow retire les cases non verrouillées mais laisse intacte celle de l'absence", async () => {
+	it("pinRow refuse d'épingler une catégorie liée à un type d'absence", async () => {
+		const { workspaceId, userId, conge } = await makeLockedCongeCell('lock-pinrow');
+
+		await expect(
+			pinRow(workspaceId, userId, { targetType: 'CATEGORY', targetId: conge.id, activityId: null, firstDay: MONDAY, lastDay: FRIDAY })
+		).rejects.toThrow();
+	});
+
+	it("deleteRow retire une case manuelle historique mais laisse intacte celle de l'absence", async () => {
 		const { workspaceId, userId, conge } = await makeLockedCongeCell('lock-deleterow');
-		// Une case manuelle sur un autre jour de la même ligne, à côté de la case verrouillée.
-		await setCell(workspaceId, userId, { targetType: 'CATEGORY', targetId: conge.id, activityId: null, day: FRIDAY, amount: 1 });
+		// Une case manuelle sur un autre jour de la même ligne, à côté de la case verrouillée — insérée
+		// directement (setCell refuse désormais toute saisie manuelle sur cette catégorie) pour simuler
+		// une entrée antérieure à ce garde-fou, que deleteRow doit pouvoir nettoyer.
+		await db.insert(timeEntry).values({ workspaceId, userId, targetType: 'CATEGORY', categoryId: conge.id, day: FRIDAY, amount: '1' });
 
 		await deleteRow(workspaceId, userId, { targetType: 'CATEGORY', targetId: conge.id, activityId: null, fromISO: MONDAY, toISO: FRIDAY });
 
@@ -199,7 +222,9 @@ describe('cases verrouillées par une absence (cf. absences.ts syncAbsenceEntrie
 
 	it("reassignActivity ignore les cases verrouillées et ne déplace que les cases manuelles", async () => {
 		const { workspaceId, userId, conge } = await makeLockedCongeCell('lock-reassign');
-		await setCell(workspaceId, userId, { targetType: 'CATEGORY', targetId: conge.id, activityId: null, day: FRIDAY, amount: 1 });
+		// Idem deleteRow ci-dessus : insérée directement, setCell refusant désormais toute saisie
+		// manuelle sur une catégorie liée à un type d'absence.
+		await db.insert(timeEntry).values({ workspaceId, userId, targetType: 'CATEGORY', categoryId: conge.id, day: FRIDAY, amount: '1' });
 		await createActivity(workspaceId, 'Astreinte');
 		const activity = (await listActivities(workspaceId)).find((a) => a.label === 'Astreinte')!;
 

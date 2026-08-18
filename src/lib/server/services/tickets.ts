@@ -20,6 +20,7 @@ import {
 } from '$lib/server/db';
 import { isManagerOrAdmin } from './workspaces';
 import { logChange } from './changeLog';
+import type { AbsenceType } from '$lib/absenceTypes';
 import {
 	num,
 	round,
@@ -581,7 +582,7 @@ export type RefData = {
 	versions: { id: string; name: string }[];
 	projects: { id: string; name: string }[];
 	activities: { id: string; label: string }[];
-	categories: { id: string; label: string; kind: string }[];
+	categories: { id: string; label: string; kind: string; linkedAbsenceType: AbsenceType | null }[];
 	members: { id: string; displayName: string }[];
 	ticketGroups: { id: string; label: string }[];
 };
@@ -619,7 +620,7 @@ export async function getRefData(workspaceId: string, sortActivitiesAlpha = fals
 			.where(and(eq(activity.workspaceId, workspaceId), isNull(activity.archivedAt)))
 			.orderBy(activity.sortOrder),
 		db
-			.select({ id: category.id, label: category.label, kind: category.kind })
+			.select({ id: category.id, label: category.label, kind: category.kind, linkedAbsenceType: category.linkedAbsenceType })
 			.from(category)
 			.where(and(eq(category.workspaceId, workspaceId), isNull(category.archivedAt))),
 		db

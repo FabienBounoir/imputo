@@ -1121,7 +1121,7 @@
 			<TargetPicker
 				bind:value={pickTarget}
 				tickets={data.tickets}
-				categories={data.categories}
+				categories={data.categories.filter((c) => !c.linkedAbsenceType)}
 				recentTicketIds={data.recentTicketIds}
 				versions={data.versions}
 				objectives={data.weeklyObjectives}
