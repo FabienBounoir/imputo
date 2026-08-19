@@ -31,6 +31,7 @@ import {
 	activity,
 	category,
 	project,
+	ssp,
 	sprint,
 	ticket,
 	ticketActivityRae,
@@ -111,6 +112,13 @@ function buildPersonas(usersPerWorkspace: number, wsSuffix: string): Persona[] {
 // rotation. weeks=15 (défaut) reproduit exactement les 8 sprints historiques. ----------
 const VERSION_NAMES = ['V1.0', 'V1.1', 'V1.2', 'V1.3'];
 const PROJECT_NAMES = ['Mobile', 'Web', 'Backend'] as const;
+const SSP_DEFS = [
+	{ code: '8364BEB5354', label: 'Site Internet', budget: 350 },
+	{ code: '123DBS34842', label: 'Appli Mob', budget: 213.75 },
+	{ code: '774FCA9021', label: 'AMOE', budget: 100 },
+	{ code: '5182ECD7730', label: 'TNR', budget: 7 },
+	{ code: '6093AFB1146', label: 'Qualification', budget: 458 }
+];
 
 function buildSprintDefs(weeks: number) {
 	const sprintCount = Math.max(1, Math.round(weeks / 2));
@@ -266,6 +274,13 @@ async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, pe
 	const activityByLabel = new Map(insertedActivities.map((a) => [a.label, a]));
 	const categoryByLabel = new Map(insertedCategories.map((c) => [c.label, c]));
 
+	// Codes SSP réalistes (format Sopra Steria) — la plupart des tickets en portent un désormais
+	// qu'il s'agit d'un référentiel : la clôture mensuelle n'a rien à montrer sans eux.
+	const insertedSsps = await db
+		.insert(ssp)
+		.values(SSP_DEFS.map((d) => ({ workspaceId: ws.id, code: d.code, label: d.label, budgetDays: String(d.budget) })))
+		.returning();
+
 	const insertedProjects = await db
 		.insert(project)
 		.values(PROJECT_NAMES.map((name) => ({ workspaceId: ws.id, name })))
@@ -392,7 +407,7 @@ async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, pe
 				// pour un ticket imputé : cf. la passe RAE par activité).
 				raeReal: String(t.estimationReal),
 				raeTest: t.estimationTest != null ? String(t.estimationTest) : null,
-				sspCode: chance(0.15) ? `SSP-${t.key.split('-')[1].padStart(3, '0')}` : null,
+				sspId: chance(0.85) ? rand(insertedSsps).id : null,
 				estimationPrev: chance(0.2) ? String(round(t.estimationReal * 0.9)) : null,
 				enveloppeTotale: chance(0.2) ? String(round(t.estimationReal * 1.3)) : null,
 				raeUpdatedAt: new Date()

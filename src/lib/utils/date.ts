@@ -137,6 +137,23 @@ export function countWorkdaysNonHoliday(fromISO: string, toISO: string): number 
 	return count;
 }
 
+/**
+ * Jours fériés FR tombant un jour ouvré entre deux dates ISO incluses — donc exactement ceux que
+ * `countWorkdaysNonHoliday` a retirés du décompte. Sert à montrer d'où vient le nombre de jours
+ * ouvrés d'un mois (cf. clôture mensuelle) : un férié en week-end ne change rien et n'a rien à
+ * faire dans cette liste.
+ */
+export function workdayHolidaysBetween(fromISO: string, toISO: string): string[] {
+	const from = parseISODate(fromISO);
+	const to = parseISODate(toISO);
+	const out: string[] = [];
+	for (let d = from; d <= to; d = addDays(d, 1)) {
+		const dow = d.getUTCDay();
+		if (dow !== 0 && dow !== 6 && isPublicHolidayFR(toISODate(d))) out.push(toISODate(d));
+	}
+	return out;
+}
+
 /** Numéro de semaine ISO. */
 export function isoWeek(d: Date): number {
 	const date = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
@@ -176,6 +193,25 @@ export function monthBounds(dateISO: string): { start: string; end: string } {
 	const y = d.getUTCFullYear();
 	const m = d.getUTCMonth();
 	return { start: toISODate(new Date(Date.UTC(y, m, 1))), end: toISODate(new Date(Date.UTC(y, m + 1, 0))) };
+}
+
+/** Options d'un sélecteur de mois : mois courant + les `back` précédents, en 'YYYY-MM'. */
+export function monthOptions(now: Date, back = 11): { value: string; label: string }[] {
+	const opts: { value: string; label: string }[] = [];
+	for (let i = 0; i <= back; i++) {
+		const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+		const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+		const label = d.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+		opts.push({ value, label: label.charAt(0).toUpperCase() + label.slice(1) });
+	}
+	return opts;
+}
+
+/** Bornes ISO d'un mois 'YYYY-MM'. */
+export function monthRange(value: string): { from: string; to: string } {
+	const [y, m] = value.split('-').map(Number);
+	const last = new Date(y, m, 0).getDate();
+	return { from: `${value}-01`, to: `${value}-${String(last).padStart(2, '0')}` };
 }
 
 const DAY_NAMES = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
@@ -316,6 +352,26 @@ export function supportPeriodIndex(
 }
 
 /** Plage de dates lisible : « 6 → 10 juil. 2026 », « 29 juin → 3 juil. 2026 », « 29 déc. 2025 → 2 janv. 2026 ». */
+/**
+ * Plusieurs jours d'un même mois, mois écrit une seule fois : « 1, 8, 14, 25 mai ». Dès que deux
+ * mois se mélangent on retombe sur la forme longue, sinon la liste devient ambiguë.
+ */
+export function formatDayList(datesISO: string[]): string {
+	if (datesISO.length === 0) return '';
+	const parsed = datesISO.map(parseISODate);
+	const sameMonth = parsed.every(
+		(d) => d.getUTCMonth() === parsed[0].getUTCMonth() && d.getUTCFullYear() === parsed[0].getUTCFullYear()
+	);
+	if (!sameMonth) return datesISO.map(formatDay).join(', ');
+	return `${parsed.map(dayNum).join(', ')} ${MONTHS[parsed[0].getUTCMonth()]}`;
+}
+
+/** Un jour seul, sans l'année : « 15 août ». formatDayRange sur deux bornes égales donne « 15 → 15 août 2026 ». */
+export function formatDay(dateISO: string): string {
+	const d = parseISODate(dateISO);
+	return `${dayNum(d)} ${MONTHS[d.getUTCMonth()]}`;
+}
+
 export function formatDayRange(fromISO: string, toISO: string): string {
 	const from = parseISODate(fromISO);
 	const to = parseISODate(toISO);

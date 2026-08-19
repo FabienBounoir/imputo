@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { db, ticket, timeEntry, jiraSyncRun, sprint } from '$lib/server/db';
+import { db, ticket, timeEntry, jiraSyncRun, sprint, ssp } from '$lib/server/db';
 import {
 	createTicket,
 	listTickets,
@@ -10,6 +10,7 @@ import {
 	canEditActivityField,
 	getTicketActivityBreakdown,
 	deleteUntouchedSyncedTickets,
+	listTicketsPage,
 	NO_ACTIVITY_ID
 } from './tickets';
 import { makeWorkspace, addMember } from './test-helpers';
@@ -272,5 +273,25 @@ describe('deleteUntouchedSyncedTickets', () => {
 
 		expect(deleted).toBe(1);
 		expect(await listTickets(workspaceId)).toHaveLength(0);
+	});
+
+	// Filtre URL-only ?ssp=none, atteint depuis la colonne « Sans code SSP » de la clôture
+	// mensuelle : ces tickets ne remontent dans aucun code budgétaire, on vient les corriger.
+	it('listTicketsPage: noSsp isole les tickets sans code SSP', async () => {
+		const { workspaceId } = await makeWorkspace();
+		const [s] = await db
+			.insert(ssp)
+			.values({ workspaceId, code: 'ZZ-1', label: 'Avec code' })
+			.returning();
+		await db.insert(ticket).values([
+			{ workspaceId, key: 'NS-1', title: 'Avec SSP', sspId: s.id },
+			{ workspaceId, key: 'NS-2', title: 'Sans SSP' },
+			{ workspaceId, key: 'NS-3', title: 'Sans SSP bis' }
+		]);
+
+		const filtered = await listTicketsPage(workspaceId, true, true, { noSsp: true });
+		expect(filtered.rows.map((r) => r.key).sort()).toEqual(['NS-2', 'NS-3']);
+		expect(filtered.total).toBe(2);
+		expect((await listTicketsPage(workspaceId, true, true, {})).total).toBe(3);
 	});
 });

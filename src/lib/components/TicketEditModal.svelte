@@ -4,6 +4,7 @@
 	import { TICKET_FIELD_LABELS } from '$lib/changeLogLabels';
 	import { confirmDialog } from '$lib/confirm.svelte';
 	import ModalErrorToast from './ModalErrorToast.svelte';
+	import SspPicker from './SspPicker.svelte';
 
 	// Même modal d'édition que Tickets & chiffrage (tickets/+page.svelte), rendue utilisable depuis
 	// n'importe quelle page (ex. Mon imputation) : elle se charge elle-même par id plutôt que de
@@ -15,6 +16,7 @@
 		projects,
 		sprints,
 		versions,
+		ssps,
 		ticketGroups,
 		testPhase,
 		canEditEstimation,
@@ -29,6 +31,7 @@
 		projects: { id: string; name: string }[];
 		sprints: { id: string; name: string }[];
 		versions: { id: string; name: string }[];
+		ssps: { id: string; code: string; label: string }[];
 		ticketGroups: { id: string; label: string }[];
 		testPhase: boolean;
 		canEditEstimation: boolean;
@@ -59,7 +62,7 @@
 		estimationTest: number;
 		raeTest: number;
 		consumed: number;
-		sspCode: string | null;
+		sspId: string | null;
 		estimationPrev: number | null;
 		enveloppeTotale: number | null;
 		hasActivityEstimation: boolean;
@@ -284,7 +287,7 @@
 							</label>
 						{/each}
 					{/if}
-					<label class="dfield"><span>Code SSP</span><input class="cell-input" placeholder="—" bind:value={ticket.sspCode} onchange={() => save('sspCode', ticket!.sspCode)} /></label>
+					<div class="dfield"><span>Code SSP</span><SspPicker {ssps} bind:value={() => ticket!.sspId ?? '', (v) => (ticket!.sspId = v || null)} onpick={(v) => save('sspId', v || null)} /></div>
 					{#if isAdmin}
 						<label class="dfield"><span>Estimation prévisionnel</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={ticket.estimationPrev} onchange={() => debouncedSave(`f-${ticket!.id}-estimationPrev`, () => save('estimationPrev', ticket!.estimationPrev))} /></label>
 						<label class="dfield"><span>Enveloppe totale</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={ticket.enveloppeTotale} onchange={() => debouncedSave(`f-${ticket!.id}-enveloppeTotale`, () => save('enveloppeTotale', ticket!.enveloppeTotale))} /></label>

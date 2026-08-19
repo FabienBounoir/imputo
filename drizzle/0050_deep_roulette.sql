@@ -1,0 +1,1 @@
+ALTER TABLE "monthly_closing" ADD COLUMN "workdays_override" numeric(4, 1);

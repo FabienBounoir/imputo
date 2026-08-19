@@ -1,5 +1,5 @@
 import { and, eq, ne, isNull, count, sql } from 'drizzle-orm';
-import { db, category, activity, timeEntry, state, ticket, ticketActivityRae } from '$lib/server/db';
+import { db, category, activity, timeEntry, state, ticket, ticketActivityRae, ssp } from '$lib/server/db';
 
 export type CategoryKind = 'PRODUCTIVE' | 'NON_PRODUCTIVE';
 export type CategoryItem = {
@@ -104,6 +104,98 @@ export async function setCategoryArchived(workspaceId: string, id: string, archi
 		.set({ archivedAt: archived ? new Date() : null })
 		.where(and(eq(category.id, id), eq(category.workspaceId, workspaceId)))
 		.returning({ id: category.id });
+	if (res.length === 0) throw new Error('Introuvable dans cet espace.');
+}
+
+// ---------- Codes SSP ----------
+
+export type SspItem = {
+	id: string;
+	code: string;
+	label: string;
+	/** Budget alloué en jours, `null` si non renseigné. */
+	budgetDays: number | null;
+	archived: boolean;
+	usage: number;
+};
+
+export async function listSsp(workspaceId: string): Promise<SspItem[]> {
+	const rows = await db
+		.select({
+			id: ssp.id,
+			code: ssp.code,
+			label: ssp.label,
+			budgetDays: ssp.budgetDays,
+			archivedAt: ssp.archivedAt,
+			usage: count(ticket.id)
+		})
+		.from(ssp)
+		.leftJoin(ticket, eq(ticket.sspId, ssp.id))
+		.where(eq(ssp.workspaceId, workspaceId))
+		.groupBy(ssp.id, ssp.code, ssp.label, ssp.budgetDays, ssp.archivedAt)
+		.orderBy(ssp.code);
+	return rows.map((r) => ({
+		id: r.id,
+		code: r.code,
+		label: r.label,
+		budgetDays: r.budgetDays === null ? null : Number(r.budgetDays),
+		archived: r.archivedAt !== null,
+		usage: r.usage
+	}));
+}
+
+/** Rejette un code déjà pris par un SSP actif de l'espace (insensible à la casse, cf. ssp_ws_code_uq). */
+async function assertUniqueSspCode(workspaceId: string, code: string, excludeId: string | null) {
+	const conds = [
+		eq(ssp.workspaceId, workspaceId),
+		isNull(ssp.archivedAt),
+		sql`lower(${ssp.code}) = ${code.toLowerCase()}`
+	];
+	if (excludeId) conds.push(ne(ssp.id, excludeId));
+	const dup = await db.select({ id: ssp.id }).from(ssp).where(and(...conds)).limit(1);
+	if (dup.length) throw new Error('Un code SSP actif porte déjà ce code.');
+}
+
+/** `budgetDays` : `null` efface le budget, un nombre le fixe. */
+export async function createSsp(workspaceId: string, code: string, label: string, budgetDays: number | null) {
+	const c = code.trim();
+	const l = label.trim();
+	if (!c) throw new Error('Code requis.');
+	await assertUniqueSspCode(workspaceId, c, null);
+	// Libellé vide : on retombe sur le code plutôt que d'afficher une ligne sans nom.
+	await db.insert(ssp).values({
+		workspaceId,
+		code: c,
+		label: l || c,
+		budgetDays: budgetDays === null ? null : String(budgetDays)
+	});
+}
+
+export async function updateSsp(
+	workspaceId: string,
+	id: string,
+	code: string,
+	label: string,
+	budgetDays: number | null
+) {
+	const c = code.trim();
+	const l = label.trim();
+	if (!c) throw new Error('Code requis.');
+	await assertUniqueSspCode(workspaceId, c, id);
+	const res = await db
+		.update(ssp)
+		.set({ code: c, label: l || c, budgetDays: budgetDays === null ? null : String(budgetDays) })
+		.where(and(eq(ssp.id, id), eq(ssp.workspaceId, workspaceId)))
+		.returning({ id: ssp.id });
+	if (res.length === 0) throw new Error('Introuvable dans cet espace.');
+}
+
+export async function setSspArchived(workspaceId: string, id: string, archived: boolean) {
+	const res = await db
+		.update(ssp)
+		.set({ archivedAt: archived ? new Date() : null })
+		.where(and(eq(ssp.id, id), eq(ssp.workspaceId, workspaceId)))
+		.returning({ id: ssp.id });
 	if (res.length === 0) throw new Error('Introuvable dans cet espace.');
 }
 

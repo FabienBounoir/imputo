@@ -405,6 +405,79 @@
 			</section>
 
 			<section class="card block">
+				<h3>Codes SSP</h3>
+				<p class="hint">
+					Codes budgétaires portés par les tickets. Le libellé est ce qu'on lit partout ailleurs
+					(synthèse, clôture mensuelle) — le code reste la clé côté compta. Le budget est en jours.
+				</p>
+				{#if form?.sspOk}<div class="flash ok">Mis à jour ✓</div>{/if}
+				<div class="ref-list">
+					{#each data.ssps as s (s.id)}
+						<div class="ref-item" class:archived={s.archived}>
+							<!-- Un seul form pour les 3 champs : le code, le libellé et le budget se valident
+							     ensemble (l'unicité porte sur le code, la modifier seule échouerait à mi-chemin). -->
+							<form method="POST" action="?/sspUpdate" use:enhance class="ssp-form">
+								<input type="hidden" name="id" value={s.id} />
+								<input
+									class="ref-name ssp-code"
+									name="code"
+									value={s.code}
+									disabled={s.archived}
+									title="Code budgétaire"
+									onchange={(e) => e.currentTarget.form?.requestSubmit()}
+								/>
+								<input
+									class="ref-name"
+									name="label"
+									value={s.label}
+									disabled={s.archived}
+									placeholder="Libellé lisible…"
+									onchange={(e) => e.currentTarget.form?.requestSubmit()}
+								/>
+								<input
+									class="ref-name ssp-budget tabnum"
+									name="budgetDays"
+									type="number"
+									step="0.25"
+									min="0"
+									value={s.budgetDays ?? ''}
+									disabled={s.archived}
+									placeholder="budget (j)"
+									title="Budget alloué en jours"
+									onchange={(e) => e.currentTarget.form?.requestSubmit()}
+								/>
+							</form>
+							{#if s.usage > 0}<span class="tag-usage" title="Tickets liés">{s.usage} ticket{s.usage > 1 ? 's' : ''}</span>{/if}
+							{#if s.archived}<span class="tag-arch">archivé</span>{/if}
+							<form
+								method="POST"
+								action="?/sspArchive"
+								use:enhance={async ({ cancel }) => {
+									if (!s.archived && s.usage > 0) {
+										const ok = await confirmDialog(
+											`${s.usage} ticket${s.usage > 1 ? 's' : ''} perdront ce code SSP à terme. Archiver quand même ?`
+										);
+										if (!ok) cancel();
+									}
+								}}
+							>
+								<input type="hidden" name="id" value={s.id} />
+								<input type="hidden" name="archived" value={s.archived ? 'false' : 'true'} />
+								<button class="ref-btn" type="submit">{s.archived ? '↺ Restaurer' : '🗄 Archiver'}</button>
+							</form>
+						</div>
+					{/each}
+					{#if data.ssps.length === 0}<p class="hint" style="margin:0;">Aucun code SSP.</p>{/if}
+				</div>
+				<form method="POST" action="?/sspCreate" use:enhance class="ref-add ssp-add">
+					<input class="ref-input ssp-code" name="code" placeholder="8364BEB5354" required />
+					<input class="ref-input" name="label" placeholder="Site Internet" />
+					<input class="ref-input ssp-budget" name="budgetDays" type="number" step="0.25" min="0" placeholder="budget (j)" />
+					<button class="btn btn-ghost" type="submit">+ Ajouter</button>
+				</form>
+			</section>
+
+			<section class="card block">
 				<h3>Activités</h3>
 				<p class="hint">Nature du travail (Dev, TU, DA…), optionnelle sur une imputation. Glisse-dépose ⠿ pour réordonner : c'est cet ordre qui sert dans la répartition par activité des synthèses (sauf préférence "alphabétique" d'un membre dans ses paramètres de compte).</p>
 				{#if form?.actOk}<div class="flash ok">Mis à jour ✓</div>{/if}
@@ -1601,6 +1674,22 @@
 	.ref-add {
 		display: flex;
 		gap: 8px;
+	}
+	/* Un SSP a 3 champs là où les autres référentiels n'en ont qu'un : le code et le budget sont
+	   de largeur fixe, seul le libellé absorbe la place restante. */
+	.ssp-form {
+		display: flex;
+		flex: 1;
+		min-width: 0;
+		gap: 6px;
+	}
+	.ssp-code {
+		flex: 0 0 11ch;
+		font-variant-numeric: tabular-nums;
+	}
+	.ssp-budget {
+		flex: 0 0 9ch;
+		text-align: right;
 	}
 	.ref-add .btn {
 		white-space: nowrap;

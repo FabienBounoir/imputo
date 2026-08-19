@@ -50,6 +50,9 @@ export const jiraSyncStatusEnum = pgEnum('jira_sync_status', ['SUCCESS', 'ERROR'
 // KEEP_LOCAL (défaut) : un ticket déjà connu localement (créé à la main ou par un sync
 // précédent) n'est jamais écrasé par le sync. JIRA_WINS : Jira écrase title/projectId/parentId.
 export const jiraConflictStrategyEnum = pgEnum('jira_conflict_strategy', ['JIRA_WINS', 'KEEP_LOCAL']);
+// DRAFT : passe de clôture en cours de saisie, consos lues en direct. INTEGRATED : reportée dans
+// GPS, figée pour toujours — on n'y revient pas, on ouvre une nouvelle passe (cf. monthlyClosing).
+export const monthlyClosingStatusEnum = pgEnum('monthly_closing_status', ['DRAFT', 'INTEGRATED']);
 
 const id = () => uuid('id').primaryKey().defaultRandom();
 const createdAt = () => timestamp('created_at', { withTimezone: true }).defaultNow().notNull();
@@ -245,6 +248,32 @@ export const project = pgTable(
 	]
 );
 
+// Code SSP (code budgétaire de l'affaire) — était un text libre sur le ticket jusqu'à la
+// migration 0048, d'où autant de graphies que de saisies. Devient un référentiel : le `code`
+// est la clé métier, le `label` ce qu'on lit partout ailleurs (« Site Internet » plutôt que le code).
+export const ssp = pgTable(
+	'ssp',
+	{
+		id: id(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspace.id, { onDelete: 'cascade' }),
+		code: text('code').notNull(),
+		label: text('label').notNull(),
+		// Budget alloué, en jours. Posé dès maintenant pour le suivi annuel (RAE mensuel), pas
+		// encore exploité par la clôture mensuelle.
+		budgetDays: numeric('budget_days', { precision: 8, scale: 2 }),
+		archivedAt: archivedAt(),
+		createdAt: createdAt()
+	},
+	(t) => [
+		index('ssp_ws_idx').on(t.workspaceId),
+		uniqueIndex('ssp_ws_code_uq')
+			.on(t.workspaceId, sql`lower(${t.code})`)
+			.where(sql`${t.archivedAt} is null`)
+	]
+);
+
 export const state = pgTable(
 	'state',
 	{
@@ -379,7 +408,7 @@ export const ticket = pgTable(
 		estimationPrev: numeric('estimation_prev', { precision: 7, scale: 2 }),
 		// Admin only, invisible pour un USER standard.
 		enveloppeTotale: numeric('enveloppe_totale', { precision: 7, scale: 2 }),
-		sspCode: text('ssp_code'),
+		sspId: uuid('ssp_id').references(() => ssp.id, { onDelete: 'set null' }),
 		comment: text('comment'),
 		flags: text('flags'), // jsonb léger sérialisé (cypress, docTech…) — simple au MVP
 		// Renseigné uniquement à la création par un sync Jira (jamais réécrit après) — sert de portée à
@@ -770,6 +799,103 @@ export const notificationLog = pgTable(
 	(t) => [uniqueIndex('notif_log_uq').on(t.userId, t.workspaceId, t.kind, t.refDate, t.slot)]
 );
 
+// ---------- Clôture mensuelle (synthèse mois / intégration GPS) ----------
+// Une "passe" = une tentative d'intégration GPS sur un mois. Il y en a plusieurs par mois :
+// la clôture comptable tombe quelques jours AVANT la fin du mois, donc tout n'est pas encore
+// imputé. Rejouer le process plus tard n'annule jamais la passe précédente, on en ouvre une
+// nouvelle (seq+1) avec les consos à jour — les anciennes restent consultables telles quelles.
+export const monthlyClosing = pgTable(
+	'monthly_closing',
+	{
+		id: id(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspace.id, { onDelete: 'cascade' }),
+		month: date('month').notNull(), // 1er du mois
+		seq: integer('seq').notNull(),
+		status: monthlyClosingStatusEnum('status').notNull().default('DRAFT'),
+		// Jours ouvrés du mois, quand le calcul automatique ne colle pas au réel : un férié
+		// effectivement travaillé, ou un jour chômé que le calendrier légal français ne connaît pas
+		// (pont d'entreprise, fermeture). NULL = on garde countWorkdaysNonHoliday. S'applique à tout
+		// le monde, contrairement à monthlyClosingMember.plannedOverride qui vise une personne.
+		workdaysOverride: numeric('workdays_override', { precision: 4, scale: 1 }),
+		integratedAt: timestamp('integrated_at', { withTimezone: true }),
+		integratedById: uuid('integrated_by_id').references(() => user.id, { onDelete: 'set null' }),
+		createdAt: createdAt()
+	},
+	(t) => [
+		uniqueIndex('monthly_closing_ws_month_seq_uq').on(t.workspaceId, t.month, t.seq),
+		// Au plus une passe ouverte à la fois sur un mois : deux brouillons concurrents rendraient
+		// le "à ventiler" ininterprétable.
+		uniqueIndex('monthly_closing_ws_month_draft_uq')
+			.on(t.workspaceId, t.month)
+			.where(sql`status = 'DRAFT'`)
+	]
+);
+
+export const monthlyClosingLine = pgTable(
+	'monthly_closing_line',
+	{
+		id: id(),
+		closingId: uuid('closing_id')
+			.notNull()
+			.references(() => monthlyClosing.id, { onDelete: 'cascade' }),
+		userId: uuid('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		sspId: uuid('ssp_id')
+			.notNull()
+			.references(() => ssp.id, { onDelete: 'cascade' }),
+		// Saisie libre de l'admin : les jours à ajouter au réel pour atteindre le prévu du mois.
+		complement: numeric('complement', { precision: 5, scale: 3 }).notNull().default('0'),
+		// NULL tant que la passe est DRAFT (la conso est lue en direct sur time_entry). Rempli à
+		// l'intégration : c'est la photo de ce qui a été validé dans GPS, elle ne doit plus bouger
+		// même si quelqu'un impute après coup — c'est justement l'écart qu'on veut mesurer.
+		consoSnapshot: numeric('conso_snapshot', { precision: 5, scale: 3 }),
+		createdAt: createdAt(),
+		updatedAt: updatedAt()
+	},
+	(t) => [uniqueIndex('monthly_closing_line_uq').on(t.closingId, t.userId, t.sspId)]
+);
+
+// Code SSP ajouté à la main aux colonnes d'une passe. Par défaut la clôture ne montre que les
+// codes réellement imputés sur le mois ; celui-ci sert à en rattraper un autre (report oublié,
+// gouvernance, bascule de réserve) sans polluer l'écran avec tout le référentiel.
+export const monthlyClosingSsp = pgTable(
+	'monthly_closing_ssp',
+	{
+		id: id(),
+		closingId: uuid('closing_id')
+			.notNull()
+			.references(() => monthlyClosing.id, { onDelete: 'cascade' }),
+		sspId: uuid('ssp_id')
+			.notNull()
+			.references(() => ssp.id, { onDelete: 'cascade' })
+	},
+	(t) => [uniqueIndex('monthly_closing_ssp_uq').on(t.closingId, t.sspId)]
+);
+
+// Une ligne par collaborateur retenu dans la passe — porte le "prévu du mois", qui n'est pas
+// ventilé par SSP contrairement aux compléments.
+export const monthlyClosingMember = pgTable(
+	'monthly_closing_member',
+	{
+		id: id(),
+		closingId: uuid('closing_id')
+			.notNull()
+			.references(() => monthlyClosing.id, { onDelete: 'cascade' }),
+		userId: uuid('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		// NULL = on garde le calcul (ouvrés non fériés − congés − formation − hors-projet).
+		// Non-NULL = l'admin a écrasé la valeur pour ce mois.
+		plannedOverride: numeric('planned_override', { precision: 5, scale: 3 }),
+		// Photo du prévu au moment de l'intégration, même raison que consoSnapshot.
+		plannedSnapshot: numeric('planned_snapshot', { precision: 5, scale: 3 })
+	},
+	(t) => [uniqueIndex('monthly_closing_member_uq').on(t.closingId, t.userId)]
+);
+
 // ---------- Relations ----------
 export const ticketRelations = relations(ticket, ({ one, many }) => ({
 	parent: one(ticket, { fields: [ticket.parentId], references: [ticket.id], relationName: 'parent' }),
@@ -797,6 +923,9 @@ export type Category = typeof category.$inferSelect;
 export type State = typeof state.$inferSelect;
 export type Activity = typeof activity.$inferSelect;
 export type Sprint = typeof sprint.$inferSelect;
+export type Ssp = typeof ssp.$inferSelect;
+export type MonthlyClosing = typeof monthlyClosing.$inferSelect;
+export type MonthlyClosingStatus = (typeof monthlyClosingStatusEnum.enumValues)[number];
 export type TimeEntry = typeof timeEntry.$inferSelect;
 export type ImputationPin = typeof imputationPin.$inferSelect;
 export type WeeklyObjective = typeof weeklyObjective.$inferSelect;

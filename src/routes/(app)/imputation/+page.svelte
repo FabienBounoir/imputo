@@ -1201,6 +1201,7 @@
 	projects={data.projects}
 	sprints={data.sprints}
 	versions={data.versions}
+	ssps={data.ssps}
 	ticketGroups={data.ticketGroups}
 	testPhase={data.testPhase}
 	canEditEstimation={data.canEditEstimation}

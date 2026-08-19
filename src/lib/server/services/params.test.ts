@@ -6,6 +6,10 @@ import {
 	renameCategory,
 	setCategoryKind,
 	setCategoryArchived,
+	listSsp,
+	createSsp,
+	updateSsp,
+	setSspArchived,
 	listActivities,
 	createActivity,
 	renameActivity,
@@ -169,5 +173,34 @@ describe('params — états', () => {
 		const [s] = await listStates(workspaceId);
 		await deleteState(workspaceId, s.id);
 		expect((await listStates(workspaceId)).find((x) => x.id === s.id)).toBeUndefined();
+	});
+
+	it('createSsp: le libellé vide retombe sur le code', async () => {
+		const { workspaceId } = await makeWorkspace('ssp-create');
+		await createSsp(workspaceId, '  8364BEB5354 ', '', 350);
+		const [s] = await listSsp(workspaceId);
+		expect(s.code).toBe('8364BEB5354');
+		expect(s.label).toBe('8364BEB5354');
+		expect(s.budgetDays).toBe(350);
+	});
+
+	it('createSsp: rejette un code déjà pris par un SSP actif, casse ignorée', async () => {
+		const { workspaceId } = await makeWorkspace('ssp-uq');
+		await createSsp(workspaceId, 'ABC-1', 'MCO', null);
+		await expect(createSsp(workspaceId, 'abc-1', 'Autre', null)).rejects.toThrow(/déjà/);
+		// Une fois archivé, le code se libère (index unique partiel sur archived_at is null).
+		const [s] = await listSsp(workspaceId);
+		await setSspArchived(workspaceId, s.id, true);
+		await expect(createSsp(workspaceId, 'abc-1', 'Autre', null)).resolves.toBeUndefined();
+	});
+
+	it('updateSsp: budget null efface le budget, un SSP d\'un autre espace est introuvable', async () => {
+		const { workspaceId } = await makeWorkspace('ssp-upd');
+		const other = await makeWorkspace('ssp-upd-other');
+		await createSsp(workspaceId, 'X-1', 'Libellé', 12);
+		const [s] = await listSsp(workspaceId);
+		await updateSsp(workspaceId, s.id, 'X-1', 'Libellé', null);
+		expect((await listSsp(workspaceId))[0].budgetDays).toBeNull();
+		await expect(updateSsp(other.workspaceId, s.id, 'X-2', 'Y', null)).rejects.toThrow(/Introuvable/);
 	});
 });

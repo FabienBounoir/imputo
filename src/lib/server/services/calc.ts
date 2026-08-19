@@ -111,3 +111,21 @@ export function avancement(totalEst: number, totalRaeValue: number, consumed = 0
 	if (totalEst <= 0) return totalRaeValue <= 0 && consumed > 0 ? 1 : 0;
 	return round(clamp((totalEst - totalRaeValue) / totalEst, 0, 1));
 }
+
+/**
+ * Clôture mensuelle — jours qu'un collaborateur est censé avoir produits sur le mois.
+ * Volontairement SANS `capacityPerDay` : un temps partiel se traduit déjà par du hors-projet
+ * dans les absences, l'appliquer en plus le compterait deux fois (cf. Excel de suivi financier).
+ * Jamais négatif : plus d'absences que de jours ouvrés ne veut rien dire.
+ */
+export function plannedDays(workdays: number, absenceDays: number): number {
+	return round(Math.max(0, workdays - absenceDays));
+}
+
+/**
+ * Clôture mensuelle — jours qu'il reste à répartir sur des codes SSP pour ce collaborateur.
+ * Négatif = il a déjà été imputé/complété plus que son prévu. Signal visuel, jamais bloquant.
+ */
+export function toAllocate(planned: number, conso: number, complement: number): number {
+	return round(planned - conso - complement);
+}

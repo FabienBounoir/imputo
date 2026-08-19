@@ -248,6 +248,10 @@
 </svg>
 				Paramètres &amp; membres
 			</a>
+			<a class="nav-item" class:active={isActive('/admin/cloture')} href="/admin/cloture">
+				<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="m9 16 2 2 4-4"/></svg>
+				Clôture mensuelle
+			</a>
 			<a class="nav-item" class:active={isActive('/admin/history')} href="/admin/history">
 				<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>
 				Historique

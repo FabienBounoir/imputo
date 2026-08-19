@@ -7,6 +7,7 @@ import {
 	user,
 	sprint,
 	project,
+	ssp,
 	activity,
 	category,
 	membership,
@@ -111,7 +112,10 @@ export type TicketRow = {
 	estimationPrev: number | null;
 	/** Admin only — redacted côté route pour un USER standard. null si enveloppeTotale non renseignée. */
 	enveloppeTotale: number | null;
+	sspId: string | null;
+	/** Dénormalisés depuis le référentiel `ssp` — le picker affiche le libellé, pas l'uuid. */
 	sspCode: string | null;
+	sspLabel: string | null;
 };
 
 /** Colonnes de base communes à listTickets/listTicketsPage (avant enrichissement). */
@@ -135,7 +139,9 @@ const TICKET_BASE_SELECT = {
 	raeTest: ticket.raeTest,
 	estimationPrev: ticket.estimationPrev,
 	enveloppeTotale: ticket.enveloppeTotale,
-	sspCode: ticket.sspCode,
+	sspId: ticket.sspId,
+	sspCode: ssp.code,
+	sspLabel: ssp.label,
 	stateLabel: state.label,
 	stateEmoji: state.emoji,
 	stateColor: state.color
@@ -148,7 +154,8 @@ function baseTicketsQuery() {
 		.from(ticket)
 		.leftJoin(state, eq(ticket.stateId, state.id))
 		.leftJoin(sprint, eq(ticket.sprintId, sprint.id))
-		.leftJoin(project, eq(ticket.projectId, project.id));
+		.leftJoin(project, eq(ticket.projectId, project.id))
+		.leftJoin(ssp, eq(ticket.sspId, ssp.id));
 }
 async function fetchBaseTickets(where: ReturnType<typeof and>) {
 	return baseTicketsQuery().where(where);
@@ -330,7 +337,9 @@ async function enrichTickets(
 			// (déductible via consumed/rae déjà visibles) donc masqué pareil.
 			estimationPrev: !isAdmin || t.estimationPrev === null ? null : num(t.estimationPrev),
 			enveloppeTotale,
+			sspId: t.sspId,
 			sspCode: t.sspCode,
+			sspLabel: t.sspLabel,
 			consumed,
 			ecartVsEstime: ecartVsEstime(resolved.real, consumed, estimationResolved),
 			ecartVsBudget: enveloppeTotale === null ? null : ecartVsBudget(resolved.real, consumed, enveloppeTotale),
@@ -416,7 +425,7 @@ export async function deleteUntouchedSyncedTickets(workspaceId: string, syncRunI
 				eq(ticket.createdBySyncRunId, syncRunId),
 				isNull(ticket.comment),
 				isNull(ticket.stateId),
-				isNull(ticket.sspCode),
+				isNull(ticket.sspId),
 				isNull(ticket.estimationReal),
 				isNull(ticket.raeReal),
 				isNull(ticket.estimationTest),
@@ -471,6 +480,9 @@ export type TicketFilters = {
 	/** Lien direct depuis l'historique de sync Jira (onglet admin) : URL-only comme exactKey, jamais
 	 *  exposé comme filtre dans la barre (cf. tickets/+page.server.ts, param ?jiraRun=). */
 	syncRunId?: string;
+	/** Tickets sans code SSP. URL-only comme les deux ci-dessus (param ?ssp=none) : lien depuis la
+	 *  colonne « Sans code SSP » de la clôture mensuelle, pour aller les corriger. */
+	noSsp?: boolean;
 };
 
 export type TicketFiltersSnapshot = {
@@ -515,6 +527,7 @@ function ticketFilterConditions(workspaceId: string, filters: TicketFilters) {
 	if (filters.versionId) conditions.push(eq(ticket.versionId, filters.versionId));
 	if (filters.exactKey) conditions.push(eq(ticket.key, filters.exactKey));
 	if (filters.syncRunId) conditions.push(eq(ticket.createdBySyncRunId, filters.syncRunId));
+	if (filters.noSsp) conditions.push(isNull(ticket.sspId));
 	if (filters.query?.trim()) {
 		const q = `%${filters.query.trim()}%`;
 		conditions.push(or(ilike(ticket.key, q), ilike(ticket.title, q))!);
@@ -585,6 +598,7 @@ export type RefData = {
 	categories: { id: string; label: string; kind: string; linkedAbsenceType: AbsenceType | null }[];
 	members: { id: string; displayName: string }[];
 	ticketGroups: { id: string; label: string }[];
+	ssps: { id: string; code: string; label: string }[];
 };
 
 /**
@@ -594,7 +608,8 @@ export type RefData = {
  * dashboard sprint/version (sprintDashboard.ts).
  */
 export async function getRefData(workspaceId: string, sortActivitiesAlpha = false): Promise<RefData> {
-	const [states, sprints, versions, projects, activities, categories, members, ticketGroups] = await Promise.all([
+	// prettier-ignore
+	const [states, sprints, versions, projects, activities, categories, members, ticketGroups, ssps] = await Promise.all([
 		db
 			.select({ id: state.id, label: state.label, emoji: state.emoji, color: state.color })
 			.from(state)
@@ -632,10 +647,15 @@ export async function getRefData(workspaceId: string, sortActivitiesAlpha = fals
 			.select({ id: ticketGroup.id, label: ticketGroup.label })
 			.from(ticketGroup)
 			.where(and(eq(ticketGroup.workspaceId, workspaceId), isNull(ticketGroup.archivedAt)))
-			.orderBy(ticketGroup.label)
+			.orderBy(ticketGroup.label),
+		db
+			.select({ id: ssp.id, code: ssp.code, label: ssp.label })
+			.from(ssp)
+			.where(and(eq(ssp.workspaceId, workspaceId), isNull(ssp.archivedAt)))
+			.orderBy(ssp.label)
 	]);
 	if (sortActivitiesAlpha) activities.sort((a, b) => a.label.localeCompare(b.label));
-	return { states, sprints, versions, projects, activities, categories, members, ticketGroups };
+	return { states, sprints, versions, projects, activities, categories, members, ticketGroups, ssps };
 }
 
 /** Descriptif du ticket — éditable par tout membre de l'espace. */
@@ -646,7 +666,7 @@ const EDITABLE_FIELDS = new Set([
 	'projectId',
 	'sprintId',
 	'versionId',
-	'sspCode'
+	'sspId'
 ]);
 /**
  * Chiffrage global du ticket — ADMIN/MANAGER seulement (retour utilisateur : un USER ne doit
@@ -971,7 +991,7 @@ export async function createTicket(
 		estimationTest?: string | null;
 		raeTest?: string | null;
 		comment?: string | null;
-		sspCode?: string | null;
+		sspId?: string | null;
 		estimationPrev?: string | null;
 		enveloppeTotale?: string | null;
 	}
