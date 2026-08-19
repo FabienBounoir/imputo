@@ -343,6 +343,10 @@
 	{/snippet}
 
 	{#if tab === 'referentiels'}
+		<!-- Un seul bandeau pour tout l'onglet : sans lui, un refus du serveur (code SSP déjà pris,
+		     catégorie en double…) était totalement silencieux — le champ gardait la saisie, la base
+		     l'ancienne valeur, et on ne le découvrait qu'en revenant sur la page. -->
+		{#if form?.error}<div class="flash error ref-error">{form.error}</div>{/if}
 		<div class="ref-grid">
 			{@render refBlock('Projets', 'project', 'Nouveau projet…', data.projects)}
 			{@render refBlock('Sprints', 'sprint', 'Nouveau sprint…', data.sprints)}
@@ -416,7 +420,25 @@
 						<div class="ref-item" class:archived={s.archived}>
 							<!-- Un seul form pour les 3 champs : le code, le libellé et le budget se valident
 							     ensemble (l'unicité porte sur le code, la modifier seule échouerait à mi-chemin). -->
-							<form method="POST" action="?/sspUpdate" use:enhance class="ssp-form">
+							<form
+								method="POST"
+								action="?/sspUpdate"
+								class="ssp-form"
+								use:enhance={({ formElement }) =>
+									async ({ result, update }) => {
+										await update();
+										// Refus du serveur : `update()` n'invalide pas le load, donc le champ garderait
+										// la saisie rejetée pendant que la base garde l'ancienne valeur — l'écran
+										// mentirait jusqu'au prochain changement de page.
+										if (result.type === 'failure') {
+											const f = formElement;
+											(f.elements.namedItem('code') as HTMLInputElement).value = s.code;
+											(f.elements.namedItem('label') as HTMLInputElement).value = s.label;
+											(f.elements.namedItem('budgetDays') as HTMLInputElement).value =
+												s.budgetDays === null ? '' : String(s.budgetDays);
+										}
+									}}
+							>
 								<input type="hidden" name="id" value={s.id} />
 								<input
 									class="ref-name ssp-code"
@@ -438,7 +460,7 @@
 									class="ref-name ssp-budget tabnum"
 									name="budgetDays"
 									type="number"
-									step="0.25"
+									step="0.01"
 									min="0"
 									value={s.budgetDays ?? ''}
 									disabled={s.archived}
@@ -472,7 +494,7 @@
 				<form method="POST" action="?/sspCreate" use:enhance class="ref-add ssp-add">
 					<input class="ref-input ssp-code" name="code" placeholder="8364BEB5354" required />
 					<input class="ref-input" name="label" placeholder="Site Internet" />
-					<input class="ref-input ssp-budget" name="budgetDays" type="number" step="0.25" min="0" placeholder="budget (j)" />
+					<input class="ref-input ssp-budget" name="budgetDays" type="number" step="0.01" min="0" placeholder="budget (j)" />
 					<button class="btn btn-ghost" type="submit">+ Ajouter</button>
 				</form>
 			</section>
@@ -1688,8 +1710,11 @@
 		font-variant-numeric: tabular-nums;
 	}
 	.ssp-budget {
-		flex: 0 0 9ch;
+		flex: 0 0 10ch;
 		text-align: right;
+	}
+	.ref-error {
+		margin-bottom: 14px;
 	}
 	.ref-add .btn {
 		white-space: nowrap;

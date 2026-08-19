@@ -86,6 +86,23 @@
 	function onToggleGroup() {
 		localStorage.setItem(GROUP_KEY, groupByTicketGroup ? '1' : '0');
 	}
+
+	// Repli d'un groupe : mémorisé par groupe, pas par sprint/version — un groupe de tickets est
+	// une notion d'espace, replier « Dette technique » une fois vaut pour tous les sprints. Même
+	// motif que la préférence de groupement ci-dessus : local, jamais serveur.
+	const GROUP_COLLAPSE_KEY = 'imputo-dashboard-group-collapsed';
+	let collapsedGroups = $state<Record<string, boolean>>({});
+	$effect(() => {
+		try {
+			collapsedGroups = JSON.parse(localStorage.getItem(GROUP_COLLAPSE_KEY) ?? '{}');
+		} catch {
+			/* entrée corrompue : on repart tout déplié */
+		}
+	});
+	function toggleGroupCollapse(key: string) {
+		collapsedGroups = { ...collapsedGroups, [key]: !collapsedGroups[key] };
+		localStorage.setItem(GROUP_COLLAPSE_KEY, JSON.stringify(collapsedGroups));
+	}
 	const maxActivity = $derived(Math.max(1, ...(dashboard?.byActivity.map((a) => a.raeReal + a.raeTest) ?? [1])));
 	const maxPerson = $derived(Math.max(1, ...(dashboard?.byPerson.map((p) => p.consumed) ?? [1])));
 
@@ -342,15 +359,37 @@
 						<tbody>
 							{#if groupByTicketGroup}
 								{#each dashboard.ticketGroups as g (g.groupId ?? '__none__')}
+									{@const gKey = g.groupId ?? '__none__'}
+									{@const open = !collapsedGroups[gKey]}
 									<tr class="us-group-row">
 										<td colspan={usColCount}>
-											{g.label}
-											<span class="us-group-count">{g.tickets.length} ticket{g.tickets.length > 1 ? 's' : ''}</span>
+											<!-- Le sous-total reste visible replié : c'est le résumé du groupe. -->
+											<button
+												type="button"
+												class="us-group-toggle"
+												aria-expanded={open}
+												onclick={() => toggleGroupCollapse(gKey)}
+											>
+												<svg
+													class="chev"
+													class:closed={!open}
+													width="13"
+													height="13"
+													viewBox="0 0 24 24"
+													fill="none"
+													stroke="currentColor"
+													stroke-width="2.5"><path d="m6 9 6 6 6-6" /></svg
+												>
+												{g.label}
+												<span class="us-group-count">{g.tickets.length} ticket{g.tickets.length > 1 ? 's' : ''}</span>
+											</button>
 										</td>
 									</tr>
-									{#each g.tickets as t (t.id)}
-										{@render ticketRow(t)}
-									{/each}
+									{#if open}
+										{#each g.tickets as t (t.id)}
+											{@render ticketRow(t)}
+										{/each}
+									{/if}
 									<tr class="us-subtotal-row">
 										<td></td>
 										<td class="ttl">Sous-total</td>
@@ -699,6 +738,25 @@
 	}
 	.us-group-row:first-child td {
 		padding-top: 8px;
+	}
+	.us-group-toggle {
+		display: inline-flex;
+		align-items: center;
+		gap: 7px;
+		padding: 0;
+		color: inherit;
+		font: inherit;
+	}
+	.us-group-toggle .chev {
+		flex-shrink: 0;
+		color: var(--text-mute);
+		transition: transform 0.15s ease;
+	}
+	.us-group-toggle .chev.closed {
+		transform: rotate(-90deg);
+	}
+	.us-group-toggle:hover .chev {
+		color: var(--accent);
 	}
 	.us-group-count {
 		margin-left: 8px;

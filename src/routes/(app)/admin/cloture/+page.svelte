@@ -35,6 +35,24 @@
 	// Colonnes : les SSP actifs, plus une colonne « Sans code SSP » en lecture seule quand des
 	// imputations du mois portent sur des tickets non rattachés — sinon ce temps disparaîtrait
 	// silencieusement du total et le « à ventiler » deviendrait faux.
+	// Repli des cartes. Mémorisé en localStorage : ouvrir une passe ou intégrer passe par une
+	// redirection, donc sans persistance tout se rouvrirait à chaque action.
+	const COLLAPSE_STORAGE_KEY = 'imputo-cloture-collapsed';
+	let collapsed = $state<Record<string, boolean>>({});
+	$effect(() => {
+		if (typeof localStorage === 'undefined') return;
+		try {
+			collapsed = JSON.parse(localStorage.getItem(COLLAPSE_STORAGE_KEY) ?? '{}');
+		} catch {
+			/* entrée corrompue : on repart tout déplié */
+		}
+	});
+	function toggleCard(key: string) {
+		collapsed = { ...collapsed, [key]: !collapsed[key] };
+		if (typeof localStorage !== 'undefined')
+			localStorage.setItem(COLLAPSE_STORAGE_KEY, JSON.stringify(collapsed));
+	}
+
 	const cols = $derived([
 		...view.ssps.map((s) => ({
 			id: s.id,
@@ -103,6 +121,15 @@
 	function colTotal(sspId: string, fn: (userId: string, sspId: string) => number) {
 		return round2(view.members.reduce((a, m) => a + fn(m.userId, sspId), 0));
 	}
+	/** Somme d'une colonne calculée par personne (Total, Prévu, À ventiler…). */
+	function rowsTotal(fn: (m: (typeof view.members)[number]) => number) {
+		return round2(view.members.reduce((a, m) => a + fn(m), 0));
+	}
+	// Dérivés plutôt que {@const} : ce dernier n'est pas autorisé en enfant direct d'un <tfoot>.
+	const restantTotal = $derived(rowsTotal(toAllocate));
+	const ecartTotal = $derived(
+		rowsTotal((m) => cols.reduce((a, c) => a + gapCell(m.userId, c.id), 0))
+	);
 	const consoCell = (userId: string, sspId: string) =>
 		view.members.find((m) => m.userId === userId)?.conso[sspId] ?? 0;
 	/** Colonne vide : ni conso ni complément. Le serveur revérifie, ceci ne fait que cacher le ✕. */
@@ -158,6 +185,30 @@
 </script>
 
 <svelte:head><title>Clôture mensuelle — Imputo</title></svelte:head>
+
+<!-- En-tête de carte : bouton de repli (motif disclosure standard — aria-expanded + le titre
+     dans le bouton), plutôt que <details>/<summary> qui rendrait le placement du bouton
+     « Intégrer GPS » de la carte 3 bancal. -->
+{#snippet cardHead(key: string, title: string)}
+	<button
+		type="button"
+		class="card-head"
+		aria-expanded={!collapsed[key]}
+		onclick={() => toggleCard(key)}
+	>
+		<svg
+			class="chev"
+			class:closed={collapsed[key]}
+			width="14"
+			height="14"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			stroke-width="2.5"><path d="m6 9 6 6 6-6" /></svg
+		>
+		<h3>{title}</h3>
+	</button>
+{/snippet}
 
 <div class="topbar">
 	<h1>
@@ -249,7 +300,8 @@
 		{/if}
 
 		<section class="card block table-conso">
-			<h3>1 · Consommation réelle {integrated ? '(Figée)' : ''}</h3>
+			{@render cardHead('conso', `1 · Consommation réelle${integrated ? ' (Figée)' : ''}`)}
+			{#if !collapsed.conso}
 			<p class="hint">
 				Imputations du mois par code SSP.
 				{#if integrated}Figée à l'intégration.{:else}Suit les saisies en direct.{/if}
@@ -291,10 +343,12 @@
 					</tfoot>
 				</table>
 			</div>
+			{/if}
 		</section>
 
 		<section class="card block table-complement">
-			<h3>2 · Complément pour fin de mois</h3>
+			{@render cardHead('complement', '2 · Complément pour fin de mois')}
+			{#if !collapsed.complement}
 			<p class="hint">Jours à répartir d'ici la fin du mois. « À ventiler » doit tomber à 0.</p>
 			<div class="toolbar">
 				<label class="tool">
@@ -406,13 +460,25 @@
 							</tr>
 						{/each}
 					</tbody>
+					<tfoot>
+						<tr>
+							<td>Total</td>
+							{#each cols as c (c.id)}
+								<td class="num tabnum"><b>{c.editable ? fmt(colTotal(c.id, cell)) : '—'}</b></td>
+							{/each}
+							<td class="num tabnum"><b>{fmt(rowsTotal((m) => complementTotal(m.userId)))}</b></td>
+							<td class="num tabnum"><b>{fmt(rowsTotal(plannedOf))}</b></td>
+							<td class="num tabnum" class:warn={restantTotal !== 0}><b>{round2(restantTotal)}</b></td>
+						</tr>
+					</tfoot>
 				</table>
 			</div>
+			{/if}
 		</section>
 
 		<section class="card block table-integration">
 			<div class="row-head">
-				<h3>3 · Détail intégration</h3>
+				{@render cardHead('integration', '3 · Détail intégration')}
 				{#if editable}
 					<form
 						method="POST"
@@ -431,6 +497,7 @@
 					</form>
 				{/if}
 			</div>
+			{#if !collapsed.integration}
 			<p class="hint">Consommation réelle + complément.</p>
 			<div class="scroll">
 				<table class="weekly-table">
@@ -471,11 +538,13 @@
 					</tfoot>
 				</table>
 			</div>
+			{/if}
 		</section>
 
 		{#if integrated}
 			<section class="card block table-gap">
-				<h3>4 · Écart vs prévisionnel</h3>
+				{@render cardHead('gap', '4 · Écart vs prévisionnel')}
+				{#if !collapsed.gap}
 				<p class="hint">
 					Conso réelle à aujourd'hui moins ce qui a été intégré. Chaque ligne devrait tendre vers 0
 					à mesure que la fin du mois se saisit.
@@ -512,8 +581,19 @@
 								</tr>
 							{/each}
 						</tbody>
+						<tfoot>
+							<tr>
+								<td>Total</td>
+								{#each cols as c (c.id)}
+									{@const t = colTotal(c.id, gapCell)}
+									<td class="num tabnum" class:warn={t !== 0}><b>{fmt(t)}</b></td>
+								{/each}
+								<td class="num tabnum" class:warn={ecartTotal !== 0}><b>{fmt(ecartTotal)}</b></td>
+							</tr>
+						</tfoot>
 					</table>
 				</div>
+				{/if}
 			</section>
 		{/if}
 	{/if}
@@ -541,7 +621,34 @@
 		margin-bottom: 18px;
 	}
 	.block h3 {
-		margin: 0 0 6px;
+		margin: 0;
+	}
+	/* Le titre est le bouton de repli : pleine largeur pour que toute la ligne soit cliquable. */
+	.card-head {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		width: 100%;
+		padding: 0;
+		margin-bottom: 6px;
+		color: var(--text);
+		text-align: left;
+	}
+	.card-head .chev {
+		flex-shrink: 0;
+		color: var(--text-mute);
+		transition: transform 0.15s ease;
+	}
+	.card-head .chev.closed {
+		transform: rotate(-90deg);
+	}
+	.card-head:hover .chev {
+		color: var(--accent);
+	}
+	/* Carte 3 : le bouton reste dans la barre, il ne doit pas s'étirer sur toute la largeur. */
+	.row-head .card-head {
+		width: auto;
+		margin-bottom: 0;
 	}
 	.row-head {
 		display: flex;

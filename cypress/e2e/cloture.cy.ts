@@ -64,4 +64,25 @@ describe('clôture mensuelle', () => {
 			cy.get('input.complement-input').should('have.value', '3');
 		});
 	});
+
+	// Le repli des cartes est mémorisé globalement par tableau (localStorage), pas par mois ni par
+	// passe : sans ça il faudrait tout replier à nouveau à chaque action, puisque « Ouvrir la
+	// clôture » et « Intégrer GPS » passent par une redirection serveur.
+	it('le repli des cartes survit à une navigation et à une intégration', () => {
+		cy.registerAndLogin().then(() => {
+			cy.visit('/admin/cloture');
+			cy.clickReliably(() => cy.contains('button', 'Ouvrir la clôture'), '.table-conso .card-head');
+			cy.get('.table-conso .card-head').click();
+			cy.get('.table-conso .card-head').should('have.attr', 'aria-expanded', 'false');
+
+			cy.contains('a', 'Mon imputation').click();
+			cy.location('pathname').should('eq', '/imputation');
+			cy.contains('a', 'Clôture mensuelle').click();
+			cy.get('.table-conso .card-head').should('have.attr', 'aria-expanded', 'false');
+
+			cy.clickReliably(() => cy.contains('button', 'Intégrer GPS'), '.cd-backdrop');
+			cy.contains('button', 'Confirmer').click();
+			cy.get('.table-conso .card-head').should('have.attr', 'aria-expanded', 'false');
+		});
+	});
 });
