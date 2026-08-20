@@ -8,7 +8,28 @@
 	import AccentPicker from '$lib/components/AccentPicker.svelte';
 	import MemberAccessModal from '$lib/components/MemberAccessModal.svelte';
 	import { confirmDialog } from '$lib/confirm.svelte';
+	import type { SubmitFunction } from '@sveltejs/kit';
 	let { data, form } = $props();
+
+	// À utiliser sur TOUT formulaire d'édition en place (champ rempli depuis `data`).
+	// Par défaut, `enhance` appelle form.reset() après un succès, ce qui remet chaque champ à
+	// l'attribut `value` du HTML initial — or Svelte n'écrit jamais cet attribut, seulement la
+	// propriété .value (cf. set_value). Le champ réaffiche donc la valeur du premier chargement,
+	// et pire : la soumission suivante la renvoie telle quelle au serveur, écrasant la vraie donnée.
+	// Ça ne se voyait pas sur un formulaire à un seul champ (la donnée change, Svelte réécrit
+	// derrière), mais dès qu'un form porte deux champs, éditer l'un ressuscite l'autre.
+	// Les formulaires de création gardent le reset par défaut, eux en ont besoin.
+	const enhanceEdit: SubmitFunction = () => async ({ update }) => update({ reset: false });
+
+	// Les flèches d'un <input type="number"> émettent un `change` à chaque clic : soumettre
+	// directement, c'est un POST + un invalidateAll (tout le load de la page admin) par incrément,
+	// qui réécrit le champ sous le curseur — il fallait re-cliquer dedans entre deux incréments.
+	// On laisse retomber la rafale avant d'enregistrer.
+	const submitTimers = new WeakMap<HTMLFormElement, ReturnType<typeof setTimeout>>();
+	function submitSoon(form: HTMLFormElement, delay = 600) {
+		clearTimeout(submitTimers.get(form));
+		submitTimers.set(form, setTimeout(() => form.requestSubmit(), delay));
+	}
 
 	let accessModalFor = $state<string | null>(null);
 	const accessModalMember = $derived(data.members.find((m) => m.id === accessModalFor) ?? null);
@@ -287,7 +308,7 @@
 								{:else if isSelf}
 									<span class="pill">{m.role === 'ADMIN' ? 'Admin' : m.role === 'MANAGER' ? 'Manager' : 'Membre'}</span>
 								{:else}
-									<form method="POST" action="?/memberRole" use:enhance>
+									<form method="POST" action="?/memberRole" use:enhance={enhanceEdit}>
 										<input type="hidden" name="userId" value={m.id} />
 										<select class="role-sel" name="role" value={m.role} onchange={(e) => e.currentTarget.form?.requestSubmit()}>
 											<option value="USER">Membre</option>
@@ -299,7 +320,7 @@
 							</td>
 							<td>{#if m.pending}<span class="pill pending">⏳ En attente</span>{:else if !m.active}<span class="pill off">🚫 Désactivé</span>{:else}<span class="pill active">✓ Actif</span>{/if}</td>
 							<td>
-								<form method="POST" action="?/memberCapacity" use:enhance class="cap-form">
+								<form method="POST" action="?/memberCapacity" use:enhance={enhanceEdit} class="cap-form">
 									<input type="hidden" name="userId" value={m.id} />
 									<input type="hidden" name="capacity" value={m.capacity} />
 									<input
@@ -313,7 +334,7 @@
 										onchange={(e) => {
 											const form = e.currentTarget.form!;
 											(form.elements.namedItem('capacity') as HTMLInputElement).value = String(Number(e.currentTarget.value) / 100);
-											form.requestSubmit();
+											submitSoon(form);
 										}}
 									/>
 									<span class="cap-unit">%</span>
@@ -395,7 +416,7 @@
 	{#snippet refBlock(title: string, type: 'project' | 'sprint' | 'version', placeholder: string, items: { id: string; name: string; archived: boolean; usage: number }[])}
 		{@const filtered = items.filter((it) => refMatch(it.name))}
 		<h3>{title}</h3>
-		{#if form?.refOk === type}<div class="flash ok">Mis à jour ✓</div>{/if}
+		{#if form?.refOk === type}<div class="flash ok toast-tr" role="status">Mis à jour ✓</div>{/if}
 		{@render refToolbar(`Rechercher ${title.toLowerCase()}…`)}
 		{#if refAddOpen}
 			<form method="POST" action="?/refCreate" use:enhance class="ref-add">
@@ -407,7 +428,7 @@
 		<div class="ref-list">
 			{#each filtered as it (it.id)}
 				<div class="ref-item" class:archived={it.archived}>
-					<form method="POST" action="?/refRename" use:enhance>
+					<form method="POST" action="?/refRename" use:enhance={enhanceEdit}>
 						<input type="hidden" name="type" value={type} />
 						<input type="hidden" name="id" value={it.id} />
 						<input
@@ -451,7 +472,7 @@
 		<!-- Un seul bandeau pour tout l'onglet : sans lui, un refus du serveur (code SSP déjà pris,
 		     catégorie en double…) était totalement silencieux — le champ gardait la saisie, la base
 		     l'ancienne valeur, et on ne le découvrait qu'en revenant sur la page. -->
-		{#if form?.error}<div class="flash error ref-error">{form.error}</div>{/if}
+		{#if form?.error}<div class="flash error toast-tr" role="alert">{form.error}</div>{/if}
 		<div class="ref-layout">
 			<!-- Une section à la fois plutôt que les 7 cartes empilées d'avant : la liste la plus longue
 			     ne désaligne plus ses voisines, et la recherche/l'ajout ci-dessous ciblent toujours la
@@ -476,7 +497,7 @@
 					{@const filtered = data.categories.filter((c) => refMatch(c.label))}
 					<h3>Catégories</h3>
 					<p class="hint">Cibles d'imputation hors-ticket (MCO, congés, formation…). « Non productif » est exclu de la charge projet.</p>
-					{#if form?.catOk}<div class="flash ok">Mis à jour ✓</div>{/if}
+					{#if form?.catOk}<div class="flash ok toast-tr" role="status">Mis à jour ✓</div>{/if}
 					{@render refToolbar('Rechercher une catégorie…')}
 					{#if refAddOpen}
 						<form method="POST" action="?/catCreate" use:enhance class="ref-add">
@@ -491,12 +512,12 @@
 					<div class="ref-list">
 						{#each filtered as c (c.id)}
 							<div class="ref-item" class:archived={c.archived}>
-								<form method="POST" action="?/catRename" use:enhance>
+								<form method="POST" action="?/catRename" use:enhance={enhanceEdit}>
 									<input type="hidden" name="id" value={c.id} />
 									<input class="ref-name" name="label" value={c.label} disabled={c.archived} onchange={(e) => e.currentTarget.form?.requestSubmit()} />
 								</form>
 								{#if c.usage > 0}<span class="tag-usage" title="Imputations liées">{c.usage} imp.</span>{/if}
-								<form method="POST" action="?/catKind" use:enhance>
+								<form method="POST" action="?/catKind" use:enhance={enhanceEdit}>
 									<input type="hidden" name="id" value={c.id} />
 									<select class="param-kind" name="kind" value={c.kind} disabled={c.archived} onchange={(e) => e.currentTarget.form?.requestSubmit()}>
 										<option value="PRODUCTIVE">Productif</option>
@@ -539,7 +560,7 @@
 						Codes budgétaires portés par les tickets. Le libellé est ce qu'on lit partout ailleurs
 						(synthèse, clôture mensuelle) — le code reste la clé côté compta. Le budget est en jours.
 					</p>
-					{#if form?.sspOk}<div class="flash ok">Mis à jour ✓</div>{/if}
+					{#if form?.sspOk}<div class="flash ok toast-tr" role="status">Mis à jour ✓</div>{/if}
 					{@render refToolbar('Rechercher un code ou un libellé…')}
 					{#if refAddOpen}
 						<form method="POST" action="?/sspCreate" use:enhance class="ref-add ssp-add">
@@ -560,7 +581,11 @@
 									class="ssp-form"
 									use:enhance={({ formElement }) =>
 										async ({ result, update }) => {
-											await update();
+											// reset: false — cf. enhanceEdit. Ici c'est critique : les 3 champs
+											// partagent un form, donc éditer le libellé ressuscitait le code et le
+											// budget du chargement initial, et les réécrivait en base à la validation
+											// suivante.
+											await update({ reset: false });
 											// Refus du serveur : `update()` n'invalide pas le load, donc le champ garderait
 											// la saisie rejetée pendant que la base garde l'ancienne valeur — l'écran
 											// mentirait jusqu'au prochain changement de page.
@@ -601,7 +626,7 @@
 										disabled={s.archived}
 										placeholder="budget (j)"
 										title="Budget alloué en jours"
-										onchange={(e) => e.currentTarget.form?.requestSubmit()}
+										onchange={(e) => submitSoon(e.currentTarget.form!)}
 									/>
 								</form>
 								<div class="ref-item-end">
@@ -634,7 +659,7 @@
 					{@const filtered = activityOrder.filter((a) => refMatch(a.label))}
 					<h3>Activités</h3>
 					<p class="hint">Nature du travail (Dev, TU, DA…), optionnelle sur une imputation. Glisse-dépose ⠿ pour réordonner : c'est cet ordre qui sert dans la répartition par activité des synthèses (sauf préférence "alphabétique" d'un membre dans ses paramètres de compte). Vide la recherche pour réordonner.</p>
-					{#if form?.actOk}<div class="flash ok">Mis à jour ✓</div>{/if}
+					{#if form?.actOk}<div class="flash ok toast-tr" role="status">Mis à jour ✓</div>{/if}
 					{@render refToolbar('Rechercher une activité…')}
 					{#if refAddOpen}
 						<form method="POST" action="?/actCreate" use:enhance class="ref-add">
@@ -663,7 +688,7 @@
 									role="button"
 									tabindex="-1"
 								>⠿</span>
-								<form method="POST" action="?/actRename" use:enhance>
+								<form method="POST" action="?/actRename" use:enhance={enhanceEdit}>
 									<input type="hidden" name="id" value={a.id} />
 									<input class="ref-name" name="label" value={a.label} disabled={a.archived} onchange={(e) => e.currentTarget.form?.requestSubmit()} />
 								</form>
@@ -723,7 +748,7 @@
 					{@const filtered = groupOrder.filter((g) => refMatch(g.label))}
 					<h3>Groupes de tickets</h3>
 					<p class="hint">Regroupement libre et transverse, indépendant des sprints/versions. Un ticket peut appartenir à plusieurs groupes. Glisse-dépose ⠿ pour réordonner : c'est cet ordre qui sert dans les synthèses par sprint/version. Vide la recherche pour réordonner.</p>
-					{#if form?.groupOk}<div class="flash ok">Mis à jour ✓</div>{/if}
+					{#if form?.groupOk}<div class="flash ok toast-tr" role="status">Mis à jour ✓</div>{/if}
 					{@render refToolbar('Rechercher un groupe…')}
 					{#if refAddOpen}
 						<form method="POST" action="?/groupCreate" use:enhance class="ref-add">
@@ -752,7 +777,7 @@
 									role="button"
 									tabindex="-1"
 								>⠿</span>
-								<form method="POST" action="?/groupRename" use:enhance>
+								<form method="POST" action="?/groupRename" use:enhance={enhanceEdit}>
 									<input type="hidden" name="id" value={g.id} />
 									<input class="ref-name" name="label" value={g.label} disabled={g.archived} onchange={(e) => e.currentTarget.form?.requestSubmit()} />
 								</form>
@@ -805,7 +830,7 @@
 								<button class="ord-btn" type="submit" disabled={i === data.states.length - 1} aria-label="Descendre">▼</button>
 							</form>
 						</div>
-						<form class="state-edit" method="POST" action="?/stateUpdate" use:enhance>
+						<form class="state-edit" method="POST" action="?/stateUpdate" use:enhance={enhanceEdit}>
 							<input type="hidden" name="id" value={s.id} />
 							<input class="state-color" type="color" name="color" value={s.color ?? '#94A3B8'} onchange={(e) => e.currentTarget.form?.requestSubmit()} aria-label="Couleur" />
 							<input class="state-emoji" name="emoji" value={s.emoji ?? ''} maxlength="4" placeholder="🏷️" onchange={(e) => e.currentTarget.form?.requestSubmit()} aria-label="Emoji" />
@@ -859,7 +884,7 @@
 				</div>
 			</form>
 
-			<form method="POST" action="?/supportCadence" use:enhance style="margin-top:14px;">
+			<form method="POST" action="?/supportCadence" use:enhance={enhanceEdit} style="margin-top:14px;">
 				<div class="field">
 					<label for="support-cadence">Cadence de rotation</label>
 					<select
@@ -937,8 +962,8 @@
 		<section class="card block">
 			<h3>Intégration Jira</h3>
 			<p class="hint">Pull planifié + forçage manuel des tickets Jira, propre à cet espace.</p>
-			{#if form?.error}<div class="flash error jira-save-toast" role="alert">{form.error}</div>{/if}
-			{#if form?.jiraSaveOk}<div class="flash ok jira-save-toast" role="status">Configuration enregistrée ✓</div>{/if}
+			{#if form?.error}<div class="flash error toast-tr" role="alert">{form.error}</div>{/if}
+			{#if form?.jiraSaveOk}<div class="flash ok toast-tr" role="status">Configuration enregistrée ✓</div>{/if}
 
 			{#if !jiraConfigured || jiraEditing}
 				<form
@@ -1347,14 +1372,14 @@
 				</p>
 				{#if form?.pprRatioOk || form?.imputationStepOk}<div class="flash ok">Réglage mis à jour ✓</div>{/if}
 				<div style="display:flex;flex-direction:column;gap:14px;margin-top:6px;">
-					<form method="POST" action="?/pprRatio" use:enhance style="display:flex;align-items:center;justify-content:space-between;gap:14px;">
+					<form method="POST" action="?/pprRatio" use:enhance={enhanceEdit} style="display:flex;align-items:center;justify-content:space-between;gap:14px;">
 						<span>Ratio PPR</span>
 						<div style="display:flex;align-items:center;gap:8px;">
 							<input class="cap-input" type="number" name="value" min="0.01" max="1" step="0.05" value={data.pprRatio} />
 							<button class="btn btn-ghost" type="submit">Enregistrer</button>
 						</div>
 					</form>
-					<form method="POST" action="?/imputationStep" use:enhance style="display:flex;align-items:center;justify-content:space-between;gap:14px;">
+					<form method="POST" action="?/imputationStep" use:enhance={enhanceEdit} style="display:flex;align-items:center;justify-content:space-between;gap:14px;">
 						<span>Pas d'imputation</span>
 						<div style="display:flex;align-items:center;gap:8px;">
 							<input class="cap-input" type="number" name="value" min="0.00" max="1" step="any" value={data.imputationStep} />
@@ -2042,9 +2067,6 @@
 		flex: 0 0 15ch;
 		text-align: right;
 	}
-	.ref-error {
-		margin-bottom: 14px;
-	}
 	.ref-add .btn {
 		white-space: nowrap;
 		flex-shrink: 0;
@@ -2064,20 +2086,20 @@
 		border-color: var(--accent);
 		box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
 	}
-	/* ---------- Jira ---------- */
-	/* Flottant plutôt qu'en tête de carte : le formulaire est long et se replie en résumé au succès
-	   (jiraEditing = false), donc un flash resté dans le flux du document finit hors-champ ou décalé
-	   par le repli. Fixe, il reste visible quel que soit le scroll. */
-	.jira-save-toast {
+	/* Toast générique haut-droite (Jira, Référentiels) : flottant plutôt qu'en tête de carte —
+	   un flash resté dans le flux du document décale tout le reste (cf. Jira qui se replie en résumé
+	   au succès, ou les 7 sections de Référentiels dont une seule est affichée à la fois). Fixe, il
+	   reste visible quel que soit le scroll. */
+	.toast-tr {
 		position: fixed;
 		top: 20px;
 		right: 20px;
 		z-index: 50;
 		max-width: min(360px, calc(100vw - 40px));
 		box-shadow: var(--shadow-lg, 0 12px 30px rgba(0, 0, 0, 0.25));
-		animation: jira-toast-in 0.15s ease-out;
+		animation: toast-tr-in 0.15s ease-out;
 	}
-	@keyframes jira-toast-in {
+	@keyframes toast-tr-in {
 		from {
 			opacity: 0;
 			transform: translateY(-6px);

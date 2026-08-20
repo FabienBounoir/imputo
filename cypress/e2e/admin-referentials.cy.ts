@@ -1,12 +1,28 @@
+// Les référentiels sont derrière un sous-menu (une section à la fois) et un formulaire d'ajout
+// replié : deux clics avant de pouvoir taper quoi que ce soit, factorisés ici.
+const gotoRefSection = (label: string, searchPlaceholder: string) => {
+	cy.clickReliably(() => cy.contains('button', 'Référentiels'), 'nav.ref-nav');
+	cy.clickReliably(
+		() => cy.contains('nav.ref-nav button', label),
+		`input[placeholder="${searchPlaceholder}"]`
+	);
+};
+const openAddForm = (expectSelector: string) => {
+	cy.get('button.ref-add-toggle').click();
+	cy.get(expectSelector).should('exist');
+};
+const gotoSsp = () => gotoRefSection('Codes SSP', 'Rechercher un code ou un libellé…');
+
 describe('admin : gestion des référentiels', () => {
 	it('crée puis archive une catégorie', () => {
 		const label = `Cat E2E ${Date.now()}`;
 
 		cy.registerAndLogin().then(() => {
 			cy.visit('/admin');
+			gotoRefSection('Catégories', 'Rechercher une catégorie…');
 			// Placeholder distinctif : l'espace a des catégories seedées par défaut, dont les champs
 			// de renommage (name="label" aussi) précèdent ce formulaire de création dans le DOM.
-			cy.clickReliably(() => cy.contains('button', 'Référentiels'), 'input[placeholder="Nouvelle catégorie…"]');
+			openAddForm('input[placeholder="Nouvelle catégorie…"]');
 
 			cy.get('input[placeholder="Nouvelle catégorie…"]').type(label);
 			cy.get('input[placeholder="Nouvelle catégorie…"]').closest('form').find('button[type=submit]').click();
@@ -26,11 +42,12 @@ describe('admin : gestion des référentiels', () => {
 		});
 	});
 
-	// Deux régressions constatées sur les codes SSP, toutes deux silencieuses côté utilisateur.
+	// Trois régressions constatées sur les codes SSP, toutes silencieuses côté utilisateur.
 	it('un refus du serveur est affiché et le champ revient à la valeur stockée', () => {
 		cy.registerAndLogin().then(() => {
 			cy.visit('/admin');
-			cy.clickReliably(() => cy.contains('button', 'Référentiels'), 'form.ssp-add input[name=code]');
+			gotoSsp();
+			openAddForm('form.ssp-add input[name=code]');
 			[
 				['AAA-1', 'Alpha'],
 				['MMM-2', 'Mike']
@@ -42,7 +59,7 @@ describe('admin : gestion des référentiels', () => {
 			// Code déjà pris : le service refuse. Sans bandeau ni remise à zéro du champ, l'écran
 			// affichait une valeur qui n'existait pas en base jusqu'au prochain changement de page.
 			cy.get('form.ssp-form input[name=code]').eq(1).clear().type('AAA-1').blur();
-			cy.get('.ref-error').should('contain.text', 'déjà');
+			cy.get('.flash.error').should('contain.text', 'déjà');
 			cy.get('form.ssp-form input[name=code]').eq(1).should('have.value', 'MMM-2');
 		});
 	});
@@ -50,7 +67,8 @@ describe('admin : gestion des référentiels', () => {
 	it('un budget SSP accepte deux décimales', () => {
 		cy.registerAndLogin().then(() => {
 			cy.visit('/admin');
-			cy.clickReliably(() => cy.contains('button', 'Référentiels'), 'form.ssp-add input[name=code]');
+			gotoSsp();
+			openAddForm('form.ssp-add input[name=code]');
 			cy.get('form.ssp-add input[name=code]').type('BUD-1');
 			cy.get('form.ssp-add input[name=label]').type('Budget');
 			cy.get('form.ssp-add button[type=submit]').click();
@@ -59,8 +77,41 @@ describe('admin : gestion des référentiels', () => {
 			cy.get('form.ssp-form input[name=budgetDays]').clear().type('213.81').blur();
 			cy.wait(1500);
 			cy.reload();
-			cy.clickReliably(() => cy.contains('button', 'Référentiels'), 'form.ssp-add input[name=code]');
+			gotoSsp();
 			cy.get('form.ssp-form input[name=budgetDays]').should('have.value', '213.81');
+		});
+	});
+
+	it("éditer un champ d'une ligne SSP ne ressuscite pas les deux autres", () => {
+		cy.registerAndLogin().then(() => {
+			cy.visit('/admin');
+			gotoSsp();
+			openAddForm('form.ssp-add input[name=code]');
+			cy.get('form.ssp-add input[name=code]').type('REG-1');
+			cy.get('form.ssp-add input[name=label]').type('Avant');
+			cy.get('form.ssp-add input[name=budgetDays]').type('10');
+			cy.get('form.ssp-add button[type=submit]').click();
+
+			cy.get('form.ssp-form input[name=code]').clear().type('REG-2').blur();
+			cy.get('form.ssp-form input[name=code]').should('have.value', 'REG-2');
+			// L'enregistrement doit être retombé avant d'attaquer le champ suivant : sinon
+			// l'invalidateAll réécrit l'input pendant que Cypress y tape, et brouille la saisie.
+			cy.wait(1500);
+
+			// Le form.reset() par défaut de `update()` remettait chaque champ à son attribut `value`
+			// d'origine (REG-1 / 10) — attribut que Svelte n'écrit jamais, il n'assigne que la
+			// propriété. La donnée serveur n'ayant pas changé, rien ne réécrivait derrière : la
+			// ligne affichait l'ancien code, et l'enregistrement suivant le renvoyait en base.
+			cy.get('form.ssp-form input[name=label]').clear().type('Après').blur();
+			cy.get('form.ssp-form input[name=code]').should('have.value', 'REG-2');
+			cy.get('form.ssp-form input[name=budgetDays]').should('have.value', '10');
+
+			cy.wait(1500);
+			cy.reload();
+			gotoSsp();
+			cy.get('form.ssp-form input[name=code]').should('have.value', 'REG-2');
+			cy.get('form.ssp-form input[name=label]').should('have.value', 'Après');
+			cy.get('form.ssp-form input[name=budgetDays]').should('have.value', '10');
 		});
 	});
 });
