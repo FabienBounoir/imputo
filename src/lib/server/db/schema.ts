@@ -169,6 +169,8 @@ export const user = pgTable('user', {
 	ticketFiltersSnapshot: text('ticket_filters_snapshot'), // JSON { view, query, stateId, projectId, sprintId, versionId }
 	// Détail par activité sous chaque ticket (vue tableau) : true = masqué par défaut (compact).
 	compactTicketActivity: boolean('compact_ticket_activity').notNull().default(true),
+	// Bandeau de citations motivantes en haut des pages (rotation toutes les 30 s).
+	motivationBanner: boolean('motivation_banner').notNull().default(true),
 	active: boolean('active').notNull().default(true),
 	createdAt: createdAt()
 });

@@ -11,6 +11,7 @@ import {
 	setRememberTicketFiltersPref,
 	setRememberTicketSearchPref,
 	setCompactTicketActivityPref,
+	setMotivationBannerPref,
 	changePassword
 } from '$lib/server/services/accounts';
 import { changePasswordSchema } from '$lib/server/validation/auth';
@@ -41,6 +42,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		rememberTicketFilters: u?.rememberTicketFilters ?? true,
 		rememberTicketSearch: u?.rememberTicketSearch ?? true,
 		compactTicketActivity: u?.compactTicketActivity ?? true,
+		motivationBanner: locals.user.motivationBanner,
 		role: locals.role
 	};
 };
@@ -80,6 +82,13 @@ export const actions: Actions = {
 		const f = await request.formData();
 		await setCompactTicketActivityPref(locals.user.id, f.get('value') === 'true');
 		return { compactActivityOk: true };
+	},
+
+	motivationBannerPref: async ({ request, locals }) => {
+		if (!locals.user) return fail(401);
+		const f = await request.formData();
+		await setMotivationBannerPref(locals.user.id, f.get('value') === 'true');
+		return { motivationBannerOk: true };
 	},
 
 	changePassword: async ({ request, locals }) => {

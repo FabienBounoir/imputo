@@ -37,6 +37,7 @@
 	let rememberTicketFilters = $state(data.rememberTicketFilters);
 	let rememberTicketSearch = $state(data.rememberTicketSearch);
 	let compactTicketActivity = $state(data.compactTicketActivity);
+	let motivationBanner = $state(data.motivationBanner);
 	const activeSeasonal = $derived(activeSeasonalEffects());
 
 	// Les clés booléennes de NotifPrefs (donc hors morningSlots/eveningSlots, qui sont des maps).
@@ -304,6 +305,18 @@
 				<div class="seg">
 					<button type="submit" name="value" value="true" class:on={compactTicketActivity} onclick={() => (compactTicketActivity = true)}>Masquer par défaut</button>
 					<button type="submit" name="value" value="false" class:on={!compactTicketActivity} onclick={() => (compactTicketActivity = false)}>Afficher par défaut</button>
+				</div>
+			</form>
+		</section>
+
+		<section class="card block">
+			<h3>Bandeau motivation</h3>
+			<p class="hint">Une citation motivante en haut de chaque page, renouvelée toutes les 30 secondes à partir d'une sélection récupérée chaque jour. Le défilement se met en pause au survol.</p>
+			{#if form?.motivationBannerOk}<div class="flash ok">Préférence enregistrée ✓</div>{/if}
+			<form method="POST" action="?/motivationBannerPref" use:enhance>
+				<div class="seg">
+					<button type="submit" name="value" value="true" class:on={motivationBanner} onclick={() => (motivationBanner = true)}>Afficher</button>
+					<button type="submit" name="value" value="false" class:on={!motivationBanner} onclick={() => (motivationBanner = false)}>Masquer</button>
 				</div>
 			</form>
 		</section>

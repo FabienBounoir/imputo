@@ -10,6 +10,7 @@
 	import Hearts from '$lib/components/Hearts.svelte';
 	import Garland from '$lib/components/Garland.svelte';
 	import SeasonalBanner from '$lib/components/SeasonalBanner.svelte';
+	import MotivationBanner from '$lib/components/MotivationBanner.svelte';
 	import Fireworks from '$lib/components/Fireworks.svelte';
 	import HalloweenCorner from '$lib/components/HalloweenCorner.svelte';
 	import { seasonalState, initSeasonal, activeSeasonalEffects } from '$lib/seasonal.svelte';
@@ -302,6 +303,7 @@
 		{#if seasonalVisible && seasonalIds.has('april-fools')}
 			<SeasonalBanner id="april-fools" message="🐟 Poisson d'avril ! Tout va bien, c'est juste le 1er avril." />
 		{/if}
+		<MotivationBanner quotes={data.motivationQuotes} />
 		{@render children()}
 	</main>
 </div>

@@ -3,6 +3,7 @@ import type { LayoutServerLoad } from './$types';
 import { getPeriodParticipation, getMoodConfig, getMyVote } from '$lib/server/services/mood';
 import { countPendingAbsences } from '$lib/server/services/absences';
 import { getCurrentDuty } from '$lib/server/services/support';
+import { getDailyQuotes } from '$lib/server/services/quotes';
 import { currentMoodPeriod, todayInParis, parseISODate, lastWorkdayOnOrBefore } from '$lib/utils/date';
 
 // En dessous de ce seuil de jours restants avant l'échéance de vote (dernier jour ouvré de la
@@ -40,6 +41,9 @@ export const load: LayoutServerLoad = async ({ locals }) => {
 	// Nom affiché dans le lien "Support" du menu, pour voir qui est de perm sans ouvrir la page.
 	const supportDuty = locals.workspace.supportEnabled ? await getCurrentDuty(locals.workspace.workspaceId) : null;
 
+	// Phrases du jour du bandeau motivation (cache mémoire côté serveur, cf. services/quotes.ts).
+	const motivationQuotes = locals.user.motivationBanner ? await getDailyQuotes() : [];
+
 	return {
 		user: locals.user,
 		workspace: locals.workspace,
@@ -49,6 +53,7 @@ export const load: LayoutServerLoad = async ({ locals }) => {
 		moodStatus,
 		moodTotalVotes,
 		pendingAbsencesCount,
-		supportDuty
+		supportDuty,
+		motivationQuotes
 	};
 };
