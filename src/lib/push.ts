@@ -10,7 +10,23 @@ export type NotifPrefs = {
 	moodRecap: boolean;
 	absencePending: boolean;
 	absenceValidated: boolean;
+	/** Créneaux de relance retenus, par slot de cron (cf. NOTIF_SLOTS). Absent = tous actifs. */
+	morningSlots: Record<string, boolean>;
+	eveningSlots: Record<string, boolean>;
 };
+
+/**
+ * Créneaux de relance, dans l'ordre d'envoi. Les valeurs doivent rester alignées sur le paramètre
+ * `slot=` des CronJobs (openshift/cronjobs.yaml) : c'est la clé qui relie un envoi à sa préférence.
+ */
+export const NOTIF_SLOTS = {
+	morningSlots: ['0900', '0915', '0930'],
+	eveningSlots: ['1700', '1715', '1800']
+} as const;
+export type SlotKey = keyof typeof NOTIF_SLOTS;
+
+/** '0915' → « 9h15 ». */
+export const slotLabel = (slot: string) => `${Number(slot.slice(0, 2))}h${slot.slice(2)}`;
 
 export function pushSupported(): boolean {
 	return (

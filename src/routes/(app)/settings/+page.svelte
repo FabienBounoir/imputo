@@ -8,7 +8,10 @@
 		unsubscribePush,
 		saveNotifPrefs,
 		sendTestNotification,
-		type NotifPrefs
+		NOTIF_SLOTS,
+		slotLabel,
+		type NotifPrefs,
+		type SlotKey
 	} from '$lib/push';
 	import { setTheme, storedTheme, type ThemePref } from '$lib/theme';
 	import { seasonalState, setSeasonalEnabled, setForcedEffect, activeSeasonalEffects, SEASONAL_EFFECTS } from '$lib/seasonal.svelte';
@@ -36,31 +39,36 @@
 	let compactTicketActivity = $state(data.compactTicketActivity);
 	const activeSeasonal = $derived(activeSeasonalEffects());
 
-	const GROUPS: { label: string; items: { key: keyof NotifPrefs; label: string }[] }[] = [
+	// Les clés booléennes de NotifPrefs (donc hors morningSlots/eveningSlots, qui sont des maps).
+	type BoolPref = { [K in keyof NotifPrefs]: NotifPrefs[K] extends boolean ? K : never }[keyof NotifPrefs];
+	// `when` = heure d'envoi réelle, telle que planifiée dans openshift/cronjobs.yaml (Europe/Paris).
+	// Les rappels à plusieurs créneaux l'affichent via leurs chips, pas ici.
+	type PrefItem = { key: BoolPref; label: string; when?: string; slots?: SlotKey };
+	const GROUPS: { label: string; items: PrefItem[] }[] = [
 		{
 			label: 'Imputation',
 			items: [
-				{ key: 'eveningMissing', label: "Le soir, si aujourd'hui n'est pas saisi" },
-				{ key: 'morningYesterday', label: "Le matin, si hier n'a pas été renseigné" },
-				{ key: 'weeklyRecap', label: 'Le vendredi, si la semaine reste incomplète' },
-				{ key: 'raeStale', label: 'RAE périmé sur mes tickets' }
+				{ key: 'eveningMissing', label: "Le soir, si aujourd'hui n'est pas saisi", slots: 'eveningSlots' },
+				{ key: 'morningYesterday', label: "Le matin, si hier n'a pas été renseigné", slots: 'morningSlots' },
+				{ key: 'weeklyRecap', label: 'Le vendredi, si la semaine reste incomplète', when: 'non planifié' },
+				{ key: 'raeStale', label: 'RAE périmé sur mes tickets', when: '9h00' }
 			]
 		},
 		{
 			label: 'Congés',
 			items: [
-				{ key: 'absenceValidated', label: 'Mon congé a été validé' },
+				{ key: 'absenceValidated', label: 'Mon congé a été validé', when: 'immédiat' },
 				...(data.role === 'ADMIN'
-					? [{ key: 'absencePending' as const, label: 'Un congé attend ma validation' }]
+					? [{ key: 'absencePending' as const, label: 'Un congé attend ma validation', when: 'immédiat' }]
 					: [])
 			]
 		},
 		{
 			label: 'Team mood',
 			items: [
-				{ key: 'moodDeadline', label: 'Dernier jour pour voter' },
+				{ key: 'moodDeadline', label: 'Dernier jour pour voter', when: '10h00' },
 				...(data.role === 'ADMIN'
-					? [{ key: 'moodRecap' as const, label: 'Baisse nette de la moyenne' }]
+					? [{ key: 'moodRecap' as const, label: 'Baisse nette de la moyenne', when: '9h00' }]
 					: [])
 			]
 		}
@@ -100,6 +108,16 @@
 	async function savePref() {
 		await saveNotifPrefs(prefs);
 		note('Préférences enregistrées ✓');
+	}
+	/** Cocher/décocher le rappel bascule ses trois créneaux d'un bloc. */
+	async function toggleKind(item: PrefItem) {
+		if (item.slots) for (const s of NOTIF_SLOTS[item.slots]) prefs[item.slots][s] = prefs[item.key];
+		await savePref();
+	}
+	/** Décocher le dernier créneau éteint le rappel (et le recocher le rallume). */
+	async function toggleSlot(item: PrefItem & { slots: SlotKey }) {
+		prefs[item.key] = NOTIF_SLOTS[item.slots].some((s) => prefs[item.slots!][s]);
+		await savePref();
 	}
 	async function test() {
 		const sent = await sendTestNotification();
@@ -165,9 +183,24 @@
 								<span class="pref-group-label">{g.label}</span>
 								{#each g.items as t (t.key)}
 									<label class="pref">
-										<input type="checkbox" bind:checked={prefs[t.key]} onchange={savePref} disabled={!prefs.enabled} />
-										<span>{t.label}</span>
+										<input type="checkbox" bind:checked={prefs[t.key]} onchange={() => toggleKind(t)} disabled={!prefs.enabled} />
+										<span>{t.label}{#if t.when}<span class="when">({t.when})</span>{/if}</span>
 									</label>
+									{#if t.slots}
+										<div class="slots" class:off={!prefs.enabled || !prefs[t.key]}>
+											{#each NOTIF_SLOTS[t.slots] as s (s)}
+												<label class="slot">
+													<input
+														type="checkbox"
+														bind:checked={prefs[t.slots][s]}
+														onchange={() => toggleSlot(t as PrefItem & { slots: SlotKey })}
+														disabled={!prefs.enabled}
+													/>
+													<span>{slotLabel(s)}</span>
+												</label>
+											{/each}
+										</div>
+									{/if}
 								{/each}
 							</div>
 						{/each}
@@ -403,6 +436,41 @@
 		width: 16px;
 		height: 16px;
 		accent-color: var(--accent);
+	}
+	.when {
+		margin-left: 6px;
+		font-size: 12px;
+		color: var(--text-mute);
+	}
+	/* Créneaux de relance, alignés sous le libellé du rappel (26px = case + gap du .pref). */
+	.slots {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+		margin: -2px 0 2px 26px;
+	}
+	.slots.off {
+		opacity: 0.5;
+	}
+	.slot {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 3px 9px;
+		border: 1px solid var(--border);
+		border-radius: 999px;
+		font-size: 12px;
+		color: var(--text-soft);
+		cursor: pointer;
+	}
+	.slot input {
+		width: 13px;
+		height: 13px;
+		accent-color: var(--accent);
+	}
+	.slot:has(input:checked) {
+		border-color: var(--accent);
+		color: var(--text);
 	}
 	.test {
 		align-self: flex-start;

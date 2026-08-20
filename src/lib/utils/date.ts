@@ -60,6 +60,14 @@ export function previousWorkday(dateISO: string): string {
 	return toISODate(d);
 }
 
+/**
+ * Dernier jour ouvré à cette date ou avant. Sert d'échéance « utile » pour une plage qui se
+ * termine un week-end (Team mood du lundi au dimanche → la relance doit tomber le vendredi).
+ */
+export function lastWorkdayOnOrBefore(dateISO: string): string {
+	return isWorkday(dateISO) ? dateISO : previousWorkday(dateISO);
+}
+
 /** Nombre de jours ouvrés (lun→ven) entre deux dates ISO incluses. */
 export function countWorkdays(fromISO: string, toISO: string): number {
 	const from = parseISODate(fromISO);

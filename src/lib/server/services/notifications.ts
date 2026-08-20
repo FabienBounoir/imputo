@@ -23,32 +23,16 @@ import {
 	workWeek,
 	toISODate,
 	addDays,
+	formatDayRange,
 	currentMoodPeriod,
-	previousMoodPeriodStart
+	previousMoodPeriodStart,
+	lastWorkdayOnOrBefore
 } from '$lib/utils/date';
-import { sendToUser, hasSubscription, type PushPayload } from './push';
+import { sendToUser, hasSubscription } from './push';
+import { NOTIF_SLOTS, type NotifPrefs, type SlotKey } from '$lib/push';
+import { notifMessage, NOTIF_URL, type NotifKind, type NotifCtx } from './notification-messages';
 
-type NotifKind =
-	| 'EVENING_MISSING'
-	| 'MORNING_YESTERDAY'
-	| 'RAE_STALE'
-	| 'WEEKLY_RECAP'
-	| 'MOOD_DEADLINE'
-	| 'MOOD_RECAP'
-	| 'ABSENCE_PENDING'
-	| 'ABSENCE_VALIDATED';
-
-type Prefs = {
-	enabled: boolean;
-	eveningMissing: boolean;
-	morningYesterday: boolean;
-	raeStale: boolean;
-	weeklyRecap: boolean;
-	moodDeadline: boolean;
-	moodRecap: boolean;
-	absencePending: boolean;
-	absenceValidated: boolean;
-};
+type Prefs = NotifPrefs;
 const DEFAULT_PREFS: Prefs = {
 	enabled: true,
 	eveningMissing: true,
@@ -58,16 +42,32 @@ const DEFAULT_PREFS: Prefs = {
 	moodDeadline: true,
 	moodRecap: true,
 	absencePending: true,
-	absenceValidated: true
+	absenceValidated: true,
+	morningSlots: {},
+	eveningSlots: {}
 };
+
+/** N'accepte que les créneaux connus, et tout ce qui n'est pas explicitement `false` est actif. */
+function parseSlots(raw: unknown, key: SlotKey): Record<string, boolean> {
+	return Object.fromEntries(
+		NOTIF_SLOTS[key].map((s) => [s, (raw as Record<string, unknown> | null)?.[s] !== false])
+	);
+}
+
 export function parseNotifPrefs(raw: string | null): Prefs {
-	if (!raw) return DEFAULT_PREFS;
+	let p: Record<string, unknown> = {};
 	try {
-		const p = JSON.parse(raw);
-		return p && typeof p === 'object' ? { ...DEFAULT_PREFS, ...p } : DEFAULT_PREFS;
+		const parsed = raw ? JSON.parse(raw) : null;
+		if (parsed && typeof parsed === 'object') p = parsed;
 	} catch {
-		return DEFAULT_PREFS;
+		// prefs illisibles : on retombe sur les valeurs par défaut
 	}
+	return {
+		...DEFAULT_PREFS,
+		...p,
+		morningSlots: parseSlots(p.morningSlots, 'morningSlots'),
+		eveningSlots: parseSlots(p.eveningSlots, 'eveningSlots')
+	};
 }
 const PREF_KEY: Record<NotifKind, keyof Prefs> = {
 	EVENING_MISSING: 'eveningMissing',
@@ -78,6 +78,11 @@ const PREF_KEY: Record<NotifKind, keyof Prefs> = {
 	MOOD_RECAP: 'moodRecap',
 	ABSENCE_PENDING: 'absencePending',
 	ABSENCE_VALIDATED: 'absenceValidated'
+};
+/** Seuls ces deux types sont relancés plusieurs fois par jour, donc réglables créneau par créneau. */
+const SLOT_PREF: Partial<Record<NotifKind, SlotKey>> = {
+	MORNING_YESTERDAY: 'morningSlots',
+	EVENING_MISSING: 'eveningSlots'
 };
 
 type Member = {
@@ -137,15 +142,19 @@ async function moodEnabledWorkspaces(): Promise<
  * `slot` distingue les relances multiples le même jour (ex: 09h00/09h15/09h30) : chaque slot
  * a son propre verrou, donc la relance ne repart que si la condition est toujours vraie.
  */
-async function maybeNotify(
+async function maybeNotify<K extends NotifKind>(
 	m: Member,
-	kind: NotifKind,
+	kind: K,
 	refDate: string,
-	payload: PushPayload,
+	ctx: NotifCtx[K],
 	slot = ''
 ): Promise<number> {
 	const prefs = parseNotifPrefs(m.prefsRaw);
 	if (!prefs.enabled || !prefs[PREF_KEY[kind]]) return 0;
+	// Créneau désactivé par l'utilisateur (le `slot` des notifs congés est un absenceId, pas un
+	// créneau : SLOT_PREF ne couvre que les deux types relancés par le cron).
+	const slotKey = SLOT_PREF[kind];
+	if (slotKey && prefs[slotKey][slot] === false) return 0;
 	if (!(await hasSubscription(m.userId))) return 0;
 	const claimed = await db
 		.insert(notificationLog)
@@ -153,13 +162,20 @@ async function maybeNotify(
 		.onConflictDoNothing()
 		.returning({ id: notificationLog.id });
 	if (claimed.length === 0) return 0; // déjà envoyé pour ce (user, espace, type, date, slot)
-	await sendToUser(m.userId, payload);
+	// Graine sans le slot : les relances d'un même rappel gardent la formulation du premier envoi.
+	const { title, body } = notifMessage(kind, ctx, `${m.userId}:${kind}:${refDate}`, m.workspaceName);
+	await sendToUser(m.userId, {
+		title,
+		body,
+		url: NOTIF_URL[kind],
+		tag: slot ? `${kind}:${refDate}:${slot}` : `${kind}:${refDate}`
+	});
 	return 1;
 }
 
 /** Jour non (assez) saisi : EVENING_MISSING (aujourd'hui) ou MORNING_YESTERDAY (veille). */
 async function dayMissing(
-	kind: NotifKind,
+	kind: 'EVENING_MISSING' | 'MORNING_YESTERDAY',
 	day: string,
 	members: Member[],
 	slot: string
@@ -186,23 +202,13 @@ async function dayMissing(
 	for (const m of members) {
 		const key = `${m.workspaceId}:${m.userId}`;
 		if (absentSet.has(key)) continue; // congé / férié ce jour-là
-		if ((totalMap.get(key) ?? 0) >= m.capacity) continue; // journée remplie
-		const body =
+		const total = totalMap.get(key) ?? 0;
+		if (total >= m.capacity) continue; // journée remplie
+		const ctx = { missing: m.capacity - total, nothing: total === 0 };
+		sent +=
 			kind === 'EVENING_MISSING'
-				? `${m.workspaceName} : tu n'as pas saisi ton imputation d'aujourd'hui.`
-				: `${m.workspaceName} : le ${day} n'a pas été renseigné. Pense à le compléter.`;
-		sent += await maybeNotify(
-			m,
-			kind,
-			day,
-			{
-				title: kind === 'EVENING_MISSING' ? 'Imputation du jour' : "Imputation d'hier",
-				body,
-				url: '/imputation',
-				tag: `${kind}:${day}:${slot}`
-			},
-			slot
-		);
+				? await maybeNotify(m, 'EVENING_MISSING', day, ctx, slot)
+				: await maybeNotify(m, 'MORNING_YESTERDAY', day, { ...ctx, day }, slot);
 	}
 	return sent;
 }
@@ -266,10 +272,8 @@ async function raeStale(refDate: string, members: Member[]): Promise<number> {
 		const m = r.userId ? byMember.get(`${r.workspaceId}:${r.userId}`) : null;
 		if (!m) continue;
 		sent += await maybeNotify(m, 'RAE_STALE', refDate, {
-			title: 'RAE à mettre à jour',
-			body: `${m.workspaceName} : ${r.cnt} ticket${r.cnt > 1 ? 's' : ''} attendent une mise à jour du RAE.`,
-			url: '/tickets',
-			tag: `RAE_STALE:${refDate}`
+			count: r.cnt,
+			staleDays: config.raeStaleDays
 		});
 	}
 	return sent;
@@ -303,35 +307,28 @@ async function weeklyRecap(refDate: string, members: Member[]): Promise<number> 
 
 	let sent = 0;
 	for (const m of members) {
-		let incomplete = false;
-		for (const d of weekDays) {
+		// Les jours en défaut sont listés dans la notif : « 17, 19 août » vaut mieux qu'un « il reste
+		// des jours incomplets » qui oblige à ouvrir l'app pour savoir lesquels.
+		const incomplete = weekDays.filter((d) => {
 			const k = `${m.workspaceId}:${m.userId}:${d}`;
-			if (absentSet.has(k)) continue;
-			if ((totalMap.get(k) ?? 0) < m.capacity) {
-				incomplete = true;
-				break;
-			}
-		}
-		if (!incomplete) continue;
-		sent += await maybeNotify(m, 'WEEKLY_RECAP', refDate, {
-			title: 'Semaine à boucler',
-			body: `${m.workspaceName} : il reste des jours incomplets cette semaine.`,
-			url: '/imputation',
-			tag: `WEEKLY_RECAP:${refDate}`
+			return !absentSet.has(k) && (totalMap.get(k) ?? 0) < m.capacity;
 		});
+		if (incomplete.length === 0) continue;
+		sent += await maybeNotify(m, 'WEEKLY_RECAP', refDate, { days: incomplete });
 	}
 	return sent;
 }
 
 /**
- * Dernier jour d'une plage Team mood : relance tous les membres n'ayant pas encore voté.
- * Indépendant du jour ouvré (une plage peut se terminer un week-end selon la config admin).
+ * Dernier jour ouvré d'une plage Team mood : relance tous les membres n'ayant pas encore voté.
+ * Pas le dernier jour calendaire : une plage lundi→dimanche relance le vendredi, sinon la notif
+ * tombe un jour où personne ne travaille. Le vote reste ouvert jusqu'à la vraie fin de plage.
  */
 async function moodDeadline(today: string): Promise<number> {
 	let sent = 0;
 	for (const w of await moodEnabledWorkspaces()) {
 		const period = currentMoodPeriod(w.periodKind, w.startWeekday, today);
-		if (period.end !== today) continue; // pas le dernier jour de la plage
+		if (lastWorkdayOnOrBefore(period.end) !== today) continue; // pas l'échéance utile de la plage
 
 		const voted = new Set(
 			(
@@ -348,12 +345,7 @@ async function moodDeadline(today: string): Promise<number> {
 				{ workspaceId: w.workspaceId, workspaceName: w.workspaceName, userId: m.userId, capacity: 0, prefsRaw: m.prefsRaw },
 				'MOOD_DEADLINE',
 				period.start,
-				{
-					title: 'Team mood : dernier jour',
-					body: `${w.workspaceName} : il reste moins d'un jour pour voter sur l'humeur de l'équipe.`,
-					url: '/mood',
-					tag: `MOOD_DEADLINE:${period.start}`
-				}
+				{}
 			);
 		}
 	}
@@ -394,12 +386,7 @@ async function moodRecap(today: string): Promise<number> {
 				{ workspaceId: w.workspaceId, workspaceName: w.workspaceName, userId: admin.userId, capacity: 0, prefsRaw: admin.prefsRaw },
 				'MOOD_RECAP',
 				justClosed.start,
-				{
-					title: 'Team mood en baisse',
-					body: `${w.workspaceName} : moyenne à ${curAvg.toFixed(1)}/5 sur la dernière plage (${prevAvg.toFixed(1)}/5 précédemment).`,
-					url: '/admin/mood',
-					tag: `MOOD_RECAP:${justClosed.start}`
-				}
+				{ avg: curAvg, prevAvg, votes: curRows.length }
 			);
 		}
 	}
@@ -417,21 +404,19 @@ export async function notifyAbsencePending(
 	workspaceName: string,
 	requesterId: string,
 	requesterName: string,
+	startDate: string,
+	endDate: string,
 	absenceId: string
 ): Promise<number> {
 	let sent = 0;
+	const range = formatDayRange(startDate, endDate);
 	for (const admin of await membersOf(workspaceId, 'ADMIN')) {
 		if (admin.userId === requesterId) continue; // pas de notif à soi-même
 		sent += await maybeNotify(
 			{ workspaceId, workspaceName, userId: admin.userId, capacity: 0, prefsRaw: admin.prefsRaw },
 			'ABSENCE_PENDING',
 			todayInParis(), // refDate = colonne `date` ; le dédup par congé se fait via `slot` (texte libre) ci-dessous
-			{
-				title: 'Congé à valider',
-				body: `${workspaceName} : ${requesterName} a demandé un congé.`,
-				url: '/absences',
-				tag: `ABSENCE_PENDING:${absenceId}`
-			},
+			{ name: requesterName, range },
 			absenceId
 		);
 	}
@@ -451,17 +436,11 @@ export async function notifyAbsenceValidated(
 	absenceId: string
 ): Promise<number> {
 	const [row] = await db.select({ prefsRaw: user.notifPrefs }).from(user).where(eq(user.id, userId));
-	const range = startDate === endDate ? startDate : `${startDate} → ${endDate}`;
 	return maybeNotify(
 		{ workspaceId, workspaceName, userId, capacity: 0, prefsRaw: row?.prefsRaw ?? null },
 		'ABSENCE_VALIDATED',
 		todayInParis(),
-		{
-			title: 'Congé validé',
-			body: `${workspaceName} : votre congé du ${range} a été validé.`,
-			url: '/absences',
-			tag: `ABSENCE_VALIDATED:${absenceId}`
-		},
+		{ range: formatDayRange(startDate, endDate) },
 		absenceId
 	);
 }
