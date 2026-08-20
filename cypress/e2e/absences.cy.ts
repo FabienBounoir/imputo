@@ -4,9 +4,11 @@ describe('absences : déclaration puis validation', () => {
 			cy.visit('/absences');
 			cy.clickReliably(() => cy.contains('button', '+ Déclarer une absence'), '.wizard-modal');
 
-			// Espace fraîchement créé sans membre externe : l'étape "Pour qui" est sautée,
-			// le wizard démarre directement sur "Dates" avec aujourd'hui->aujourd'hui déjà valide.
+			// Le créateur d'un espace en est ADMIN, donc canManageOthers : le wizard a 3 étapes
+			// (Pour qui / Dates / Type), pas 2. Les valeurs par défaut de chacune sont déjà valides
+			// (moi-même, aujourd'hui -> aujourd'hui, congé prévisionnel), on ne fait qu'avancer.
 			cy.contains('.wizard-modal h3', 'Déclarer une absence').should('be.visible');
+			cy.get('.wizard-modal').contains('button', 'Suivant →').click();
 			cy.get('.wizard-modal').contains('button', 'Suivant →').click();
 
 			// Étape "Type" : le type par défaut (congé prévisionnel) reste sélectionné.

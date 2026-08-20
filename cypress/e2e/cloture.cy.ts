@@ -10,7 +10,8 @@ describe('clôture mensuelle', () => {
 			cy.visit('/admin');
 			// Toujours passer par le clic d'onglet : `?tab=referentiels` + submit immédiat perd
 			// l'onglet (repli natif avant hydratation), cf. admin-referentials.cy.ts.
-			cy.clickReliably(() => cy.contains('button', 'Référentiels'), 'form.ssp-add input[name=code]');
+			cy.gotoRefSection('Codes SSP', 'Rechercher un code ou un libellé…');
+			cy.openRefAddForm('form.ssp-add input[name=code]');
 
 			cy.get('form.ssp-add input[name=code]').type(code);
 			cy.get('form.ssp-add input[name=label]').type('Libellé E2E');

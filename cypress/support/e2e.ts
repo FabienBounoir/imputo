@@ -27,6 +27,21 @@ Cypress.Commands.add('clickReliably', (find: () => Cypress.Chainable, expectSele
 	cy.get(expectSelector, { timeout: 4000 }).should('exist');
 });
 
+// Les référentiels de /admin sont derrière un sous-menu (une section affichée à la fois) et un
+// formulaire d'ajout replié : deux clics avant de pouvoir taper. Le placeholder de la recherche
+// sert de témoin — c'est le seul élément propre à une section donnée qui existe avant tout ajout.
+Cypress.Commands.add('gotoRefSection', (label: string, searchPlaceholder: string) => {
+	cy.clickReliably(() => cy.contains('button', 'Référentiels'), 'nav.ref-nav');
+	cy.clickReliably(
+		() => cy.contains('nav.ref-nav button', label),
+		`input[placeholder="${searchPlaceholder}"]`
+	);
+});
+Cypress.Commands.add('openRefAddForm', (expectSelector: string) => {
+	cy.get('button.ref-add-toggle').click();
+	cy.get(expectSelector).should('exist');
+});
+
 Cypress.Commands.add('registerAndLogin', (overrides = {}) => {
 	const rnd = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
 	const account = {
@@ -61,6 +76,8 @@ declare global {
 		interface Chainable {
 			typeReliably(selector: string, text: string): Chainable<void>;
 			clickReliably(find: () => Chainable, expectSelector: string): Chainable<void>;
+			gotoRefSection(label: string, searchPlaceholder: string): Chainable<void>;
+			openRefAddForm(expectSelector: string): Chainable<void>;
 			registerAndLogin(overrides?: Partial<RegisteredAccount>): Chainable<RegisteredAccount>;
 		}
 	}

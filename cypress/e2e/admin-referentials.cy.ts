@@ -1,17 +1,4 @@
-// Les référentiels sont derrière un sous-menu (une section à la fois) et un formulaire d'ajout
-// replié : deux clics avant de pouvoir taper quoi que ce soit, factorisés ici.
-const gotoRefSection = (label: string, searchPlaceholder: string) => {
-	cy.clickReliably(() => cy.contains('button', 'Référentiels'), 'nav.ref-nav');
-	cy.clickReliably(
-		() => cy.contains('nav.ref-nav button', label),
-		`input[placeholder="${searchPlaceholder}"]`
-	);
-};
-const openAddForm = (expectSelector: string) => {
-	cy.get('button.ref-add-toggle').click();
-	cy.get(expectSelector).should('exist');
-};
-const gotoSsp = () => gotoRefSection('Codes SSP', 'Rechercher un code ou un libellé…');
+const gotoSsp = () => cy.gotoRefSection('Codes SSP', 'Rechercher un code ou un libellé…');
 
 describe('admin : gestion des référentiels', () => {
 	it('crée puis archive une catégorie', () => {
@@ -19,10 +6,10 @@ describe('admin : gestion des référentiels', () => {
 
 		cy.registerAndLogin().then(() => {
 			cy.visit('/admin');
-			gotoRefSection('Catégories', 'Rechercher une catégorie…');
+			cy.gotoRefSection('Catégories', 'Rechercher une catégorie…');
 			// Placeholder distinctif : l'espace a des catégories seedées par défaut, dont les champs
 			// de renommage (name="label" aussi) précèdent ce formulaire de création dans le DOM.
-			openAddForm('input[placeholder="Nouvelle catégorie…"]');
+			cy.openRefAddForm('input[placeholder="Nouvelle catégorie…"]');
 
 			cy.get('input[placeholder="Nouvelle catégorie…"]').type(label);
 			cy.get('input[placeholder="Nouvelle catégorie…"]').closest('form').find('button[type=submit]').click();
@@ -47,7 +34,7 @@ describe('admin : gestion des référentiels', () => {
 		cy.registerAndLogin().then(() => {
 			cy.visit('/admin');
 			gotoSsp();
-			openAddForm('form.ssp-add input[name=code]');
+			cy.openRefAddForm('form.ssp-add input[name=code]');
 			[
 				['AAA-1', 'Alpha'],
 				['MMM-2', 'Mike']
@@ -68,7 +55,7 @@ describe('admin : gestion des référentiels', () => {
 		cy.registerAndLogin().then(() => {
 			cy.visit('/admin');
 			gotoSsp();
-			openAddForm('form.ssp-add input[name=code]');
+			cy.openRefAddForm('form.ssp-add input[name=code]');
 			cy.get('form.ssp-add input[name=code]').type('BUD-1');
 			cy.get('form.ssp-add input[name=label]').type('Budget');
 			cy.get('form.ssp-add button[type=submit]').click();
@@ -86,7 +73,7 @@ describe('admin : gestion des référentiels', () => {
 		cy.registerAndLogin().then(() => {
 			cy.visit('/admin');
 			gotoSsp();
-			openAddForm('form.ssp-add input[name=code]');
+			cy.openRefAddForm('form.ssp-add input[name=code]');
 			cy.get('form.ssp-add input[name=code]').type('REG-1');
 			cy.get('form.ssp-add input[name=label]').type('Avant');
 			cy.get('form.ssp-add input[name=budgetDays]').type('10');

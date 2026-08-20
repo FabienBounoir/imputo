@@ -6,9 +6,12 @@ const WEDNESDAY = '2026-06-24';
 function openDeclareWizard() {
 	cy.visit('/absences');
 	cy.clickReliably(() => cy.contains('button', '+ Déclarer une absence'), '.wizard-modal');
+	// Le créateur d'un espace en est ADMIN, donc canManageOthers : le wizard ouvre sur "Pour qui"
+	// (moi-même par défaut) et pas sur "Dates". On avance d'une étape pour atteindre les dates.
+	cy.get('.wizard-modal').contains('button', 'Suivant →').click();
 }
 
-/** Étape "Dates" du wizard (déjà la première étape pour un admin sans membre externe). */
+/** Étape "Dates" du wizard. */
 function fillDatesAndNext(start: string, end: string) {
 	cy.get('#startDate').clear().type(start).should('have.value', start);
 	cy.get('#endDate').clear().type(end).should('have.value', end);
@@ -128,7 +131,7 @@ describe('absences → "Mon imputation" : synchronisation automatique', () => {
 	it('la catégorie "Congé" (requise par le suivi des absences) ne peut pas être archivée depuis l\'admin', () => {
 		cy.registerAndLogin().then(() => {
 			cy.visit('/admin');
-			cy.clickReliably(() => cy.contains('button', 'Référentiels'), 'input[placeholder="Nouvelle catégorie…"]');
+			cy.gotoRefSection('Catégories', 'Rechercher une catégorie…');
 
 			// Même motif que admin-referentials.cy.ts : le libellé vit en propriété `value` d'un
 			// <input> de renommage inline, pas dans le textContent.
