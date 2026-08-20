@@ -132,6 +132,17 @@
 	);
 	const consoCell = (userId: string, sspId: string) =>
 		view.members.find((m) => m.userId === userId)?.conso[sspId] ?? 0;
+	// Conso réelle à date, distincte de `conso` (figée) une fois la passe intégrée — sert à afficher
+	// le réel entre parenthèses dans le tableau 1 sans devoir aller chercher l'écart du tableau 4.
+	const consoLiveCell = (userId: string, sspId: string) =>
+		view.members.find((m) => m.userId === userId)?.consoLive?.[sspId] ?? 0;
+	const consoLiveTotal = (userId: string) =>
+		round2(cols.reduce((a, c) => a + consoLiveCell(userId, c.id), 0));
+	// Dérivés plutôt que {@const} : ce dernier n'est pas autorisé en enfant direct d'un <tfoot>.
+	const consoGrandTotal = $derived(round2(view.members.reduce((a, m) => a + m.consoTotal, 0)));
+	const consoGrandLive = $derived(
+		integrated ? round2(view.members.reduce((a, m) => a + consoLiveTotal(m.userId), 0)) : consoGrandTotal
+	);
 	/** Colonne vide : ni conso ni complément. Le serveur revérifie, ceci ne fait que cacher le ✕. */
 	const isEmptyCol = (sspId: string) =>
 		colTotal(sspId, consoCell) === 0 && colTotal(sspId, cell) === 0;
@@ -182,6 +193,9 @@
 	}
 
 	const fmt = (n: number) => (n === 0 ? '·' : String(round2(n)));
+	// `fmt` mappuie sur "·" pour un zéro isolé — mais associé au réel ("· X" juste après), ce même
+	// point devient illisible (deux points collés). Le figé garde alors son 0 explicite.
+	const fmtBase = (n: number, paired: boolean) => (paired ? String(round2(n)) : fmt(n));
 </script>
 
 <svelte:head><title>Clôture mensuelle — Imputo</title></svelte:head>
@@ -303,8 +317,12 @@
 			{@render cardHead('conso', `1 · Consommation réelle${integrated ? ' (Figée)' : ''}`)}
 			{#if !collapsed.conso}
 			<p class="hint">
-				Imputations du mois par code SSP.
-				{#if integrated}Figée à l'intégration.{:else}Suit les saisies en direct.{/if}
+				Imputations du mois par code SSP. 
+				{#if integrated}
+					Les chiffres <span class="conso-live">en rouge</span> = le réel à date, si différent.
+				{:else}
+					Suit les saisies en direct.
+				{/if}
 			</p>
 			<div class="scroll">
 				<table class="weekly-table">
@@ -327,18 +345,46 @@
 					</thead>
 					<tbody>
 						{#each view.members as m (m.userId)}
+							{@const liveTotal = integrated ? consoLiveTotal(m.userId) : m.consoTotal}
+							{@const totalDiff = liveTotal !== m.consoTotal}
 							<tr>
 								<td>{m.displayName}{#if m.inactive}<span class="tag-arch" title="N'est plus membre actif de l'espace, mais garde des jours sur ce mois">inactif</span>{/if}</td>
-								{#each cols as c (c.id)}<td class="num tabnum">{fmt(consoCell(m.userId, c.id))}</td>{/each}
-								<td class="num tabnum"><b>{fmt(m.consoTotal)}</b></td>
+								{#each cols as c (c.id)}
+									{@const figé = consoCell(m.userId, c.id)}
+									{@const réel = integrated ? consoLiveCell(m.userId, c.id) : figé}
+									{@const diff = réel !== figé}
+									<td class="num tabnum"
+										>{fmtBase(figé, diff)}{#if diff}
+											<span class="conso-live" title="Réel à date">· {fmt(réel)}</span>
+										{/if}</td
+									>
+								{/each}
+								<td class="num tabnum">
+									<b>{fmtBase(m.consoTotal, totalDiff)}</b>{#if totalDiff}
+										<span class="conso-live" title="Réel à date">· {fmt(liveTotal)}</span>
+									{/if}
+								</td>
 							</tr>
 						{/each}
 					</tbody>
 					<tfoot>
 						<tr>
 							<td>Total</td>
-							{#each cols as c (c.id)}<td class="num tabnum"><b>{fmt(colTotal(c.id, consoCell))}</b></td>{/each}
-							<td class="num tabnum"><b>{fmt(round2(view.members.reduce((a, m) => a + m.consoTotal, 0)))}</b></td>
+							{#each cols as c (c.id)}
+								{@const t = colTotal(c.id, consoCell)}
+								{@const tLive = integrated ? colTotal(c.id, consoLiveCell) : t}
+								{@const tDiff = tLive !== t}
+								<td class="num tabnum"
+									><b>{fmtBase(t, tDiff)}</b>{#if tDiff}
+										<span class="conso-live" title="Réel à date">· {fmt(tLive)}</span>
+									{/if}</td
+								>
+							{/each}
+							<td class="num tabnum">
+								<b>{fmtBase(consoGrandTotal, consoGrandLive !== consoGrandTotal)}</b>{#if consoGrandLive !== consoGrandTotal}
+									<span class="conso-live" title="Réel à date">· {fmt(consoGrandLive)}</span>
+								{/if}
+							</td>
 						</tr>
 					</tfoot>
 				</table>
@@ -761,6 +807,15 @@
 	.warn {
 		color: var(--warn);
 		font-weight: 600;
+	}
+	/* Réel à date entre parenthèses à côté du figé — c'est lui qui bouge encore, donc lui qui porte
+	   l'alerte (gras rouge) ; le figé reste en poids normal, il ne change plus. margin-left plutôt
+	   qu'un espace texte en tête : Svelte rogne l'espace de tête du premier enfant d'un élément/bloc
+	   à la compilation, un espace littéral avant "·" ne survit jamais au rendu. */
+	.conso-live {
+		margin-left: 0.3em;
+		font-weight: 700;
+		color: var(--warn);
 	}
 	/* Ligne soldée : plus rien à ventiler. Teinte très basse — c'est l'état normal qu'on doit
 	   pouvoir balayer du regard, pas une alerte. Le vert porte sur les cellules et non sur le

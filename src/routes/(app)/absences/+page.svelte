@@ -64,10 +64,10 @@
 	let showDeclareModal = $state(false);
 	let wizardStep = $state(0);
 
-	// Étape "Pour qui" seulement pour un admin/manager qui a des membres externes à choisir, et
-	// seulement à la création (le sujet d'une absence existante ne se réassigne jamais).
+	// Étape "Pour qui" seulement pour un admin/manager, et seulement à la création (le sujet d'une
+	// absence existante ne se réassigne jamais).
 	const wizardSteps = $derived(
-		!editingId && data.canManageOthers && data.externalMembers.length > 0
+		!editingId && data.canManageOthers
 			? [
 					{ key: 'subject', label: 'Pour qui' },
 					{ key: 'dates', label: 'Dates' },
@@ -439,8 +439,8 @@
 						<label for="subject">Pour qui ?</label>
 						<select id="subject" bind:value={subject}>
 							<option value="me">Moi-même</option>
-							{#each data.externalMembers as em (em.id)}
-								<option value="ext:{em.id}">{em.displayName} (externe)</option>
+							{#each data.rows.filter((r) => r.id !== data.selfId) as m (m.id)}
+								<option value={m.external ? `ext:${m.id}` : `user:${m.id}`}>{m.displayName}{m.external ? ' (externe)' : ''}</option>
 							{/each}
 						</select>
 					</div>
