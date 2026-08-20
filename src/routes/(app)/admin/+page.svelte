@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import { enhance } from '$app/forms';
 	import { invalidateAll, replaceState } from '$app/navigation';
 	import { page } from '$app/state';
@@ -7,10 +8,55 @@
 	import AccentPicker from '$lib/components/AccentPicker.svelte';
 	import MemberAccessModal from '$lib/components/MemberAccessModal.svelte';
 	import { confirmDialog } from '$lib/confirm.svelte';
+	import type { SubmitFunction } from '@sveltejs/kit';
 	let { data, form } = $props();
+
+	// À utiliser sur TOUT formulaire d'édition en place (champ rempli depuis `data`).
+	// Par défaut, `enhance` appelle form.reset() après un succès, ce qui remet chaque champ à
+	// l'attribut `value` du HTML initial — or Svelte n'écrit jamais cet attribut, seulement la
+	// propriété .value (cf. set_value). Le champ réaffiche donc la valeur du premier chargement,
+	// et pire : la soumission suivante la renvoie telle quelle au serveur, écrasant la vraie donnée.
+	// Ça ne se voyait pas sur un formulaire à un seul champ (la donnée change, Svelte réécrit
+	// derrière), mais dès qu'un form porte deux champs, éditer l'un ressuscite l'autre.
+	// Les formulaires de création gardent le reset par défaut, eux en ont besoin.
+	const enhanceEdit: SubmitFunction = () => async ({ update }) => update({ reset: false });
+
+	// Les flèches d'un <input type="number"> émettent un `change` à chaque clic : soumettre
+	// directement, c'est un POST + un invalidateAll (tout le load de la page admin) par incrément,
+	// qui réécrit le champ sous le curseur — il fallait re-cliquer dedans entre deux incréments.
+	// On laisse retomber la rafale avant d'enregistrer.
+	const submitTimers = new WeakMap<HTMLFormElement, ReturnType<typeof setTimeout>>();
+	function submitSoon(form: HTMLFormElement, delay = 600) {
+		clearTimeout(submitTimers.get(form));
+		submitTimers.set(form, setTimeout(() => form.requestSubmit(), delay));
+	}
 
 	let accessModalFor = $state<string | null>(null);
 	const accessModalMember = $derived(data.members.find((m) => m.id === accessModalFor) ?? null);
+
+	// ---------- Membres : recherche + regroupement (désactivés en bas) ----------
+	const ROLE_LABELS: Record<string, string> = { USER: 'Membre', MANAGER: 'Manager', ADMIN: 'Admin' };
+	function memberStatusLabel(m: { pending: boolean; active: boolean }) {
+		return m.pending ? 'en attente' : m.active ? 'actif' : 'désactivé';
+	}
+	let memberSearch = $state('');
+	const filteredMembers = $derived.by(() => {
+		const q = memberSearch.trim().toLowerCase();
+		const list = q
+			? data.members.filter(
+					(m) =>
+						m.displayName.toLowerCase().includes(q) ||
+						m.email.toLowerCase().includes(q) ||
+						ROLE_LABELS[m.role].toLowerCase().includes(q) ||
+						memberStatusLabel(m).includes(q)
+				)
+			: data.members;
+		// Tri stable : seuls les désactivés passent en bas, l'ordre serveur est conservé au sein de
+		// chaque groupe (actifs/en attente d'un côté, désactivés de l'autre).
+		return [...list].sort((a, b) => Number(!a.active && !a.pending) - Number(!b.active && !b.pending));
+	});
+	// Frontière des deux groupes, pour insérer un séparateur visuel — absent si l'un des deux est vide.
+	const firstInactiveMemberIndex = $derived(filteredMembers.findIndex((m) => !m.active && !m.pending));
 
 	// Glisser-déposer (groupes de tickets, activités) : 'end' = zone sous le dernier élément
 	// (dépose = envoyer à la fin) ; null = pas de survol actif.
@@ -119,8 +165,53 @@
 	let tab = $state<Tab>(tabFromUrl ?? 'general');
 	function setTab(next: Tab) {
 		tab = next;
-		replaceState(`?tab=${next}`, {});
+		const params = new URLSearchParams(next === 'referentiels' ? { tab: next, ref: refSection } : { tab: next });
+		replaceState(`?${params}`, {});
 	}
+
+	// ---------- Référentiels : sous-menu latéral (une section à la fois — cf. discussion ergonomie
+	// 2026-08-20, le grid 2-3 colonnes se désalignait dès qu'une liste dépassait ses voisines) ----------
+	const REF_SECTIONS = [
+		{ key: 'projects', label: 'Projets' },
+		{ key: 'sprints', label: 'Sprints' },
+		{ key: 'versions', label: 'Versions' },
+		{ key: 'categories', label: 'Catégories' },
+		{ key: 'ssp', label: 'Codes SSP' },
+		{ key: 'activities', label: 'Activités' },
+		{ key: 'groups', label: 'Groupes de tickets' }
+	] as const;
+	type RefSection = (typeof REF_SECTIONS)[number]['key'];
+	const refSectionCount = $derived<Record<RefSection, number>>({
+		projects: data.projects.length,
+		sprints: data.sprints.length,
+		versions: data.versions.length,
+		categories: data.categories.length,
+		ssp: data.ssps.length,
+		activities: data.activities.length,
+		groups: data.ticketGroups.length
+	});
+	const refFromUrl = REF_SECTIONS.find((s) => s.key === page.url.searchParams.get('ref'))?.key;
+	let refSection = $state<RefSection>(refFromUrl ?? 'projects');
+	// Recherche remise à zéro à chaque changement de section — un filtre "SSP" oublié qui masquerait
+	// silencieusement toute la liste "Activités" au clic suivant serait un piège classique.
+	let refSearch = $state('');
+	// Un seul champ de recherche monté à la fois (une section à la fois) : cette même ref est passée
+	// en bind:this à chacun des inputs, elle pointe donc toujours sur celui actuellement affiché.
+	let refSearchInput = $state<HTMLInputElement | null>(null);
+	// Formulaire d'ajout replié par défaut — recherche et création sont deux intentions différentes,
+	// les empiler toutes les deux ouvertes en permanence les rendait difficiles à distinguer.
+	let refAddOpen = $state(false);
+	async function setRefSection(next: RefSection) {
+		refSection = next;
+		refSearch = '';
+		refAddOpen = false;
+		replaceState(`?${new URLSearchParams({ tab: 'referentiels', ref: next })}`, {});
+		// Choisir une section, c'est pour y chercher quelque chose tout de suite — focus après le
+		// changement de branche {#if}, une fois le nouvel input monté (tick attend ce rendu).
+		await tick();
+		refSearchInput?.focus();
+	}
+	const refMatch = (text: string) => text.toLowerCase().includes(refSearch.trim().toLowerCase());
 
 	// ---------- Jira (onglet) ----------
 	let jiraRegexPattern = $state(data.jira.regexPattern);
@@ -192,12 +283,23 @@
 				👑 Le <b>créateur de l'espace</b> a les mêmes droits qu'un admin, mais ne peut être ni rétrogradé ni
 				désactivé par personne d'autre. Il peut transmettre ce statut à un autre membre actif.
 			</p>
+			<div class="ref-search">
+				<input
+					class="ref-search-input"
+					type="search"
+					placeholder="Rechercher par nom, email, rôle, statut…"
+					bind:value={memberSearch}
+				/>
+			</div>
 			<div class="members-wrap">
 			<div class="members-scroll">
 			<table class="members">
 				<tbody>
-					{#each data.members as m (m.id)}
+					{#each filteredMembers as m, i (m.id)}
 						{@const isSelf = m.id === data.selfId}
+						{#if i === firstInactiveMemberIndex && firstInactiveMemberIndex > 0}
+							<tr class="member-sep"><td colspan="6">Désactivés</td></tr>
+						{/if}
 						<tr class:inactive={!m.active && !m.pending}>
 							<td><div class="mc"><span class="avatar">{initials(m.displayName)}</span><div><b>{m.displayName}{#if isSelf} <span class="you">vous</span>{/if}</b><span>{m.email}</span></div></div></td>
 							<td>
@@ -206,7 +308,7 @@
 								{:else if isSelf}
 									<span class="pill">{m.role === 'ADMIN' ? 'Admin' : m.role === 'MANAGER' ? 'Manager' : 'Membre'}</span>
 								{:else}
-									<form method="POST" action="?/memberRole" use:enhance>
+									<form method="POST" action="?/memberRole" use:enhance={enhanceEdit}>
 										<input type="hidden" name="userId" value={m.id} />
 										<select class="role-sel" name="role" value={m.role} onchange={(e) => e.currentTarget.form?.requestSubmit()}>
 											<option value="USER">Membre</option>
@@ -218,7 +320,7 @@
 							</td>
 							<td>{#if m.pending}<span class="pill pending">⏳ En attente</span>{:else if !m.active}<span class="pill off">🚫 Désactivé</span>{:else}<span class="pill active">✓ Actif</span>{/if}</td>
 							<td>
-								<form method="POST" action="?/memberCapacity" use:enhance class="cap-form">
+								<form method="POST" action="?/memberCapacity" use:enhance={enhanceEdit} class="cap-form">
 									<input type="hidden" name="userId" value={m.id} />
 									<input type="hidden" name="capacity" value={m.capacity} />
 									<input
@@ -232,7 +334,7 @@
 										onchange={(e) => {
 											const form = e.currentTarget.form!;
 											(form.elements.namedItem('capacity') as HTMLInputElement).value = String(Number(e.currentTarget.value) / 100);
-											form.requestSubmit();
+											submitSoon(form);
 										}}
 									/>
 									<span class="cap-unit">%</span>
@@ -286,6 +388,9 @@
 							</td>
 						</tr>
 					{/each}
+					{#if filteredMembers.length === 0}
+						<tr><td colspan="6" class="hint">Aucun résultat pour cette recherche.</td></tr>
+					{/if}
 				</tbody>
 			</table>
 			</div>
@@ -293,25 +398,49 @@
 		</section>
 	{/if}
 
+	<!-- Recherche + bascule d'ajout partagées par les 7 sections : sur une seule ligne plutôt que deux
+	     champs empilés qui se distinguaient mal, le formulaire de création replié par défaut. -->
+	{#snippet refToolbar(searchPlaceholder: string)}
+		<div class="ref-toolbar">
+			<input class="ref-search-input" type="search" placeholder={searchPlaceholder} bind:value={refSearch} bind:this={refSearchInput} />
+			<button type="button" class="btn btn-ghost ref-add-toggle" aria-expanded={refAddOpen} onclick={() => (refAddOpen = !refAddOpen)}>
+				{#if refAddOpen}
+					Fermer <span class="ref-add-caret open">▾</span>
+				{:else}
+					+ Ajouter <span class="ref-add-caret">▾</span>
+				{/if}
+			</button>
+		</div>
+	{/snippet}
+
 	{#snippet refBlock(title: string, type: 'project' | 'sprint' | 'version', placeholder: string, items: { id: string; name: string; archived: boolean; usage: number }[])}
-		<section class="card block">
-			<h3>{title}</h3>
-			{#if form?.refOk === type}<div class="flash ok">Mis à jour ✓</div>{/if}
-			<div class="ref-list">
-				{#each items as it (it.id)}
-					<div class="ref-item" class:archived={it.archived}>
-						<form method="POST" action="?/refRename" use:enhance>
-							<input type="hidden" name="type" value={type} />
-							<input type="hidden" name="id" value={it.id} />
-							<input
-								class="ref-name"
-								name="name"
-								value={it.name}
-								disabled={it.archived}
-								onchange={(e) => e.currentTarget.form?.requestSubmit()}
-							/>
-						</form>
-						{#if it.usage > 0}<span class="tag-usage" title="Tickets liés">{it.usage} ticket{it.usage > 1 ? 's' : ''}</span>{/if}
+		{@const filtered = items.filter((it) => refMatch(it.name))}
+		<h3>{title}</h3>
+		{#if form?.refOk === type}<div class="flash ok toast-tr" role="status">Mis à jour ✓</div>{/if}
+		{@render refToolbar(`Rechercher ${title.toLowerCase()}…`)}
+		{#if refAddOpen}
+			<form method="POST" action="?/refCreate" use:enhance class="ref-add">
+				<input type="hidden" name="type" value={type} />
+				<input class="ref-input" name="name" placeholder={placeholder} required />
+				<button class="btn btn-ghost" type="submit">+ Ajouter</button>
+			</form>
+		{/if}
+		<div class="ref-list">
+			{#each filtered as it (it.id)}
+				<div class="ref-item" class:archived={it.archived}>
+					<form method="POST" action="?/refRename" use:enhance={enhanceEdit}>
+						<input type="hidden" name="type" value={type} />
+						<input type="hidden" name="id" value={it.id} />
+						<input
+							class="ref-name"
+							name="name"
+							value={it.name}
+							disabled={it.archived}
+							onchange={(e) => e.currentTarget.form?.requestSubmit()}
+						/>
+					</form>
+					{#if it.usage > 0}<span class="tag-usage" title="Tickets liés">{it.usage} ticket{it.usage > 1 ? 's' : ''}</span>{/if}
+					<div class="ref-item-end">
 						{#if it.archived}<span class="tag-arch">archivé</span>{/if}
 						<form
 							method="POST"
@@ -331,216 +460,352 @@
 							<button class="ref-btn" type="submit">{it.archived ? '↺ Restaurer' : '🗄 Archiver'}</button>
 						</form>
 					</div>
-				{/each}
-				{#if items.length === 0}<p class="hint" style="margin:0;">Aucun élément pour l'instant.</p>{/if}
-			</div>
-			<form method="POST" action="?/refCreate" use:enhance class="ref-add">
-				<input type="hidden" name="type" value={type} />
-				<input class="ref-input" name="name" placeholder={placeholder} required />
-				<button class="btn btn-ghost" type="submit">+ Ajouter</button>
-			</form>
-		</section>
+				</div>
+			{/each}
+			{#if filtered.length === 0}
+				<p class="hint" style="margin:0;">{items.length === 0 ? "Aucun élément pour l'instant." : 'Aucun résultat pour cette recherche.'}</p>
+			{/if}
+		</div>
 	{/snippet}
 
 	{#if tab === 'referentiels'}
-		<div class="ref-grid">
-			{@render refBlock('Projets', 'project', 'Nouveau projet…', data.projects)}
-			{@render refBlock('Sprints', 'sprint', 'Nouveau sprint…', data.sprints)}
-			{@render refBlock('Versions', 'version', 'Nouvelle version…', data.versions)}
-		</div>
+		<!-- Un seul bandeau pour tout l'onglet : sans lui, un refus du serveur (code SSP déjà pris,
+		     catégorie en double…) était totalement silencieux — le champ gardait la saisie, la base
+		     l'ancienne valeur, et on ne le découvrait qu'en revenant sur la page. -->
+		{#if form?.error}<div class="flash error toast-tr" role="alert">{form.error}</div>{/if}
+		<div class="ref-layout">
+			<!-- Une section à la fois plutôt que les 7 cartes empilées d'avant : la liste la plus longue
+			     ne désaligne plus ses voisines, et la recherche/l'ajout ci-dessous ciblent toujours la
+			     bonne section sans avoir à la chercher sur la page. -->
+			<nav class="ref-nav card" aria-label="Sections des référentiels">
+				{#each REF_SECTIONS as s (s.key)}
+					<button type="button" class:on={refSection === s.key} onclick={() => setRefSection(s.key)}>
+						<span>{s.label}</span>
+						<span class="ref-nav-count">{refSectionCount[s.key]}</span>
+					</button>
+				{/each}
+			</nav>
 
-		<div class="cols-2">
-			<section class="card block">
-				<h3>Catégories</h3>
-				<p class="hint">Cibles d'imputation hors-ticket (MCO, congés, formation…). « Non productif » est exclu de la charge projet.</p>
-				{#if form?.catOk}<div class="flash ok">Mis à jour ✓</div>{/if}
-				<div class="ref-list">
-					{#each data.categories as c (c.id)}
-						<div class="ref-item" class:archived={c.archived}>
-							<form method="POST" action="?/catRename" use:enhance>
-								<input type="hidden" name="id" value={c.id} />
-								<input class="ref-name" name="label" value={c.label} disabled={c.archived} onchange={(e) => e.currentTarget.form?.requestSubmit()} />
-							</form>
-							{#if c.usage > 0}<span class="tag-usage" title="Imputations liées">{c.usage} imp.</span>{/if}
-							<form method="POST" action="?/catKind" use:enhance>
-								<input type="hidden" name="id" value={c.id} />
-								<select class="param-kind" name="kind" value={c.kind} disabled={c.archived} onchange={(e) => e.currentTarget.form?.requestSubmit()}>
-									<option value="PRODUCTIVE">Productif</option>
-									<option value="NON_PRODUCTIVE">Non productif</option>
-								</select>
-							</form>
-							{#if c.archived}<span class="tag-arch">archivé</span>{/if}
-							{#if c.locked}
-								<span class="tag-usage" title="Requise par le suivi des absences — ne peut pas être archivée">🔒 requis</span>
-							{:else}
-								<form
-									method="POST"
-									action="?/catArchive"
-									use:enhance={async ({ cancel }) => {
-										if (!c.archived && c.usage > 0) {
-											const ok = await confirmDialog(
-												`${c.usage} imputation${c.usage > 1 ? 's' : ''} seront supprimées à terme. Archiver quand même ?`
-											);
-											if (!ok) cancel();
-										}
-									}}
-								>
+			<section class="card block ref-panel">
+				{#if refSection === 'projects'}
+					{@render refBlock('Projets', 'project', 'Nouveau projet…', data.projects)}
+				{:else if refSection === 'sprints'}
+					{@render refBlock('Sprints', 'sprint', 'Nouveau sprint…', data.sprints)}
+				{:else if refSection === 'versions'}
+					{@render refBlock('Versions', 'version', 'Nouvelle version…', data.versions)}
+				{:else if refSection === 'categories'}
+					{@const filtered = data.categories.filter((c) => refMatch(c.label))}
+					<h3>Catégories</h3>
+					<p class="hint">Cibles d'imputation hors-ticket (MCO, congés, formation…). « Non productif » est exclu de la charge projet.</p>
+					{#if form?.catOk}<div class="flash ok toast-tr" role="status">Mis à jour ✓</div>{/if}
+					{@render refToolbar('Rechercher une catégorie…')}
+					{#if refAddOpen}
+						<form method="POST" action="?/catCreate" use:enhance class="ref-add">
+							<input class="ref-input" name="label" placeholder="Nouvelle catégorie…" required />
+							<select class="param-kind" name="kind">
+								<option value="PRODUCTIVE">Productif</option>
+								<option value="NON_PRODUCTIVE">Non productif</option>
+							</select>
+							<button class="btn btn-ghost" type="submit">+ Ajouter</button>
+						</form>
+					{/if}
+					<div class="ref-list">
+						{#each filtered as c (c.id)}
+							<div class="ref-item" class:archived={c.archived}>
+								<form method="POST" action="?/catRename" use:enhance={enhanceEdit}>
 									<input type="hidden" name="id" value={c.id} />
-									<input type="hidden" name="archived" value={c.archived ? 'false' : 'true'} />
-									<button class="ref-btn" type="submit">{c.archived ? '↺ Restaurer' : '🗄 Archiver'}</button>
+									<input class="ref-name" name="label" value={c.label} disabled={c.archived} onchange={(e) => e.currentTarget.form?.requestSubmit()} />
 								</form>
-							{/if}
-						</div>
-					{/each}
-					{#if data.categories.length === 0}<p class="hint" style="margin:0;">Aucune catégorie.</p>{/if}
-				</div>
-				<form method="POST" action="?/catCreate" use:enhance class="ref-add">
-					<input class="ref-input" name="label" placeholder="Nouvelle catégorie…" required />
-					<select class="param-kind" name="kind">
-						<option value="PRODUCTIVE">Productif</option>
-						<option value="NON_PRODUCTIVE">Non productif</option>
-					</select>
-					<button class="btn btn-ghost" type="submit">+ Ajouter</button>
-				</form>
-			</section>
-
-			<section class="card block">
-				<h3>Activités</h3>
-				<p class="hint">Nature du travail (Dev, TU, DA…), optionnelle sur une imputation. Glisse-dépose ⠿ pour réordonner : c'est cet ordre qui sert dans la répartition par activité des synthèses (sauf préférence "alphabétique" d'un membre dans ses paramètres de compte).</p>
-				{#if form?.actOk}<div class="flash ok">Mis à jour ✓</div>{/if}
-				<div class="ref-list">
-					{#each activityOrder as a (a.id)}
-						<!-- svelte-ignore a11y_no_static_element_interactions -->
-						<div
-							class="ref-item"
-							class:archived={a.archived}
-							class:drag-over={dragOverActivityId === a.id && draggingActivityId !== a.id}
-							ondragover={(e) => { e.preventDefault(); dragOverActivityId = a.id; }}
-							ondragleave={() => { if (dragOverActivityId === a.id) dragOverActivityId = null; }}
-							ondrop={(e) => { e.preventDefault(); onActivityDrop(a.id); }}
-						>
-							<span
-								class="drag-handle"
-								draggable="true"
-								ondragstart={(e) => { draggingActivityId = a.id; e.dataTransfer?.setData('text/plain', a.id); }}
-								ondragend={() => { draggingActivityId = null; dragOverActivityId = null; }}
-								aria-label="Glisser pour réordonner {a.label}"
-								role="button"
-								tabindex="-1"
-							>⠿</span>
-							<form method="POST" action="?/actRename" use:enhance>
-								<input type="hidden" name="id" value={a.id} />
-								<input class="ref-name" name="label" value={a.label} disabled={a.archived} onchange={(e) => e.currentTarget.form?.requestSubmit()} />
-							</form>
-							{#if a.usage > 0}<span class="tag-usage" title="Imputations liées">{a.usage} imp.</span>{/if}
-							{#if a.archived}<span class="tag-arch">inactive</span>{/if}
-							<form
-								method="POST"
-								action="?/actActive"
-								use:enhance={async ({ cancel }) => {
-									if (!a.archived) {
-										const ok = await confirmDialog(
-											'Désactiver cette activité ? Elle restera visible sur les imputations et tickets existants, mais ne sera plus proposée pour de nouvelles saisies.'
-										);
-										if (!ok) cancel();
-									}
-								}}
-							>
-								<input type="hidden" name="id" value={a.id} />
-								<input type="hidden" name="active" value={a.archived ? 'true' : 'false'} />
-								<button class="ref-btn" type="submit">{a.archived ? 'Activer' : 'Désactiver'}</button>
-							</form>
-							{#if a.usage === 0}
+								{#if c.usage > 0}<span class="tag-usage" title="Imputations liées">{c.usage} imp.</span>{/if}
+								<form method="POST" action="?/catKind" use:enhance={enhanceEdit}>
+									<input type="hidden" name="id" value={c.id} />
+									<select class="param-kind" name="kind" value={c.kind} disabled={c.archived} onchange={(e) => e.currentTarget.form?.requestSubmit()}>
+										<option value="PRODUCTIVE">Productif</option>
+										<option value="NON_PRODUCTIVE">Non productif</option>
+									</select>
+								</form>
+								<div class="ref-item-end">
+									{#if c.archived}<span class="tag-arch">archivé</span>{/if}
+									{#if c.locked}
+										<span class="ref-btn ref-btn-locked" title="Requise par le suivi des absences — ne peut pas être archivée">🔒 requis</span>
+									{:else}
+										<form
+											method="POST"
+											action="?/catArchive"
+											use:enhance={async ({ cancel }) => {
+												if (!c.archived && c.usage > 0) {
+													const ok = await confirmDialog(
+														`${c.usage} imputation${c.usage > 1 ? 's' : ''} seront supprimées à terme. Archiver quand même ?`
+													);
+													if (!ok) cancel();
+												}
+											}}
+										>
+											<input type="hidden" name="id" value={c.id} />
+											<input type="hidden" name="archived" value={c.archived ? 'false' : 'true'} />
+											<button class="ref-btn" type="submit">{c.archived ? '↺ Restaurer' : '🗄 Archiver'}</button>
+										</form>
+									{/if}
+								</div>
+							</div>
+						{/each}
+						{#if filtered.length === 0}
+							<p class="hint" style="margin:0;">{data.categories.length === 0 ? 'Aucune catégorie.' : 'Aucun résultat pour cette recherche.'}</p>
+						{/if}
+					</div>
+				{:else if refSection === 'ssp'}
+					{@const filtered = data.ssps.filter((s) => refMatch(`${s.code} ${s.label}`))}
+					<h3>Codes SSP</h3>
+					<p class="hint">
+						Codes budgétaires portés par les tickets. Le libellé est ce qu'on lit partout ailleurs
+						(synthèse, clôture mensuelle) — le code reste la clé côté compta. Le budget est en jours.
+					</p>
+					{#if form?.sspOk}<div class="flash ok toast-tr" role="status">Mis à jour ✓</div>{/if}
+					{@render refToolbar('Rechercher un code ou un libellé…')}
+					{#if refAddOpen}
+						<form method="POST" action="?/sspCreate" use:enhance class="ref-add ssp-add">
+							<input class="ref-input ssp-code" name="code" placeholder="8364BEB5354" required />
+							<input class="ref-input" name="label" placeholder="Site Internet" />
+							<input class="ref-input ssp-budget" name="budgetDays" type="number" step="0.01" min="0" placeholder="budget (j)" />
+							<button class="btn btn-ghost" type="submit">+ Ajouter</button>
+						</form>
+					{/if}
+					<div class="ref-list">
+						{#each filtered as s (s.id)}
+							<div class="ref-item" class:archived={s.archived}>
+								<!-- Un seul form pour les 3 champs : le code, le libellé et le budget se valident
+								     ensemble (l'unicité porte sur le code, la modifier seule échouerait à mi-chemin). -->
 								<form
 									method="POST"
-									action="?/actDelete"
-									use:enhance={async ({ cancel }) => {
-										const ok = await confirmDialog({
-											message: `Supprimer définitivement l'activité « ${a.label} » ?`,
-											confirmLabel: 'Supprimer'
-										});
-										if (!ok) cancel();
-									}}
+									action="?/sspUpdate"
+									class="ssp-form"
+									use:enhance={({ formElement }) =>
+										async ({ result, update }) => {
+											// reset: false — cf. enhanceEdit. Ici c'est critique : les 3 champs
+											// partagent un form, donc éditer le libellé ressuscitait le code et le
+											// budget du chargement initial, et les réécrivait en base à la validation
+											// suivante.
+											await update({ reset: false });
+											// Refus du serveur : `update()` n'invalide pas le load, donc le champ garderait
+											// la saisie rejetée pendant que la base garde l'ancienne valeur — l'écran
+											// mentirait jusqu'au prochain changement de page.
+											if (result.type === 'failure') {
+												const f = formElement;
+												(f.elements.namedItem('code') as HTMLInputElement).value = s.code;
+												(f.elements.namedItem('label') as HTMLInputElement).value = s.label;
+												(f.elements.namedItem('budgetDays') as HTMLInputElement).value =
+													s.budgetDays === null ? '' : String(s.budgetDays);
+											}
+										}}
 								>
-									<input type="hidden" name="id" value={a.id} />
-									<button class="ref-btn ref-btn-danger" type="submit">Supprimer</button>
+									<input type="hidden" name="id" value={s.id} />
+									<input
+										class="ref-name ssp-code"
+										name="code"
+										value={s.code}
+										disabled={s.archived}
+										title="Code budgétaire"
+										onchange={(e) => e.currentTarget.form?.requestSubmit()}
+									/>
+									<input
+										class="ref-name"
+										name="label"
+										value={s.label}
+										disabled={s.archived}
+										placeholder="Libellé lisible…"
+										onchange={(e) => e.currentTarget.form?.requestSubmit()}
+									/>
+									{#if s.usage > 0}<span class="tag-usage" title="Tickets liés">{s.usage} ticket{s.usage > 1 ? 's' : ''}</span>{/if}
+									<input
+										class="ref-name ssp-budget tabnum"
+										name="budgetDays"
+										type="number"
+										step="0.01"
+										min="0"
+										value={s.budgetDays ?? ''}
+										disabled={s.archived}
+										placeholder="budget (j)"
+										title="Budget alloué en jours"
+										onchange={(e) => submitSoon(e.currentTarget.form!)}
+									/>
 								</form>
-							{/if}
-						</div>
-					{/each}
-					{#if activityOrder.length === 0}
-						<p class="hint" style="margin:0;">Aucune activité.</p>
-					{:else}
-						<!-- svelte-ignore a11y_no_static_element_interactions -->
-						<div
-							class="drop-end"
-							class:drag-over={dragOverActivityId === DROP_END}
-							ondragover={(e) => { if (draggingActivityId) { e.preventDefault(); dragOverActivityId = DROP_END; } }}
-							ondragleave={() => { if (dragOverActivityId === DROP_END) dragOverActivityId = null; }}
-							ondrop={(e) => { e.preventDefault(); onActivityDrop(DROP_END); }}
-						></div>
+								<div class="ref-item-end">
+									{#if s.archived}<span class="tag-arch">archivé</span>{/if}
+									<form
+										method="POST"
+										action="?/sspArchive"
+										use:enhance={async ({ cancel }) => {
+											if (!s.archived && s.usage > 0) {
+												const ok = await confirmDialog(
+													`${s.usage} ticket${s.usage > 1 ? 's' : ''} perdront ce code SSP à terme. Archiver quand même ?`
+												);
+												if (!ok) cancel();
+											}
+										}}
+									>
+										<input type="hidden" name="id" value={s.id} />
+										<input type="hidden" name="archived" value={s.archived ? 'false' : 'true'} />
+										<button class="ref-btn" type="submit">{s.archived ? '↺ Restaurer' : '🗄 Archiver'}</button>
+									</form>
+								</div>
+							</div>
+						{/each}
+						{#if filtered.length === 0}
+							<p class="hint" style="margin:0;">{data.ssps.length === 0 ? 'Aucun code SSP.' : 'Aucun résultat pour cette recherche.'}</p>
+						{/if}
+					</div>
+				{:else if refSection === 'activities'}
+					{@const dragEnabled = refSearch.trim() === ''}
+					{@const filtered = activityOrder.filter((a) => refMatch(a.label))}
+					<h3>Activités</h3>
+					<p class="hint">Nature du travail (Dev, TU, DA…), optionnelle sur une imputation. Glisse-dépose ⠿ pour réordonner : c'est cet ordre qui sert dans la répartition par activité des synthèses (sauf préférence "alphabétique" d'un membre dans ses paramètres de compte). Vide la recherche pour réordonner.</p>
+					{#if form?.actOk}<div class="flash ok toast-tr" role="status">Mis à jour ✓</div>{/if}
+					{@render refToolbar('Rechercher une activité…')}
+					{#if refAddOpen}
+						<form method="POST" action="?/actCreate" use:enhance class="ref-add">
+							<input class="ref-input" name="label" placeholder="Nouvelle activité…" required />
+							<button class="btn btn-ghost" type="submit">+ Ajouter</button>
+						</form>
 					{/if}
-				</div>
-				<form method="POST" action="?/actCreate" use:enhance class="ref-add">
-					<input class="ref-input" name="label" placeholder="Nouvelle activité…" required />
-					<button class="btn btn-ghost" type="submit">+ Ajouter</button>
-				</form>
-			</section>
-
-			<section class="card block">
-				<h3>Groupes de tickets</h3>
-				<p class="hint">Regroupement libre et transverse, indépendant des sprints/versions. Un ticket peut appartenir à plusieurs groupes. Glisse-dépose ⠿ pour réordonner : c'est cet ordre qui sert dans les synthèses par sprint/version.</p>
-				{#if form?.groupOk}<div class="flash ok">Mis à jour ✓</div>{/if}
-				<div class="ref-list">
-					{#each groupOrder as g (g.id)}
-						<!-- svelte-ignore a11y_no_static_element_interactions -->
-						<div
-							class="ref-item"
-							class:archived={g.archived}
-							class:drag-over={dragOverGroupId === g.id && draggingGroupId !== g.id}
-							ondragover={(e) => { e.preventDefault(); dragOverGroupId = g.id; }}
-							ondragleave={() => { if (dragOverGroupId === g.id) dragOverGroupId = null; }}
-							ondrop={(e) => { e.preventDefault(); onGroupDrop(g.id); }}
-						>
-							<span
-								class="drag-handle"
-								draggable="true"
-								ondragstart={(e) => { draggingGroupId = g.id; e.dataTransfer?.setData('text/plain', g.id); }}
-								ondragend={() => { draggingGroupId = null; dragOverGroupId = null; }}
-								aria-label="Glisser pour réordonner {g.label}"
-								role="button"
-								tabindex="-1"
-							>⠿</span>
-							<form method="POST" action="?/groupRename" use:enhance>
-								<input type="hidden" name="id" value={g.id} />
-								<input class="ref-name" name="label" value={g.label} disabled={g.archived} onchange={(e) => e.currentTarget.form?.requestSubmit()} />
-							</form>
-							{#if g.usage > 0}<span class="tag-usage" title="Tickets liés">{g.usage} ticket{g.usage > 1 ? 's' : ''}</span>{/if}
-							{#if g.archived}<span class="tag-arch">inactif</span>{/if}
-							<form method="POST" action="?/groupArchive" use:enhance>
-								<input type="hidden" name="id" value={g.id} />
-								<input type="hidden" name="archived" value={g.archived ? 'false' : 'true'} />
-								<button class="ref-btn" type="submit">{g.archived ? 'Activer' : 'Désactiver'}</button>
-							</form>
-						</div>
-					{/each}
-					{#if groupOrder.length === 0}
-						<p class="hint" style="margin:0;">Aucun groupe.</p>
-					{:else}
-						<!-- svelte-ignore a11y_no_static_element_interactions -->
-						<div
-							class="drop-end"
-							class:drag-over={dragOverGroupId === DROP_END}
-							ondragover={(e) => { if (draggingGroupId) { e.preventDefault(); dragOverGroupId = DROP_END; } }}
-							ondragleave={() => { if (dragOverGroupId === DROP_END) dragOverGroupId = null; }}
-							ondrop={(e) => { e.preventDefault(); onGroupDrop(DROP_END); }}
-						></div>
+					<div class="ref-list">
+						{#each filtered as a (a.id)}
+							<!-- svelte-ignore a11y_no_static_element_interactions -->
+							<div
+								class="ref-item"
+								class:archived={a.archived}
+								class:drag-over={dragOverActivityId === a.id && draggingActivityId !== a.id}
+								ondragover={(e) => { if (dragEnabled) { e.preventDefault(); dragOverActivityId = a.id; } }}
+								ondragleave={() => { if (dragOverActivityId === a.id) dragOverActivityId = null; }}
+								ondrop={(e) => { e.preventDefault(); onActivityDrop(a.id); }}
+							>
+								<span
+									class="drag-handle"
+									draggable={dragEnabled}
+									ondragstart={(e) => { draggingActivityId = a.id; e.dataTransfer?.setData('text/plain', a.id); }}
+									ondragend={() => { draggingActivityId = null; dragOverActivityId = null; }}
+									aria-label="Glisser pour réordonner {a.label}"
+									title={dragEnabled ? undefined : 'Videz la recherche pour réordonner'}
+									role="button"
+									tabindex="-1"
+								>⠿</span>
+								<form method="POST" action="?/actRename" use:enhance={enhanceEdit}>
+									<input type="hidden" name="id" value={a.id} />
+									<input class="ref-name" name="label" value={a.label} disabled={a.archived} onchange={(e) => e.currentTarget.form?.requestSubmit()} />
+								</form>
+								{#if a.usage > 0}<span class="tag-usage" title="Imputations liées">{a.usage} imp.</span>{/if}
+								<div class="ref-item-end ref-item-end-wide">
+									{#if a.archived}<span class="tag-arch">inactive</span>{/if}
+									<form
+										method="POST"
+										action="?/actActive"
+										use:enhance={async ({ cancel }) => {
+											if (!a.archived) {
+												const ok = await confirmDialog(
+													'Désactiver cette activité ? Elle restera visible sur les imputations et tickets existants, mais ne sera plus proposée pour de nouvelles saisies.'
+												);
+												if (!ok) cancel();
+											}
+										}}
+									>
+										<input type="hidden" name="id" value={a.id} />
+										<input type="hidden" name="active" value={a.archived ? 'true' : 'false'} />
+										<button class="ref-btn" type="submit">{a.archived ? 'Activer' : 'Désactiver'}</button>
+									</form>
+									{#if a.usage === 0}
+										<form
+											method="POST"
+											action="?/actDelete"
+											use:enhance={async ({ cancel }) => {
+												const ok = await confirmDialog({
+													message: `Supprimer définitivement l'activité « ${a.label} » ?`,
+													confirmLabel: 'Supprimer'
+												});
+												if (!ok) cancel();
+											}}
+										>
+											<input type="hidden" name="id" value={a.id} />
+											<button class="ref-btn ref-btn-danger" type="submit">Supprimer</button>
+										</form>
+									{/if}
+								</div>
+							</div>
+						{/each}
+						{#if filtered.length === 0}
+							<p class="hint" style="margin:0;">{activityOrder.length === 0 ? 'Aucune activité.' : 'Aucun résultat pour cette recherche.'}</p>
+						{:else if dragEnabled}
+							<!-- svelte-ignore a11y_no_static_element_interactions -->
+							<div
+								class="drop-end"
+								class:drag-over={dragOverActivityId === DROP_END}
+								ondragover={(e) => { if (draggingActivityId) { e.preventDefault(); dragOverActivityId = DROP_END; } }}
+								ondragleave={() => { if (dragOverActivityId === DROP_END) dragOverActivityId = null; }}
+								ondrop={(e) => { e.preventDefault(); onActivityDrop(DROP_END); }}
+							></div>
+						{/if}
+					</div>
+				{:else if refSection === 'groups'}
+					{@const dragEnabled = refSearch.trim() === ''}
+					{@const filtered = groupOrder.filter((g) => refMatch(g.label))}
+					<h3>Groupes de tickets</h3>
+					<p class="hint">Regroupement libre et transverse, indépendant des sprints/versions. Un ticket peut appartenir à plusieurs groupes. Glisse-dépose ⠿ pour réordonner : c'est cet ordre qui sert dans les synthèses par sprint/version. Vide la recherche pour réordonner.</p>
+					{#if form?.groupOk}<div class="flash ok toast-tr" role="status">Mis à jour ✓</div>{/if}
+					{@render refToolbar('Rechercher un groupe…')}
+					{#if refAddOpen}
+						<form method="POST" action="?/groupCreate" use:enhance class="ref-add">
+							<input class="ref-input" name="label" placeholder="Nouveau groupe…" required />
+							<button class="btn btn-ghost" type="submit">+ Ajouter</button>
+						</form>
 					{/if}
-				</div>
-				<form method="POST" action="?/groupCreate" use:enhance class="ref-add">
-					<input class="ref-input" name="label" placeholder="Nouveau groupe…" required />
-					<button class="btn btn-ghost" type="submit">+ Ajouter</button>
-				</form>
+					<div class="ref-list">
+						{#each filtered as g (g.id)}
+							<!-- svelte-ignore a11y_no_static_element_interactions -->
+							<div
+								class="ref-item"
+								class:archived={g.archived}
+								class:drag-over={dragOverGroupId === g.id && draggingGroupId !== g.id}
+								ondragover={(e) => { if (dragEnabled) { e.preventDefault(); dragOverGroupId = g.id; } }}
+								ondragleave={() => { if (dragOverGroupId === g.id) dragOverGroupId = null; }}
+								ondrop={(e) => { e.preventDefault(); onGroupDrop(g.id); }}
+							>
+								<span
+									class="drag-handle"
+									draggable={dragEnabled}
+									ondragstart={(e) => { draggingGroupId = g.id; e.dataTransfer?.setData('text/plain', g.id); }}
+									ondragend={() => { draggingGroupId = null; dragOverGroupId = null; }}
+									aria-label="Glisser pour réordonner {g.label}"
+									title={dragEnabled ? undefined : 'Videz la recherche pour réordonner'}
+									role="button"
+									tabindex="-1"
+								>⠿</span>
+								<form method="POST" action="?/groupRename" use:enhance={enhanceEdit}>
+									<input type="hidden" name="id" value={g.id} />
+									<input class="ref-name" name="label" value={g.label} disabled={g.archived} onchange={(e) => e.currentTarget.form?.requestSubmit()} />
+								</form>
+								{#if g.usage > 0}<span class="tag-usage" title="Tickets liés">{g.usage} ticket{g.usage > 1 ? 's' : ''}</span>{/if}
+								<div class="ref-item-end">
+									{#if g.archived}<span class="tag-arch">inactif</span>{/if}
+									<form method="POST" action="?/groupArchive" use:enhance>
+										<input type="hidden" name="id" value={g.id} />
+										<input type="hidden" name="archived" value={g.archived ? 'false' : 'true'} />
+										<button class="ref-btn" type="submit">{g.archived ? 'Activer' : 'Désactiver'}</button>
+									</form>
+								</div>
+							</div>
+						{/each}
+						{#if filtered.length === 0}
+							<p class="hint" style="margin:0;">{groupOrder.length === 0 ? 'Aucun groupe.' : 'Aucun résultat pour cette recherche.'}</p>
+						{:else if dragEnabled}
+							<!-- svelte-ignore a11y_no_static_element_interactions -->
+							<div
+								class="drop-end"
+								class:drag-over={dragOverGroupId === DROP_END}
+								ondragover={(e) => { if (draggingGroupId) { e.preventDefault(); dragOverGroupId = DROP_END; } }}
+								ondragleave={() => { if (dragOverGroupId === DROP_END) dragOverGroupId = null; }}
+								ondrop={(e) => { e.preventDefault(); onGroupDrop(DROP_END); }}
+							></div>
+						{/if}
+					</div>
+				{/if}
 			</section>
 		</div>
 	{/if}
@@ -565,7 +830,7 @@
 								<button class="ord-btn" type="submit" disabled={i === data.states.length - 1} aria-label="Descendre">▼</button>
 							</form>
 						</div>
-						<form class="state-edit" method="POST" action="?/stateUpdate" use:enhance>
+						<form class="state-edit" method="POST" action="?/stateUpdate" use:enhance={enhanceEdit}>
 							<input type="hidden" name="id" value={s.id} />
 							<input class="state-color" type="color" name="color" value={s.color ?? '#94A3B8'} onchange={(e) => e.currentTarget.form?.requestSubmit()} aria-label="Couleur" />
 							<input class="state-emoji" name="emoji" value={s.emoji ?? ''} maxlength="4" placeholder="🏷️" onchange={(e) => e.currentTarget.form?.requestSubmit()} aria-label="Emoji" />
@@ -619,7 +884,7 @@
 				</div>
 			</form>
 
-			<form method="POST" action="?/supportCadence" use:enhance style="margin-top:14px;">
+			<form method="POST" action="?/supportCadence" use:enhance={enhanceEdit} style="margin-top:14px;">
 				<div class="field">
 					<label for="support-cadence">Cadence de rotation</label>
 					<select
@@ -697,8 +962,8 @@
 		<section class="card block">
 			<h3>Intégration Jira</h3>
 			<p class="hint">Pull planifié + forçage manuel des tickets Jira, propre à cet espace.</p>
-			{#if form?.error}<div class="flash error jira-save-toast" role="alert">{form.error}</div>{/if}
-			{#if form?.jiraSaveOk}<div class="flash ok jira-save-toast" role="status">Configuration enregistrée ✓</div>{/if}
+			{#if form?.error}<div class="flash error toast-tr" role="alert">{form.error}</div>{/if}
+			{#if form?.jiraSaveOk}<div class="flash ok toast-tr" role="status">Configuration enregistrée ✓</div>{/if}
 
 			{#if !jiraConfigured || jiraEditing}
 				<form
@@ -1107,14 +1372,14 @@
 				</p>
 				{#if form?.pprRatioOk || form?.imputationStepOk}<div class="flash ok">Réglage mis à jour ✓</div>{/if}
 				<div style="display:flex;flex-direction:column;gap:14px;margin-top:6px;">
-					<form method="POST" action="?/pprRatio" use:enhance style="display:flex;align-items:center;justify-content:space-between;gap:14px;">
+					<form method="POST" action="?/pprRatio" use:enhance={enhanceEdit} style="display:flex;align-items:center;justify-content:space-between;gap:14px;">
 						<span>Ratio PPR</span>
 						<div style="display:flex;align-items:center;gap:8px;">
 							<input class="cap-input" type="number" name="value" min="0.01" max="1" step="0.05" value={data.pprRatio} />
 							<button class="btn btn-ghost" type="submit">Enregistrer</button>
 						</div>
 					</form>
-					<form method="POST" action="?/imputationStep" use:enhance style="display:flex;align-items:center;justify-content:space-between;gap:14px;">
+					<form method="POST" action="?/imputationStep" use:enhance={enhanceEdit} style="display:flex;align-items:center;justify-content:space-between;gap:14px;">
 						<span>Pas d'imputation</span>
 						<div style="display:flex;align-items:center;gap:8px;">
 							<input class="cap-input" type="number" name="value" min="0.00" max="1" step="any" value={data.imputationStep} />
@@ -1299,6 +1564,16 @@
 	}
 	.members tr:first-child td {
 		border-top: none;
+	}
+	/* Sépare visuellement le groupe des désactivés, renvoyés en bas de liste (cf. filteredMembers). */
+	.member-sep td {
+		padding: 8px 6px 4px;
+		border-top: none;
+		font-size: 11px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
+		color: var(--text-mute);
 	}
 	.mc {
 		display: flex;
@@ -1491,14 +1766,127 @@
 		min-width: 0;
 	}
 
-	.ref-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-		gap: 18px;
-		margin-bottom: 18px;
+	/* Sous-menu latéral de l'onglet Référentiels : une section à la fois plutôt que 7 cartes
+	   empilées, pour ne plus désaligner de grille quand une liste dépasse ses voisines. */
+	.ref-layout {
+		display: flex;
+		align-items: flex-start;
+		gap: 20px;
 	}
-	.ref-grid .block {
-		margin-bottom: 0;
+	.ref-nav {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		flex: 0 0 180px;
+		padding: 8px;
+		/* .card ne pose que fond/bordure/ombre (cf. app.css) : sans ce padding le sous-menu collait
+		   ses boutons directement au bord, plus dur à distinguer du reste de la page. */
+		/* Relatif à .main (seul ancêtre scrollable) : le sous-menu reste visible même en bas d'une
+		   longue liste, sans jamais scoper la page dans un panneau borné. */
+		position: sticky;
+		top: 0;
+	}
+	.ref-nav button {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+		width: 100%;
+		padding: 9px 12px;
+		border: none;
+		border-radius: 8px;
+		background: transparent;
+		color: var(--text-mute);
+		font: inherit;
+		font-size: 13.5px;
+		text-align: left;
+		cursor: pointer;
+		transition: background 0.15s, color 0.15s;
+	}
+	.ref-nav button:hover {
+		background: var(--surface-2);
+		color: var(--text);
+	}
+	.ref-nav button.on {
+		background: var(--surface-2);
+		color: var(--text);
+		font-weight: 600;
+	}
+	.ref-nav-count {
+		font-size: 11px;
+		font-variant-numeric: tabular-nums;
+		color: var(--text-mute);
+	}
+	.ref-panel {
+		flex: 1;
+		min-width: 0;
+	}
+	.ref-search {
+		margin-bottom: 12px;
+	}
+	.ref-search-input {
+		width: 100%;
+		box-sizing: border-box;
+		padding: 8px 12px;
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		background: var(--surface-2);
+		font: inherit;
+		font-size: 13.5px;
+		color: var(--text);
+	}
+	.ref-search-input:focus {
+		outline: none;
+		border-color: var(--accent);
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+	}
+	/* Recherche + bascule d'ajout sur une même ligne (cf. refToolbar) : deux intentions différentes
+	   (filtrer / créer), visuellement séparées au lieu de deux champs empilés et collés. */
+	.ref-toolbar {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		margin-bottom: 12px;
+	}
+	.ref-toolbar .ref-search-input {
+		flex: 1;
+		min-width: 0;
+		width: auto;
+	}
+	.ref-add-toggle {
+		flex: 0 0 auto;
+		white-space: nowrap;
+	}
+	.ref-add-caret {
+		display: inline-block;
+		font-size: 9px;
+		transition: transform 0.15s;
+	}
+	.ref-add-caret.open {
+		transform: rotate(180deg);
+	}
+	@media (max-width: 720px) {
+		.ref-layout {
+			flex-direction: column;
+			/* .ref-layout est en `align-items:flex-start` pour le mode sidebar (desktop) : sans cette
+			   surcharge, .ref-panel hérite du même comportement une fois empilé en colonne et se
+			   contente de la largeur de son contenu au lieu de prendre toute la largeur disponible. */
+			align-items: stretch;
+		}
+		.ref-nav {
+			/* Bande horizontale à défilement plutôt qu'une liste empilée : même mécanique que .tabs
+			   plus haut sur cette page (max-width:640px) — `width:100%` sur chaque bouton ferait sinon
+			   un bouton par ligne, pas un vrai rang horizontal. */
+			flex-direction: row;
+			overflow-x: auto;
+			position: static;
+			flex-basis: auto;
+			width: 100%;
+		}
+		.ref-nav button {
+			flex-shrink: 0;
+			width: auto;
+		}
 	}
 	.ref-list {
 		display: flex;
@@ -1517,6 +1905,59 @@
 	}
 	.ref-item.drag-over {
 		box-shadow: inset 0 2px 0 var(--accent);
+	}
+	/* Zone de fin de ligne (statut archivé + action) : largeur minimale réservée pour que le tag
+	   "🔒 requis" (plus court qu'un bouton "Archiver") ne fasse pas bouger le reste de la ligne —
+	   le tag d'usage (ex. "30 imp."), lui, reste juste après le nom, dans l'ordre naturel de lecture. */
+	.ref-item-end {
+		display: flex;
+		align-items: center;
+		justify-content: flex-end;
+		flex: 0 0 auto;
+		gap: 6px;
+		min-width: 170px;
+	}
+	/* Activités : deux boutons possibles (Désactiver + Supprimer) au lieu d'un seul ailleurs. */
+	.ref-item-end-wide {
+		min-width: 260px;
+	}
+	/* Même gabarit qu'un .ref-btn (padding, taille, coins) pour que "🔒 requis" occupe exactement la
+	   place du bouton "Archiver" qu'il remplace — non interactif, donc pas de bordure ni de hover. */
+	.ref-btn-locked {
+		display: inline-flex;
+		align-items: center;
+		padding: 6px 10px;
+		font-size: 12px;
+		font-weight: 600;
+		color: var(--text-mute);
+		background: var(--surface-sunk);
+		border-radius: 8px;
+		white-space: nowrap;
+	}
+	/* En dessous, une ligne de saisie (nom + kind/budget + actions) ne tient plus sur une largeur de
+	   téléphone : elle passe sur plusieurs lignes plutôt que d'écraser le champ nom à rien. Doit
+	   rester APRÈS .ref-item-end/.ref-item-end-wide/.ssp-form ci-dessus : même spécificité (une
+	   classe), c'est l'ordre dans la feuille qui tranche. */
+	@media (max-width: 560px) {
+		.ref-item {
+			flex-wrap: wrap;
+		}
+		.ref-item > form:first-of-type {
+			flex-basis: 100%;
+		}
+		.ref-item-end {
+			min-width: 0;
+			flex: 1 1 auto;
+		}
+		.ssp-form {
+			flex-wrap: wrap;
+		}
+		.ssp-form .ref-name:not(.ssp-code):not(.ssp-budget) {
+			flex-basis: 100%;
+		}
+		.ref-toolbar {
+			flex-wrap: wrap;
+		}
 	}
 	.drop-end {
 		height: 22px;
@@ -1598,9 +2039,33 @@
 		border-color: #c0392b;
 		color: #c0392b;
 	}
+	/* Replié par défaut (cf. refAddOpen) : encadré une fois déplié pour bien le distinguer de la
+	   barre de recherche juste au-dessus et de la liste juste en dessous. */
 	.ref-add {
 		display: flex;
 		gap: 8px;
+		padding: 10px;
+		margin-bottom: 12px;
+		border: 1px solid var(--border);
+		border-radius: 10px;
+		background: var(--surface-2);
+	}
+	/* Un SSP a 3 champs là où les autres référentiels n'en ont qu'un : le code et le budget sont
+	   de largeur fixe, seul le libellé absorbe la place restante. */
+	.ssp-form {
+		display: flex;
+		align-items: center;
+		flex: 1;
+		min-width: 0;
+		gap: 6px;
+	}
+	.ssp-code {
+		flex: 0 0 11ch;
+		font-variant-numeric: tabular-nums;
+	}
+	.ssp-budget {
+		flex: 0 0 15ch;
+		text-align: right;
 	}
 	.ref-add .btn {
 		white-space: nowrap;
@@ -1621,26 +2086,20 @@
 		border-color: var(--accent);
 		box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
 	}
-	@media (max-width: 860px) {
-		.ref-grid {
-			grid-template-columns: 1fr;
-		}
-	}
-
-	/* ---------- Jira ---------- */
-	/* Flottant plutôt qu'en tête de carte : le formulaire est long et se replie en résumé au succès
-	   (jiraEditing = false), donc un flash resté dans le flux du document finit hors-champ ou décalé
-	   par le repli. Fixe, il reste visible quel que soit le scroll. */
-	.jira-save-toast {
+	/* Toast générique haut-droite (Jira, Référentiels) : flottant plutôt qu'en tête de carte —
+	   un flash resté dans le flux du document décale tout le reste (cf. Jira qui se replie en résumé
+	   au succès, ou les 7 sections de Référentiels dont une seule est affichée à la fois). Fixe, il
+	   reste visible quel que soit le scroll. */
+	.toast-tr {
 		position: fixed;
 		top: 20px;
 		right: 20px;
 		z-index: 50;
 		max-width: min(360px, calc(100vw - 40px));
 		box-shadow: var(--shadow-lg, 0 12px 30px rgba(0, 0, 0, 0.25));
-		animation: jira-toast-in 0.15s ease-out;
+		animation: toast-tr-in 0.15s ease-out;
 	}
-	@keyframes jira-toast-in {
+	@keyframes toast-tr-in {
 		from {
 			opacity: 0;
 			transform: translateY(-6px);

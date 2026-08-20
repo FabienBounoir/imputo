@@ -40,6 +40,10 @@ import {
 	renameCategory,
 	setCategoryKind,
 	setCategoryArchived,
+	listSsp,
+	createSsp,
+	updateSsp,
+	setSspArchived,
 	listActivities,
 	createActivity,
 	renameActivity,
@@ -115,6 +119,20 @@ const jiraConfigSchema = z.object({
 	createdSinceDate: z.string().trim().max(10).optional().default('')
 });
 
+// Budget vide = pas de budget alloué (null), pas zéro : 0 jour et « non renseigné » ne veulent
+// pas dire la même chose sur un suivi financier.
+const sspSchema = z.object({
+	code: z.string().trim().min(1, 'Code requis').max(40),
+	label: z.string().trim().max(120).optional().default(''),
+	budgetDays: z
+		.string()
+		.trim()
+		.optional()
+		.default('')
+		.transform((v) => (v === '' ? null : Number(v.replace(',', '.'))))
+		.refine((v) => v === null || (Number.isFinite(v) && v >= 0), 'Budget invalide.')
+});
+
 export const load: PageServerLoad = async ({ locals }) => {
 	if (locals.role !== 'ADMIN') redirect(303, '/imputation');
 	const ws = locals.workspace!;
@@ -134,12 +152,14 @@ export const load: PageServerLoad = async ({ locals }) => {
 		.innerJoin(user, eq(membership.userId, user.id))
 		.where(eq(membership.workspaceId, ws.workspaceId));
 
-	const [projects, sprints, versions, categories, activities, states, ticketGroups, mood, support, supportMembers, jira, jiraSyncRuns] =
+	// prettier-ignore
+	const [projects, sprints, versions, categories, ssps, activities, states, ticketGroups, mood, support, supportMembers, jira, jiraSyncRuns] =
 		await Promise.all([
 			listRefs(ws.workspaceId, 'project'),
 			listRefs(ws.workspaceId, 'sprint'),
 			listRefs(ws.workspaceId, 'version'),
 			listCategories(ws.workspaceId),
+			listSsp(ws.workspaceId),
 			listActivities(ws.workspaceId),
 			listStates(ws.workspaceId),
 			listTicketGroups(ws.workspaceId),
@@ -170,6 +190,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		sprints,
 		versions,
 		categories,
+		ssps,
 		activities,
 		states,
 		ticketGroups
@@ -361,6 +382,45 @@ export const actions: Actions = {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { refOk: type };
+	},
+
+	sspCreate: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const parsed = sspSchema.safeParse(Object.fromEntries(await request.formData()));
+		if (!parsed.success) return fail(400, { error: parsed.error.issues[0].message });
+		try {
+			await createSsp(ws.workspaceId, parsed.data.code, parsed.data.label, parsed.data.budgetDays);
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { sspOk: true };
+	},
+
+	sspUpdate: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const f = await request.formData();
+		const parsed = sspSchema.safeParse(Object.fromEntries(f));
+		if (!parsed.success) return fail(400, { error: parsed.error.issues[0].message });
+		try {
+			await updateSsp(ws.workspaceId, String(f.get('id')), parsed.data.code, parsed.data.label, parsed.data.budgetDays);
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { sspOk: true };
+	},
+
+	sspArchive: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const f = await request.formData();
+		try {
+			await setSspArchived(ws.workspaceId, String(f.get('id')), f.get('archived') === 'true');
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { sspOk: true };
 	},
 
 	memberRole: async ({ request, locals }) => {

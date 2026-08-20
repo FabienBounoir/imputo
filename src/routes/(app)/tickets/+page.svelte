@@ -6,6 +6,7 @@
 	import { TICKET_FIELD_LABELS } from '$lib/changeLogLabels';
 	import { confirmDialog } from '$lib/confirm.svelte';
 	import ModalErrorToast from '$lib/components/ModalErrorToast.svelte';
+	import SspPicker from '$lib/components/SspPicker.svelte';
 	import { slide } from 'svelte/transition';
 	let { data, form } = $props();
 
@@ -70,10 +71,11 @@
 		}
 		fetch('?/rememberFilters', { method: 'POST', body });
 	}
-	// exactKey/syncRunId : arrivée via un lien direct (dashboard sprint/version ?ticket=…, ou
-	// historique de sync Jira ?jiraRun=…) — sans ça le bouton Réinitialiser reste invisible et on ne
-	// peut plus revenir à la liste complète.
-	const hasFilters = $derived(!!(data.filters.query || data.filters.stateId || data.filters.projectId || data.filters.sprintId || data.filters.versionId || data.filters.exactKey || data.filters.syncRunId));
+	// exactKey/syncRunId/noSsp : arrivée via un lien direct (dashboard sprint/version ?ticket=…,
+	// historique de sync Jira ?jiraRun=…, clôture mensuelle ?ssp=none) — sans ça le bouton
+	// Réinitialiser reste invisible et on ne peut plus revenir à la liste complète. Aucun de ces
+	// trois n'est reconstruit par navigateWith, donc n'importe quelle navigation les efface.
+	const hasFilters = $derived(!!(data.filters.query || data.filters.stateId || data.filters.projectId || data.filters.sprintId || data.filters.versionId || data.filters.exactKey || data.filters.syncRunId || data.filters.noSsp));
 	// Filtres/vue/pagination naviguent tous via goto() (rechargement serveur) : un fieldset désactive
 	// la barre d'un coup pendant le trajet, pour qu'on ne confonde jamais l'ancienne liste avec la nouvelle.
 	const isNavigating = $derived(!!navigating.to);
@@ -143,7 +145,7 @@
 		estimationTest: number;
 		raeTest: number;
 		consumed: number;
-		sspCode: string | null;
+		sspId: string | null;
 		estimationPrev: number | null;
 		enveloppeTotale: number | null;
 		hasActivityEstimation: boolean;
@@ -235,7 +237,7 @@
 			estimationTest: t.estimationTest,
 			raeTest: t.raeTest,
 			consumed: t.consumed,
-			sspCode: t.sspCode,
+			sspId: t.sspId,
 			estimationPrev: t.estimationPrev,
 			enveloppeTotale: t.enveloppeTotale,
 			hasActivityEstimation: t.hasActivityEstimation,
@@ -553,7 +555,7 @@
 					</div>
 				{/if}
 				<div class="grid2">
-					<div class="field"><label for="ssp">Code SSP</label><input id="ssp" name="sspCode" /></div>
+					<div class="field"><span class="lbl">Code SSP</span><SspPicker ssps={data.ref.ssps} name="sspId" /></div>
 					{#if data.isAdmin}<div class="field"><label for="eprev">Estimation prévisionnel</label><input id="eprev" name="estimationPrev" type="number" step="0.25" min="0" /></div>{/if}
 				</div>
 				{#if data.isAdmin}
@@ -1009,7 +1011,7 @@
 						</label>
 					{/each}
 				{/if}
-				<label class="dfield"><span>Code SSP</span><input class="cell-input" placeholder="—" bind:value={editRow.sspCode} onchange={() => save(editRow!, 'sspCode', editRow!.sspCode)} /></label>
+				<div class="dfield"><span>Code SSP</span><SspPicker ssps={data.ref.ssps} bind:value={() => editRow!.sspId ?? '', (v) => (editRow!.sspId = v || null)} onpick={(v) => save(editRow!, 'sspId', v || null)} /></div>
 				{#if data.isAdmin}
 					<label class="dfield"><span>Estimation prévisionnel</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationPrev} onchange={() => debouncedSave(`f-${editRow!.id}-estimationPrev`, () => save(editRow!, 'estimationPrev', editRow!.estimationPrev))} /></label>
 					<label class="dfield"><span>Enveloppe totale</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.enveloppeTotale} onchange={() => debouncedSave(`f-${editRow!.id}-enveloppeTotale`, () => save(editRow!, 'enveloppeTotale', editRow!.enveloppeTotale))} /></label>

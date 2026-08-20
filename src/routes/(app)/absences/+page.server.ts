@@ -99,11 +99,14 @@ export const actions: Actions = {
 		// Un congé ne se déclare qu'en prévisionnel ; seul un admin/manager peut le valider (action `validate`).
 		if (type === 'CONGE_VALIDE' && !isManagerOrAdmin(locals.role)) return fail(403, { error: 'Réservé aux admins/managers.' });
 
-		// Un membre externe ne peut être ciblé que par un admin/manager — sinon on retombe sur soi-même.
-		const subject: AbsenceSubject =
-			subjectRaw.startsWith('ext:') && isManagerOrAdmin(locals.role)
+		// Un autre membre (interne ou externe) ne peut être ciblé que par un admin/manager — sinon on retombe sur soi-même.
+		const subject: AbsenceSubject = !isManagerOrAdmin(locals.role)
+			? { userId: locals.user.id }
+			: subjectRaw.startsWith('ext:')
 				? { externalMemberId: subjectRaw.slice(4) }
-				: { userId: locals.user.id };
+				: subjectRaw.startsWith('user:')
+					? { userId: subjectRaw.slice(5) }
+					: { userId: locals.user.id };
 
 		try {
 			const absenceId = await createAbsenceFor(ws.workspaceId, subject, { startDate, endDate, type, period });

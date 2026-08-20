@@ -18,6 +18,7 @@ spec:
       containers:
         - name: seed
           image: 'image-registry.openshift-image-registry.svc:5000/CHANGEME-namespace/imputo:tools'
+          imagePullPolicy: Always
           command: ['npm', 'run', 'db:seed']
           envFrom:
             - secretRef:

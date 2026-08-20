@@ -81,6 +81,7 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 		activities: ref.activities,
 		categories: ref.categories,
 		versions: ref.versions,
+		ssps: ref.ssps,
 		// Nécessaires pour la modal d'édition de ticket (même modal que Tickets & chiffrage,
 		// cf. TicketEditModal.svelte) : `ref` est déjà chargé ci-dessus, ceci n'ajoute aucune requête.
 		states: ref.states,

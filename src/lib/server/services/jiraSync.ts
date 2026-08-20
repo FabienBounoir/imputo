@@ -1,6 +1,6 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import type { Db } from '$lib/server/db/connection';
-import { workspace, project, sprint, ticket, jiraSyncRun } from '$lib/server/db/schema';
+import type { Db } from '../db/connection';
+import { workspace, project, sprint, ticket, jiraSyncRun } from '../db/schema';
 import {
 	getAzureToken,
 	searchJiraIssues,

@@ -33,7 +33,7 @@ const createSchema = z.object({
 	estimationReal: z.string().optional(),
 	estimationTest: z.string().optional(),
 	comment: z.string().optional(),
-	sspCode: z.string().optional(),
+	sspId: z.string().uuid().optional().or(z.literal('')),
 	estimationPrev: z.string().optional(),
 	enveloppeTotale: z.string().optional()
 });
@@ -84,7 +84,10 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		exactKey: url.searchParams.get('ticket') ?? undefined,
 		// Lien direct depuis l'historique de sync Jira (Admin > Jira) : même principe que exactKey,
 		// URL-only — jamais un champ du formulaire de filtres (cf. TicketFilters#syncRunId).
-		syncRunId: url.searchParams.get('jiraRun') ?? undefined
+		syncRunId: url.searchParams.get('jiraRun') ?? undefined,
+		// Lien depuis la clôture mensuelle (colonne « Sans code SSP ») : ces tickets ne remontent
+		// dans aucun code budgétaire, on vient les corriger.
+		noSsp: url.searchParams.get('ssp') === 'none'
 	};
 	// Lien depuis l'imputation (clic sur le sprint/version d'une ligne) : filtre sur le sprint ou la
 	// version (liste complète, pas juste ce ticket) + surbrillance du ticket d'origine dans la liste.
@@ -172,7 +175,7 @@ export const actions: Actions = {
 				raeReal: empty(d.estimationReal),
 				raeTest: empty(d.estimationTest),
 				comment: empty(d.comment),
-				sspCode: empty(d.sspCode),
+				sspId: empty(d.sspId),
 				// Invisible pour un USER : ignoré silencieusement si soumis malgré tout.
 				estimationPrev: isAdmin ? empty(d.estimationPrev) : null,
 				enveloppeTotale: isAdmin ? empty(d.enveloppeTotale) : null

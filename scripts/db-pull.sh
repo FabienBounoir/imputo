@@ -25,6 +25,11 @@ trap 'rm -f "$DUMP"' EXIT
 oc exec -n "$NS" "$POD" -- sh -c 'pg_dump -U "$POSTGRESQL_USER" --clean --if-exists "$POSTGRESQL_DATABASE"' > "$DUMP"
 
 echo "→ Restauration dans le conteneur local imputo-db (écrase la base locale)..."
+# Table rase avant restauration : le --clean du dump ne sait détruire que ce qui existe en prod.
+# Depuis une branche portant des migrations en avance, les tables locales inconnues de la prod
+# survivent et leurs contraintes bloquent le DROP des tables qu'elles référencent.
+docker exec -i imputo-db psql -U imputo -d imputo -v ON_ERROR_STOP=1 \
+  -c 'drop schema public cascade; drop schema if exists drizzle cascade; create schema public;' >/dev/null
 docker exec -i imputo-db psql -U imputo -d imputo -v ON_ERROR_STOP=1 < "$DUMP" >/dev/null
 
 echo "✓ Base locale imputo-db à jour avec les données de $ENV."

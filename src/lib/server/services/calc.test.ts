@@ -13,7 +13,9 @@ import {
 	avancement,
 	ppr,
 	weeklyCapacity,
-	capacityPct
+	capacityPct,
+	plannedDays,
+	toAllocate
 } from './calc';
 
 describe('calc', () => {
@@ -104,5 +106,18 @@ describe('calc', () => {
 		expect(avancement(0, 0, 5)).toBe(1); // travaillé et terminé, jamais chiffré
 		expect(avancement(0, 0, 0)).toBe(0); // ticket vraiment pas commencé
 		expect(avancement(0, 3, 5)).toBe(0); // RAE restant sans estimation : pas "terminé"
+	});
+
+	it('plannedDays: jours ouvrés moins les absences, jamais négatif', () => {
+		expect(plannedDays(22, 0)).toBe(22);
+		expect(plannedDays(22, 5.5)).toBe(16.5);
+		expect(plannedDays(22, 22)).toBe(0);
+		expect(plannedDays(22, 30)).toBe(0); // plus d'absences que d'ouvrés : plancher à 0
+	});
+
+	it('toAllocate: reste à ventiler, négatif si déjà dépassé', () => {
+		expect(toAllocate(20, 15, 5)).toBe(0);
+		expect(toAllocate(20, 12, 0)).toBe(8);
+		expect(toAllocate(20, 18, 5)).toBe(-3);
 	});
 });

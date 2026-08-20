@@ -12,7 +12,7 @@
 import { eq, inArray } from 'drizzle-orm';
 import { hashPassword } from '../auth/password';
 import { DEFAULT_STATES, DEFAULT_ACTIVITIES, DEFAULT_CATEGORIES } from '../services/defaults';
-import { round } from '../services/calc';
+import { round, plannedDays } from '../services/calc';
 import {
 	toISODate,
 	addDays,
@@ -21,7 +21,9 @@ import {
 	todayInParis,
 	isPublicHolidayFR,
 	currentSupportPeriod,
-	supportPeriodIndex
+	supportPeriodIndex,
+	monthRange,
+	countWorkdaysNonHoliday
 } from '../../utils/date';
 import {
 	workspace,
@@ -31,6 +33,7 @@ import {
 	activity,
 	category,
 	project,
+	ssp,
 	sprint,
 	ticket,
 	ticketActivityRae,
@@ -46,7 +49,10 @@ import {
 	weeklyVacation,
 	jiraSyncRun,
 	supportRotationMember,
-	supportOverride
+	supportOverride,
+	monthlyClosing,
+	monthlyClosingLine,
+	monthlyClosingMember
 } from './schema';
 import { getDb, wipeSandbox, WORKSPACE_NAME, SEED_DOMAIN, SEED_USERS, getSeedScale, type SeedScale } from './seed.shared';
 
@@ -111,6 +117,13 @@ function buildPersonas(usersPerWorkspace: number, wsSuffix: string): Persona[] {
 // rotation. weeks=15 (défaut) reproduit exactement les 8 sprints historiques. ----------
 const VERSION_NAMES = ['V1.0', 'V1.1', 'V1.2', 'V1.3'];
 const PROJECT_NAMES = ['Mobile', 'Web', 'Backend'] as const;
+const SSP_DEFS = [
+	{ code: '8364BEB5354', label: 'Site Internet', budget: 350 },
+	{ code: '123DBS34842', label: 'Appli Mob', budget: 213.75 },
+	{ code: '774FCA9021', label: 'AMOE', budget: 100 },
+	{ code: '5182ECD7730', label: 'TNR', budget: 7 },
+	{ code: '6093AFB1146', label: 'Qualification', budget: 458 }
+];
 
 function buildSprintDefs(weeks: number) {
 	const sprintCount = Math.max(1, Math.round(weeks / 2));
@@ -266,6 +279,13 @@ async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, pe
 	const activityByLabel = new Map(insertedActivities.map((a) => [a.label, a]));
 	const categoryByLabel = new Map(insertedCategories.map((c) => [c.label, c]));
 
+	// Codes SSP réalistes (format Sopra Steria) — la plupart des tickets en portent un désormais
+	// qu'il s'agit d'un référentiel : la clôture mensuelle n'a rien à montrer sans eux.
+	const insertedSsps = await db
+		.insert(ssp)
+		.values(SSP_DEFS.map((d) => ({ workspaceId: ws.id, code: d.code, label: d.label, budgetDays: String(d.budget) })))
+		.returning();
+
 	const insertedProjects = await db
 		.insert(project)
 		.values(PROJECT_NAMES.map((name) => ({ workspaceId: ws.id, name })))
@@ -392,7 +412,7 @@ async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, pe
 				// pour un ticket imputé : cf. la passe RAE par activité).
 				raeReal: String(t.estimationReal),
 				raeTest: t.estimationTest != null ? String(t.estimationTest) : null,
-				sspCode: chance(0.15) ? `SSP-${t.key.split('-')[1].padStart(3, '0')}` : null,
+				sspId: chance(0.85) ? rand(insertedSsps).id : null,
 				estimationPrev: chance(0.2) ? String(round(t.estimationReal * 0.9)) : null,
 				enveloppeTotale: chance(0.2) ? String(round(t.estimationReal * 1.3)) : null,
 				raeUpdatedAt: new Date()
@@ -560,6 +580,88 @@ async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, pe
 		500
 	))
 		await db.insert(timeEntry).values(batch);
+
+	// ---------- Clôtures mensuelles (/admin/cloture) : une passe INTEGRATED par mois déjà passé de
+	// la fenêtre du seed (conso figée à la photo réelle des imputations ci-dessus), une passe DRAFT
+	// sur le mois en cours — pour un écran qui a déjà de l'historique au premier chargement, plutôt
+	// qu'un "Ouvrir la clôture" sur une page vide.
+	const sspIdByTicketId = new Map(insertedTickets.map((t) => [t.id, t.sspId]));
+	const linkedAbsenceCategoryIds = new Set(['Congé', 'Formation'].map((l) => categoryByLabel.get(l)!.id));
+	type MonthAgg = { consoBySsp: Map<string, Map<string, number>>; absenceDays: Map<string, number> };
+	const aggByMonth = new Map<string, MonthAgg>();
+	function monthAgg(monthKey: string): MonthAgg {
+		let agg = aggByMonth.get(monthKey);
+		if (!agg) {
+			agg = { consoBySsp: new Map(), absenceDays: new Map() };
+			aggByMonth.set(monthKey, agg);
+		}
+		return agg;
+	}
+	for (const d of entryDrafts) {
+		const agg = monthAgg(d.day.slice(0, 7));
+		if (d.targetType === 'CATEGORY' && d.categoryId && linkedAbsenceCategoryIds.has(d.categoryId)) {
+			agg.absenceDays.set(d.userId, round((agg.absenceDays.get(d.userId) ?? 0) + d.amount));
+			continue;
+		}
+		const sspId = d.ticketId ? sspIdByTicketId.get(d.ticketId) : null;
+		if (!sspId) continue;
+		const byUser = agg.consoBySsp.get(d.userId) ?? new Map<string, number>();
+		byUser.set(sspId, round((byUser.get(sspId) ?? 0) + d.amount));
+		agg.consoBySsp.set(d.userId, byUser);
+	}
+
+	const currentMonthKey = todayInParis().slice(0, 7);
+	const monthKeys = [...new Set(allDays.map((d) => d.slice(0, 7)))].sort();
+	for (const monthKey of monthKeys) {
+		const isCurrent = monthKey === currentMonthKey;
+		const { from, to } = monthRange(monthKey);
+		const workdays = countWorkdaysNonHoliday(from, to);
+		const agg = monthAgg(monthKey);
+
+		const [closing] = await db
+			.insert(monthlyClosing)
+			.values({
+				workspaceId: ws.id,
+				month: `${monthKey}-01`,
+				seq: 1,
+				status: isCurrent ? 'DRAFT' : 'INTEGRATED',
+				integratedAt: isCurrent ? null : new Date(`${to}T18:00:00`),
+				integratedById: isCurrent ? null : bySlot('alice').id
+			})
+			.returning();
+
+		const memberRows: (typeof monthlyClosingMember.$inferInsert)[] = [];
+		const lineRows: (typeof monthlyClosingLine.$inferInsert)[] = [];
+		for (const p of personas) {
+			const userId = userByEmail.get(p.email)!.id;
+			// Bob (temps partiel) a un prévu ajusté à la main sur le dernier mois passé — pour montrer
+			// l'override en plus du calcul automatique.
+			const isLatestPastMonth = !isCurrent && monthKey === monthKeys.filter((k) => k !== currentMonthKey).at(-1);
+			const plannedOverride = p.slot === 'bob' && isLatestPastMonth ? workdays - 1 : null;
+			const planned = plannedOverride ?? plannedDays(workdays, agg.absenceDays.get(userId) ?? 0);
+			memberRows.push({
+				closingId: closing.id,
+				userId,
+				plannedOverride: plannedOverride != null ? String(plannedOverride) : null,
+				plannedSnapshot: isCurrent ? null : String(planned)
+			});
+
+			for (const [sspId, consoAmount] of agg.consoBySsp.get(userId) ?? []) {
+				// Petit rattrapage de fin de mois sur ~15% des lignes, comme un admin qui complète avant
+				// bascule GPS — sinon "à ventiler" tombe toujours pile à 0, jamais crédible.
+				const complement = chance(0.15) ? rand([0.25, 0.5, 1]) : 0;
+				lineRows.push({
+					closingId: closing.id,
+					userId,
+					sspId,
+					complement: String(complement),
+					consoSnapshot: isCurrent ? null : String(consoAmount)
+				});
+			}
+		}
+		await db.insert(monthlyClosingMember).values(memberRows);
+		if (lineRows.length) await db.insert(monthlyClosingLine).values(lineRows);
+	}
 
 	// ---------- RAE cible par ticket (dérivé de l'état + du consommé réel) ----------
 	const targetRaeByTicket = new Map<string, { real: number; test: number }>();
@@ -921,7 +1023,7 @@ async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, pe
 	const totalAbsences = insertedAbsences.length + clientAbsenceRows.length;
 	console.log(
 		`✓ "${wsName}" créé — ${totalTickets} tickets sur ${sprintDefs.length} sprints / ${VERSION_NAMES.length} versions, ` +
-			`${entryDrafts.length} imputations (${allDays.length} jours ouvrés, du ${allDays[0]} au ${allDays[allDays.length - 1]}), ${snapshotRows.length} snapshots, ${moodVoteRows.length} votes team mood sur 7 semaines, ${totalAbsences} absences (dont 1 membre externe), ${changeLogRows.length} entrées d'historique, 6 objectifs de semaine (dont David en vacances la semaine prochaine, sans objectif), 3 runs de sync Jira (import initial de ${insertedTickets.length} tickets, run récent de ${insertedRecentTickets.length} tickets encore annulables, 1 en échec), perm support activée (${rotationUserIds.length} personnes en rotation, 1 override sur la période courante).`
+			`${entryDrafts.length} imputations (${allDays.length} jours ouvrés, du ${allDays[0]} au ${allDays[allDays.length - 1]}), ${snapshotRows.length} snapshots, ${moodVoteRows.length} votes team mood sur 7 semaines, ${totalAbsences} absences (dont 1 membre externe), ${changeLogRows.length} entrées d'historique, 6 objectifs de semaine (dont David en vacances la semaine prochaine, sans objectif), 3 runs de sync Jira (import initial de ${insertedTickets.length} tickets, run récent de ${insertedRecentTickets.length} tickets encore annulables, 1 en échec), perm support activée (${rotationUserIds.length} personnes en rotation, 1 override sur la période courante), ${monthKeys.length} clôtures mensuelles (${monthKeys.length - 1} intégrées + 1 en brouillon sur ${currentMonthKey}).`
 	);
 	for (const p of personas) console.log(`  ${p.email.padEnd(32)} ${p.password.padEnd(14)} (${p.role})`);
 }

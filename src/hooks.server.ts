@@ -59,5 +59,14 @@ export const handle: Handle = async ({ event, resolve }) => {
 		}
 	}
 
-	return resolve(event);
+	const response = await resolve(event);
+
+	// Headers de sécurité, posés ici plutôt que dans app.html : ça couvre aussi /api,
+	// qui ne rend aucun <head>. HSTS est ignoré par le navigateur sur du HTTP simple,
+	// donc pas besoin de le conditionner au dev.
+	response.headers.set('X-Frame-Options', 'DENY');
+	response.headers.set('X-Content-Type-Options', 'nosniff');
+	response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+	response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+	return response;
 };
