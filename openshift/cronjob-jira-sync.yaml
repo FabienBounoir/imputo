@@ -33,6 +33,10 @@ spec:
           containers:
             - name: jira-sync
               image: 'image-registry.openshift-image-registry.svc:5000/CHANGEME-namespace/imputo:tools'
+              # `tools` est un tag mutable : sans Always, IfNotPresent (défaut hors `:latest`)
+              # fait tourner la copie cachée sur le nœud, potentiellement antérieure au dernier
+              # build — c'est ce qui faisait échouer le job sur `Missing script: "jira:sync"`.
+              imagePullPolicy: Always
               command: ['npm', 'run', 'jira:sync']
               envFrom:
                 - configMapRef:

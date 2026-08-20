@@ -1,10 +1,12 @@
 // Script CLI autonome pour le CronJob de synchronisation Jira (image imputo:tools, npm run
 // jira:sync — voir openshift/cronjob-jira-sync.yaml). Même schéma que seed.ts/migrate.js :
 // process.env directement, jamais $lib/server/config (résolu par SvelteKit uniquement, cf.
-// jiraSync.ts pour le détail de cette contrainte).
+// jiraSync.ts pour le détail de cette contrainte). Idem pour l'alias `$lib` lui-même : il vient
+// de .svelte-kit/tsconfig.json, absent de l'image tools (pas d'étape `npm run build`, et
+// .svelte-kit est dans .dockerignore) — tout ce que ce script atteint doit être en relatif.
 import { readFileSync } from 'node:fs';
-import { createDb } from '$lib/server/db/connection';
-import { syncAllEnabledWorkspaces, type JiraSyncConfig } from '$lib/server/services/jiraSync';
+import { createDb } from '../src/lib/server/db/connection';
+import { syncAllEnabledWorkspaces, type JiraSyncConfig } from '../src/lib/server/services/jiraSync';
 
 if (!process.env.DATABASE_URL) {
 	try {
