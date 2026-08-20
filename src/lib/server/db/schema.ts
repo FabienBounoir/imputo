@@ -91,6 +91,11 @@ export const workspace = pgTable('workspace', {
 	// Le samedi compte-t-il comme un jour de perm (cadence DAY) ? Dimanche jamais inclus.
 	supportIncludeSaturday: boolean('support_include_saturday').notNull().default(false),
 
+	// Curseur du "mois en cours" du Suivi annuel — indépendant du calendrier et de monthlyClosing,
+	// avancé uniquement via le bouton "Mois suivant". NULL = pas encore initialisé, bootstrap sur le
+	// mois calendaire courant à la volée (jamais persisté tant qu'aucun admin n'a avancé le curseur).
+	annualTrackingMonth: date('annual_tracking_month'),
+
 	// ---------- Synchronisation Jira (pull planifié + forçage manuel) ----------
 	jiraSyncEnabled: boolean('jira_sync_enabled').notNull().default(false),
 	// Chiffré (AES-256-GCM, voir auth/secretCrypto.ts) — jamais en clair, jamais réaffiché.
@@ -272,6 +277,47 @@ export const ssp = pgTable(
 			.on(t.workspaceId, sql`lower(${t.code})`)
 			.where(sql`${t.archivedAt} is null`)
 	]
+);
+
+// Production saisie à la main, uniquement modifiable sur workspace.annualTrackingMonth (Suivi
+// annuel). Une ligne = un mois où une prod a été saisie ; l'absence de ligne affiche un blanc, pas
+// un 0 (distinction "jamais saisi" vs "saisi à zéro", nécessaire pour ne pas fausser le TNF avant
+// que le mois soit travaillé).
+export const sspAnnualProd = pgTable(
+	'ssp_annual_prod',
+	{
+		id: id(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspace.id, { onDelete: 'cascade' }),
+		sspId: uuid('ssp_id')
+			.notNull()
+			.references(() => ssp.id, { onDelete: 'cascade' }),
+		month: date('month').notNull(), // 1er du mois
+		value: numeric('value', { precision: 8, scale: 2 }).notNull(), // même précision que ssp.budgetDays
+		updatedAt: updatedAt()
+	},
+	(t) => [uniqueIndex('ssp_annual_prod_ssp_month_uq').on(t.sspId, t.month)]
+);
+
+// Surcharge manuelle du RAE d'un mois passé ou courant (Suivi annuel) — casse la chaîne récursive
+// RAE(M) = RAE(M-1) - Prod(M) à cet endroit : tout mois postérieur repart de cette valeur au lieu
+// de continuer depuis ssp.budgetDays.
+export const sspAnnualRaeOverride = pgTable(
+	'ssp_annual_rae_override',
+	{
+		id: id(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspace.id, { onDelete: 'cascade' }),
+		sspId: uuid('ssp_id')
+			.notNull()
+			.references(() => ssp.id, { onDelete: 'cascade' }),
+		month: date('month').notNull(),
+		value: numeric('value', { precision: 8, scale: 2 }).notNull(),
+		updatedAt: updatedAt()
+	},
+	(t) => [uniqueIndex('ssp_annual_rae_override_ssp_month_uq').on(t.sspId, t.month)]
 );
 
 export const state = pgTable(
