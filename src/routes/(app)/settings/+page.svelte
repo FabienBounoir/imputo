@@ -64,6 +64,10 @@
 			]
 		},
 		{
+			label: 'Support',
+			items: [{ key: 'supportDuty', label: 'Mon tour de support commence', when: '9h00' }]
+		},
+		{
 			label: 'Team mood',
 			items: [
 				{ key: 'moodDeadline', label: 'Dernier jour pour voter', when: '10h00' },

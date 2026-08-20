@@ -14,6 +14,7 @@ import {
 } from '$lib/server/db';
 import { config } from '$lib/server/config';
 import { num, resolvedRae } from './calc';
+import { getCurrentDuty } from './support';
 import {
 	todayInParis,
 	previousWorkday,
@@ -23,6 +24,7 @@ import {
 	workWeek,
 	toISODate,
 	addDays,
+	formatDay,
 	formatDayRange,
 	currentMoodPeriod,
 	previousMoodPeriodStart,
@@ -43,6 +45,7 @@ const DEFAULT_PREFS: Prefs = {
 	moodRecap: true,
 	absencePending: true,
 	absenceValidated: true,
+	supportDuty: true,
 	morningSlots: {},
 	eveningSlots: {}
 };
@@ -77,7 +80,8 @@ const PREF_KEY: Record<NotifKind, keyof Prefs> = {
 	MOOD_DEADLINE: 'moodDeadline',
 	MOOD_RECAP: 'moodRecap',
 	ABSENCE_PENDING: 'absencePending',
-	ABSENCE_VALIDATED: 'absenceValidated'
+	ABSENCE_VALIDATED: 'absenceValidated',
+	SUPPORT_DUTY: 'supportDuty'
 };
 /** Seuls ces deux types sont relancés plusieurs fois par jour, donc réglables créneau par créneau. */
 const SLOT_PREF: Partial<Record<NotifKind, SlotKey>> = {
@@ -394,6 +398,33 @@ async function moodRecap(today: string): Promise<number> {
 }
 
 /**
+ * Premier jour d'une période de support : prévient la personne dont c'est le tour. `getCurrentDuty`
+ * porte déjà la rotation, l'offset et les overrides ponctuels — on ne notifie que le jour où la
+ * période démarre, pas chaque matin.
+ */
+async function supportDuty(today: string): Promise<number> {
+	let sent = 0;
+	const workspaces = await db
+		.select({ workspaceId: workspace.id, workspaceName: workspace.name })
+		.from(workspace)
+		.where(eq(workspace.supportEnabled, true));
+
+	for (const w of workspaces) {
+		const duty = await getCurrentDuty(w.workspaceId, today);
+		if (!duty || duty.periodStart !== today) continue; // rotation vide, ou période déjà entamée
+		const member = (await membersOf(w.workspaceId)).find((m) => m.userId === duty.userId);
+		if (!member) continue; // plus membre actif de l'espace
+		sent += await maybeNotify(
+			{ workspaceId: w.workspaceId, workspaceName: w.workspaceName, userId: duty.userId, capacity: 0, prefsRaw: member.prefsRaw },
+			'SUPPORT_DUTY',
+			duty.periodStart,
+			{ single: duty.periodStart === duty.periodEnd, until: formatDay(duty.periodEnd) }
+		);
+	}
+	return sent;
+}
+
+/**
  * Notifie les admins d'un espace qu'un congé prévisionnel attend leur validation. Contrairement
  * aux autres notifs (relances planifiées via le cron), celle-ci est déclenchée en direct par
  * l'action de dépôt du congé — le dédup `notificationLog` (clé = absenceId) protège juste contre
@@ -470,6 +501,7 @@ export async function runNotifications(
 	} else if (trigger === 'morning') {
 		sent += await dayMissing('MORNING_YESTERDAY', previousWorkday(today), members, slot);
 		sent += await raeStale(today, members);
+		sent += await supportDuty(today);
 	} else if (trigger === 'weekly') {
 		sent += await weeklyRecap(today, members);
 	}

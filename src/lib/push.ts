@@ -10,6 +10,7 @@ export type NotifPrefs = {
 	moodRecap: boolean;
 	absencePending: boolean;
 	absenceValidated: boolean;
+	supportDuty: boolean;
 	/** Créneaux de relance retenus, par slot de cron (cf. NOTIF_SLOTS). Absent = tous actifs. */
 	morningSlots: Record<string, boolean>;
 	eveningSlots: Record<string, boolean>;

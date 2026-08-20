@@ -8,7 +8,8 @@ export type NotifKind =
 	| 'MOOD_DEADLINE'
 	| 'MOOD_RECAP'
 	| 'ABSENCE_PENDING'
-	| 'ABSENCE_VALIDATED';
+	| 'ABSENCE_VALIDATED'
+	| 'SUPPORT_DUTY';
 
 /** Contexte attendu par les variantes de chaque type de notif. */
 export type NotifCtx = {
@@ -20,6 +21,7 @@ export type NotifCtx = {
 	MOOD_RECAP: { avg: number; prevAvg: number; votes: number };
 	ABSENCE_PENDING: { name: string; range: string };
 	ABSENCE_VALIDATED: { range: string };
+	SUPPORT_DUTY: { single: boolean; until: string };
 };
 
 /** « 0,5 j » — les capacités sont en décimales de journée, jamais en heures. */
@@ -28,6 +30,7 @@ const plural = (n: number, s = 's') => (n > 1 ? s : '');
 /** Élision devant un prénom : « d'Alice », « de Bob ». */
 const de = (name: string) => (/^[aeiouyàâäéèêëîïôöûüh]/i.test(name) ? `d'${name}` : `de ${name}`);
 const note = (n: number) => `${n.toFixed(1).replace('.', ',')}/5`;
+const duree = (c: NotifCtx['SUPPORT_DUTY']) => (c.single ? "aujourd'hui" : `jusqu'au ${c.until}`);
 
 type Variant<K extends NotifKind> = (c: NotifCtx[K]) => { title: string; body: string };
 
@@ -148,6 +151,13 @@ const VARIANTS: { [K in NotifKind]: Variant<K>[] } = {
 		(c) => ({ title: '✋ Validation en attente', body: `Congé ${de(c.name)} : ${c.range}.` }),
 		(c) => ({ title: '🏖️ Nouvelle demande', body: `${c.name} demande un congé du ${c.range}.` })
 	],
+	// Cadence DAY : la période tient sur la journée, « jusqu'au … » n'aurait pas de sens.
+	SUPPORT_DUTY: [
+		(c) => ({ title: '🎧 Support : c’est toi', body: `Tu prends le support ${duree(c)}.` }),
+		(c) => ({ title: '📞 Ton tour de support', body: `Le support est sur toi ${duree(c)}.` }),
+		(c) => ({ title: '🛎️ Tour de support', body: `Tu es la personne de support ${duree(c)}.` }),
+		(c) => ({ title: '📣 Support', body: `C’est ton tour ${duree(c)}.` })
+	],
 	ABSENCE_VALIDATED: [
 		(c) => ({ title: '✅ Congé validé', body: `Ton congé du ${c.range} est validé.` }),
 		(c) => ({ title: '👍 C\'est validé', body: `Ton congé du ${c.range} a été accepté.` }),
@@ -165,7 +175,8 @@ export const NOTIF_URL: Record<NotifKind, string> = {
 	MOOD_DEADLINE: '/mood',
 	MOOD_RECAP: '/admin/mood',
 	ABSENCE_PENDING: '/absences',
-	ABSENCE_VALIDATED: '/absences'
+	ABSENCE_VALIDATED: '/absences',
+	SUPPORT_DUTY: '/support'
 };
 
 // ponytail: hash FNV-ish sur la graine plutôt qu'un Math.random() — deux membres (ou deux jours)

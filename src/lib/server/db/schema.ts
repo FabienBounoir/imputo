@@ -31,7 +31,8 @@ export const notificationKindEnum = pgEnum('notification_kind', [
 	'MOOD_DEADLINE',
 	'MOOD_RECAP',
 	'ABSENCE_PENDING',
-	'ABSENCE_VALIDATED'
+	'ABSENCE_VALIDATED',
+	'SUPPORT_DUTY'
 ]);
 export const moodPeriodKindEnum = pgEnum('mood_period_kind', ['WEEK_1', 'WEEK_2', 'WEEK_3', 'MONTH']);
 export const absenceTypeEnum = pgEnum('absence_type', [

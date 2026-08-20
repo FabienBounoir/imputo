@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterAll } from 'vitest';
 import { eq, and } from 'drizzle-orm';
 import { db, workspace, category, timeEntry, moodVote, user, membership } from '$lib/server/db';
 import { createWorkspaceWithOwner } from './workspaces';
+import { setSupportEnabled, setSupportCadence, addRotationMember } from './support';
 import { todayInParis, parseISODate, toISODate, addDays } from '$lib/utils/date';
 
 const sendCalls: { userId: string; tag?: string }[] = [];
@@ -109,6 +110,32 @@ describe('créneaux de relance', () => {
 			'1715': true,
 			'1800': true
 		});
+	});
+});
+
+describe('support', () => {
+	it('notifie la personne de support le jour où sa période démarre, pas les jours suivants', async () => {
+		const { userId, workspaceId } = await createWorkspaceWithOwner({
+			displayName: 'Support Test',
+			email: `support-${rnd}@acme.test`,
+			password: 'password123',
+			workspaceName: 'Espace Support'
+		});
+		wsIds.push(workspaceId);
+		await setSupportEnabled(workspaceId, true);
+		await setSupportCadence(workspaceId, 'DAY'); // période = la journée, donc elle démarre aujourd'hui
+		await addRotationMember(workspaceId, userId);
+
+		sendCalls.length = 0;
+		await runNotifications('morning', '0900');
+		expect(sentTo(userId, 'SUPPORT_DUTY')).toBe(true);
+
+		// Cadence WEEK : la période a démarré lundi, donc plus rien à notifier aujourd'hui
+		// (sauf si on est lundi — d'où le dédup déjà posé ci-dessus qui couvre ce cas).
+		await setSupportCadence(workspaceId, 'WEEK');
+		sendCalls.length = 0;
+		await runNotifications('morning', '0915');
+		expect(sentTo(userId, 'SUPPORT_DUTY')).toBe(false);
 	});
 });
 

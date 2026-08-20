@@ -9,7 +9,8 @@ const CTX: { [K in NotifKind]: NotifCtx[K] } = {
 	MOOD_DEADLINE: {},
 	MOOD_RECAP: { avg: 2.8, prevAvg: 3.7, votes: 8 },
 	ABSENCE_PENDING: { name: 'Alice', range: '3 → 7 sept. 2026' },
-	ABSENCE_VALIDATED: { range: '3 → 7 sept. 2026' }
+	ABSENCE_VALIDATED: { range: '3 → 7 sept. 2026' },
+	SUPPORT_DUTY: { single: false, until: '24 août' }
 };
 const KINDS = Object.keys(CTX) as NotifKind[];
 
