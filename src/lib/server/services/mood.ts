@@ -5,11 +5,6 @@ import { previousMoodPeriodStart } from '$lib/utils/date';
 export type { MoodPeriodKind };
 
 /** Nombre total de votes enregistrés (toutes plages confondues) — pour un badge admin en un coup d'œil. */
-export async function countVotes(workspaceId: string): Promise<number> {
-	const rows = await db.select({ n: count() }).from(moodVote).where(eq(moodVote.workspaceId, workspaceId));
-	return rows[0]?.n ?? 0;
-}
-
 /** Participation sur la plage en cours : nombre de votes / membres actifs. Jamais le score, pour ne pas influencer les votes restants. */
 export async function getPeriodParticipation(
 	workspaceId: string,

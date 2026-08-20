@@ -1,6 +1,6 @@
 import { redirect } from '@sveltejs/kit';
 import type { LayoutServerLoad } from './$types';
-import { countVotes, getMoodConfig, getMyVote } from '$lib/server/services/mood';
+import { getPeriodParticipation, getMoodConfig, getMyVote } from '$lib/server/services/mood';
 import { countPendingAbsences } from '$lib/server/services/absences';
 import { getCurrentDuty } from '$lib/server/services/support';
 import { currentMoodPeriod, todayInParis, parseISODate, lastWorkdayOnOrBefore } from '$lib/utils/date';
@@ -27,7 +27,11 @@ export const load: LayoutServerLoad = async ({ locals }) => {
 		const deadline = lastWorkdayOnOrBefore(end);
 		const daysLeft = Math.round((parseISODate(deadline).getTime() - parseISODate(today).getTime()) / 86400000);
 		moodStatus = { voted: Boolean(myVote), urgent: !myVote && daysLeft <= MOOD_REMINDER_DAYS };
-		if (locals.role === 'ADMIN') moodTotalVotes = await countVotes(locals.workspace.workspaceId);
+		// Badge du menu = participation de la plage en cours, pas le cumul depuis la création de
+		// l'espace (un compteur qui ne redescend jamais ne dit rien de la plage qu'on est en train
+		// de remplir).
+		if (locals.role === 'ADMIN')
+			moodTotalVotes = (await getPeriodParticipation(locals.workspace.workspaceId, start)).voted;
 	}
 
 	const canManageOthers = locals.role === 'ADMIN' || locals.role === 'MANAGER';

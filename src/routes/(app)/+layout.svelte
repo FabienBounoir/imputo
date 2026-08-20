@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { browser } from '$app/environment';
 	import { page, navigating } from '$app/state';
+	import { invalidateAll } from '$app/navigation';
 	import { beep } from '$lib/sound';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
@@ -16,6 +17,24 @@
 	let commandPalette: CommandPalette | undefined = $state();
 
 	onMount(initSeasonal);
+
+	// Les compteurs de la navbar (votes mood, congés à valider, personne de support) viennent du
+	// load de +layout.server.ts, qui ne rejoue pas sur une navigation client : un onglet laissé
+	// ouvert afficherait l'état du matin. On les rafraîchit au retour sur l'onglet, avec un délai
+	// minimum entre deux rafraîchissements — sinon une série d'alt-tab rejoue le load à chaque
+	// aller-retour, alors que rien n'a eu le temps de changer côté serveur.
+	const REFRESH_COOLDOWN_MS = 120_000;
+	onMount(() => {
+		let lastRefresh = Date.now();
+		const refresh = () => {
+			if (document.visibilityState !== 'visible') return;
+			if (Date.now() - lastRefresh < REFRESH_COOLDOWN_MS) return;
+			lastRefresh = Date.now();
+			invalidateAll();
+		};
+		document.addEventListener('visibilitychange', refresh);
+		return () => document.removeEventListener('visibilitychange', refresh);
+	});
 	const seasonalIds = $derived(new Set(activeSeasonalEffects().map((e) => e.id)));
 	const seasonalVisible = $derived(browser && (seasonalState.enabled || seasonalState.forced));
 

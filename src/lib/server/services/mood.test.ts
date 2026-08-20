@@ -8,7 +8,6 @@ import {
 	setMoodEnabled,
 	setMoodPeriodConfig,
 	listMoodResults,
-	countVotes,
 	getPeriodParticipation
 } from './mood';
 import { makeWorkspace, addMember } from './test-helpers';
@@ -88,7 +87,7 @@ describe('resetPeriodVotes', () => {
 	});
 });
 
-describe('listMoodResults / countVotes / getPeriodParticipation', () => {
+describe('listMoodResults / getPeriodParticipation', () => {
 	it('agrège les votes par plage sans jamais exposer userId', async () => {
 		const { workspaceId, userId: u1 } = await makeWorkspace();
 		const { userId: u2 } = await addMember(workspaceId, 'USER', 'voter2');
@@ -96,7 +95,6 @@ describe('listMoodResults / countVotes / getPeriodParticipation', () => {
 		await submitVote(workspaceId, u1, PERIOD, PERIOD_END, 4, 'top');
 		await submitVote(workspaceId, u2, PERIOD, PERIOD_END, 2, null);
 
-		expect(await countVotes(workspaceId)).toBe(2);
 		expect(await getPeriodParticipation(workspaceId, PERIOD)).toEqual({ voted: 2, total: 2 });
 
 		const results = await listMoodResults(workspaceId);
