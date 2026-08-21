@@ -15,6 +15,7 @@ declare global {
 				accentMode: string;
 				accentColor: string | null;
 				sortActivitiesAlpha: boolean;
+				motivationBanner: boolean;
 			} | null;
 			sessionToken: string | null;
 			memberships: MembershipInfo[];

@@ -70,14 +70,24 @@
 	function onWindowClick(e: MouseEvent) {
 		if (open && root && !root.contains(e.target as Node)) open = false;
 	}
+	// Armé avec un court délai : sur mobile, focus(searchInput) juste après l'ouverture fait
+	// remonter le clavier, et le navigateur fait défiler la page pour garder le champ visible —
+	// un vrai scroll, mais provoqué par nous, pas par l'utilisateur. Sans ce délai, ce scroll-là
+	// referme le panneau avant même que le clavier ait fini de s'ouvrir (cf. TargetPicker).
 	$effect(() => {
 		if (!open) return;
+		let armed = false;
+		const timer = setTimeout(() => (armed = true), 400);
 		const onScroll = (e: Event) => {
+			if (!armed) return;
 			if (panelEl && e.target instanceof Node && panelEl.contains(e.target)) return;
 			open = false;
 		};
 		window.addEventListener('scroll', onScroll, true);
-		return () => window.removeEventListener('scroll', onScroll, true);
+		return () => {
+			clearTimeout(timer);
+			window.removeEventListener('scroll', onScroll, true);
+		};
 	});
 </script>
 

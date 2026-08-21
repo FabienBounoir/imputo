@@ -11,6 +11,7 @@ import {
 	formatMonthLabel,
 	parseISODate,
 	currentMoodPeriod,
+	lastWorkdayOnOrBefore,
 	currentSupportPeriod,
 	supportPeriodIndex,
 	buildPeriod,
@@ -154,6 +155,18 @@ describe('currentMoodPeriod', () => {
 			start: '2026-02-01',
 			end: '2026-02-28'
 		});
+	});
+});
+
+describe('lastWorkdayOnOrBefore', () => {
+	// 2026-06-05 = vendredi, 06 = samedi, 07 = dimanche, 08 = lundi
+	it('rend la date telle quelle si c’est un jour ouvré', () => {
+		expect(lastWorkdayOnOrBefore('2026-06-05')).toBe('2026-06-05');
+		expect(lastWorkdayOnOrBefore('2026-06-08')).toBe('2026-06-08');
+	});
+	it('recule au vendredi depuis le week-end (plage Team mood lundi→dimanche)', () => {
+		expect(lastWorkdayOnOrBefore('2026-06-06')).toBe('2026-06-05');
+		expect(lastWorkdayOnOrBefore('2026-06-07')).toBe('2026-06-05');
 	});
 });
 

@@ -182,6 +182,11 @@ export async function setCompactTicketActivityPref(userId: string, value: boolea
 	await db.update(user).set({ compactTicketActivity: value }).where(eq(user.id, userId));
 }
 
+/** Bandeau de citations motivantes en haut des pages — préférence de compte. */
+export async function setMotivationBannerPref(userId: string, value: boolean) {
+	await db.update(user).set({ motivationBanner: value }).where(eq(user.id, userId));
+}
+
 /** Remplace entièrement le dernier état de filtres tickets — un champ absent du payload = filtre
  *  désormais vide, c'est ce qui permet à "Réinitialiser" de s'y refléter sans code dédié. */
 export async function setTicketFiltersSnapshot(userId: string, snapshot: TicketFiltersSnapshot) {

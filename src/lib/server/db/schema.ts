@@ -31,7 +31,8 @@ export const notificationKindEnum = pgEnum('notification_kind', [
 	'MOOD_DEADLINE',
 	'MOOD_RECAP',
 	'ABSENCE_PENDING',
-	'ABSENCE_VALIDATED'
+	'ABSENCE_VALIDATED',
+	'SUPPORT_DUTY'
 ]);
 export const moodPeriodKindEnum = pgEnum('mood_period_kind', ['WEEK_1', 'WEEK_2', 'WEEK_3', 'MONTH']);
 export const absenceTypeEnum = pgEnum('absence_type', [
@@ -168,6 +169,8 @@ export const user = pgTable('user', {
 	ticketFiltersSnapshot: text('ticket_filters_snapshot'), // JSON { view, query, stateId, projectId, sprintId, versionId }
 	// Détail par activité sous chaque ticket (vue tableau) : true = masqué par défaut (compact).
 	compactTicketActivity: boolean('compact_ticket_activity').notNull().default(true),
+	// Bandeau de citations motivantes en haut des pages (rotation toutes les 30 s).
+	motivationBanner: boolean('motivation_banner').notNull().default(true),
 	active: boolean('active').notNull().default(true),
 	createdAt: createdAt()
 });

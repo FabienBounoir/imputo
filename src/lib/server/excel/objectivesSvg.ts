@@ -50,12 +50,12 @@ function vacChipWidth(name: string): number {
 	return 10 + VAC_ICON_SIZE + 4 + Math.ceil(name.length * VAC_CHAR_W) + 10;
 }
 
-// Petit palmier en trait, même dessin que l'icône vacances de la page (pas un palmier "plein" —
-// juste tronc + 3 palmes) pour rester cohérent entre l'appli et l'export.
+// Palmier plein (île + palmes), même dessin que l'icône vacances de la page pour rester cohérent
+// entre l'appli et l'export. Contrairement aux autres icônes, c'est un tracé plein en viewBox 32.
 const PALM_PATHS =
-	'<path d="M12 21v-9" /><path d="M12 12c-1-4-4-6-8-6 1 4 4 6 8 6Z" /><path d="M12 12c1-4 4-6 8-6-1 4-4 6-8 6Z" /><path d="M12 12c-3-2-5-5-4-9 3 1 5 4 4 9Z" />';
+	'<path d="M14.5,24c-5.2,0-10.1,2.3-13.3,6.4c-0.2,0.3-0.3,0.7-0.1,1.1S1.6,32,2,32h25c0.4,0,0.7-0.2,0.9-0.6s0.1-0.8-0.1-1.1C24.6,26.3,19.7,24,14.5,24z" /><path d="M30.1,5.7c-3-1.7-6.2-1.8-9-0.4c-1.5,0.8-2.7,1.9-3.6,3.4c-0.3-2.1-1.2-3.9-2.7-5.3c-2.3-2.1-5.6-2.8-9-1.8C5.5,1.7,5.2,1.9,5.1,2.3c-0.1,0.4,0,0.7,0.3,1l2.6,2.4c0.1,0.1,0.3,0.2,0.4,0.2l0.7,0.2c0,0.1,0,0.2,0,0.2c0,0.3,0.1,0.5,0.3,0.7l1.1,1c-0.2,0-0.4,0-0.7,0c-3.1,0-5.9,1.6-7.8,4.4c-0.2,0.3-0.2,0.7,0,1C2.3,13.8,2.6,14,3,14h3.6c0.2,0,0.3,0,0.4-0.1l0.7-0.4C7.9,13.8,8.2,14,8.6,14h6.7c0.7,2.7,0.5,5.5-0.7,8c2.4,0,4.8,0.5,7,1.4c0.4-3.2-0.2-6.5-1.9-9.4l-0.6-1l1.6-0.8c0.1-0.1,0.3-0.2,0.3-0.3l0.5-0.6c0.3,0.2,0.6,0.2,1,0L30,7.5c0.3-0.2,0.5-0.5,0.5-0.9C30.6,6.2,30.4,5.9,30.1,5.7z" />';
 function palmIcon(x: number, y: number): string {
-	return iconGroup(PALM_PATHS, x, y, VAC_ICON_SIZE, VAC_CHIP_TEXT);
+	return `<g transform="translate(${x},${y}) scale(${VAC_ICON_SIZE / 32})" fill="${VAC_CHIP_TEXT}">${PALM_PATHS}</g>`;
 }
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');

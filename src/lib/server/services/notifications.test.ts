@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterAll } from 'vitest';
 import { eq, and } from 'drizzle-orm';
 import { db, workspace, category, timeEntry, moodVote, user, membership } from '$lib/server/db';
 import { createWorkspaceWithOwner } from './workspaces';
+import { setSupportEnabled, setSupportCadence, addRotationMember } from './support';
 import { todayInParis, parseISODate, toISODate, addDays } from '$lib/utils/date';
 
 const sendCalls: { userId: string; tag?: string }[] = [];
@@ -15,12 +16,15 @@ vi.mock('./push', () => ({
 function sentTo(userId: string, tagPrefix?: string) {
 	return sendCalls.some((c) => c.userId === userId && (!tagPrefix || c.tag?.startsWith(tagPrefix)));
 }
+// isWorkday/lastWorkdayOnOrBefore neutralisés : sans ça les tests ci-dessous (qui construisent des
+// plages se terminant « aujourd'hui ») échoueraient selon le jour de la semaine où la CI tourne.
+// Le décalage au dernier jour ouvré est couvert par date.test.ts.
 vi.mock('$lib/utils/date', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('$lib/utils/date')>();
-	return { ...actual, isWorkday: () => true };
+	return { ...actual, isWorkday: () => true, lastWorkdayOnOrBefore: (d: string) => d };
 });
 
-const { runNotifications, notifyAbsencePending, notifyAbsenceValidated } = await import('./notifications');
+const { runNotifications, notifyAbsencePending, notifyAbsenceValidated, parseNotifPrefs } = await import('./notifications');
 
 const rnd = Math.random().toString(36).slice(2, 8);
 const wsIds: string[] = [];
@@ -66,6 +70,72 @@ describe('runNotifications - relances par slot', () => {
 		sendCalls.length = 0;
 		await runNotifications('evening', '1800');
 		expect(sentTo(userId)).toBe(false); // journée complétée → plus de relance
+	});
+});
+
+describe('créneaux de relance', () => {
+	it('ne notifie pas sur un créneau décoché, mais garde les autres', async () => {
+		const { userId, workspaceId } = await createWorkspaceWithOwner({
+			displayName: 'Slot Test',
+			email: `slot-${rnd}@acme.test`,
+			password: 'password123',
+			workspaceName: 'Espace Slot'
+		});
+		wsIds.push(workspaceId);
+		await db
+			.update(user)
+			.set({ notifPrefs: JSON.stringify({ eveningSlots: { '1715': false } }) })
+			.where(eq(user.id, userId));
+
+		sendCalls.length = 0;
+		await runNotifications('evening', '1700');
+		expect(sentTo(userId)).toBe(true);
+
+		sendCalls.length = 0;
+		await runNotifications('evening', '1715'); // créneau décoché
+		expect(sentTo(userId)).toBe(false);
+
+		sendCalls.length = 0;
+		await runNotifications('evening', '1800');
+		expect(sentTo(userId)).toBe(true);
+	});
+
+	it('des prefs sans créneaux (ou illisibles) activent les trois créneaux', () => {
+		for (const raw of [null, '{}', 'pas du json', '{"eveningMissing":true}']) {
+			expect(parseNotifPrefs(raw).eveningSlots).toEqual({ '1700': true, '1715': true, '1800': true });
+		}
+		// Clés inconnues ignorées, seuls les créneaux connus sont conservés.
+		expect(parseNotifPrefs('{"eveningSlots":{"0300":false,"1700":false}}').eveningSlots).toEqual({
+			'1700': false,
+			'1715': true,
+			'1800': true
+		});
+	});
+});
+
+describe('support', () => {
+	it('notifie la personne de support le jour où sa période démarre, pas les jours suivants', async () => {
+		const { userId, workspaceId } = await createWorkspaceWithOwner({
+			displayName: 'Support Test',
+			email: `support-${rnd}@acme.test`,
+			password: 'password123',
+			workspaceName: 'Espace Support'
+		});
+		wsIds.push(workspaceId);
+		await setSupportEnabled(workspaceId, true);
+		await setSupportCadence(workspaceId, 'DAY'); // période = la journée, donc elle démarre aujourd'hui
+		await addRotationMember(workspaceId, userId);
+
+		sendCalls.length = 0;
+		await runNotifications('morning', '0900');
+		expect(sentTo(userId, 'SUPPORT_DUTY')).toBe(true);
+
+		// Cadence WEEK : la période a démarré lundi, donc plus rien à notifier aujourd'hui
+		// (sauf si on est lundi — d'où le dédup déjà posé ci-dessus qui couvre ce cas).
+		await setSupportCadence(workspaceId, 'WEEK');
+		sendCalls.length = 0;
+		await runNotifications('morning', '0915');
+		expect(sentTo(userId, 'SUPPORT_DUTY')).toBe(false);
 	});
 });
 
@@ -182,12 +252,12 @@ describe('notifyAbsencePending', () => {
 		await db.insert(membership).values({ workspaceId: admin.workspaceId, userId: requester.id, role: 'USER' });
 
 		sendCalls.length = 0;
-		await notifyAbsencePending(admin.workspaceId, 'Espace Congés', requester.id, 'Demandeur', 'absence-1');
+		await notifyAbsencePending(admin.workspaceId, 'Espace Congés', requester.id, 'Demandeur', '2026-08-10', '2026-08-12', 'absence-1');
 		expect(sentTo(admin.userId, 'ABSENCE_PENDING')).toBe(true);
 		expect(sentTo(requester.id)).toBe(false); // le demandeur n'est pas admin de toute façon, mais surtout jamais notifié de sa propre demande
 
 		sendCalls.length = 0;
-		await notifyAbsencePending(admin.workspaceId, 'Espace Congés', requester.id, 'Demandeur', 'absence-1');
+		await notifyAbsencePending(admin.workspaceId, 'Espace Congés', requester.id, 'Demandeur', '2026-08-10', '2026-08-12', 'absence-1');
 		expect(sentTo(admin.userId)).toBe(false); // même congé → dédupliqué
 	});
 });

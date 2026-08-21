@@ -112,7 +112,15 @@ export const actions: Actions = {
 			const absenceId = await createAbsenceFor(ws.workspaceId, subject, { startDate, endDate, type, period });
 			// Prévisionnel = en attente de validation : les admins doivent en être notifiés pour aller le traiter.
 			if (type === 'CONGE_PREVISIONNEL') {
-				await notifyAbsencePending(ws.workspaceId, ws.workspaceName, locals.user.id, locals.user.displayName, absenceId);
+				await notifyAbsencePending(
+					ws.workspaceId,
+					ws.workspaceName,
+					locals.user.id,
+					locals.user.displayName,
+					startDate,
+					endDate,
+					absenceId
+				);
 			}
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });

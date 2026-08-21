@@ -19,29 +19,17 @@
 	import ExportModal from '$lib/components/ExportModal.svelte';
 	import TargetPicker from '$lib/components/TargetPicker.svelte';
 	import TicketEditModal from '$lib/components/TicketEditModal.svelte';
-	import { ABSENCE_TYPE_COLORS, ABSENCE_TYPE_LABELS, ABSENCE_PERIOD_LABELS, type AbsenceType } from '$lib/absenceTypes';
+	import ImputationMobile from '$lib/components/ImputationMobile.svelte';
+	import { ABSENCE_TYPE_COLORS, ABSENCE_TYPE_LABELS, ABSENCE_PERIOD_LABELS } from '$lib/absenceTypes';
+	import type { Row } from '$lib/imputationRow';
 
 	let { data } = $props();
 
-	type Row = {
-		rowKey: string;
-		targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE';
-		targetId: string;
-		activityId: string | null;
-		label: string;
-		sublabel: string;
-		emoji: string | null;
-		nonProductive: boolean;
-		sprintName: string | null;
-		versionName: string | null;
-		raeReal: number | null;
-		estimation: number | null;
-		amounts: Record<string, number>;
-		/** Jours issus d'une absence validée (day ISO → id de l'absence) — non éditables ici. */
-		lockedDays: Record<string, string>;
-		/** Type d'absence lié à la catégorie de cette ligne — pilote la couleur des cases verrouillées. */
-		absenceType: AbsenceType | null;
-	};
+	// Le tableau (colonnes jour + colonnes figées + navigation clavier) n'est pas utilisable au doigt
+	// sur un écran étroit : en dessous de ce seuil on rend ImputationMobile (un jour à la fois) à la
+	// place. `innerWidth` est undefined au SSR — on part donc sur le tableau, comme avant.
+	let innerWidth = $state(0);
+	const isMobile = $derived(innerWidth > 0 && innerWidth <= 720);
 
 	const TASK_COL_W = 320;
 	const RAE_COL_W = 74;
@@ -915,7 +903,24 @@
 		</div>
 	{/if}
 
-	<div class="card grid-card">
+	<div class="card grid-card" class:mobile-card={isMobile}>
+		{#if isMobile}
+		<ImputationMobile
+			{rows}
+			{days}
+			{today}
+			capacity={data.capacity}
+			absences={data.absences}
+			readOnly={data.readOnly}
+			onCycle={(row, day) => cycle(row, day)}
+			onSetAmount={setAmount}
+			onDelete={requestDeleteRow}
+			onPickActivity={(row) => (activityPickerRow = row)}
+			{activityLabel}
+			{absenceHref}
+			{rowIcon}
+		/>
+		{:else}
 		<div class="table-scroll" bind:this={scroller}>
 		<table class="imp" class:no-rae={!showRae} style="--imp-min-w: {tableMinWidth}px; --task-w: {TASK_COL_W}px;">
 			<colgroup>
@@ -1114,6 +1119,7 @@
 			</tfoot>
 		</table>
 		</div>
+		{/if}
 
 		{#if !data.readOnly}
 		<div class="addrow">
@@ -1136,7 +1142,9 @@
 	</div>
 
 	<div class="legend">
-		{#if !data.readOnly}
+		{#if isMobile && !data.readOnly}
+			<span class="kbd">Touchez une case pour faire défiler les valeurs · appui long pour vider</span>
+		{:else if !data.readOnly}
 			{@const keyEntries = Object.entries(KEYMAP).filter(([k]) => k !== '0')}
 			<span class="kbd">Clique pour faire défiler <b>·</b> → {CYCLE.slice(1).map((v) => fmt(v)).join(' → ')} <b>·</b> <kbd>Shift</kbd>+clic pour reculer</span>
 			<span class="kbd">Clavier : {#each keyEntries as [k] (k)}<kbd>{k}</kbd> {/each}→ {keyEntries.map(([, v]) => fmt(v)).join(' / ')} · <kbd>0</kbd>/<kbd>Suppr</kbd> vide · <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> naviguer · <kbd>←</kbd>/<kbd>→</kbd> en bord = période ±</span>
@@ -1146,6 +1154,7 @@
 </div>
 
 <svelte:window
+	bind:innerWidth
 	onkeydown={(e) => e.key === 'Escape' && ((confirmDelete = null), (activityPickerRow = null))}
 />
 
@@ -1454,6 +1463,10 @@
 		.grid-card::after {
 			display: block;
 		}
+	}
+	/* Vue mobile : plus de défilement horizontal à signaler (un jour à la fois, cf. ImputationMobile). */
+	.grid-card.mobile-card::after {
+		display: none;
 	}
 	/* Pas de hauteur bornée : le scroll vertical doit rester porté par .main (la page), pas par ce
 	   conteneur — sinon un tableau chargé affiche sa propre barre verticale en plus de celle de la

@@ -1,0 +1,1 @@
+ALTER TABLE "user" ADD COLUMN "motivation_banner" boolean DEFAULT true NOT NULL;
