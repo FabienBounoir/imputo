@@ -303,7 +303,11 @@
 		{#if seasonalVisible && seasonalIds.has('april-fools')}
 			<SeasonalBanner id="april-fools" message="🐟 Poisson d'avril ! Tout va bien, c'est juste le 1er avril." />
 		{/if}
-		<MotivationBanner quotes={data.motivationQuotes} />
+		<!-- data.motivationQuotes est streamé (non awaité côté load, cf. +layout.server.ts) : rien ne
+		     s'affiche tant qu'il n'est pas résolu, plutôt que de retarder tout le reste de la page. -->
+		{#await data.motivationQuotes then quotes}
+			<MotivationBanner {quotes} />
+		{/await}
 		{@render children()}
 	</main>
 </div>

@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { slide } from 'svelte/transition';
+
 	// Bandeau de citations du jour : une phrase toutes les 30 s, croisé-fondu + léger glissement.
 	// Le timer se met en pause au survol (le temps de finir une phrase longue) et quand l'onglet
 	// n'est pas visible — sinon on revient sur l'onglet au milieu d'une transition. Un clic (ou
@@ -34,6 +36,7 @@
 		onclick={next}
 		onmouseenter={() => (paused = true)}
 		onmouseleave={() => (paused = false)}
+		transition:slide={{ duration: 200 }}
 	>
 		<span class="slot" role="status" aria-live="polite">
 			{#key index}

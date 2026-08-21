@@ -42,7 +42,11 @@ export const load: LayoutServerLoad = async ({ locals }) => {
 	const supportDuty = locals.workspace.supportEnabled ? await getCurrentDuty(locals.workspace.workspaceId) : null;
 
 	// Phrases du jour du bandeau motivation (cache mémoire côté serveur, cf. services/quotes.ts).
-	const motivationQuotes = locals.user.motivationBanner ? await getDailyQuotes() : [];
+	// Volontairement PAS awaité : sur cache manqué (1x/jour/process), le fetch réseau sous-jacent
+	// peut prendre jusqu'à 5s (timeout), et ce load tourne sur CHAQUE navigation de CHAQUE page —
+	// l'attendre bloquerait tout le rendu pour une bannière annexe. SvelteKit stream la promesse
+	// telle quelle ; +layout.svelte l'attend localement avec {#await}, seule la bannière patiente.
+	const motivationQuotes = locals.user.motivationBanner ? getDailyQuotes() : Promise.resolve([]);
 
 	return {
 		user: locals.user,

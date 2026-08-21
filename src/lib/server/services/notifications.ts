@@ -126,6 +126,26 @@ async function membersOf(workspaceId: string, role?: 'ADMIN'): Promise<MoodMembe
 		.where(and(...conds));
 }
 
+/**
+ * Une personne précise d'un espace, déjà identifiée (ex: la personne de perm du jour) — filtre en
+ * SQL au lieu de charger tout l'effectif via membersOf() pour n'en garder qu'une avec .find().
+ */
+async function memberOf(workspaceId: string, userId: string): Promise<MoodMember | undefined> {
+	const [row] = await db
+		.select({ userId: membership.userId, prefsRaw: user.notifPrefs })
+		.from(membership)
+		.innerJoin(user, eq(membership.userId, user.id))
+		.where(
+			and(
+				eq(membership.workspaceId, workspaceId),
+				eq(membership.userId, userId),
+				eq(membership.active, true),
+				eq(user.active, true)
+			)
+		);
+	return row;
+}
+
 /** Espaces où le Team mood est activé, avec leur config de plage. */
 async function moodEnabledWorkspaces(): Promise<
 	{ workspaceId: string; workspaceName: string; periodKind: MoodPeriodKind; startWeekday: number }[]
@@ -412,7 +432,7 @@ async function supportDuty(today: string): Promise<number> {
 	for (const w of workspaces) {
 		const duty = await getCurrentDuty(w.workspaceId, today);
 		if (!duty || duty.periodStart !== today) continue; // rotation vide, ou période déjà entamée
-		const member = (await membersOf(w.workspaceId)).find((m) => m.userId === duty.userId);
+		const member = await memberOf(w.workspaceId, duty.userId);
 		if (!member) continue; // plus membre actif de l'espace
 		sent += await maybeNotify(
 			{ workspaceId: w.workspaceId, workspaceName: w.workspaceName, userId: duty.userId, capacity: 0, prefsRaw: member.prefsRaw },

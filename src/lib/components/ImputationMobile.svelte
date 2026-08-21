@@ -130,6 +130,11 @@
 		{#each rows as row (row.rowKey)}
 			{@const locked = row.lockedDays[selected]}
 			{@const v = row.amounts[selected] ?? 0}
+			<!-- N'importe quel jour verrouillé de la ligne bloque la suppression, pas seulement le jour
+			     affiché (cf. hasLockedDay côté desktop) : la case sélectionnée peut être libre alors que
+			     la ligne porte quand même un jour généré par une absence validée ailleurs dans la
+			     période — supprimer effacerait les heures réelles des autres jours sans le signaler. -->
+			{@const anyLocked = Object.keys(row.lockedDays).length > 0}
 			<li class="mrow">
 				<span class="pill pill-ico">{@render rowIcon(row)}</span>
 				<div class="tt">
@@ -170,12 +175,25 @@
 						aria-label="Imputation de {row.label}">{fmt(v)}</button
 					>
 				{/if}
-				{#if !readOnly && !locked}
-					<button type="button" class="mdel" onclick={() => onDelete(row)} aria-label="Supprimer la ligne">
-						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-							><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6" /></svg
+				{#if !readOnly}
+					{#if anyLocked}
+						<a
+							class="mdel mdel-locked"
+							href={absenceHref(Object.values(row.lockedDays)[0])}
+							aria-label="Ligne verrouillée par une absence"
+							title="Cette ligne contient des jours issus d'une absence validée — à retirer depuis la page Absences."
 						>
-					</button>
+							<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+								><rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg
+							>
+						</a>
+					{:else}
+						<button type="button" class="mdel" onclick={() => onDelete(row)} aria-label="Supprimer la ligne">
+							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+								><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6" /></svg
+							>
+						</button>
+					{/if}
 				{/if}
 			</li>
 		{/each}
@@ -424,6 +442,12 @@
 	.mdel:active {
 		background: color-mix(in srgb, var(--danger, #c0392b) 12%, transparent);
 		color: var(--danger, #c0392b);
+	}
+	/* Lien vers l'absence, pas une suppression : teinte neutre plutôt que danger-rouge au toucher.
+	   Doit rester après .mdel:active dans la feuille — même spécificité, l'ordre de déclaration tranche. */
+	.mdel-locked:active {
+		background: color-mix(in srgb, var(--text-mute) 18%, transparent);
+		color: var(--text);
 	}
 	.mempty {
 		list-style: none;

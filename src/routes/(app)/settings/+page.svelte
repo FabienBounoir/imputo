@@ -212,7 +212,7 @@
 														type="checkbox"
 														bind:checked={prefs[t.slots][s]}
 														onchange={() => toggleSlot(t as PrefItem & { slots: SlotKey })}
-														disabled={!prefs.enabled}
+														disabled={!prefs.enabled || !prefs[t.key]}
 													/>
 													<span>{slotLabel(s)}</span>
 												</label>
