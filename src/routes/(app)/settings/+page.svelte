@@ -133,13 +133,26 @@
 		setTheme(p);
 	}
 
+	// « Apparence » = ce qui change le look de l'app entière ; « Mes vues » = les réglages par défaut
+	// d'une page précise (Tickets & chiffrage, Synthèse). Les mélanger donnait une liste sans fin où
+	// l'ordre des activités voisinait avec le choix du thème.
 	const TABS = [
 		{ key: 'notifications', label: 'Notifications' },
-		{ key: 'securite', label: 'Sécurité' },
-		{ key: 'apparence', label: 'Apparence' }
+		{ key: 'apparence', label: 'Apparence' },
+		{ key: 'vues', label: 'Mes vues' },
+		{ key: 'securite', label: 'Sécurité' }
 	] as const;
 	type Tab = (typeof TABS)[number]['key'];
-	let tab = $state<Tab>(form?.pwOk || form?.pwError ? 'securite' : form?.accentPrefOk ? 'apparence' : 'notifications');
+	// Repli sur l'onglet concerné après un POST sans JS (use:enhance ne remonte pas le composant).
+	let tab = $state<Tab>(
+		form?.pwOk || form?.pwError
+			? 'securite'
+			: form?.accentPrefOk || form?.motivationBannerOk
+				? 'apparence'
+				: form?.sortActivitiesAlphaOk || form?.rememberTicketFiltersOk || form?.rememberTicketSearchOk || form?.compactActivityOk
+					? 'vues'
+					: 'notifications'
+	);
 </script>
 
 <div class="topbar">
@@ -229,28 +242,35 @@
 		</section>
 	{:else if tab === 'apparence'}
 		<section class="card block">
-			<h3>Thème</h3>
-			<p class="hint">Apparence de l’interface. « Système » suit le réglage de ton appareil.</p>
-			<div class="seg">
-				<button type="button" class:on={themePref === 'system'} onclick={() => pickTheme('system')}>Système</button>
-				<button type="button" class:on={themePref === 'light'} onclick={() => pickTheme('light')}>Clair</button>
-				<button type="button" class:on={themePref === 'dark'} onclick={() => pickTheme('dark')}>Sombre</button>
-			</div>
-		</section>
+			<h3>Thème &amp; couleur</h3>
 
-		<section class="card block">
-			<h3>Couleur d’accent</h3>
-			<p class="hint">Par défaut, suit la couleur choisie par l’admin de l’espace. Force ta propre couleur (ou le mode RGB) si tu préfères, sur tous les espaces.</p>
-			{#if form?.accentPrefOk}<div class="flash ok">Préférence enregistrée ✓</div>{/if}
-			<form method="POST" action="?/accentPref" use:enhance>
+			<div class="opt">
+				<div class="opt-t">
+					<b>Thème</b>
+					<span class="hint">« Système » suit le réglage de ton appareil.</span>
+				</div>
+				<div class="seg">
+					<button type="button" class:on={themePref === 'system'} onclick={() => pickTheme('system')}>Système</button>
+					<button type="button" class:on={themePref === 'light'} onclick={() => pickTheme('light')}>Clair</button>
+					<button type="button" class:on={themePref === 'dark'} onclick={() => pickTheme('dark')}>Sombre</button>
+				</div>
+			</div>
+
+			<div class="opt">
+				<div class="opt-t">
+					<b>Couleur d’accent{#if form?.accentPrefOk}<span class="ok-tag">enregistré ✓</span>{/if}</b>
+					<span class="hint">Par défaut, suit la couleur choisie par l’admin de l’espace. Personnalise pour imposer la tienne sur tous les espaces.</span>
+				</div>
 				<div class="seg">
 					<button type="button" class:on={!accentOverride} onclick={() => (accentOverride = false)}>Suivre l’espace</button>
 					<button type="button" class:on={accentOverride} onclick={() => (accentOverride = true)}>Personnaliser</button>
 				</div>
+			</div>
+			<!-- Le nuancier reste hors de la ligne : il lui faut la largeur pleine de la carte, la
+			     colonne de droite d'une ligne de réglage ne suffit pas. -->
+			<form method="POST" action="?/accentPref" use:enhance class="opt-more">
 				{#if accentOverride}
-					<div style="margin-top:14px;">
-						<AccentPicker bind:color={accentColor} bind:rgbMode={accentRgb} bind:discoMode={accentDisco} presets={PRESETS} />
-					</div>
+					<AccentPicker bind:color={accentColor} bind:rgbMode={accentRgb} bind:discoMode={accentDisco} presets={PRESETS} />
 				{/if}
 				<input
 					type="hidden"
@@ -258,76 +278,35 @@
 					value={!accentOverride ? 'WORKSPACE' : accentRgb ? 'RGB' : accentDisco ? 'DISCO' : 'CUSTOM'}
 				/>
 				<input type="hidden" name="color" value={accentColor} />
-				<button class="btn btn-primary" type="submit" style="margin-top:14px;">Enregistrer</button>
+				<button class="btn btn-primary" type="submit">Enregistrer</button>
 			</form>
 		</section>
 
 		<section class="card block">
-			<h3>Répartition par activité</h3>
-			<p class="hint">Ordre des activités dans la synthèse par sprint/version. Par défaut, suit l'ordre défini dans les référentiels de l'espace.</p>
-			{#if form?.sortActivitiesAlphaOk}<div class="flash ok">Préférence enregistrée ✓</div>{/if}
-			<form method="POST" action="?/sortActivitiesAlphaPref" use:enhance>
-				<div class="seg">
-					<button type="submit" name="value" value="false" class:on={!sortActivitiesAlpha} onclick={() => (sortActivitiesAlpha = false)}>Ordre des référentiels</button>
-					<button type="submit" name="value" value="true" class:on={sortActivitiesAlpha} onclick={() => (sortActivitiesAlpha = true)}>Alphabétique</button>
-				</div>
-			</form>
-		</section>
+			<h3>Ambiance</h3>
 
-		<section class="card block">
-			<h3>Filtres tickets</h3>
-			<p class="hint">Sur la vue Tickets &amp; chiffrage, retrouve tes derniers filtres (état, projet, sprint, version, recherche) à chaque retour sur la page, sur tous tes espaces. Désactive pour repartir sans filtre à chaque fois.</p>
-			{#if form?.rememberTicketFiltersOk}<div class="flash ok">Préférence enregistrée ✓</div>{/if}
-			<form method="POST" action="?/rememberTicketFiltersPref" use:enhance>
-				<div class="seg">
-					<button type="submit" name="value" value="true" class:on={rememberTicketFilters} onclick={() => (rememberTicketFilters = true)}>Garder mes filtres</button>
-					<button type="submit" name="value" value="false" class:on={!rememberTicketFilters} onclick={() => (rememberTicketFilters = false)}>Réinitialiser à chaque fois</button>
+			<div class="opt">
+				<div class="opt-t">
+					<b>Bandeau motivation{#if form?.motivationBannerOk}<span class="ok-tag">enregistré ✓</span>{/if}</b>
+					<span class="hint">Une citation en haut de chaque page, renouvelée toutes les 30 s (en pause au survol).</span>
 				</div>
-			</form>
-
-			{#if rememberTicketFilters}
-				<p class="hint" style="margin-top:14px;">Inclure aussi le texte tapé dans la recherche, ou ne garder que l'état/projet/sprint/version.</p>
-				{#if form?.rememberTicketSearchOk}<div class="flash ok">Préférence enregistrée ✓</div>{/if}
-				<form method="POST" action="?/rememberTicketSearchPref" use:enhance>
+				<form method="POST" action="?/motivationBannerPref" use:enhance>
 					<div class="seg">
-						<button type="submit" name="value" value="true" class:on={rememberTicketSearch} onclick={() => (rememberTicketSearch = true)}>Garder aussi la recherche</button>
-						<button type="submit" name="value" value="false" class:on={!rememberTicketSearch} onclick={() => (rememberTicketSearch = false)}>Sans la recherche</button>
+						<button type="submit" name="value" value="true" class:on={motivationBanner} onclick={() => (motivationBanner = true)}>Afficher</button>
+						<button type="submit" name="value" value="false" class:on={!motivationBanner} onclick={() => (motivationBanner = false)}>Masquer</button>
 					</div>
 				</form>
-			{/if}
-		</section>
+			</div>
 
-		<section class="card block">
-			<h3>Détail par activité</h3>
-			<p class="hint">Sur la vue Tickets &amp; chiffrage (tableau), chaque ticket peut afficher le détail par activité en dessous. Choisis l'état par défaut à l'ouverture — chaque ticket reste dépliable/repliable individuellement le temps de la session.</p>
-			{#if form?.compactActivityOk}<div class="flash ok">Préférence enregistrée ✓</div>{/if}
-			<form method="POST" action="?/compactActivityPref" use:enhance>
-				<div class="seg">
-					<button type="submit" name="value" value="true" class:on={compactTicketActivity} onclick={() => (compactTicketActivity = true)}>Masquer par défaut</button>
-					<button type="submit" name="value" value="false" class:on={!compactTicketActivity} onclick={() => (compactTicketActivity = false)}>Afficher par défaut</button>
-				</div>
-			</form>
-		</section>
-
-		<section class="card block">
-			<h3>Bandeau motivation</h3>
-			<p class="hint">Une citation motivante en haut de chaque page, renouvelée toutes les 30 secondes à partir d'une sélection récupérée chaque jour. Le défilement se met en pause au survol.</p>
-			{#if form?.motivationBannerOk}<div class="flash ok">Préférence enregistrée ✓</div>{/if}
-			<form method="POST" action="?/motivationBannerPref" use:enhance>
-				<div class="seg">
-					<button type="submit" name="value" value="true" class:on={motivationBanner} onclick={() => (motivationBanner = true)}>Afficher</button>
-					<button type="submit" name="value" value="false" class:on={!motivationBanner} onclick={() => (motivationBanner = false)}>Masquer</button>
-				</div>
-			</form>
-		</section>
-
-		<section class="card block">
-			<h3>Effets saisonniers</h3>
-			<p class="hint">Petites surprises visuelles liées aux périodes de l'année (ex. neige à Noël). Désactivable si tu préfères une interface sobre.</p>
-			<div class="row">
-				<div>
-					<b>{activeSeasonal.length ? activeSeasonal.map((e) => e.label).join(' + ') : 'Aucun effet actif en ce moment'}</b>
-					<span class="sub">{seasonalState.enabled ? 'Activés' : 'Désactivés'} sur cet appareil</span>
+			<div class="opt">
+				<div class="opt-t">
+					<b>Effets saisonniers</b>
+					<span class="hint">
+						Surprises visuelles liées à la saison (neige à Noël…), réglées sur cet appareil.
+						{activeSeasonal.length
+							? `En ce moment : ${activeSeasonal.map((e) => e.label).join(' + ')}.`
+							: 'Aucun effet actif en ce moment.'}
+					</span>
 				</div>
 				{#if seasonalState.enabled}
 					<button class="btn btn-ghost" onclick={() => setSeasonalEnabled(false)}>Désactiver</button>
@@ -337,8 +316,8 @@
 			</div>
 
 			{#if konamiState.unlocked}
-				<div class="konami-force">
-					<p class="hint" style="margin:16px 0 8px;">🕹️ Mode forcé — débloqué par le code Konami. Outrepasse la détection par date, pratique pour tester (ou juste pour le fun).</p>
+				<div class="opt-more">
+					<p class="hint">🕹️ Mode forcé — débloqué par le code Konami. Outrepasse la détection par date, pratique pour tester (ou juste pour le fun).</p>
 					<div class="seg seg-wrap">
 						<button type="button" class:on={!seasonalState.forced} onclick={() => setForcedEffect(null)}>Auto (date)</button>
 						{#each SEASONAL_EFFECTS as e (e.id)}
@@ -348,15 +327,80 @@
 				</div>
 			{/if}
 		</section>
+	{:else if tab === 'vues'}
+		<section class="card block">
+			<h3>Tickets &amp; chiffrage</h3>
+
+			<div class="opt">
+				<div class="opt-t">
+					<b>Filtres{#if form?.rememberTicketFiltersOk}<span class="ok-tag">enregistré ✓</span>{/if}</b>
+					<span class="hint">Retrouver tes derniers filtres (état, projet, sprint, version) à chaque retour sur la page, sur tous tes espaces.</span>
+				</div>
+				<form method="POST" action="?/rememberTicketFiltersPref" use:enhance>
+					<div class="seg">
+						<button type="submit" name="value" value="true" class:on={rememberTicketFilters} onclick={() => (rememberTicketFilters = true)}>Garder</button>
+						<button type="submit" name="value" value="false" class:on={!rememberTicketFilters} onclick={() => (rememberTicketFilters = false)}>Réinitialiser</button>
+					</div>
+				</form>
+			</div>
+
+			{#if rememberTicketFilters}
+				<div class="opt opt-sub">
+					<div class="opt-t">
+						<b>Texte de recherche{#if form?.rememberTicketSearchOk}<span class="ok-tag">enregistré ✓</span>{/if}</b>
+						<span class="hint">Garder aussi ce qui est tapé dans la recherche, ou seulement les filtres.</span>
+					</div>
+					<form method="POST" action="?/rememberTicketSearchPref" use:enhance>
+						<div class="seg">
+							<button type="submit" name="value" value="true" class:on={rememberTicketSearch} onclick={() => (rememberTicketSearch = true)}>Garder</button>
+							<button type="submit" name="value" value="false" class:on={!rememberTicketSearch} onclick={() => (rememberTicketSearch = false)}>Ignorer</button>
+						</div>
+					</form>
+				</div>
+			{/if}
+
+			<div class="opt">
+				<div class="opt-t">
+					<b>Détail par activité{#if form?.compactActivityOk}<span class="ok-tag">enregistré ✓</span>{/if}</b>
+					<span class="hint">État par défaut du détail sous chaque ticket — il reste dépliable ticket par ticket le temps de la session.</span>
+				</div>
+				<form method="POST" action="?/compactActivityPref" use:enhance>
+					<div class="seg">
+						<button type="submit" name="value" value="true" class:on={compactTicketActivity} onclick={() => (compactTicketActivity = true)}>Masquer</button>
+						<button type="submit" name="value" value="false" class:on={!compactTicketActivity} onclick={() => (compactTicketActivity = false)}>Afficher</button>
+					</div>
+				</form>
+			</div>
+		</section>
+
+		<section class="card block">
+			<h3>Synthèse</h3>
+
+			<div class="opt">
+				<div class="opt-t">
+					<b>Répartition par activité{#if form?.sortActivitiesAlphaOk}<span class="ok-tag">enregistré ✓</span>{/if}</b>
+					<span class="hint">Ordre des activités dans la synthèse par sprint/version.</span>
+				</div>
+				<form method="POST" action="?/sortActivitiesAlphaPref" use:enhance>
+					<div class="seg">
+						<button type="submit" name="value" value="false" class:on={!sortActivitiesAlpha} onclick={() => (sortActivitiesAlpha = false)}>Référentiels</button>
+						<button type="submit" name="value" value="true" class:on={sortActivitiesAlpha} onclick={() => (sortActivitiesAlpha = true)}>Alphabétique</button>
+					</div>
+				</form>
+			</div>
+		</section>
 	{/if}
 </div>
 
 <style>
 	.settings {
-		max-width: 680px;
+		/* Un peu plus large qu'avant (680px) : les lignes de réglage sont sur deux colonnes, une
+		   explication qui tenait sur une ligne en pleine largeur en prenait trois. */
+		max-width: 780px;
 	}
 	.tabs {
 		display: inline-flex;
+		flex-wrap: wrap;
 		gap: 2px;
 		padding: 3px;
 		border-radius: 30px;
@@ -385,6 +429,76 @@
 		font-size: 18px;
 		font-weight: 600;
 		margin-bottom: 4px;
+	}
+
+	/* --- Ligne de réglage ---
+	   Un réglage = une ligne (libellé + explication à gauche, contrôle à droite), plusieurs lignes
+	   par carte. Avant, chaque réglage occupait sa propre carte titre + paragraphe + segmented :
+	   l'onglet Apparence devenait une liste verticale interminable pour 7 interrupteurs. */
+	.opt {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 18px;
+		padding: 15px 0;
+		border-top: 1px solid var(--border);
+	}
+	.opt:first-of-type {
+		border-top: none;
+		padding-top: 6px;
+	}
+	.opt-t {
+		min-width: 0;
+	}
+	.opt-t b {
+		display: block;
+		font-size: 14px;
+		font-weight: 600;
+		margin-bottom: 2px;
+	}
+	.opt .hint {
+		margin: 0;
+		font-size: 12.5px;
+		line-height: 1.45;
+	}
+	.opt > form,
+	.opt > .seg,
+	.opt > .btn {
+		flex-shrink: 0;
+	}
+	/* Réglage qui n'existe que si celui du dessus est actif (ex. « garder aussi la recherche »). */
+	.opt-sub {
+		padding-left: 16px;
+		border-left: 2px solid var(--border);
+		margin-left: 2px;
+	}
+	/* Contrôle trop large pour la colonne de droite (nuancier, chips konami) : pleine largeur sous
+	   les lignes, séparé par le même filet. */
+	.opt-more {
+		border-top: 1px solid var(--border);
+		padding-top: 16px;
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 14px;
+	}
+	.ok-tag {
+		margin-left: 8px;
+		font-size: 11px;
+		font-weight: 600;
+		color: var(--accent);
+		background: var(--accent-tint-2);
+		padding: 2px 8px;
+		border-radius: 20px;
+		white-space: nowrap;
+	}
+	/* Sous ~560px, libellé et contrôle ne cohabitent plus sur une ligne sans écraser le segmented. */
+	@media (max-width: 560px) {
+		.opt {
+			flex-direction: column;
+			align-items: stretch;
+			gap: 10px;
+		}
 	}
 	.hint {
 		color: var(--text-mute);
