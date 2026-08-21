@@ -117,14 +117,24 @@
 	// principale scrollable) ne bubble pas jusqu'à window, seule la capture le voit.
 	// Le panneau lui-même passe par window en phase de capture (il est dans le DOM sous root) —
 	// sans l'exclure, le moindre scroll de sa propre liste le refermait aussitôt.
+	// Armé avec un court délai : sur mobile, focus(searchInput) juste après l'ouverture fait
+	// remonter le clavier, et le navigateur fait défiler la page pour garder le champ visible —
+	// un vrai scroll, mais provoqué par nous, pas par l'utilisateur. Sans ce délai, ce scroll-là
+	// referme le panneau avant même que le clavier ait fini de s'ouvrir.
 	$effect(() => {
 		if (!open) return;
+		let armed = false;
+		const timer = setTimeout(() => (armed = true), 400);
 		const onScroll = (e: Event) => {
+			if (!armed) return;
 			if (panelEl && e.target instanceof Node && panelEl.contains(e.target)) return;
 			open = false;
 		};
 		window.addEventListener('scroll', onScroll, true);
-		return () => window.removeEventListener('scroll', onScroll, true);
+		return () => {
+			clearTimeout(timer);
+			window.removeEventListener('scroll', onScroll, true);
+		};
 	});
 </script>
 
@@ -207,6 +217,11 @@
 	.tp-root {
 		position: relative;
 		flex: 1;
+		/* Sans ça, un flex item garde pour largeur minimale le min-content de son texte non wrappé
+		   (le placeholder long type "Rechercher un ticket, ou taper un nom pour créer une tâche…")
+		   malgré l'ellipsis du bouton — il refuse de rétrécir sous cette largeur et déborde du
+		   conteneur flex sur mobile. Même correctif déjà en place sur SspPicker (.sp-root). */
+		min-width: 0;
 	}
 	.tp-trigger {
 		display: flex;
