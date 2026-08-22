@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { createTicket } from './tickets';
 import { setCell } from './imputation';
-import { makeWorkspace } from './test-helpers';
+import { makeWorkspace, addMember } from './test-helpers';
 import { getWeeklySynthesis } from './weeklySynthesis';
+import { setMemberFactice } from './accounts';
 
 describe('getWeeklySynthesis', () => {
 	it('agrège le total imputé par semaine/personne avec le % de capacité', async () => {
@@ -51,5 +52,20 @@ describe('getWeeklySynthesis', () => {
 
 		const rows = await getWeeklySynthesis(ws.workspaceId, '2026-06-01', '2026-06-07');
 		expect(rows).toEqual([]);
+	});
+
+	it('excludeUserIds retire un membre des lignes retournées (cf. membres "factice")', async () => {
+		const ws = await makeWorkspace('wsynth-exclude');
+		const { userId: facticeId } = await addMember(ws.workspaceId, 'USER', 'wsynth-exclude-factice');
+		await setMemberFactice(ws.workspaceId, facticeId, true);
+		const t = await createTicket(ws.workspaceId, { key: `WSE-${ws.id}`, title: 'Ticket' });
+		await setCell(ws.workspaceId, ws.userId, { targetType: 'TICKET', targetId: t.id, activityId: null, day: '2026-06-01', amount: 1 });
+		await setCell(ws.workspaceId, facticeId, { targetType: 'TICKET', targetId: t.id, activityId: null, day: '2026-06-01', amount: 1 });
+
+		const withFactice = await getWeeklySynthesis(ws.workspaceId, '2026-06-01', '2026-06-07');
+		expect(withFactice.map((r) => r.userId).sort()).toEqual([facticeId, ws.userId].sort());
+
+		const withoutFactice = await getWeeklySynthesis(ws.workspaceId, '2026-06-01', '2026-06-07', [facticeId]);
+		expect(withoutFactice.map((r) => r.userId)).toEqual([ws.userId]);
 	});
 });

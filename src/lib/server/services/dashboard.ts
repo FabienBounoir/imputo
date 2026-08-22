@@ -1,4 +1,4 @@
-import { and, eq, gte, lte, sql } from 'drizzle-orm';
+import { and, eq, gte, lte, notInArray, sql } from 'drizzle-orm';
 import { db, timeEntry, category, activity, user, ticketGroup, ticket, ssp } from '$lib/server/db';
 import { listTickets, getRefData } from './tickets';
 import { num, round, totalEstimation, totalRae, avancement } from './calc';
@@ -39,10 +39,14 @@ export type SspConsoRow = {
  *
  * Le code SSP vit sur le ticket, jamais sur une catégorie/objectif — l'inner join exclut donc
  * naturellement tout ce qui n'est pas une imputation TICKET, sans filtrer sur targetType à la main.
+ *
+ * `excludeUserIds` : membres à exclure du calcul (cf. accounts.ts listFacticeMemberIds) — jamais
+ * renseigné pour la clôture (monthlyClosing.ts) ou un rôle ADMIN, qui doivent tout voir.
  */
 export async function getConsoBySsp(
 	workspaceId: string,
-	period?: { from: string; to: string }
+	period?: { from: string; to: string },
+	excludeUserIds?: string[]
 ): Promise<SspConsoRow[]> {
 	const inPeriod = period
 		? and(gte(timeEntry.day, period.from), lte(timeEntry.day, period.to))
@@ -60,7 +64,13 @@ export async function getConsoBySsp(
 		.innerJoin(user, eq(timeEntry.userId, user.id))
 		.innerJoin(ticket, eq(timeEntry.ticketId, ticket.id))
 		.leftJoin(ssp, eq(ticket.sspId, ssp.id))
-		.where(and(eq(timeEntry.workspaceId, workspaceId), inPeriod))
+		.where(
+			and(
+				eq(timeEntry.workspaceId, workspaceId),
+				inPeriod,
+				excludeUserIds?.length ? notInArray(timeEntry.userId, excludeUserIds) : undefined
+			)
+		)
 		.groupBy(timeEntry.userId, user.displayName, ticket.sspId, ssp.code, ssp.label);
 	return rows.map((r) => ({ ...r, total: round(num(r.total)) }));
 }
@@ -85,11 +95,14 @@ export type GroupProgress = {
 export async function getDashboard(
 	workspaceId: string,
 	period?: { from: string; to: string },
-	testPhase = true
+	testPhase = true,
+	excludeUserIds?: string[]
 ): Promise<Dashboard> {
 	const inPeriod = period
 		? and(gte(timeEntry.day, period.from), lte(timeEntry.day, period.to))
 		: undefined;
+	// cf. accounts.ts listFacticeMemberIds — jamais renseigné pour un rôle ADMIN.
+	const notExcluded = excludeUserIds?.length ? notInArray(timeEntry.userId, excludeUserIds) : undefined;
 
 	const [personRows, activityRows, sspRows] = await Promise.all([
 		db
@@ -102,7 +115,7 @@ export async function getDashboard(
 			.from(timeEntry)
 			.leftJoin(category, eq(timeEntry.categoryId, category.id))
 			.innerJoin(user, eq(timeEntry.userId, user.id))
-			.where(and(eq(timeEntry.workspaceId, workspaceId), inPeriod))
+			.where(and(eq(timeEntry.workspaceId, workspaceId), inPeriod, notExcluded))
 			.groupBy(user.displayName, timeEntry.targetType, category.kind),
 		db
 			.select({
@@ -114,9 +127,9 @@ export async function getDashboard(
 			.from(timeEntry)
 			.leftJoin(activity, eq(timeEntry.activityId, activity.id))
 			.leftJoin(category, eq(timeEntry.categoryId, category.id))
-			.where(and(eq(timeEntry.workspaceId, workspaceId), inPeriod))
+			.where(and(eq(timeEntry.workspaceId, workspaceId), inPeriod, notExcluded))
 			.groupBy(sql`coalesce(${activity.label}, 'Non précisé')`, timeEntry.targetType, category.kind),
-		getConsoBySsp(workspaceId, period)
+		getConsoBySsp(workspaceId, period, excludeUserIds)
 	]);
 
 	// Par personne (productif vs non productif) + consommé ticket sur la période

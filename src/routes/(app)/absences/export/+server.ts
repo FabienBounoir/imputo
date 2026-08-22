@@ -13,7 +13,7 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 	const span = parseAbsenceSpan(url.searchParams.get('span'));
 	const range = absenceRangeBounds(anchorISO, span);
 
-	const buffer = await buildAbsencesWorkbook(ws.workspaceId, anchorISO, span);
+	const buffer = await buildAbsencesWorkbook(ws.workspaceId, anchorISO, span, locals.role === 'ADMIN');
 	const safeName = ws.workspaceName.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '');
 	const filename = `absences-${safeName || 'export'}-${range.start.slice(0, 7)}_${range.end.slice(0, 7)}.xlsx`;
 

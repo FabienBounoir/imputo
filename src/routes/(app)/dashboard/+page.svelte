@@ -395,10 +395,11 @@
 
 	{@render weeklySynthCard()}
 
-	{#if !isAll}
+	{#if !isAll && data.isAdmin}
 		<!-- Détail par SSP : toujours sur sa propre ligne pleine largeur (jamais à côté de la
 		     synthèse hebdo) — le nombre de codes SSP rencontrés dans un espace n'est pas borné,
-		     la partager avec une autre carte finit immanquablement par déborder. -->
+		     la partager avec une autre carte finit immanquablement par déborder. Réservé à un rôle
+		     ADMIN — budget/financier, pas une info de suivi d'équipe. -->
 		<div class="card panel ssp-detail">
 			<h3>Détail par SSP</h3>
 			{#if sspPersons.length === 0}

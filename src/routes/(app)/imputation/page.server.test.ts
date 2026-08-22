@@ -7,6 +7,7 @@ import { makeWorkspace, addMember, grantCapability } from '$lib/server/services/
 import { fakeLocals, formRequest } from '$lib/server/test-helpers/http';
 import { createTicket } from '$lib/server/services/tickets';
 import { getTimesheet } from '$lib/server/services/imputation';
+import { setMemberFactice } from '$lib/server/services/accounts';
 
 describe('imputation +page.server load', () => {
 	it("redirige vers /register si l'utilisateur n'a pas d'espace courant", async () => {
@@ -65,6 +66,36 @@ describe('imputation +page.server load', () => {
 		expect(result.viewedId).toBe(memberId);
 		expect(result.viewingOther).toBe(true);
 		expect(result.readOnly).toBe(true);
+	});
+
+	it('un membre "factice" est visible pour un ADMIN mais absent du sélecteur pour un non-admin', async () => {
+		const { userId: adminId, workspaceId } = await makeWorkspace('imputfactice');
+		const { userId: viewerId } = await addMember(workspaceId, 'USER', 'imputfactice-viewer');
+		await grantCapability(workspaceId, viewerId, 'canViewImputations');
+		const { userId: facticeId } = await addMember(workspaceId, 'USER', 'imputfactice-dummy');
+		await setMemberFactice(workspaceId, facticeId, true);
+
+		const asAdmin = await load({
+			locals: await fakeLocals(adminId),
+			url: new URL('http://localhost/imputation'),
+			cookies: { get: () => undefined, set: () => {} }
+		} as never);
+		expect(asAdmin.members.map((m: { id: string }) => m.id)).toContain(facticeId);
+
+		const asViewer = await load({
+			locals: await fakeLocals(viewerId),
+			url: new URL('http://localhost/imputation'),
+			cookies: { get: () => undefined, set: () => {} }
+		} as never);
+		expect(asViewer.members.map((m: { id: string }) => m.id)).not.toContain(facticeId);
+
+		// Contournement direct de l'URL bloqué aussi : le non-admin retombe sur sa propre feuille.
+		const bypassAttempt = await load({
+			locals: await fakeLocals(viewerId),
+			url: new URL(`http://localhost/imputation?u=${facticeId}`),
+			cookies: { get: () => undefined, set: () => {} }
+		} as never);
+		expect(bypassAttempt.viewedId).toBe(viewerId);
 	});
 });
 

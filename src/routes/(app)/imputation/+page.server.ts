@@ -39,6 +39,10 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 	const weekMondays = period.weeks.map((w) => w.mondayISO);
 
 	const ref = await getRefData(ws.workspaceId, user.sortActivitiesAlpha);
+	// Membres "factice" (arrangements entre projets en clôture, pas de vraies personnes, cf.
+	// schema.ts membership.factice) : invisibles pour tout rôle non-ADMIN — sélecteur de membre,
+	// vue "Toute l'équipe", et accès direct via ?u= (sinon contournable en tapant l'URL).
+	const visibleMembers = isAdmin ? ref.members : ref.members.filter((m) => !m.factice);
 
 	// Un admin, ou une personne avec la capacité canViewImputations, peut consulter l'imputation
 	// d'un autre membre via ?u=<userId> — en lecture seule sauf pour l'admin (cf. resolveSubjectId).
@@ -47,7 +51,7 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 	let viewedId = user.id;
 	let viewedName = user.displayName;
 	if (canViewOthers && uParam && uParam !== user.id && uParam !== 'team') {
-		const m = ref.members.find((x) => x.id === uParam);
+		const m = visibleMembers.find((x) => x.id === uParam);
 		if (m) {
 			viewedId = m.id;
 			viewedName = m.displayName;
@@ -74,6 +78,13 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 		periodAbsences.filter((a) => a.subjectId === viewedId),
 		period.days
 	)[viewedId] ?? {};
+
+	// getTeamTimesheet construit ses lignes depuis les imputations elles-mêmes (pas depuis
+	// membership), donc un membre factice y apparaît dès qu'il a des heures saisies — sans lien avec
+	// `factice` dans son type. On retire juste les lignes concernées pour un non-admin, sans toucher
+	// aux totaux (mêmes heures réelles, juste la ventilation par personne qui reste masquée).
+	const facticeIds = isAdmin ? null : new Set(ref.members.filter((m) => m.factice).map((m) => m.id));
+	const visibleTeam = team && facticeIds ? { ...team, members: team.members.filter((m) => !facticeIds.has(m.userId)) } : team;
 
 	return {
 		sheet,
@@ -102,13 +113,13 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 		// Suppression de ticket (TicketEditModal) réservée au créateur de l'espace (super admin).
 		isOwner: user.id === ws.createdByUserId,
 		canViewOthers,
-		members: canViewOthers ? ref.members : [],
+		members: canViewOthers ? visibleMembers : [],
 		selfId: user.id,
 		viewedId,
 		viewedName,
 		viewingOther,
 		viewingTeam,
-		team,
+		team: visibleTeam,
 		readOnly
 	};
 };

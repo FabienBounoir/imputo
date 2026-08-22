@@ -44,6 +44,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	// Regroupe les jours par mois pour l'en-tête de la synthèse (utile dès que la plage dépasse un mois).
 	const monthGroups = groupDaysByMonth(days);
 
+	const isAdmin = locals.role === 'ADMIN';
 	const canManageOthers = isManagerOrAdmin(locals.role);
 	const [ref, myAbsences, teamAbsences, externalMembers, pendingAbsences, schoolHolidays] = await Promise.all([
 		getRefData(ws.workspaceId),
@@ -54,9 +55,14 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		getSchoolHolidays(range.start, range.end)
 	]);
 
+	// Membres "factice" (arrangements entre projets en clôture, pas de vraies personnes, cf.
+	// schema.ts membership.factice) : entièrement masqués pour tout rôle non-ADMIN — `rows` alimente
+	// aussi bien la grille équipe que le sélecteur "Pour qui ?", donc un seul filtre ici suffit.
+	const visibleMembers = isAdmin ? ref.members : ref.members.filter((m) => !m.factice);
+
 	// Une seule liste pour la synthèse équipe (réels + externes) — `external` pilote la teinte de ligne.
 	const rows = [
-		...ref.members.map((m) => ({ id: m.id, displayName: m.displayName, external: false as const })),
+		...visibleMembers.map((m) => ({ id: m.id, displayName: m.displayName, external: false as const })),
 		...externalMembers.map((m) => ({ id: m.id, displayName: m.displayName, external: true as const }))
 	];
 

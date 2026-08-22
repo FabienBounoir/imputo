@@ -19,7 +19,7 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 	const rowsParam = url.searchParams.get('rows');
 	const rowIds = rowsParam ? rowsParam.split(',').filter(Boolean) : null;
 
-	const { svg } = await buildAbsencesSvg(ws.workspaceId, from, to, rowIds);
+	const { svg } = await buildAbsencesSvg(ws.workspaceId, from, to, rowIds, locals.role === 'ADMIN');
 
 	return new Response(svg, {
 		headers: {
