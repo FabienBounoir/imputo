@@ -49,8 +49,12 @@ const isWeekend = (dISO: string) => {
 	return dow === 0 || dow === 6;
 };
 
-/** Génère un export .xlsx de la plage demandée, esthétique proche de "Prévisions congés.xlsx". */
-export async function buildAbsencesWorkbook(workspaceId: string, anchorISO: string, span: AbsenceSpan): Promise<ExcelJS.Buffer> {
+/**
+ * Génère un export .xlsx de la plage demandée, esthétique proche de "Prévisions congés.xlsx".
+ * `isAdmin` : un membre "factice" (cf. schema.ts membership.factice) n'est inclus que pour un rôle
+ * ADMIN — même règle que la grille en ligne (absences/+page.server.ts).
+ */
+export async function buildAbsencesWorkbook(workspaceId: string, anchorISO: string, span: AbsenceSpan, isAdmin = true): Promise<ExcelJS.Buffer> {
 	const range = absenceRangeBounds(anchorISO, span);
 	const days: string[] = [];
 	for (let d = parseISODate(range.start); toISODate(d) <= range.end; d = addDays(d, 1)) days.push(toISODate(d));
@@ -61,8 +65,9 @@ export async function buildAbsencesWorkbook(workspaceId: string, anchorISO: stri
 		listExternalMembers(workspaceId)
 	]);
 	const grid = buildAbsenceGrid(absences, days);
+	const visibleMembers = isAdmin ? ref.members : ref.members.filter((m) => !m.factice);
 	const rows = [
-		...ref.members.map((m) => ({ id: m.id, displayName: m.displayName, external: false })),
+		...visibleMembers.map((m) => ({ id: m.id, displayName: m.displayName, external: false })),
 		...externalMembers.map((m) => ({ id: m.id, displayName: m.displayName, external: true }))
 	];
 

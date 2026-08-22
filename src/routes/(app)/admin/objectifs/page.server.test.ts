@@ -1,7 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { actions } from './+page.server';
+import { actions, load as loadUntyped } from './+page.server';
+// `load` peut renvoyer `void` côté types (branche redirect sans retour explicite) ; en pratique il
+// renvoie toujours des données ici, donc on retype pour éviter un cast répété à chaque accès.
+const load = loadUntyped as (event: unknown) => Promise<Record<string, any>>;
 import { makeWorkspace, addMember } from '$lib/server/services/test-helpers';
 import { fakeLocals, formRequest } from '$lib/server/test-helpers/http';
+import { setMemberFactice } from '$lib/server/services/accounts';
 
 describe('admin/objectifs addObjective action', () => {
 	it('un MANAGER peut ajouter un objectif custom à un membre', async () => {
@@ -76,5 +80,21 @@ describe('admin/objectifs removeObjective + toggleVacation actions', () => {
 			request: formRequest({ userId, weekMondayISO: '2026-06-22', onVacation: 'true' })
 		} as never);
 		expect(res).toEqual({ objOk: true });
+	});
+});
+
+describe('admin/objectifs load — membres "factice"', () => {
+	it('un membre marqué factice (cf. membership.factice) est exclu de la liste des membres', async () => {
+		const { userId: ownerId, workspaceId } = await makeWorkspace('obj-factice');
+		const { userId: normalId } = await addMember(workspaceId, 'USER', 'obj-factice-normal');
+		const { userId: facticeId } = await addMember(workspaceId, 'USER', 'obj-factice-dummy');
+		await setMemberFactice(workspaceId, facticeId, true);
+
+		const locals = await fakeLocals(ownerId);
+		const result = await load({ locals, url: new URL('http://localhost/admin/objectifs') } as never);
+
+		const memberIds = result.members.map((m: { id: string }) => m.id);
+		expect(memberIds).toContain(normalId);
+		expect(memberIds).not.toContain(facticeId);
 	});
 });

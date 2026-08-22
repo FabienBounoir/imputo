@@ -57,33 +57,40 @@
 		return map;
 	});
 
-	// Clé de ligne d'un objectif (même format que Row.rowKey) — comparer sur targetId seul confond
-	// deux objectifs du même ticket sur deux activités différentes (chacun doit rester traçable
-	// indépendamment : présent/absent, ajouté/supprimé, sans effet sur l'autre).
+	// Clé de ligne (même format que côté serveur, cf. rowKey dans imputation.ts) : comparer sur
+	// targetId seul confondrait deux objectifs du même ticket sur la même activité — le 4e segment
+	// (objectiveId, seulement pour un TICKET issu d'un objectif) les garde traçables indépendamment.
+	function computeRowKey(targetType: string, targetId: string, activityId: string | null, objectiveId: string | null = null) {
+		return `${targetType}:${targetId}:${activityId ?? ''}:${objectiveId ?? ''}`;
+	}
+
 	function objectiveRowKey(o: (typeof data.weeklyObjectives)[number]) {
 		const targetType = o.kind === 'TICKET' ? 'TICKET' : 'OBJECTIVE';
 		const targetId = o.kind === 'TICKET' ? (o.ticketId ?? '') : o.id;
-		return `${targetType}:${targetId}:${o.activityId ?? ''}`;
+		return computeRowKey(targetType, targetId, o.activityId ?? null, o.kind === 'TICKET' ? o.id : null);
 	}
 
-	// Lignes de la feuille + tâches attribuées absentes du tableau, fusionnées : appelée dès l'état
-	// initial (pas seulement dans l'$effect) pour que le premier rendu ait déjà les lignes attribuées
-	// et que le bandeau de rappel ne clignote pas avant de disparaître.
+	// Lignes de la feuille + objectifs TICKET attribués absents du tableau, fusionnées : appelée dès
+	// l'état initial (pas seulement dans l'$effect) pour que le premier rendu ait déjà les lignes
+	// attribuées et que le bandeau de rappel ne clignote pas avant de disparaître.
+	// Les objectifs CUSTOM (tâche personnalisée, sans ticket donc sans SSP) ne sont volontairement
+	// jamais ajoutés ici : ce sont des lignes purement informatives (cf. bandeau "🎯 Attribué sur
+	// cette période"), pas des cibles d'imputation — sinon leurs heures échapperaient à la clôture
+	// (cf. getConsoBySsp, qui ne peut attribuer un SSP qu'à une imputation liée à un ticket).
 	function syncedRows(): Row[] {
 		const next: Row[] = data.sheet.rows.map((r) => ({ ...r, amounts: { ...r.amounts } }));
 		if (!data.readOnly) {
 			for (const o of data.weeklyObjectives) {
-				const targetType: 'TICKET' | 'OBJECTIVE' = o.kind === 'TICKET' ? 'TICKET' : 'OBJECTIVE';
-				const targetId = o.kind === 'TICKET' ? (o.ticketId ?? '') : o.id;
-				if (!targetId || next.some((r) => r.rowKey === objectiveRowKey(o))) continue;
-				next.push(buildRow(targetType, targetId, o.activityId ?? null));
+				if (o.kind !== 'TICKET' || !o.ticketId || next.some((r) => r.rowKey === objectiveRowKey(o))) continue;
+				next.push(buildRow('TICKET', o.ticketId, o.activityId ?? null, undefined, o.id, o.label));
 			}
 			// Lignes ajoutées via "+ Ajouter" mais jamais remplies (cf. pinRow) : sans ça elles
-			// disparaîtraient au prochain chargement faute d'imputation en base.
+			// disparaîtraient au prochain chargement faute d'imputation en base. Un pin TICKET déjà
+			// couvert par un objectif ci-dessus (même objectiveId) produit la même clé et est ignoré.
 			for (const p of data.pinnedRows) {
-				const rowKey = `${p.targetType}:${p.targetId}:${p.activityId ?? ''}`;
+				const rowKey = computeRowKey(p.targetType, p.targetId, p.activityId, p.objectiveId);
 				if (next.some((r) => r.rowKey === rowKey)) continue;
-				next.push(buildRow(p.targetType, p.targetId, p.activityId));
+				next.push(buildRow(p.targetType, p.targetId, p.activityId, undefined, p.objectiveId, null));
 			}
 		}
 		return next;
@@ -248,6 +255,7 @@
 		body.set('targetType', row.targetType);
 		body.set('targetId', row.targetId);
 		if (row.activityId) body.set('activityId', row.activityId);
+		if (row.objectiveId) body.set('objectiveId', row.objectiveId);
 		body.set('day', day);
 		body.set('amount', String(value));
 		body.set('targetUserId', data.viewedId);
@@ -453,6 +461,7 @@
 		body.set('targetType', row.targetType);
 		body.set('targetId', row.targetId);
 		if (row.activityId) body.set('activityId', row.activityId);
+		if (row.objectiveId) body.set('objectiveId', row.objectiveId);
 		// Le serveur reconstruit la plage depuis ces trois champs : `fetch('?/…')` perd la query string.
 		body.set('anchor', data.period.anchorISO);
 		body.set('g', data.period.granularity);
@@ -470,13 +479,15 @@
 		activityPickerRow = null;
 		if (!row || row.activityId === toActivityId) return;
 
-		const destKey = `${row.targetType}:${row.targetId}:${toActivityId ?? ''}`;
+		const destKey = computeRowKey(row.targetType, row.targetId, toActivityId, row.objectiveId);
 		const dest = rows.find((r) => r.rowKey !== row.rowKey && r.rowKey === destKey);
 		if (dest) {
 			for (const d of days) dest.amounts[d] = round((dest.amounts[d] ?? 0) + (row.amounts[d] ?? 0));
 			rows = rows.filter((r) => r.rowKey !== row.rowKey);
 		} else {
-			rows = rows.map((r) => (r.rowKey === row.rowKey ? buildRow(row.targetType, row.targetId, toActivityId, r.amounts) : r));
+			rows = rows.map((r) =>
+				r.rowKey === row.rowKey ? buildRow(row.targetType, row.targetId, toActivityId, r.amounts, row.objectiveId, row.objectiveNote) : r
+			);
 		}
 
 		const body = new FormData();
@@ -484,6 +495,7 @@
 		body.set('targetId', row.targetId);
 		if (row.activityId) body.set('fromActivityId', row.activityId);
 		if (toActivityId) body.set('toActivityId', toActivityId);
+		if (row.objectiveId) body.set('objectiveId', row.objectiveId);
 		body.set('anchor', data.period.anchorISO);
 		body.set('g', data.period.granularity);
 		body.set('mode', data.period.mode);
@@ -541,9 +553,11 @@
 		targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE',
 		targetId: string,
 		activityId: string | null,
-		amounts: Record<string, number> = {}
+		amounts: Record<string, number> = {},
+		objectiveId: string | null = null,
+		note: string | null = null
 	): Row {
-		const rowKey = `${targetType}:${targetId}:${activityId ?? ''}`;
+		const rowKey = computeRowKey(targetType, targetId, activityId, objectiveId);
 		let label = '';
 		let sublabel = '';
 		let emoji = '🎫';
@@ -573,6 +587,8 @@
 			targetType,
 			targetId,
 			activityId,
+			objectiveId,
+			objectiveNote: note,
 			label,
 			sublabel,
 			emoji,
@@ -593,14 +609,22 @@
 
 	async function addRow() {
 		if (!pickTarget) return;
-		const [targetType, targetId] = pickTarget.split('::') as ['TICKET' | 'CATEGORY' | 'OBJECTIVE', string];
+		// Un pick TICKET issu de "🎯 Attribué cette semaine" (cf. TargetPicker) encode un 3e segment
+		// (objectiveId) — absent pour un ticket choisi directement dans la liste classique.
+		const [targetType, targetId, pickedObjectiveId] = pickTarget.split('::') as [
+			'TICKET' | 'CATEGORY' | 'OBJECTIVE',
+			string,
+			string | undefined
+		];
 		const activityId = pickActivity || null;
-		const rowKey = `${targetType}:${targetId}:${activityId ?? ''}`;
+		const objectiveId = targetType === 'TICKET' ? pickedObjectiveId || null : null;
+		const rowKey = computeRowKey(targetType, targetId, activityId, objectiveId);
 		if (rows.some((r) => r.rowKey === rowKey)) {
 			pickTarget = '';
 			return;
 		}
-		rows = [...rows, buildRow(targetType, targetId, activityId)];
+		const note = objectiveId ? (data.weeklyObjectives.find((o) => o.id === objectiveId)?.label ?? null) : null;
+		rows = [...rows, buildRow(targetType, targetId, activityId, undefined, objectiveId, note)];
 		pickTarget = '';
 		pickActivity = '';
 
@@ -612,6 +636,7 @@
 		body.set('targetType', targetType);
 		body.set('targetId', targetId);
 		if (activityId) body.set('activityId', activityId);
+		if (objectiveId) body.set('objectiveId', objectiveId);
 		body.set('anchor', data.period.anchorISO);
 		body.set('g', data.period.granularity);
 		body.set('mode', data.period.mode);
@@ -619,16 +644,15 @@
 		await fetch('?/pinRow', { method: 'POST', body });
 	}
 
-	// Ajout en un clic depuis le bandeau de rappel (contourne le picker).
+	// Ajout en un clic depuis le bandeau de rappel (contourne le picker) — TICKET uniquement, cf.
+	// syncedRows : un CUSTOM n'a rien à ajouter, il reste une information dans le bandeau.
 	function quickAddObjective(o: (typeof data.weeklyObjectives)[number]) {
-		const targetType: 'TICKET' | 'OBJECTIVE' = o.kind === 'TICKET' ? 'TICKET' : 'OBJECTIVE';
-		const targetId = o.kind === 'TICKET' ? (o.ticketId ?? '') : o.id;
-		if (!targetId || rows.some((r) => r.rowKey === objectiveRowKey(o))) return;
-		rows = [...rows, buildRow(targetType, targetId, o.activityId ?? null)];
+		if (o.kind !== 'TICKET' || !o.ticketId || rows.some((r) => r.rowKey === objectiveRowKey(o))) return;
+		rows = [...rows, buildRow('TICKET', o.ticketId, o.activityId ?? null, undefined, o.id, o.label)];
 	}
 
-	// Tâches attribuées auto-ajoutées au chargement mais absentes du tableau (supprimées depuis) :
-	// c'est elles seules que le bandeau de rappel doit remonter.
+	// Objectifs TICKET auto-ajoutés au chargement mais absents du tableau (supprimés depuis) + tous
+	// les objectifs CUSTOM (jamais ajoutés, cf. syncedRows) : c'est ce que le bandeau de rappel remonte.
 	let missingObjectives = $derived(
 		data.weeklyObjectives.filter((o) => !rows.some((r) => r.rowKey === objectiveRowKey(o)))
 	);
@@ -809,7 +833,7 @@
 									<div class="task-cell">
 										<span class="pill pill-ico">{@render rowIcon(row)}</span>
 										<div class="tt">
-											<b>{row.label}</b>
+											<b>{row.objectiveNote || row.label}</b>
 											<span class="sub">{row.sublabel}</span>
 										</div>
 									</div>
@@ -884,7 +908,7 @@
 
 	{#if !data.readOnly && missingObjectives.length > 0}
 		<div class="card reminder-card">
-			<div class="reminder-head">🎯 Attribué sur cette période — à rajouter</div>
+			<div class="reminder-head">🎯 Attribué sur cette période</div>
 			<div class="reminder-list">
 				{#each missingObjectives as o, i (o.id)}
 					{#if multiWeek && o.weekMonday !== missingObjectives[i - 1]?.weekMonday}
@@ -892,11 +916,20 @@
 					{/if}
 					<div class="reminder-item">
 						<span class="reminder-label">
-							{o.kind === 'TICKET' ? '🎫' : '📝'}
+							<span class="reminder-ico">
+								{#if o.kind === 'TICKET'}{@render ticketIcon()}{:else}{@render taskIcon()}{/if}
+							</span>
 							{o.kind === 'TICKET' ? `${o.ticketKey} — ${o.ticketTitle}` : o.label}
+							{#if o.kind === 'TICKET' && o.label} — {o.label}{/if}
 							{#if o.activityLabel}<span class="tag-activity">{o.activityLabel}</span>{/if}
 						</span>
-						<button class="btn btn-ghost reminder-add" onclick={() => quickAddObjective(o)}>+ Ajouter</button>
+						{#if o.kind === 'TICKET'}
+							<button class="btn btn-ghost reminder-add" onclick={() => quickAddObjective(o)}>+ Ajouter</button>
+						{:else}
+							<!-- CUSTOM : pas de ticket donc pas de SSP, jamais imputable — pure information sur
+							     ce qui est attendu cette semaine (cf. syncedRows/quickAddObjective). -->
+							<span class="reminder-info" title="Tâche sans ticket associé — non imputable directement, impute tes heures sur le ticket concerné.">Info seule</span>
+						{/if}
 					</div>
 				{/each}
 			</div>
@@ -968,7 +1001,7 @@
 							<div class="task-cell">
 								<span class="pill pill-ico">{@render rowIcon(row)}</span>
 								<div class="tt">
-									<b>{row.label}</b>
+									<b>{row.objectiveNote || row.label}</b>
 									<span class="sub">
 										{row.sublabel}
 										{#if !data.readOnly}
@@ -1130,7 +1163,7 @@
 				categories={data.categories.filter((c) => !c.linkedAbsenceType)}
 				recentTicketIds={data.recentTicketIds}
 				versions={data.versions}
-				objectives={data.weeklyObjectives}
+				objectives={data.weeklyObjectives.filter((o) => o.kind === 'TICKET')}
 			/>
 			<select bind:value={pickActivity} aria-label="Activité (optionnel)">
 				<option value="">Activité (option)</option>
@@ -1328,6 +1361,16 @@
 		gap: 7px;
 		min-width: 0;
 	}
+	.reminder-ico {
+		display: inline-flex;
+		flex-shrink: 0;
+		align-self: center;
+		color: var(--text-mute);
+	}
+	.reminder-ico svg {
+		width: 14px;
+		height: 14px;
+	}
 	.tag-activity {
 		display: inline-block;
 		font-size: 11px;
@@ -1385,6 +1428,13 @@
 		flex-shrink: 0;
 		padding: 5px 11px;
 		font-size: 12px;
+	}
+	.reminder-info {
+		flex-shrink: 0;
+		padding: 5px 11px;
+		font-size: 12px;
+		font-weight: 600;
+		color: var(--text-mute);
 	}
 	.ro-banner {
 		display: flex;

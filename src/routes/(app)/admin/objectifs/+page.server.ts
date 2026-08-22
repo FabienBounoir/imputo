@@ -30,12 +30,17 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		listVacationsForWeek(ws.workspaceId, mondayISO)
 	]);
 
+	// Membres "factice" (arrangements entre projets en clôture, pas de vraies personnes) : exclus
+	// d'ici uniquement pour l'instant, cf. schema.ts membership.factice — ils restent normalement
+	// imputables et visibles partout ailleurs.
+	const members = ref.members.filter((m) => !m.factice);
+
 	const uParam = url.searchParams.get('u');
-	const selectedUserId = ref.members.find((m) => m.id === uParam)?.id ?? ref.members[0]?.id ?? '';
+	const selectedUserId = members.find((m) => m.id === uParam)?.id ?? members[0]?.id ?? '';
 	const objectives = selectedUserId ? await listObjectivesForUser(ws.workspaceId, selectedUserId, mondayISO) : [];
 
 	return {
-		members: ref.members,
+		members,
 		tickets: tickets.map((t) => ({ id: t.id, key: t.key, title: t.title })),
 		activities: ref.activities,
 		selectedUserId,

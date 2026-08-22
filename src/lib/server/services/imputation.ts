@@ -22,6 +22,10 @@ export type ImputationRow = {
 	targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE';
 	targetId: string;
 	activityId: string | null;
+	/** Objectif hebdo TICKET à l'origine de la ligne (distingue deux objectifs sur le même ticket) — null hors ce cas. */
+	objectiveId: string | null;
+	/** Note propre à cet objectif TICKET (weeklyObjective.label) — distincte du commentaire partagé du ticket. */
+	objectiveNote: string | null;
 	label: string;
 	sublabel: string;
 	emoji: string | null;
@@ -58,8 +62,8 @@ export type TimesheetData = {
 	total: number;
 };
 
-function rowKey(targetType: string, targetId: string, activityId: string | null) {
-	return `${targetType}:${targetId}:${activityId ?? ''}`;
+function rowKey(targetType: string, targetId: string, activityId: string | null, objectiveId: string | null) {
+	return `${targetType}:${targetId}:${activityId ?? ''}:${objectiveId ?? ''}`;
 }
 
 type RawEntry = {
@@ -154,6 +158,8 @@ function rowSkeleton(e: RawEntry, targetId: string, key: string): ImputationRow 
 		targetType: e.targetType,
 		targetId,
 		activityId: e.activityId,
+		objectiveId: e.targetType === 'TICKET' ? e.objectiveId : null,
+		objectiveNote: e.targetType === 'TICKET' ? e.objectiveLabel : null,
 		label,
 		sublabel,
 		emoji,
@@ -192,7 +198,9 @@ export async function getTimesheet(
 		if (!(e.day in dayTotals)) continue;
 		const targetId =
 			(e.targetType === 'TICKET' ? e.ticketId : e.targetType === 'CATEGORY' ? e.categoryId : e.objectiveId) ?? '';
-		const key = rowKey(e.targetType, targetId, e.activityId);
+		// Disambiguateur : seul un TICKET peut être imputé via deux objectifs distincts (cf. objectiveId
+		// sur timeEntry) — pour CATEGORY/OBJECTIVE, targetId identifie déjà la ligne à lui seul.
+		const key = rowKey(e.targetType, targetId, e.activityId, e.targetType === 'TICKET' ? e.objectiveId : null);
 		if (!rows.has(key)) rows.set(key, rowSkeleton(e, targetId, key));
 		const r = rows.get(key)!;
 		const amount = num(e.amount);
@@ -244,7 +252,7 @@ export async function getTeamTimesheet(workspaceId: string, days: string[]): Pro
 		}
 		const targetId =
 			(e.targetType === 'TICKET' ? e.ticketId : e.targetType === 'CATEGORY' ? e.categoryId : e.objectiveId) ?? '';
-		const key = rowKey(e.targetType, targetId, e.activityId);
+		const key = rowKey(e.targetType, targetId, e.activityId, e.targetType === 'TICKET' ? e.objectiveId : null);
 		if (!m.rows.has(key)) m.rows.set(key, rowSkeleton(e, targetId, key));
 		const r = m.rows.get(key)!;
 		const amount = num(e.amount);
@@ -346,7 +354,7 @@ async function assertTargetInWorkspace(
 	userId: string,
 	targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE',
 	targetId: string,
-	opts: { blockLinkedCategory?: boolean } = {}
+	opts: { blockLinkedCategory?: boolean; objectiveId?: string | null } = {}
 ) {
 	if (targetType === 'TICKET') {
 		const r = await db
@@ -354,6 +362,23 @@ async function assertTargetInWorkspace(
 			.from(ticket)
 			.where(and(eq(ticket.id, targetId), eq(ticket.workspaceId, workspaceId)));
 		if (!r[0]) throw new Error('Ticket introuvable dans cet espace.');
+		if (opts.objectiveId) {
+			// Un objectiveId fourni pour une ligne TICKET doit désigner un objectif TICKET de cette
+			// personne qui référence bien CE ticket — sinon un id d'objectif d'un autre ticket/personne
+			// pourrait être injecté côté client (le FK garantit juste que la ligne existe quelque part).
+			const o = await db
+				.select({ id: weeklyObjective.id })
+				.from(weeklyObjective)
+				.where(
+					and(
+						eq(weeklyObjective.id, opts.objectiveId),
+						eq(weeklyObjective.workspaceId, workspaceId),
+						eq(weeklyObjective.userId, userId),
+						eq(weeklyObjective.ticketId, targetId)
+					)
+				);
+			if (!o[0]) throw new Error('Objectif introuvable pour ce ticket et cette personne.');
+		}
 	} else if (targetType === 'CATEGORY') {
 		const r = await db
 			.select({ id: category.id, linkedAbsenceType: category.linkedAbsenceType })
@@ -388,13 +413,19 @@ export async function setCell(
 		activityId: string | null;
 		day: string;
 		amount: number;
+		/** Objectif hebdo TICKET à l'origine de la ligne — ignoré hors targetType==='TICKET'. */
+		objectiveId?: string | null;
 	}
 ) {
-	await assertTargetInWorkspace(workspaceId, userId, input.targetType, input.targetId, { blockLinkedCategory: true });
+	const objectiveIdForTicket = input.targetType === 'TICKET' ? (input.objectiveId ?? null) : null;
+	await assertTargetInWorkspace(workspaceId, userId, input.targetType, input.targetId, {
+		blockLinkedCategory: true,
+		objectiveId: objectiveIdForTicket
+	});
 
 	const ticketId = input.targetType === 'TICKET' ? input.targetId : null;
 	const categoryId = input.targetType === 'CATEGORY' ? input.targetId : null;
-	const objectiveId = input.targetType === 'OBJECTIVE' ? input.targetId : null;
+	const objectiveId = input.targetType === 'OBJECTIVE' ? input.targetId : objectiveIdForTicket;
 
 	const targetMatch =
 		input.targetType === 'TICKET'
@@ -408,7 +439,10 @@ export async function setCell(
 		eq(timeEntry.userId, userId),
 		eq(timeEntry.day, input.day),
 		targetMatch,
-		input.activityId ? eq(timeEntry.activityId, input.activityId) : undefined
+		input.activityId ? eq(timeEntry.activityId, input.activityId) : undefined,
+		// Deux objectifs TICKET distincts sur le même ticket ne doivent jamais se confondre — sans
+		// cette condition explicite, `undefined` matcherait n'importe quel objectiveId (y compris un autre).
+		input.targetType === 'TICKET' ? (objectiveIdForTicket ? eq(timeEntry.objectiveId, objectiveIdForTicket) : isNull(timeEntry.objectiveId)) : undefined
 	);
 
 	const existing = await db.select({ id: timeEntry.id, absenceId: timeEntry.absenceId }).from(timeEntry).where(match);
@@ -457,10 +491,12 @@ export async function reassignActivity(
 		toActivityId: string | null;
 		fromISO: string;
 		toISO: string;
+		objectiveId?: string | null;
 	}
 ) {
 	if (input.fromActivityId === input.toActivityId) return;
-	await assertTargetInWorkspace(workspaceId, userId, input.targetType, input.targetId);
+	const objectiveIdForTicket = input.targetType === 'TICKET' ? (input.objectiveId ?? null) : null;
+	await assertTargetInWorkspace(workspaceId, userId, input.targetType, input.targetId, { objectiveId: objectiveIdForTicket });
 	if (input.toActivityId) {
 		const [act] = await db
 			.select({ id: activity.id })
@@ -476,6 +512,15 @@ export async function reassignActivity(
 				? eq(timeEntry.categoryId, input.targetId)
 				: eq(timeEntry.objectiveId, input.targetId);
 
+	// Deux objectifs TICKET distincts sur le même ticket ne doivent jamais fusionner : appliqué à la
+	// fois à la ligne d'origine et à la ligne de destination ci-dessous.
+	const objectiveMatch =
+		input.targetType === 'TICKET'
+			? objectiveIdForTicket
+				? eq(timeEntry.objectiveId, objectiveIdForTicket)
+				: isNull(timeEntry.objectiveId)
+			: undefined;
+
 	// Si la ligne était épinglée (cf. pinRow) sur l'ancienne activité, chaque épingle qui touche la
 	// période affichée suit vers la nouvelle activité, en conservant sa propre plage — sinon changer
 	// l'activité d'une ligne vide (jamais remplie) ne ferait rien du tout.
@@ -484,7 +529,12 @@ export async function reassignActivity(
 		.from(imputationPin)
 		.where(
 			and(
-				pinTargetMatch(workspaceId, userId, { targetType: input.targetType, targetId: input.targetId, activityId: input.fromActivityId }),
+				pinTargetMatch(workspaceId, userId, {
+					targetType: input.targetType,
+					targetId: input.targetId,
+					activityId: input.fromActivityId,
+					objectiveId: objectiveIdForTicket
+				}),
 				pinOverlaps(input.fromISO, input.toISO)
 			)
 		);
@@ -495,7 +545,8 @@ export async function reassignActivity(
 			targetId: input.targetId,
 			activityId: input.toActivityId,
 			firstDay: p.firstDay,
-			lastDay: p.lastDay
+			lastDay: p.lastDay,
+			objectiveId: objectiveIdForTicket
 		});
 	}
 
@@ -509,6 +560,7 @@ export async function reassignActivity(
 				gte(timeEntry.day, input.fromISO),
 				lte(timeEntry.day, input.toISO),
 				targetMatch,
+				objectiveMatch,
 				input.fromActivityId ? eq(timeEntry.activityId, input.fromActivityId) : isNull(timeEntry.activityId),
 				// Verrouillées (cf. deleteRow) : une absence validée reste sur son activité d'origine
 				// (null), la réassignation ne doit pas y toucher.
@@ -528,6 +580,7 @@ export async function reassignActivity(
 						eq(timeEntry.userId, userId),
 						eq(timeEntry.day, r.day),
 						targetMatch,
+						objectiveMatch,
 						input.toActivityId ? eq(timeEntry.activityId, input.toActivityId) : isNull(timeEntry.activityId)
 					)
 				);
@@ -560,9 +613,11 @@ export async function deleteRow(
 		activityId: string | null;
 		fromISO: string;
 		toISO: string;
+		objectiveId?: string | null;
 	}
 ) {
-	await assertTargetInWorkspace(workspaceId, userId, input.targetType, input.targetId);
+	const objectiveIdForTicket = input.targetType === 'TICKET' ? (input.objectiveId ?? null) : null;
+	await assertTargetInWorkspace(workspaceId, userId, input.targetType, input.targetId, { objectiveId: objectiveIdForTicket });
 
 	const targetMatch =
 		input.targetType === 'TICKET'
@@ -580,6 +635,7 @@ export async function deleteRow(
 				gte(timeEntry.day, input.fromISO),
 				lte(timeEntry.day, input.toISO),
 				targetMatch,
+				input.targetType === 'TICKET' ? (objectiveIdForTicket ? eq(timeEntry.objectiveId, objectiveIdForTicket) : isNull(timeEntry.objectiveId)) : undefined,
 				input.activityId ? eq(timeEntry.activityId, input.activityId) : isNull(timeEntry.activityId),
 				// Verrouillées : générées par une absence validée (cf. absences.ts), à retirer uniquement
 				// depuis la page Absences — sinon la prochaine modif de l'absence les recréerait quand
@@ -592,11 +648,13 @@ export async function deleteRow(
 	await unpinRow(workspaceId, userId, input);
 }
 
-function pinTargetColumns(targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE', targetId: string) {
+function pinTargetColumns(targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE', targetId: string, sourceObjectiveId?: string | null) {
 	return {
 		ticketId: targetType === 'TICKET' ? targetId : null,
 		categoryId: targetType === 'CATEGORY' ? targetId : null,
-		objectiveId: targetType === 'OBJECTIVE' ? targetId : null
+		// Pour OBJECTIVE (tâche CUSTOM), objectiveId EST la cible. Pour TICKET, c'est un discriminant
+		// optionnel (deux objectifs sur le même ticket) — jamais rempli pour CATEGORY.
+		objectiveId: targetType === 'OBJECTIVE' ? targetId : targetType === 'TICKET' ? (sourceObjectiveId ?? null) : null
 	};
 }
 
@@ -604,9 +662,9 @@ function pinTargetColumns(targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE', targe
 function pinTargetMatch(
 	workspaceId: string,
 	userId: string,
-	input: { targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE'; targetId: string; activityId: string | null }
+	input: { targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE'; targetId: string; activityId: string | null; objectiveId?: string | null }
 ) {
-	const cols = pinTargetColumns(input.targetType, input.targetId);
+	const cols = pinTargetColumns(input.targetType, input.targetId, input.objectiveId);
 	return and(
 		eq(imputationPin.workspaceId, workspaceId),
 		eq(imputationPin.userId, userId),
@@ -623,7 +681,13 @@ function pinOverlaps(fromISO: string, toISO: string) {
 	return and(lte(imputationPin.firstDay, toISO), gte(imputationPin.lastDay, fromISO));
 }
 
-export type PinnedRow = { targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE'; targetId: string; activityId: string | null };
+export type PinnedRow = {
+	targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE';
+	targetId: string;
+	activityId: string | null;
+	/** Objectif TICKET source de l'épingle — null hors ce cas (y compris pour targetType==='OBJECTIVE'). */
+	objectiveId: string | null;
+};
 
 /**
  * Lignes épinglées sur "Mon imputation" et visibles pour la période affichée — même sans aucune
@@ -645,7 +709,8 @@ export async function listPinnedRows(workspaceId: string, userId: string, fromIS
 		.map((r) => ({
 			targetType: r.targetType,
 			targetId: r.ticketId ?? r.categoryId ?? r.objectiveId,
-			activityId: r.activityId
+			activityId: r.activityId,
+			objectiveId: r.targetType === 'TICKET' ? r.objectiveId : null
 		}))
 		.filter((r): r is PinnedRow => !!r.targetId);
 }
@@ -665,9 +730,13 @@ export async function pinRow(
 		activityId: string | null;
 		firstDay: string;
 		lastDay: string;
+		objectiveId?: string | null;
 	}
 ) {
-	await assertTargetInWorkspace(workspaceId, userId, input.targetType, input.targetId, { blockLinkedCategory: true });
+	await assertTargetInWorkspace(workspaceId, userId, input.targetType, input.targetId, {
+		blockLinkedCategory: true,
+		objectiveId: input.targetType === 'TICKET' ? input.objectiveId : undefined
+	});
 	const existing = await db
 		.select({ id: imputationPin.id })
 		.from(imputationPin)
@@ -683,7 +752,7 @@ export async function pinRow(
 		workspaceId,
 		userId,
 		targetType: input.targetType,
-		...pinTargetColumns(input.targetType, input.targetId),
+		...pinTargetColumns(input.targetType, input.targetId, input.objectiveId),
 		activityId: input.activityId,
 		firstDay: input.firstDay,
 		lastDay: input.lastDay
@@ -694,7 +763,14 @@ export async function pinRow(
 export async function unpinRow(
 	workspaceId: string,
 	userId: string,
-	input: { targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE'; targetId: string; activityId: string | null; fromISO: string; toISO: string }
+	input: {
+		targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE';
+		targetId: string;
+		activityId: string | null;
+		fromISO: string;
+		toISO: string;
+		objectiveId?: string | null;
+	}
 ) {
 	await db.delete(imputationPin).where(and(pinTargetMatch(workspaceId, userId, input), pinOverlaps(input.fromISO, input.toISO)));
 }

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterAll } from 'vitest';
+import { describe, it, expect, vi, afterAll, afterEach } from 'vitest';
 import { eq, and } from 'drizzle-orm';
 import { db, workspace, category, timeEntry, moodVote, user, membership } from '$lib/server/db';
 import { createWorkspaceWithOwner } from './workspaces';
@@ -19,9 +19,19 @@ function sentTo(userId: string, tagPrefix?: string) {
 // isWorkday/lastWorkdayOnOrBefore neutralisés : sans ça les tests ci-dessous (qui construisent des
 // plages se terminant « aujourd'hui ») échoueraient selon le jour de la semaine où la CI tourne.
 // Le décalage au dernier jour ouvré est couvert par date.test.ts.
+//
+// todayInParis figé sur un lundi (ANCHOR_TODAY) pour la même raison : currentSupportPeriod (cadence
+// DAY, cf. support.ts) retombe sur le dernier jour actif un week-end, donc « aujourd'hui » n'est
+// alors jamais le début de période — sans ce mock, le test support ci-dessous échouait un
+// samedi/dimanche. Tous les autres tests du fichier dérivent déjà leurs dates de todayInParis(),
+// donc les figer sur un lundi les rend simplement déterministes, sans rien changer à ce qu'ils
+// vérifient. `mockedToday` est mutable pour le test « week-end » plus bas, qui a besoin d'un vrai
+// samedi/dimanche — remis à l'ancre après chaque test.
+const ANCHOR_TODAY = '2026-06-22'; // lundi
+let mockedToday = ANCHOR_TODAY;
 vi.mock('$lib/utils/date', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('$lib/utils/date')>();
-	return { ...actual, isWorkday: () => true, lastWorkdayOnOrBefore: (d: string) => d };
+	return { ...actual, isWorkday: () => true, lastWorkdayOnOrBefore: (d: string) => d, todayInParis: () => mockedToday };
 });
 
 const { runNotifications, notifyAbsencePending, notifyAbsenceValidated, parseNotifPrefs } = await import('./notifications');
@@ -30,6 +40,9 @@ const rnd = Math.random().toString(36).slice(2, 8);
 const wsIds: string[] = [];
 afterAll(async () => {
 	for (const id of wsIds) await db.delete(workspace).where(eq(workspace.id, id));
+});
+afterEach(() => {
+	mockedToday = ANCHOR_TODAY;
 });
 
 describe('runNotifications - relances par slot', () => {
@@ -135,6 +148,32 @@ describe('support', () => {
 		await setSupportCadence(workspaceId, 'WEEK');
 		sendCalls.length = 0;
 		await runNotifications('morning', '0915');
+		expect(sentTo(userId, 'SUPPORT_DUTY')).toBe(false);
+	});
+
+	it('cadence DAY un week-end : la période retombe sur le dernier jour actif, jamais "aujourd\'hui"', async () => {
+		const { userId, workspaceId } = await createWorkspaceWithOwner({
+			displayName: 'Support Weekend',
+			email: `support-we-${rnd}@acme.test`,
+			password: 'password123',
+			workspaceName: 'Espace Support Weekend'
+		});
+		wsIds.push(workspaceId);
+		await setSupportEnabled(workspaceId, true);
+		await setSupportCadence(workspaceId, 'DAY');
+		await addRotationMember(workspaceId, userId);
+
+		// Samedi (includeSaturday par défaut false) : currentSupportPeriod retombe sur le vendredi
+		// précédent (cf. isActiveSupportDay/date.ts) — periodStart ne vaut alors jamais "aujourd'hui",
+		// donc supportDuty() (notifications.ts) ne notifie personne, un jour comme l'autre du week-end.
+		mockedToday = '2026-06-27'; // samedi
+		sendCalls.length = 0;
+		await runNotifications('morning', '0900');
+		expect(sentTo(userId, 'SUPPORT_DUTY')).toBe(false);
+
+		mockedToday = '2026-06-28'; // dimanche
+		sendCalls.length = 0;
+		await runNotifications('morning', '0900');
 		expect(sentTo(userId, 'SUPPORT_DUTY')).toBe(false);
 	});
 });

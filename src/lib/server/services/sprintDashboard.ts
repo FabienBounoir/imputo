@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, notInArray, sql } from 'drizzle-orm';
 import { db, sprint, timeEntry, user, activity, ticketActivityRae, ticketSnapshot, ticketGroup } from '$lib/server/db';
 import { num, round, totalEstimation, totalRae, avancement } from './calc';
 import { listTickets } from './tickets';
@@ -71,7 +71,9 @@ export async function getSprintDashboard(
 	testPhase = true,
 	isAdmin = true,
 	/** Répartition par activité : false (défaut) = ordre des référentiels (activity.sortOrder), true = alphabétique — préférence du membre courant (user.sortActivitiesAlpha). */
-	sortActivitiesAlpha = false
+	sortActivitiesAlpha = false,
+	/** Membres à exclure de `byPerson` (cf. accounts.ts listFacticeMemberIds) — jamais renseigné pour un rôle ADMIN. */
+	excludeUserIds?: string[]
 ): Promise<SprintDashboard> {
 	const [sprintRow] = await db
 		.select({ id: sprint.id, name: sprint.name, kind: sprint.kind })
@@ -197,7 +199,13 @@ export async function getSprintDashboard(
 					.select({ name: user.displayName, total: sql<string>`sum(${timeEntry.amount})` })
 					.from(timeEntry)
 					.innerJoin(user, eq(timeEntry.userId, user.id))
-					.where(and(eq(timeEntry.workspaceId, workspaceId), inArray(timeEntry.ticketId, ticketIds)))
+					.where(
+						and(
+							eq(timeEntry.workspaceId, workspaceId),
+							inArray(timeEntry.ticketId, ticketIds),
+							excludeUserIds?.length ? notInArray(timeEntry.userId, excludeUserIds) : undefined
+						)
+					)
 					.groupBy(user.displayName);
 	const byPerson = personRows
 		.map((r) => ({ name: r.name, consumed: round(num(r.total)) }))

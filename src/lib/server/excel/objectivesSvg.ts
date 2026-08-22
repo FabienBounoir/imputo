@@ -136,7 +136,10 @@ export async function buildObjectivesSvg(workspaceId: string, weekMondayISO: str
 	]);
 	const accent = wsRow[0]?.accentColor ?? '#16A34A';
 	const activityColor = mixHex(accent, '#000000', 0.78);
-	const members = ref.members;
+	// Membres "factice" (arrangements entre projets en clôture, pas de vraies personnes, cf.
+	// schema.ts membership.factice) : exclus ici pour tout le monde, sans distinction de rôle — même
+	// règle, sans condition, que la page en ligne (admin/objectifs/+page.server.ts).
+	const members = ref.members.filter((m) => !m.factice);
 	const innerW = CARD_W - PAD * 2;
 
 	// blocks : un objectif par entrée, avec ses lignes (jusqu'à 2 si le libellé est long) — lines

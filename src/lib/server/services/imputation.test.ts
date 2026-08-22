@@ -12,6 +12,7 @@ import {
 import { createTicket } from './tickets';
 import { listCategories, createActivity, listActivities } from './params';
 import { createAbsenceFor } from './absences';
+import { addObjective, listObjectivesForUser } from './weeklyObjectives';
 import { makeWorkspace } from './test-helpers';
 import { db, timeEntry } from '$lib/server/db';
 
@@ -254,7 +255,7 @@ describe('pinRow / unpinRow / listPinnedRows', () => {
 
 		await pinRow(workspaceId, userId, { targetType: 'TICKET', targetId: t.id, activityId: null, ...WEEK });
 		const pinned = await listPinnedRows(workspaceId, userId, WEEK.firstDay, WEEK.lastDay);
-		expect(pinned).toEqual([{ targetType: 'TICKET', targetId: t.id, activityId: null }]);
+		expect(pinned).toEqual([{ targetType: 'TICKET', targetId: t.id, activityId: null, objectiveId: null }]);
 	});
 
 	it("scopée à la période où elle a été ajoutée : n'apparaît pas sur une autre semaine", async () => {
@@ -410,7 +411,7 @@ describe('reassignActivity', () => {
 		});
 
 		expect(await listPinnedRows(workspaceId, userId, WEEK.firstDay, WEEK.lastDay)).toEqual([
-			{ targetType: 'TICKET', targetId: t.id, activityId: dev.id }
+			{ targetType: 'TICKET', targetId: t.id, activityId: dev.id, objectiveId: null }
 		]);
 	});
 });
@@ -439,5 +440,130 @@ describe('getRecentTicketIds', () => {
 		const recent = await getRecentTicketIds(workspaceId, userId, 4);
 		expect(recent).toContain(t1.id);
 		expect(recent).toContain(t2.id);
+	});
+});
+
+describe('objectiveId sur une ligne TICKET (deux objectifs sur le même ticket, cf. weeklyObjectives)', () => {
+	const WEEK_MONDAY = '2026-06-22'; // == MONDAY, même semaine que WEEK
+
+	async function twoObjectivesOnSameTicket(prefix: string) {
+		const { workspaceId, userId } = await makeWorkspace(prefix);
+		const t = await createTicket(workspaceId, { key: `${prefix}-T`, title: 'MCO parapluie' });
+		await addObjective(workspaceId, userId, { userId, weekMondayISO: WEEK_MONDAY, kind: 'TICKET', ticketId: t.id, label: 'Support niveau 1' });
+		await addObjective(workspaceId, userId, { userId, weekMondayISO: WEEK_MONDAY, kind: 'TICKET', ticketId: t.id, label: 'Astreinte' });
+		const [objA, objB] = await listObjectivesForUser(workspaceId, userId, WEEK_MONDAY);
+		return { workspaceId, userId, ticket: t, objA, objB };
+	}
+
+	it('deux setCell sur le même ticket avec des objectiveId différents créent deux lignes distinctes', async () => {
+		const { workspaceId, userId, ticket, objA, objB } = await twoObjectivesOnSameTicket('obj-setcell');
+
+		await setCell(workspaceId, userId, { targetType: 'TICKET', targetId: ticket.id, activityId: null, day: MONDAY, amount: 2, objectiveId: objA.id });
+		await setCell(workspaceId, userId, { targetType: 'TICKET', targetId: ticket.id, activityId: null, day: MONDAY, amount: 1, objectiveId: objB.id });
+
+		const week = await getWeek(workspaceId, userId, MONDAY);
+		const rows = week.rows.filter((r) => r.targetId === ticket.id);
+		expect(rows).toHaveLength(2);
+		const byNote = new Map(rows.map((r) => [r.objectiveNote, r]));
+		expect(byNote.get('Support niveau 1')?.amounts[MONDAY]).toBe(2);
+		expect(byNote.get('Astreinte')?.amounts[MONDAY]).toBe(1);
+		expect(week.dayTotals[MONDAY]).toBe(3);
+
+		// Un second setCell sur le même (ticket, objectiveId) met à jour la ligne existante — pas un 3e doublon.
+		await setCell(workspaceId, userId, { targetType: 'TICKET', targetId: ticket.id, activityId: null, day: MONDAY, amount: 5, objectiveId: objA.id });
+		const week2 = await getWeek(workspaceId, userId, MONDAY);
+		const rows2 = week2.rows.filter((r) => r.targetId === ticket.id);
+		expect(rows2).toHaveLength(2);
+		expect(rows2.find((r) => r.objectiveId === objA.id)?.amounts[MONDAY]).toBe(5);
+	});
+
+	it("une imputation directe sur le ticket sans objectiveId reste une ligne à part (objectiveId null)", async () => {
+		const { workspaceId, userId, ticket, objA } = await twoObjectivesOnSameTicket('obj-direct');
+
+		await setCell(workspaceId, userId, { targetType: 'TICKET', targetId: ticket.id, activityId: null, day: MONDAY, amount: 1, objectiveId: objA.id });
+		await setCell(workspaceId, userId, { targetType: 'TICKET', targetId: ticket.id, activityId: null, day: MONDAY, amount: 4 });
+
+		const week = await getWeek(workspaceId, userId, MONDAY);
+		const rows = week.rows.filter((r) => r.targetId === ticket.id);
+		expect(rows).toHaveLength(2);
+		expect(rows.find((r) => r.objectiveId === null)?.amounts[MONDAY]).toBe(4);
+		expect(rows.find((r) => r.objectiveId === objA.id)?.amounts[MONDAY]).toBe(1);
+	});
+
+	it("reassignActivity sur une des deux lignes n'affecte pas l'autre (même ticket, autre objectif)", async () => {
+		const { workspaceId, userId, ticket, objA, objB } = await twoObjectivesOnSameTicket('obj-reassign');
+		await createActivity(workspaceId, `Dev-${ticket.id}`);
+		const dev = (await listActivities(workspaceId)).find((a) => a.label === `Dev-${ticket.id}`)!;
+
+		await setCell(workspaceId, userId, { targetType: 'TICKET', targetId: ticket.id, activityId: null, day: MONDAY, amount: 2, objectiveId: objA.id });
+		await setCell(workspaceId, userId, { targetType: 'TICKET', targetId: ticket.id, activityId: null, day: MONDAY, amount: 1, objectiveId: objB.id });
+
+		await reassignActivity(workspaceId, userId, {
+			targetType: 'TICKET',
+			targetId: ticket.id,
+			fromActivityId: null,
+			toActivityId: dev.id,
+			fromISO: MONDAY,
+			toISO: MONDAY,
+			objectiveId: objA.id
+		});
+
+		const week = await getWeek(workspaceId, userId, MONDAY);
+		const rows = week.rows.filter((r) => r.targetId === ticket.id);
+		expect(rows).toHaveLength(2);
+		expect(rows.find((r) => r.objectiveId === objA.id)?.activityId).toBe(dev.id);
+		expect(rows.find((r) => r.objectiveId === objB.id)?.activityId).toBeNull();
+		expect(rows.find((r) => r.objectiveId === objB.id)?.amounts[MONDAY]).toBe(1);
+	});
+
+	it('deleteRow ne supprime que la ligne visée (même ticket, autre objectif intact)', async () => {
+		const { workspaceId, userId, ticket, objA, objB } = await twoObjectivesOnSameTicket('obj-delete');
+
+		await setCell(workspaceId, userId, { targetType: 'TICKET', targetId: ticket.id, activityId: null, day: MONDAY, amount: 2, objectiveId: objA.id });
+		await setCell(workspaceId, userId, { targetType: 'TICKET', targetId: ticket.id, activityId: null, day: MONDAY, amount: 1, objectiveId: objB.id });
+
+		await deleteRow(workspaceId, userId, { targetType: 'TICKET', targetId: ticket.id, activityId: null, fromISO: MONDAY, toISO: MONDAY, objectiveId: objA.id });
+
+		const week = await getWeek(workspaceId, userId, MONDAY);
+		const rows = week.rows.filter((r) => r.targetId === ticket.id);
+		expect(rows).toHaveLength(1);
+		expect(rows[0].objectiveId).toBe(objB.id);
+		expect(rows[0].amounts[MONDAY]).toBe(1);
+	});
+
+	it('pinRow avec deux objectiveId sur le même ticket produit deux PinnedRow distincts', async () => {
+		const { workspaceId, userId, ticket, objA, objB } = await twoObjectivesOnSameTicket('obj-pin');
+
+		await pinRow(workspaceId, userId, { targetType: 'TICKET', targetId: ticket.id, activityId: null, firstDay: MONDAY, lastDay: FRIDAY, objectiveId: objA.id });
+		await pinRow(workspaceId, userId, { targetType: 'TICKET', targetId: ticket.id, activityId: null, firstDay: MONDAY, lastDay: FRIDAY, objectiveId: objB.id });
+
+		const pinned = await listPinnedRows(workspaceId, userId, WEEK.firstDay, WEEK.lastDay);
+		expect(pinned).toHaveLength(2);
+		expect(new Set(pinned.map((p) => p.objectiveId))).toEqual(new Set([objA.id, objB.id]));
+	});
+
+	it("refuse un objectiveId qui ne désigne pas un objectif de ce ticket/cette personne", async () => {
+		const { workspaceId, userId, ticket } = await twoObjectivesOnSameTicket('obj-guard');
+		const { workspaceId: otherWs, userId: otherUser } = await makeWorkspace('obj-guard-other');
+		const otherTicket = await createTicket(otherWs, { key: 'OTHER-T', title: 'y' });
+		await addObjective(otherWs, otherUser, { userId: otherUser, weekMondayISO: WEEK_MONDAY, kind: 'TICKET', ticketId: otherTicket.id });
+		const [foreignObj] = await listObjectivesForUser(otherWs, otherUser, WEEK_MONDAY);
+
+		// objectiveId d'un autre espace/ticket.
+		await expect(
+			setCell(workspaceId, userId, { targetType: 'TICKET', targetId: ticket.id, activityId: null, day: MONDAY, amount: 1, objectiveId: foreignObj.id })
+		).rejects.toThrow();
+
+		// objectiveId inexistant.
+		await expect(
+			setCell(workspaceId, userId, {
+				targetType: 'TICKET',
+				targetId: ticket.id,
+				activityId: null,
+				day: MONDAY,
+				amount: 1,
+				objectiveId: 'ffffffff-ffff-ffff-ffff-ffffffffffff'
+			})
+		).rejects.toThrow();
 	});
 });

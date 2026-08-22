@@ -5,6 +5,7 @@ import { load as loadUntyped, actions } from './+page.server';
 const load = loadUntyped as (event: unknown) => Promise<Record<string, any>>;
 import { makeWorkspace, addMember } from '$lib/server/services/test-helpers';
 import { fakeLocals, formRequest } from '$lib/server/test-helpers/http';
+import { setMemberFactice } from '$lib/server/services/accounts';
 
 describe('absences +page.server load', () => {
 	it("redirige vers /register si l'utilisateur n'a pas d'espace courant", async () => {
@@ -27,6 +28,20 @@ describe('absences +page.server load', () => {
 		expect(memberResult.canManageOthers).toBe(false);
 		expect(adminResult.canManageOthers).toBe(true);
 		expect(memberResult.pendingAbsences).toEqual([]);
+	});
+
+	it('un membre "factice" est visible pour un ADMIN mais absent de rows pour un MANAGER', async () => {
+		const { userId: adminId, workspaceId } = await makeWorkspace('absfactice');
+		const { userId: managerId } = await addMember(workspaceId, 'MANAGER', 'absfactice-manager');
+		const { userId: facticeId } = await addMember(workspaceId, 'USER', 'absfactice-dummy');
+		await setMemberFactice(workspaceId, facticeId, true);
+		const url = new URL('http://localhost/absences');
+
+		const asAdmin = await load({ locals: await fakeLocals(adminId), url } as never);
+		expect(asAdmin.rows.map((r: { id: string }) => r.id)).toContain(facticeId);
+
+		const asManager = await load({ locals: await fakeLocals(managerId), url } as never);
+		expect(asManager.rows.map((r: { id: string }) => r.id)).not.toContain(facticeId);
 	});
 });
 

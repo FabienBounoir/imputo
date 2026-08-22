@@ -292,6 +292,34 @@ export async function setMemberActive(workspaceId: string, userId: string, activ
 	if (!res[0]) throw new Error('Membre introuvable dans cet espace.');
 }
 
+/**
+ * Marque un membre comme "factice" (placeholder créé en clôture pour un arrangement entre projets,
+ * pas une vraie personne). Reste `active`/imputable — seul un rôle ADMIN le voit encore dans
+ * Objectifs de la semaine, Mon imputation (sélecteur + vue équipe), Absences et les synthèses
+ * (cf. listFacticeMemberIds ci-dessous, utilisée par ces pages).
+ */
+export async function setMemberFactice(workspaceId: string, userId: string, factice: boolean) {
+	const res = await db
+		.update(membership)
+		.set({ factice })
+		.where(memberWhere(workspaceId, userId))
+		.returning({ id: membership.id });
+	if (!res[0]) throw new Error('Membre introuvable dans cet espace.');
+}
+
+/**
+ * Ids des membres "factice" d'un espace — à passer en exclusion aux écrans/agrégats qui ne doivent
+ * les montrer qu'à un rôle ADMIN (cf. setMemberFactice). Un ADMIN ne doit jamais appeler ceci pour
+ * filtrer quoi que ce soit : il voit tout le monde.
+ */
+export async function listFacticeMemberIds(workspaceId: string): Promise<string[]> {
+	const rows = await db
+		.select({ userId: membership.userId })
+		.from(membership)
+		.where(and(eq(membership.workspaceId, workspaceId), eq(membership.factice, true)));
+	return rows.map((r) => r.userId);
+}
+
 /** Régénère un magic link d'invitation pour un membre (lien perdu/expiré). */
 export async function regenerateInvite(
 	workspaceId: string,

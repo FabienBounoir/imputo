@@ -2,8 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { createTicket } from './tickets';
 import { setCell } from './imputation';
 import { listCategories, listActivities } from './params';
-import { makeWorkspace } from './test-helpers';
+import { makeWorkspace, addMember } from './test-helpers';
 import { getDashboard } from './dashboard';
+import { setMemberFactice } from './accounts';
 
 describe('getDashboard', () => {
 	it('agrège KPIs, état et productif/non-productif sur tout l’espace', async () => {
@@ -126,5 +127,28 @@ describe('getDashboard', () => {
 		expect(dash.kpis.consumedTotal).toBe(1); // seule l'imputation de juin compte
 		expect(dash.byProject).toEqual([]);
 		expect(dash.byState).toEqual([]);
+	});
+
+	it('excludeUserIds retire un membre de byPerson/byActivity et de ses totaux (cf. membres "factice")', async () => {
+		const ws = await makeWorkspace('dash-exclude');
+		const { userId: facticeId } = await addMember(ws.workspaceId, 'USER', 'dash-exclude-factice');
+		await setMemberFactice(ws.workspaceId, facticeId, true);
+
+		const t = await createTicket(ws.workspaceId, { key: `DE-${ws.id}`, title: 'Ticket exclude' });
+		const period = { from: '2026-06-01', to: '2026-06-30' };
+		await setCell(ws.workspaceId, ws.userId, { targetType: 'TICKET', targetId: t.id, activityId: null, day: '2026-06-01', amount: 1 });
+		await setCell(ws.workspaceId, facticeId, { targetType: 'TICKET', targetId: t.id, activityId: null, day: '2026-06-01', amount: 5 });
+
+		// Mode période : kpis.consumedTotal dérive du même agrégat par personne que byPerson (cf.
+		// dashboard.ts ligne ~188) — contrairement au mode "Tout l'espace" où il vient du chiffrage
+		// ticket (listTickets), sans notion de personne, donc pas affecté par excludeUserIds.
+		const withFactice = await getDashboard(ws.workspaceId, period);
+		expect(withFactice.kpis.consumedTotal).toBe(6);
+		expect(withFactice.byPerson.map((p) => p.name).sort()).toEqual(['dash-exclude owner', 'dash-exclude-factice']);
+
+		const withoutFactice = await getDashboard(ws.workspaceId, period, true, [facticeId]);
+		expect(withoutFactice.kpis.consumedTotal).toBe(1); // seule la ligne du membre non-factice compte
+		expect(withoutFactice.byPerson.map((p) => p.name)).toEqual(['dash-exclude owner']);
+		expect(withoutFactice.bySsp.every((r) => r.personName !== 'dash-exclude-factice')).toBe(true);
 	});
 });

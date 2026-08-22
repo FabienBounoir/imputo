@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { makeWorkspace, addMember } from './test-helpers';
+import { createTicket } from './tickets';
 import {
 	listObjectivesForUser,
 	listObjectivesForUserWeeks,
@@ -83,6 +84,40 @@ describe('weeklyObjectives — listing', () => {
 		const all = await listObjectivesForWorkspace(workspaceId, WEEK_1);
 		expect(all).toHaveLength(2);
 		expect(all.every((o) => typeof o.displayName === 'string' && o.displayName.length > 0)).toBe(true);
+	});
+});
+
+describe('weeklyObjectives — objectif TICKET', () => {
+	it('accepte une note optionnelle (label) sur un objectif TICKET, absente par défaut', async () => {
+		const { workspaceId, userId } = await makeWorkspace('wo-ticket-note');
+		const t = await createTicket(workspaceId, { key: 'WO-1', title: 'x' });
+
+		await addObjective(workspaceId, userId, { userId, weekMondayISO: WEEK_1, kind: 'TICKET', ticketId: t.id });
+		const withoutNote = await listObjectivesForUser(workspaceId, userId, WEEK_1);
+		expect(withoutNote[0].label).toBeNull();
+
+		await addObjective(workspaceId, userId, {
+			userId,
+			weekMondayISO: WEEK_2,
+			kind: 'TICKET',
+			ticketId: t.id,
+			label: 'Support niveau 1'
+		});
+		const withNote = await listObjectivesForUser(workspaceId, userId, WEEK_2);
+		expect(withNote[0].label).toBe('Support niveau 1');
+	});
+
+	it('permet d’attribuer deux fois le même ticket à la même personne/semaine (deux objectifs distincts)', async () => {
+		const { workspaceId, userId } = await makeWorkspace('wo-ticket-twice');
+		const t = await createTicket(workspaceId, { key: 'WO-2', title: 'x' });
+
+		await addObjective(workspaceId, userId, { userId, weekMondayISO: WEEK_1, kind: 'TICKET', ticketId: t.id, label: 'Support niveau 1' });
+		await addObjective(workspaceId, userId, { userId, weekMondayISO: WEEK_1, kind: 'TICKET', ticketId: t.id, label: 'Astreinte' });
+
+		const week1 = await listObjectivesForUser(workspaceId, userId, WEEK_1);
+		expect(week1).toHaveLength(2);
+		expect(week1.map((o) => o.label).sort()).toEqual(['Astreinte', 'Support niveau 1']);
+		expect(new Set(week1.map((o) => o.id)).size).toBe(2);
 	});
 });
 

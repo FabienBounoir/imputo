@@ -188,6 +188,11 @@ export const membership = pgTable(
 		role: roleEnum('role').notNull().default('USER'),
 		capacityPerDay: numeric('capacity_per_day', { precision: 3, scale: 2 }).notNull().default('1'),
 		active: boolean('active').notNull().default(true),
+		// Membre "factice" : placeholder créé pour un arrangement entre projets en clôture, pas une
+		// vraie personne. Reste normalement imputable (donc reste `active`) — seul son affichage dans
+		// "Objectifs de la semaine" est exclu pour l'instant (cf. admin/objectifs/+page.server.ts),
+		// à étendre à d'autres écrans plus tard si besoin.
+		factice: boolean('factice').notNull().default(false),
 		// Capacités de lecture accordables indépendamment du rôle (ex : un USER qui doit voir
 		// l'imputation de tous sans devenir MANAGER/ADMIN et sans aucun droit d'écriture).
 		canViewImputations: boolean('can_view_imputations').notNull().default(false),

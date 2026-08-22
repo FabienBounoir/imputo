@@ -65,17 +65,21 @@
 		// indexOf plutôt que split('::') : un libellé personnalisé peut lui-même contenir "::".
 		const sep = value.indexOf('::');
 		const type = value.slice(0, sep);
-		const id = value.slice(sep + 2);
+		const rest = value.slice(sep + 2);
 		if (type === 'TICKET') {
+			// Un pick depuis "🎯 Attribué cette semaine" encode un 3e segment (objectiveId, cf. pick
+			// ci-dessous) pour distinguer deux objectifs sur le même ticket — jamais présent depuis la
+			// liste de tickets classique.
+			const id = rest.split('::')[0];
 			const t = tickets.find((x) => x.id === id);
 			return t ? `${t.key} — ${t.title}` : '';
 		}
 		if (type === 'OBJECTIVE') {
-			const o = objectives.find((x) => x.id === id);
+			const o = objectives.find((x) => x.id === rest);
 			return o?.label ?? '';
 		}
-		if (type === 'CUSTOM') return id;
-		const c = categories.find((x) => x.id === id);
+		if (type === 'CUSTOM') return rest;
+		const c = categories.find((x) => x.id === rest);
 		return c?.label ?? '';
 	});
 
@@ -173,7 +177,7 @@
 					<div class="tp-label">🎯 Attribué cette semaine</div>
 					{#each objectives as o (o.id)}
 						{#if o.kind === 'TICKET' && o.ticketId}
-							<button type="button" class="tp-item" onclick={() => pick(`TICKET::${o.ticketId}`)}>
+							<button type="button" class="tp-item" onclick={() => pick(`TICKET::${o.ticketId}::${o.id}`)}>
 								<span class="tp-key">{o.ticketKey}</span><span class="tp-title">{o.ticketTitle}</span>
 							</button>
 						{:else if o.kind === 'CUSTOM'}

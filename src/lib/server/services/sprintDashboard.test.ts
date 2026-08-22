@@ -3,9 +3,10 @@ import { createTicket, upsertTicketActivityRae } from './tickets';
 import { setCell } from './imputation';
 import { createRef, listRefs } from './referentials';
 import { createActivity, listActivities, reorderActivities } from './params';
-import { makeWorkspace } from './test-helpers';
+import { makeWorkspace, addMember } from './test-helpers';
 import { getSprintDashboard } from './sprintDashboard';
 import { createTicketGroup, listTicketGroups, reorderTicketGroups, setTicketInGroup } from './ticketGroups';
+import { setMemberFactice } from './accounts';
 
 describe('getSprintDashboard', () => {
 	it('scope les KPIs et tickets sur le sprint demandé (kind SPRINT)', async () => {
@@ -38,6 +39,24 @@ describe('getSprintDashboard', () => {
 		expect(dash.kpis.raeTotal).toBe(2);
 		expect(dash.tickets.map((t) => t.key)).toEqual([`SP-${ws.id}`]);
 		expect(dash.byPerson.find((p) => p.name === 'sprintdash owner')?.consumed).toBe(1);
+	});
+
+	it('excludeUserIds retire un membre de byPerson (cf. membres "factice")', async () => {
+		const ws = await makeWorkspace('sprintdash-exclude');
+		const { userId: facticeId } = await addMember(ws.workspaceId, 'USER', 'sprintdash-exclude-factice');
+		await setMemberFactice(ws.workspaceId, facticeId, true);
+		await createRef(ws.workspaceId, 'sprint', `Sprint ${ws.id}`);
+		const [sprint] = (await listRefs(ws.workspaceId, 'sprint')).filter((s) => s.name === `Sprint ${ws.id}`);
+
+		const t = await createTicket(ws.workspaceId, { key: `SPX-${ws.id}`, title: 'Ticket', sprintId: sprint.id });
+		await setCell(ws.workspaceId, ws.userId, { targetType: 'TICKET', targetId: t.id, activityId: null, day: '2026-06-01', amount: 1 });
+		await setCell(ws.workspaceId, facticeId, { targetType: 'TICKET', targetId: t.id, activityId: null, day: '2026-06-01', amount: 4 });
+
+		const withFactice = await getSprintDashboard(ws.workspaceId, sprint.id);
+		expect(withFactice.byPerson.map((p) => p.name).sort()).toEqual(['sprintdash-exclude owner', 'sprintdash-exclude-factice']);
+
+		const withoutFactice = await getSprintDashboard(ws.workspaceId, sprint.id, true, true, false, [facticeId]);
+		expect(withoutFactice.byPerson.map((p) => p.name)).toEqual(['sprintdash-exclude owner']);
 	});
 
 	it('scope sur une version (kind VERSION) et masque ecartVsBudgetTotal pour un non-admin', async () => {

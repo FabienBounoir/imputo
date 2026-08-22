@@ -39,6 +39,10 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 	const weekMondays = period.weeks.map((w) => w.mondayISO);
 
 	const ref = await getRefData(ws.workspaceId, user.sortActivitiesAlpha);
+	// Membres "factice" (arrangements entre projets en clôture, pas de vraies personnes, cf.
+	// schema.ts membership.factice) : invisibles pour tout rôle non-ADMIN — sélecteur de membre,
+	// vue "Toute l'équipe", et accès direct via ?u= (sinon contournable en tapant l'URL).
+	const visibleMembers = isAdmin ? ref.members : ref.members.filter((m) => !m.factice);
 
 	// Un admin, ou une personne avec la capacité canViewImputations, peut consulter l'imputation
 	// d'un autre membre via ?u=<userId> — en lecture seule sauf pour l'admin (cf. resolveSubjectId).
@@ -47,7 +51,7 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 	let viewedId = user.id;
 	let viewedName = user.displayName;
 	if (canViewOthers && uParam && uParam !== user.id && uParam !== 'team') {
-		const m = ref.members.find((x) => x.id === uParam);
+		const m = visibleMembers.find((x) => x.id === uParam);
 		if (m) {
 			viewedId = m.id;
 			viewedName = m.displayName;
@@ -74,6 +78,13 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 		periodAbsences.filter((a) => a.subjectId === viewedId),
 		period.days
 	)[viewedId] ?? {};
+
+	// getTeamTimesheet construit ses lignes depuis les imputations elles-mêmes (pas depuis
+	// membership), donc un membre factice y apparaît dès qu'il a des heures saisies — sans lien avec
+	// `factice` dans son type. On retire juste les lignes concernées pour un non-admin, sans toucher
+	// aux totaux (mêmes heures réelles, juste la ventilation par personne qui reste masquée).
+	const facticeIds = isAdmin ? null : new Set(ref.members.filter((m) => m.factice).map((m) => m.id));
+	const visibleTeam = team && facticeIds ? { ...team, members: team.members.filter((m) => !facticeIds.has(m.userId)) } : team;
 
 	return {
 		sheet,
@@ -102,13 +113,13 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 		// Suppression de ticket (TicketEditModal) réservée au créateur de l'espace (super admin).
 		isOwner: user.id === ws.createdByUserId,
 		canViewOthers,
-		members: canViewOthers ? ref.members : [],
+		members: canViewOthers ? visibleMembers : [],
 		selfId: user.id,
 		viewedId,
 		viewedName,
 		viewingOther,
 		viewingTeam,
-		team,
+		team: visibleTeam,
 		readOnly
 	};
 };
@@ -140,6 +151,9 @@ export const actions: Actions = {
 		const activityId = (f.get('activityId') as string) || null;
 		const day = String(f.get('day'));
 		const amount = Number(f.get('amount'));
+		// Objectif TICKET source de la ligne (distingue deux objectifs sur le même ticket) — n'a de sens
+		// que pour targetType==='TICKET', ignoré sinon.
+		const objectiveId = targetType === 'TICKET' ? (f.get('objectiveId') as string) || null : null;
 
 		if (!['TICKET', 'CATEGORY', 'OBJECTIVE'].includes(targetType) || !targetId || !day)
 			return fail(400, { error: 'Données invalides.' });
@@ -158,7 +172,8 @@ export const actions: Actions = {
 				targetId,
 				activityId,
 				day,
-				amount: Number.isFinite(amount) ? amount : 0
+				amount: Number.isFinite(amount) ? amount : 0,
+				objectiveId
 			});
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
@@ -174,6 +189,7 @@ export const actions: Actions = {
 		const targetId = String(f.get('targetId'));
 		const activityId = (f.get('activityId') as string) || null;
 		const anchor = String(f.get('anchor') ?? '');
+		const objectiveId = targetType === 'TICKET' ? (f.get('objectiveId') as string) || null : null;
 
 		if (!['TICKET', 'CATEGORY', 'OBJECTIVE'].includes(targetType) || !targetId || !anchor)
 			return fail(400, { error: 'Données invalides.' });
@@ -200,7 +216,8 @@ export const actions: Actions = {
 				targetId,
 				activityId,
 				fromISO: period.firstDay,
-				toISO: period.lastDay
+				toISO: period.lastDay,
+				objectiveId
 			});
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
@@ -216,6 +233,7 @@ export const actions: Actions = {
 		const targetId = String(f.get('targetId'));
 		const activityId = (f.get('activityId') as string) || null;
 		const anchor = String(f.get('anchor') ?? '');
+		const objectiveId = targetType === 'TICKET' ? (f.get('objectiveId') as string) || null : null;
 
 		if (!['TICKET', 'CATEGORY', 'OBJECTIVE'].includes(targetType) || !targetId || !anchor)
 			return fail(400, { error: 'Données invalides.' });
@@ -237,7 +255,14 @@ export const actions: Actions = {
 		);
 
 		try {
-			await pinRow(ws.workspaceId, subjectId, { targetType, targetId, activityId, firstDay: period.firstDay, lastDay: period.lastDay });
+			await pinRow(ws.workspaceId, subjectId, {
+				targetType,
+				targetId,
+				activityId,
+				firstDay: period.firstDay,
+				lastDay: period.lastDay,
+				objectiveId
+			});
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
@@ -253,6 +278,7 @@ export const actions: Actions = {
 		const fromActivityId = (f.get('fromActivityId') as string) || null;
 		const toActivityId = (f.get('toActivityId') as string) || null;
 		const anchor = String(f.get('anchor') ?? '');
+		const objectiveId = targetType === 'TICKET' ? (f.get('objectiveId') as string) || null : null;
 
 		if (!['TICKET', 'CATEGORY', 'OBJECTIVE'].includes(targetType) || !targetId || !anchor)
 			return fail(400, { error: 'Données invalides.' });
@@ -279,7 +305,8 @@ export const actions: Actions = {
 				fromActivityId,
 				toActivityId,
 				fromISO: period.firstDay,
-				toISO: period.lastDay
+				toISO: period.lastDay,
+				objectiveId
 			});
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });

@@ -21,11 +21,15 @@ export type WeeklySynthesisRow = {
 /**
  * Synthèse hebdo par personne (semaine × personne, % de capacité) sur une période donnée.
  * Vue admin pour faciliter la validation des imputations — pas un nouveau mode de saisie.
+ *
+ * `excludeUserIds` : membres à exclure (cf. accounts.ts listFacticeMemberIds) — jamais renseigné
+ * pour un rôle ADMIN, qui doit tout voir.
  */
 export async function getWeeklySynthesis(
 	workspaceId: string,
 	from: string,
-	to: string
+	to: string,
+	excludeUserIds?: string[]
 ): Promise<WeeklySynthesisRow[]> {
 	const [entries, members] = await Promise.all([
 		db
@@ -40,6 +44,7 @@ export async function getWeeklySynthesis(
 			.where(eq(membership.workspaceId, workspaceId))
 	]);
 	const memberMap = new Map(members.map((m) => [m.userId, m]));
+	const excluded = new Set(excludeUserIds);
 
 	const weekMap = new Map<string, { userId: string; mondayISO: string; total: number; days: Map<string, number> }>();
 	for (const e of entries) {
@@ -56,6 +61,7 @@ export async function getWeeklySynthesis(
 	for (const w of weekMap.values()) {
 		const member = memberMap.get(w.userId);
 		if (!member) continue; // membre retiré de l'espace depuis : hors périmètre de la synthèse
+		if (excluded.has(w.userId)) continue;
 		const friday = toISODate(addDays(parseISODate(w.mondayISO), 4));
 		const workdays = countWorkdaysNonHoliday(w.mondayISO, friday);
 		const capacity = weeklyCapacity(member.capacityPerDay, workdays);

@@ -44,12 +44,16 @@ export type AbsencesSvg = { svg: string; width: number; height: number };
 /**
  * Image (SVG) d'un extrait de la synthèse équipe — mêmes couleurs/séparateurs que l'export Excel.
  * `rowIds` filtre les lignes affichées ; omis ou vide = toutes les lignes (réels + externes).
+ * `isAdmin` : un membre "factice" (cf. schema.ts membership.factice) n'est inclus que pour un rôle
+ * ADMIN — même règle que la grille en ligne (absences/+page.server.ts) ; un `rowIds` qui viserait
+ * un factice pour un non-admin ne le fait pas réapparaître, `byId` ci-dessous ne le contient plus.
  */
 export async function buildAbsencesSvg(
 	workspaceId: string,
 	fromISO: string,
 	toISO: string,
-	rowIds?: string[] | null
+	rowIds?: string[] | null,
+	isAdmin = true
 ): Promise<AbsencesSvg> {
 	const days: string[] = [];
 	for (let d = parseISODate(fromISO); toISODate(d) <= toISO; d = addDays(d, 1)) days.push(toISODate(d));
@@ -60,8 +64,9 @@ export async function buildAbsencesSvg(
 		listExternalMembers(workspaceId)
 	]);
 	const grid = buildAbsenceGrid(absences, days);
+	const visibleMembers = isAdmin ? ref.members : ref.members.filter((m) => !m.factice);
 	let rows = [
-		...ref.members.map((m) => ({ id: m.id, displayName: m.displayName, external: false })),
+		...visibleMembers.map((m) => ({ id: m.id, displayName: m.displayName, external: false })),
 		...externalMembers.map((m) => ({ id: m.id, displayName: m.displayName, external: true }))
 	];
 	if (rowIds && rowIds.length > 0) {

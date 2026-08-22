@@ -13,6 +13,7 @@ import {
 	setImputationStep,
 	setMemberRole,
 	setMemberActive,
+	setMemberFactice,
 	setMemberCapacity,
 	setMemberCapability,
 	regenerateInvite,
@@ -143,6 +144,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 			email: user.email,
 			role: membership.role,
 			active: membership.active,
+			factice: membership.factice,
 			capacity: membership.capacityPerDay,
 			canViewImputations: membership.canViewImputations,
 			canViewMoodResults: membership.canViewMoodResults,
@@ -465,6 +467,20 @@ export const actions: Actions = {
 		if (userId === locals.user!.id) return fail(400, { error: 'Vous ne pouvez pas vous désactiver vous-même.' });
 		try {
 			await setMemberActive(ws.workspaceId, userId, active);
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { memberOk: true };
+	},
+
+	memberFactice: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const f = await request.formData();
+		const userId = String(f.get('userId'));
+		const factice = f.get('factice') === 'true';
+		try {
+			await setMemberFactice(ws.workspaceId, userId, factice);
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
