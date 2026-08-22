@@ -178,7 +178,10 @@ export async function addObjective(
 		weekMonday: input.weekMondayISO,
 		kind: input.kind,
 		ticketId: input.kind === 'TICKET' ? (input.ticketId ?? null) : null,
-		label: input.kind === 'CUSTOM' ? input.label!.trim() : null,
+		// Pour CUSTOM, label est le libellé de la tâche (obligatoire, validé plus haut). Pour TICKET,
+		// c'est une note optionnelle propre à cet objectif/cette personne (distincte du commentaire
+		// partagé du ticket) — ex: "ce qu'on attend réellement sur ce ticket cette semaine".
+		label: input.kind === 'CUSTOM' ? input.label!.trim() : input.label?.trim() || null,
 		activityId: input.activityId || null,
 		sortOrder: Number(max) + 1,
 		createdByUserId

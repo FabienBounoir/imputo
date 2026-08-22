@@ -140,6 +140,9 @@ export const actions: Actions = {
 		const activityId = (f.get('activityId') as string) || null;
 		const day = String(f.get('day'));
 		const amount = Number(f.get('amount'));
+		// Objectif TICKET source de la ligne (distingue deux objectifs sur le même ticket) — n'a de sens
+		// que pour targetType==='TICKET', ignoré sinon.
+		const objectiveId = targetType === 'TICKET' ? (f.get('objectiveId') as string) || null : null;
 
 		if (!['TICKET', 'CATEGORY', 'OBJECTIVE'].includes(targetType) || !targetId || !day)
 			return fail(400, { error: 'Données invalides.' });
@@ -158,7 +161,8 @@ export const actions: Actions = {
 				targetId,
 				activityId,
 				day,
-				amount: Number.isFinite(amount) ? amount : 0
+				amount: Number.isFinite(amount) ? amount : 0,
+				objectiveId
 			});
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
@@ -174,6 +178,7 @@ export const actions: Actions = {
 		const targetId = String(f.get('targetId'));
 		const activityId = (f.get('activityId') as string) || null;
 		const anchor = String(f.get('anchor') ?? '');
+		const objectiveId = targetType === 'TICKET' ? (f.get('objectiveId') as string) || null : null;
 
 		if (!['TICKET', 'CATEGORY', 'OBJECTIVE'].includes(targetType) || !targetId || !anchor)
 			return fail(400, { error: 'Données invalides.' });
@@ -200,7 +205,8 @@ export const actions: Actions = {
 				targetId,
 				activityId,
 				fromISO: period.firstDay,
-				toISO: period.lastDay
+				toISO: period.lastDay,
+				objectiveId
 			});
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
@@ -216,6 +222,7 @@ export const actions: Actions = {
 		const targetId = String(f.get('targetId'));
 		const activityId = (f.get('activityId') as string) || null;
 		const anchor = String(f.get('anchor') ?? '');
+		const objectiveId = targetType === 'TICKET' ? (f.get('objectiveId') as string) || null : null;
 
 		if (!['TICKET', 'CATEGORY', 'OBJECTIVE'].includes(targetType) || !targetId || !anchor)
 			return fail(400, { error: 'Données invalides.' });
@@ -237,7 +244,14 @@ export const actions: Actions = {
 		);
 
 		try {
-			await pinRow(ws.workspaceId, subjectId, { targetType, targetId, activityId, firstDay: period.firstDay, lastDay: period.lastDay });
+			await pinRow(ws.workspaceId, subjectId, {
+				targetType,
+				targetId,
+				activityId,
+				firstDay: period.firstDay,
+				lastDay: period.lastDay,
+				objectiveId
+			});
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
@@ -253,6 +267,7 @@ export const actions: Actions = {
 		const fromActivityId = (f.get('fromActivityId') as string) || null;
 		const toActivityId = (f.get('toActivityId') as string) || null;
 		const anchor = String(f.get('anchor') ?? '');
+		const objectiveId = targetType === 'TICKET' ? (f.get('objectiveId') as string) || null : null;
 
 		if (!['TICKET', 'CATEGORY', 'OBJECTIVE'].includes(targetType) || !targetId || !anchor)
 			return fail(400, { error: 'Données invalides.' });
@@ -279,7 +294,8 @@ export const actions: Actions = {
 				fromActivityId,
 				toActivityId,
 				fromISO: period.firstDay,
-				toISO: period.lastDay
+				toISO: period.lastDay,
+				objectiveId
 			});
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });

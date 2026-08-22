@@ -9,6 +9,10 @@ export type Row = {
 	targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE';
 	targetId: string;
 	activityId: string | null;
+	/** Objectif hebdo TICKET à l'origine de la ligne (distingue deux objectifs sur le même ticket) — null hors ce cas. */
+	objectiveId: string | null;
+	/** Note propre à cet objectif TICKET (weeklyObjective.label) — distincte du commentaire partagé du ticket. */
+	objectiveNote: string | null;
 	label: string;
 	sublabel: string;
 	emoji: string | null;

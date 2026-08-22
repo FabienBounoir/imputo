@@ -12,6 +12,10 @@
 	// prop allowCustom) — évite deux formulaires séparés pour ce qui est le même geste.
 	let pickTarget = $state('');
 	let pickTicketActivity = $state('');
+	// Note propre à l'objectif TICKET (ex: "ce qu'on attend réellement sur ce ticket cette semaine")
+	// — distincte du commentaire partagé du ticket, propre à cette personne/semaine. Sans objet pour
+	// CUSTOM : le libellé de la tâche vient déjà du texte tapé dans le picker.
+	let noteText = $state('');
 	let imgBusy = $state(false);
 
 	const pickedKind = $derived(pickTarget.startsWith('CUSTOM::') ? 'CUSTOM' : 'TICKET');
@@ -133,6 +137,7 @@
 								<span class="pill-ico">{@render taskIcon()}</span>{o.label}
 							{/if}
 							{#if o.activityLabel}<span class="tag-activity">{o.activityLabel}</span>{/if}
+							{#if o.kind === 'TICKET' && o.label}<span class="tag-activity">📝 {o.label}</span>{/if}
 						</span>
 						<form method="POST" action="?/removeObjective" use:enhance>
 							<input type="hidden" name="id" value={o.id} />
@@ -150,14 +155,14 @@
 					<form
 						method="POST"
 						action="?/addObjective"
-						use:enhance={() => async ({ update }) => { pickTarget = ''; pickTicketActivity = ''; await update(); }}
+						use:enhance={() => async ({ update }) => { pickTarget = ''; pickTicketActivity = ''; noteText = ''; await update(); }}
 						class="add-ticket"
 					>
 						<input type="hidden" name="userId" value={data.selectedUserId} />
 						<input type="hidden" name="weekMondayISO" value={data.weekMondayISO} />
 						<input type="hidden" name="kind" value={pickedKind} />
 						<input type="hidden" name="ticketId" value={pickedTicketId} />
-						<input type="hidden" name="label" value={pickedLabel} />
+						<input type="hidden" name="label" value={pickedKind === 'CUSTOM' ? pickedLabel : noteText} />
 						<TargetPicker
 							bind:value={pickTarget}
 							tickets={data.tickets}
@@ -170,6 +175,9 @@
 							<option value="">Type d'activité (option)</option>
 							{#each data.activities as a (a.id)}<option value={a.id}>{a.label}</option>{/each}
 						</select>
+						{#if pickedKind === 'TICKET' && pickTarget}
+							<input class="note-pick" type="text" bind:value={noteText} placeholder="Note (optionnel)" maxlength="500" aria-label="Note pour cet objectif" />
+						{/if}
 						<button class="btn btn-ghost" type="submit" disabled={!pickTarget}>+ {pickedKind === 'CUSTOM' ? 'Créer' : 'Assigner'}</button>
 					</form>
 				</div>
@@ -218,6 +226,7 @@
 										{#if o.kind === 'TICKET'}<span class="task-ico">{@render ticketIcon()}</span> <b>{o.ticketKey}</b> — {o.ticketTitle}{:else}<span class="task-ico">{@render taskIcon()}</span> {o.label}{/if}
 									</span>
 									{#if o.activityLabel}<span class="tag-activity">{o.activityLabel}</span>{/if}
+									{#if o.kind === 'TICKET' && o.label}<span class="tag-activity">📝 {o.label}</span>{/if}
 								</li>
 							{/each}
 						</ul>
@@ -541,6 +550,16 @@
 		flex-shrink: 0;
 		max-width: 190px;
 	}
+	.note-pick {
+		padding: 9px 11px;
+		border-radius: var(--r-md);
+		border: 1px solid var(--border);
+		background: var(--surface-2);
+		color: var(--text);
+		font-size: 13px;
+		flex: 1;
+		min-width: 140px;
+	}
 	@media (max-width: 860px) {
 		.ref-grid {
 			grid-template-columns: 1fr;
@@ -562,6 +581,9 @@
 		.activity-pick {
 			flex: 1;
 			max-width: none;
+		}
+		.note-pick {
+			flex-basis: 100%;
 		}
 	}
 </style>

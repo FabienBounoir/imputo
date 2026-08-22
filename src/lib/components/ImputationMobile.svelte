@@ -138,7 +138,7 @@
 			<li class="mrow">
 				<span class="pill pill-ico">{@render rowIcon(row)}</span>
 				<div class="tt">
-					<b>{row.label}</b>
+					<b>{row.objectiveNote || row.label}</b>
 					<span class="sub">
 						<span class="ell">{row.sublabel}</span>
 						{#if readOnly}
