@@ -292,6 +292,20 @@ export async function setMemberActive(workspaceId: string, userId: string, activ
 	if (!res[0]) throw new Error('Membre introuvable dans cet espace.');
 }
 
+/**
+ * Marque un membre comme "factice" (placeholder créé en clôture pour un arrangement entre projets,
+ * pas une vraie personne). Reste `active`/imputable — seul son affichage dans "Objectifs de la
+ * semaine" en tient compte pour l'instant (cf. admin/objectifs/+page.server.ts).
+ */
+export async function setMemberFactice(workspaceId: string, userId: string, factice: boolean) {
+	const res = await db
+		.update(membership)
+		.set({ factice })
+		.where(memberWhere(workspaceId, userId))
+		.returning({ id: membership.id });
+	if (!res[0]) throw new Error('Membre introuvable dans cet espace.');
+}
+
 /** Régénère un magic link d'invitation pour un membre (lien perdu/expiré). */
 export async function regenerateInvite(
 	workspaceId: string,

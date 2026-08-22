@@ -1,0 +1,1 @@
+ALTER TABLE "membership" ADD COLUMN "factice" boolean DEFAULT false NOT NULL;

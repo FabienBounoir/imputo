@@ -379,6 +379,13 @@
       "when": 1787258082417,
       "tag": "0053_brave_amazoness",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1787332053386,
+      "tag": "0054_rare_rafael_vega",
+      "breakpoints": true
     }
   ]
 }

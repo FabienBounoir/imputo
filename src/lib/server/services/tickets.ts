@@ -596,7 +596,7 @@ export type RefData = {
 	projects: { id: string; name: string }[];
 	activities: { id: string; label: string }[];
 	categories: { id: string; label: string; kind: string; linkedAbsenceType: AbsenceType | null }[];
-	members: { id: string; displayName: string }[];
+	members: { id: string; displayName: string; factice: boolean }[];
 	ticketGroups: { id: string; label: string }[];
 	ssps: { id: string; code: string; label: string }[];
 };
@@ -639,7 +639,7 @@ export async function getRefData(workspaceId: string, sortActivitiesAlpha = fals
 			.from(category)
 			.where(and(eq(category.workspaceId, workspaceId), isNull(category.archivedAt))),
 		db
-			.select({ id: user.id, displayName: user.displayName })
+			.select({ id: user.id, displayName: user.displayName, factice: membership.factice })
 			.from(membership)
 			.innerJoin(user, eq(membership.userId, user.id))
 			.where(and(eq(membership.workspaceId, workspaceId), eq(membership.active, true))),

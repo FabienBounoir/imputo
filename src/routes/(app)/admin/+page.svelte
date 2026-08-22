@@ -34,6 +34,32 @@
 	let accessModalFor = $state<string | null>(null);
 	const accessModalMember = $derived(data.members.find((m) => m.id === accessModalFor) ?? null);
 
+	// Menu "···" d'actions membre (Accès/Lien/Transmettre/Désactiver/Factice regroupés — trop de
+	// boutons en ligne sinon). `position: fixed` calculée au clic, comme TargetPicker : la ligne vit
+	// dans une card à overflow:clip qui rognerait un panneau en position:absolute.
+	let openMemberMenu = $state<string | null>(null);
+	let memberMenuPos = $state({ top: 0, right: 0 });
+	let memberMenuEl: HTMLDivElement | null = $state(null);
+	async function toggleMemberMenu(id: string, trigger: HTMLElement) {
+		if (openMemberMenu === id) {
+			openMemberMenu = null;
+			return;
+		}
+		const r = trigger.getBoundingClientRect();
+		memberMenuPos = { top: r.bottom + 4, right: window.innerWidth - r.right };
+		openMemberMenu = id;
+		// Le nombre d'items varie selon la personne visée (Accès/Transmettre/Désactiver conditionnels)
+		// — on mesure le menu une fois rendu plutôt que d'estimer sa hauteur, et on le bascule
+		// au-dessus du bouton s'il déborderait en bas de l'écran (même idée que TargetPicker).
+		await tick();
+		if (memberMenuEl && memberMenuPos.top + memberMenuEl.offsetHeight > window.innerHeight) {
+			memberMenuPos = { top: r.top - memberMenuEl.offsetHeight - 4, right: memberMenuPos.right };
+		}
+	}
+	function onWindowClickCloseMemberMenu(e: MouseEvent) {
+		if (openMemberMenu && !(e.target as HTMLElement).closest('.member-menu, .member-menu-trigger')) openMemberMenu = null;
+	}
+
 	// ---------- Membres : recherche + regroupement (désactivés en bas) ----------
 	const ROLE_LABELS: Record<string, string> = { USER: 'Membre', MANAGER: 'Manager', ADMIN: 'Admin' };
 	function memberStatusLabel(m: { pending: boolean; active: boolean }) {
@@ -234,6 +260,8 @@
 	let jiraPatEditing = $state(false);
 </script>
 
+<svelte:window onclick={onWindowClickCloseMemberMenu} />
+
 <div class="topbar">
 	<h1>Paramètres &amp; membres</h1>
 </div>
@@ -275,6 +303,14 @@
 		<section class="card block">
 			<div class="block-head">
 				<h3>Membres ({data.members.length})</h3>
+				<div class="ref-search member-search">
+					<input
+						class="ref-search-input"
+						type="search"
+						placeholder="Rechercher…"
+						bind:value={memberSearch}
+					/>
+				</div>
 			</div>
 			{#if form?.memberOk}<div class="flash ok">Membre mis à jour ✓</div>{/if}
 			{#if form?.ownerOk}<div class="flash ok">Propriété de l'espace transmise ✓</div>{/if}
@@ -283,14 +319,6 @@
 				👑 Le <b>créateur de l'espace</b> a les mêmes droits qu'un admin, mais ne peut être ni rétrogradé ni
 				désactivé par personne d'autre. Il peut transmettre ce statut à un autre membre actif.
 			</p>
-			<div class="ref-search">
-				<input
-					class="ref-search-input"
-					type="search"
-					placeholder="Rechercher par nom, email, rôle, statut…"
-					bind:value={memberSearch}
-				/>
-			</div>
 			<div class="members-wrap">
 			<div class="members-scroll">
 			<table class="members">
@@ -298,10 +326,10 @@
 					{#each filteredMembers as m, i (m.id)}
 						{@const isSelf = m.id === data.selfId}
 						{#if i === firstInactiveMemberIndex && firstInactiveMemberIndex > 0}
-							<tr class="member-sep"><td colspan="6">Désactivés</td></tr>
+							<tr class="member-sep"><td colspan="5">Désactivés</td></tr>
 						{/if}
 						<tr class:inactive={!m.active && !m.pending}>
-							<td><div class="mc"><span class="avatar">{initials(m.displayName)}</span><div><b>{m.displayName}{#if isSelf} <span class="you">vous</span>{/if}</b><span>{m.email}</span></div></div></td>
+							<td><div class="mc"><span class="avatar">{initials(m.displayName)}</span><div><b>{m.displayName}{#if isSelf} <span class="you">vous</span>{/if}{#if m.factice} <span class="you factice-tag" title="Placeholder pour un arrangement entre projets (clôture) — exclu d'Objectifs de la semaine">factice</span>{/if}</b><span>{m.email}</span></div></div></td>
 							<td>
 								{#if m.isOwner}
 									<span class="pill owner" title="Créateur de l'espace">👑 Créateur</span>
@@ -340,14 +368,6 @@
 									<span class="cap-unit">%</span>
 								</form>
 							</td>
-							<td>
-								{#if m.role !== 'ADMIN'}
-									<button type="button" class="ref-btn" onclick={() => (accessModalFor = m.id)}>
-										⚙ Accès
-										{#if m.canViewImputations || m.canViewMoodResults}<span class="access-dot" title="Au moins une capacité de lecture accordée"></span>{/if}
-									</button>
-								{/if}
-							</td>
 							<td class="m-actions">
 								{#if m.pending}
 									<form method="POST" action="?/memberInvite" use:enhance>
@@ -355,41 +375,65 @@
 										<button class="ref-btn" type="submit">↻ Régénérer le lien</button>
 									</form>
 								{:else}
-									<div class="action-group">
-										<form method="POST" action="?/memberInvite" use:enhance>
-											<input type="hidden" name="userId" value={m.id} />
-											<button class="ref-btn" type="submit" title="Envoyer un lien pour réinitialiser son mot de passe">🔑 Lien de réinitialisation</button>
-										</form>
-										{#if data.isOwner && !m.isOwner && m.active}
-											<form
-												method="POST"
-												action="?/transferOwnership"
-												use:enhance={async ({ cancel }) => {
-													const ok = await confirmDialog({
-														message: `Transmettre la propriété de l'espace à ${m.displayName} ? Vous resterez admin, mais perdrez la protection de créateur.`,
-														confirmLabel: 'Transmettre'
-													});
-													if (!ok) cancel();
-												}}
-											>
+									<button
+										type="button"
+										class="ref-btn member-menu-trigger"
+										onclick={(e) => toggleMemberMenu(m.id, e.currentTarget)}
+										aria-haspopup="menu"
+										aria-expanded={openMemberMenu === m.id}
+										aria-label="Actions pour {m.displayName}"
+									>
+										⋯
+									</button>
+									{#if openMemberMenu === m.id}
+										<div class="member-menu" role="menu" bind:this={memberMenuEl} style="top:{memberMenuPos.top}px; right:{memberMenuPos.right}px;">
+											{#if m.role !== 'ADMIN'}
+												<button type="button" class="member-menu-item" onclick={() => { accessModalFor = m.id; openMemberMenu = null; }}>
+													🔐 Accès
+													{#if m.canViewImputations || m.canViewMoodResults}<span class="access-dot"></span>{/if}
+												</button>
+											{/if}
+											<form method="POST" action="?/memberInvite" use:enhance={() => { openMemberMenu = null; }}>
 												<input type="hidden" name="userId" value={m.id} />
-												<button class="ref-btn" type="submit">👑 Transmettre</button>
+												<button type="submit" class="member-menu-item">🔑 Lien de réinitialisation</button>
 											</form>
-										{/if}
-										{#if !isSelf && !m.isOwner}
-											<form method="POST" action="?/memberActive" use:enhance>
-												<input type="hidden" name="userId" value={m.id} />
-												<input type="hidden" name="active" value={m.active ? 'false' : 'true'} />
-												<button class="ref-btn" type="submit">{m.active ? 'Désactiver' : 'Réactiver'}</button>
-											</form>
-										{/if}
-									</div>
+											{#if data.isOwner && !m.isOwner && m.active}
+												<form
+													method="POST"
+													action="?/transferOwnership"
+													use:enhance={async ({ cancel }) => {
+														openMemberMenu = null;
+														const ok = await confirmDialog({
+															message: `Transmettre la propriété de l'espace à ${m.displayName} ? Vous resterez admin, mais perdrez la protection de créateur.`,
+															confirmLabel: 'Transmettre'
+														});
+														if (!ok) cancel();
+													}}
+												>
+													<input type="hidden" name="userId" value={m.id} />
+													<button type="submit" class="member-menu-item">👑 Transmettre la propriété</button>
+												</form>
+											{/if}
+											{#if !isSelf && !m.isOwner}
+												<form method="POST" action="?/memberActive" use:enhance={() => { openMemberMenu = null; }}>
+													<input type="hidden" name="userId" value={m.id} />
+													<input type="hidden" name="active" value={m.active ? 'false' : 'true'} />
+													<button type="submit" class="member-menu-item">{m.active ? '🚫 Désactiver' : '✓ Réactiver'}</button>
+												</form>
+												<form method="POST" action="?/memberFactice" use:enhance={() => { openMemberMenu = null; }}>
+													<input type="hidden" name="userId" value={m.id} />
+													<input type="hidden" name="factice" value={m.factice ? 'false' : 'true'} />
+													<button type="submit" class="member-menu-item" title="Placeholder pour un arrangement entre projets (clôture) — exclu d'Objectifs de la semaine">{m.factice ? '↩ Retirer factice' : '🎭 Marquer factice'}</button>
+												</form>
+											{/if}
+										</div>
+									{/if}
 								{/if}
 							</td>
 						</tr>
 					{/each}
 					{#if filteredMembers.length === 0}
-						<tr><td colspan="6" class="hint">Aucun résultat pour cette recherche.</td></tr>
+						<tr><td colspan="5" class="hint">Aucun résultat pour cette recherche.</td></tr>
 					{/if}
 				</tbody>
 			</table>
@@ -1620,6 +1664,10 @@
 		vertical-align: middle;
 		margin-left: 6px;
 	}
+	.factice-tag {
+		color: var(--text-mute);
+		background: var(--surface-sunk);
+	}
 	.role-sel {
 		padding: 5px 9px;
 		border-radius: 8px;
@@ -1651,10 +1699,40 @@
 	.m-actions {
 		text-align: right;
 	}
-	.action-group {
+	.member-menu-trigger {
+		font-size: 15px;
+		line-height: 1;
+		padding: 6px 12px;
+	}
+	.member-menu {
+		position: fixed;
+		z-index: 30;
 		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		min-width: 220px;
+		padding: 6px;
+		border-radius: var(--r-md, 10px);
+		border: 1px solid var(--border);
+		background: var(--surface);
+		box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+	}
+	.member-menu-item {
+		display: flex;
+		align-items: center;
 		gap: 6px;
-		justify-content: flex-end;
+		width: 100%;
+		padding: 7px 9px;
+		border-radius: 8px;
+		font-size: 12.5px;
+		font-weight: 600;
+		color: var(--text-soft);
+		text-align: left;
+		white-space: nowrap;
+	}
+	.member-menu-item:hover {
+		background: var(--accent-tint, var(--surface-2));
+		color: var(--text);
 	}
 	.cap-form {
 		display: flex;
@@ -1823,6 +1901,18 @@
 	}
 	.ref-search {
 		margin-bottom: 12px;
+	}
+	/* Recherche membres : à droite du titre plutôt qu'en pleine largeur en dessous — un filtre, pas
+	   l'action principale de la card. */
+	.member-search {
+		flex: 0 0 auto;
+		width: 200px;
+		max-width: 45%;
+		margin-bottom: 0;
+	}
+	.member-search .ref-search-input {
+		padding: 6px 10px;
+		font-size: 12.5px;
 	}
 	.ref-search-input {
 		width: 100%;
