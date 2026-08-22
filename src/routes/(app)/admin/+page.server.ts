@@ -17,6 +17,7 @@ import {
 	setMemberCapacity,
 	setMemberCapability,
 	regenerateInvite,
+	cancelInvite,
 	transferOwnership,
 	getJiraConfig,
 	setJiraSyncEnabled,
@@ -529,6 +530,18 @@ export const actions: Actions = {
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
+	},
+
+	memberCancelInvite: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const userId = String((await request.formData()).get('userId'));
+		try {
+			await cancelInvite(ws.workspaceId, userId);
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { memberOk: true };
 	},
 
 	catCreate: async ({ request, locals }) => {

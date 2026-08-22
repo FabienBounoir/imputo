@@ -1,6 +1,6 @@
 import { describe, it, expect, afterAll } from 'vitest';
-import { eq } from 'drizzle-orm';
-import { db, workspace, ticket, jiraSyncRun } from '$lib/server/db';
+import { and, eq } from 'drizzle-orm';
+import { db, workspace, user, membership, ticket, jiraSyncRun } from '$lib/server/db';
 import { createWorkspaceWithOwner } from './workspaces';
 import {
 	login,
@@ -8,6 +8,8 @@ import {
 	regenerateInvite,
 	getTokenTarget,
 	setPasswordWithToken,
+	inviteMember,
+	cancelInvite,
 	getJiraConfig,
 	setJiraSyncEnabled,
 	saveJiraConfig,
@@ -81,6 +83,59 @@ describe('regenerateInvite pour un membre déjà actif', () => {
 		expect(ok).toBe(true);
 		expect(await login(email, 'resetpassword789')).toEqual({ userId });
 		expect(await login(email, 'password123')).toBeNull();
+	});
+});
+
+describe('cancelInvite', () => {
+	it('supprime le compte et la membership d’une invitation encore en attente', async () => {
+		const { workspaceId } = await createWorkspaceWithOwner({
+			displayName: 'Denis',
+			email: `cancel-owner-${rnd}@acme.test`,
+			password: 'password123',
+			workspaceName: 'Espace Cancel OK'
+		});
+		wsIds.push(workspaceId);
+
+		const email = `cancel-pending-${rnd}@acme.test`;
+		await inviteMember({ workspaceId, email, displayName: 'Invité', role: 'USER' });
+		const [invited] = await db.select({ id: user.id }).from(user).where(eq(user.email, email));
+
+		await cancelInvite(workspaceId, invited.id);
+
+		const [remainingUser] = await db.select().from(user).where(eq(user.id, invited.id));
+		expect(remainingUser).toBeUndefined();
+		const remainingMembership = await db
+			.select()
+			.from(membership)
+			.where(and(eq(membership.workspaceId, workspaceId), eq(membership.userId, invited.id)));
+		expect(remainingMembership).toHaveLength(0);
+	});
+
+	it('refuse d’annuler un membre dont le compte est déjà activé', async () => {
+		const { userId, workspaceId } = await createWorkspaceWithOwner({
+			displayName: 'Émile',
+			email: `cancel-active-${rnd}@acme.test`,
+			password: 'password123',
+			workspaceName: 'Espace Cancel KO'
+		});
+		wsIds.push(workspaceId);
+
+		await expect(cancelInvite(workspaceId, userId)).rejects.toThrow('déjà activé son compte');
+
+		const [stillThere] = await db.select({ id: user.id }).from(user).where(eq(user.id, userId));
+		expect(stillThere?.id).toBe(userId);
+	});
+
+	it('refuse un membre introuvable dans cet espace', async () => {
+		const { workspaceId } = await createWorkspaceWithOwner({
+			displayName: 'Fanny',
+			email: `cancel-missing-${rnd}@acme.test`,
+			password: 'password123',
+			workspaceName: 'Espace Cancel Missing'
+		});
+		wsIds.push(workspaceId);
+
+		await expect(cancelInvite(workspaceId, '00000000-0000-0000-0000-000000000000')).rejects.toThrow('introuvable');
 	});
 });
 

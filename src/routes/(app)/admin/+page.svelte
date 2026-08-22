@@ -369,65 +369,75 @@
 								</form>
 							</td>
 							<td class="m-actions">
-								{#if m.pending}
-									<form method="POST" action="?/memberInvite" use:enhance>
-										<input type="hidden" name="userId" value={m.id} />
-										<button class="ref-btn" type="submit">↻ Régénérer le lien</button>
-									</form>
-								{:else}
-									<button
-										type="button"
-										class="ref-btn member-menu-trigger"
-										onclick={(e) => toggleMemberMenu(m.id, e.currentTarget)}
-										aria-haspopup="menu"
-										aria-expanded={openMemberMenu === m.id}
-										aria-label="Actions pour {m.displayName}"
-									>
-										⋯
-									</button>
-									{#if openMemberMenu === m.id}
-										<div class="member-menu" role="menu" bind:this={memberMenuEl} style="top:{memberMenuPos.top}px; right:{memberMenuPos.right}px;">
-											{#if m.role !== 'ADMIN'}
-												<button type="button" class="member-menu-item" onclick={() => { accessModalFor = m.id; openMemberMenu = null; }}>
-													🔐 Accès
-													{#if m.canViewImputations || m.canViewMoodResults}<span class="access-dot"></span>{/if}
-												</button>
-											{/if}
-											<form method="POST" action="?/memberInvite" use:enhance={() => { openMemberMenu = null; }}>
+								<button
+									type="button"
+									class="ref-btn member-menu-trigger"
+									onclick={(e) => toggleMemberMenu(m.id, e.currentTarget)}
+									aria-haspopup="menu"
+									aria-expanded={openMemberMenu === m.id}
+									aria-label="Actions pour {m.displayName}"
+								>
+									⋯
+								</button>
+								{#if openMemberMenu === m.id}
+									<div class="member-menu" role="menu" bind:this={memberMenuEl} style="top:{memberMenuPos.top}px; right:{memberMenuPos.right}px;">
+										{#if !m.pending && m.role !== 'ADMIN'}
+											<button type="button" class="member-menu-item" onclick={() => { accessModalFor = m.id; openMemberMenu = null; }}>
+												🔐 Accès
+												{#if m.canViewImputations || m.canViewMoodResults}<span class="access-dot"></span>{/if}
+											</button>
+										{/if}
+										<form method="POST" action="?/memberInvite" use:enhance={() => { openMemberMenu = null; }}>
+											<input type="hidden" name="userId" value={m.id} />
+											<button type="submit" class="member-menu-item">{m.pending ? '↻ Régénérer le lien' : '🔑 Lien de réinitialisation'}</button>
+										</form>
+										{#if data.isOwner && !m.isOwner && m.active && !m.pending}
+											<form
+												method="POST"
+												action="?/transferOwnership"
+												use:enhance={async ({ cancel }) => {
+													openMemberMenu = null;
+													const ok = await confirmDialog({
+														message: `Transmettre la propriété de l'espace à ${m.displayName} ? Vous resterez admin, mais perdrez la protection de créateur.`,
+														confirmLabel: 'Transmettre'
+													});
+													if (!ok) cancel();
+												}}
+											>
 												<input type="hidden" name="userId" value={m.id} />
-												<button type="submit" class="member-menu-item">🔑 Lien de réinitialisation</button>
+												<button type="submit" class="member-menu-item">👑 Transmettre la propriété</button>
 											</form>
-											{#if data.isOwner && !m.isOwner && m.active}
+										{/if}
+										{#if !isSelf && !m.isOwner}
+											<form method="POST" action="?/memberActive" use:enhance={() => { openMemberMenu = null; }}>
+												<input type="hidden" name="userId" value={m.id} />
+												<input type="hidden" name="active" value={m.active ? 'false' : 'true'} />
+												<button type="submit" class="member-menu-item">{m.active ? '🚫 Désactiver' : '✓ Réactiver'}</button>
+											</form>
+											<form method="POST" action="?/memberFactice" use:enhance={() => { openMemberMenu = null; }}>
+												<input type="hidden" name="userId" value={m.id} />
+												<input type="hidden" name="factice" value={m.factice ? 'false' : 'true'} />
+												<button type="submit" class="member-menu-item" title="Placeholder pour un arrangement entre projets (clôture) — exclu d'Objectifs de la semaine">{m.factice ? '↩ Retirer factice' : '🎭 Marquer factice'}</button>
+											</form>
+											{#if m.pending}
 												<form
 													method="POST"
-													action="?/transferOwnership"
+													action="?/memberCancelInvite"
 													use:enhance={async ({ cancel }) => {
 														openMemberMenu = null;
 														const ok = await confirmDialog({
-															message: `Transmettre la propriété de l'espace à ${m.displayName} ? Vous resterez admin, mais perdrez la protection de créateur.`,
-															confirmLabel: 'Transmettre'
+															message: `Annuler l'invitation de ${m.displayName} ? Le lien envoyé ne fonctionnera plus.`,
+															confirmLabel: 'Annuler l’invitation'
 														});
 														if (!ok) cancel();
 													}}
 												>
 													<input type="hidden" name="userId" value={m.id} />
-													<button type="submit" class="member-menu-item">👑 Transmettre la propriété</button>
+													<button type="submit" class="member-menu-item danger">🗑 Annuler l'invitation</button>
 												</form>
 											{/if}
-											{#if !isSelf && !m.isOwner}
-												<form method="POST" action="?/memberActive" use:enhance={() => { openMemberMenu = null; }}>
-													<input type="hidden" name="userId" value={m.id} />
-													<input type="hidden" name="active" value={m.active ? 'false' : 'true'} />
-													<button type="submit" class="member-menu-item">{m.active ? '🚫 Désactiver' : '✓ Réactiver'}</button>
-												</form>
-												<form method="POST" action="?/memberFactice" use:enhance={() => { openMemberMenu = null; }}>
-													<input type="hidden" name="userId" value={m.id} />
-													<input type="hidden" name="factice" value={m.factice ? 'false' : 'true'} />
-													<button type="submit" class="member-menu-item" title="Placeholder pour un arrangement entre projets (clôture) — exclu d'Objectifs de la semaine">{m.factice ? '↩ Retirer factice' : '🎭 Marquer factice'}</button>
-												</form>
-											{/if}
-										</div>
-									{/if}
+										{/if}
+									</div>
 								{/if}
 							</td>
 						</tr>
@@ -1733,6 +1743,10 @@
 	.member-menu-item:hover {
 		background: var(--accent-tint, var(--surface-2));
 		color: var(--text);
+	}
+	.member-menu-item.danger:hover {
+		background: rgba(192, 57, 43, 0.12);
+		color: #c0392b;
 	}
 	.cap-form {
 		display: flex;

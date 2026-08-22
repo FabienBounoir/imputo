@@ -307,6 +307,21 @@ export async function setMemberFactice(workspaceId: string, userId: string, fact
 	if (!res[0]) throw new Error('Membre introuvable dans cet espace.');
 }
 
+/** Annule une invitation en attente (jamais connectée) : supprime le membre et son compte. */
+export async function cancelInvite(workspaceId: string, userId: string) {
+	const [m] = await db
+		.select({ passwordHash: user.passwordHash })
+		.from(membership)
+		.innerJoin(user, eq(membership.userId, user.id))
+		.where(memberWhere(workspaceId, userId));
+	if (!m) throw new Error('Membre introuvable dans cet espace.');
+	if (m.passwordHash !== null) throw new Error('Ce membre a déjà activé son compte, il ne peut plus être annulé.');
+	await db.transaction(async (tx) => {
+		await tx.delete(membership).where(memberWhere(workspaceId, userId));
+		await tx.delete(user).where(eq(user.id, userId));
+	});
+}
+
 /**
  * Ids des membres "factice" d'un espace — à passer en exclusion aux écrans/agrégats qui ne doivent
  * les montrer qu'à un rôle ADMIN (cf. setMemberFactice). Un ADMIN ne doit jamais appeler ceci pour

@@ -229,6 +229,40 @@ describe('admin memberRole / memberActive : garde-fous sur soi-même', () => {
 	});
 });
 
+describe('admin memberCancelInvite', () => {
+	it('annule l’invitation d’un membre encore en attente (compte supprimé)', async () => {
+		const { userId, workspaceId } = await makeWorkspace('cancel1');
+		const { userId: pendingId } = await addMember(workspaceId, 'USER', 'cancel1-pending');
+		const locals = await fakeLocals(userId);
+
+		const res = await actions.memberCancelInvite({
+			locals,
+			request: formRequest({ userId: pendingId })
+		} as never);
+		expect(res).toEqual({ memberOk: true });
+
+		const { db, user } = await import('$lib/server/db');
+		const { eq } = await import('drizzle-orm');
+		const [remaining] = await db.select({ id: user.id }).from(user).where(eq(user.id, pendingId));
+		expect(remaining).toBeUndefined();
+	});
+
+	it('refuse d’annuler un membre dont le compte est déjà activé', async () => {
+		const { userId, workspaceId } = await makeWorkspace('cancel2');
+		const { userId: activeId } = await addMember(workspaceId, 'USER', 'cancel2-active');
+		const { setPasswordWithToken, regenerateInvite } = await import('$lib/server/services/accounts');
+		const { token } = await regenerateInvite(workspaceId, activeId);
+		await setPasswordWithToken(token, 'password123');
+		const locals = await fakeLocals(userId);
+
+		const res = await actions.memberCancelInvite({
+			locals,
+			request: formRequest({ userId: activeId })
+		} as never);
+		expect(res?.status).toBe(400);
+	});
+});
+
 describe('admin transferOwnership', () => {
 	it("réservé au créateur de l'espace (pas juste un ADMIN)", async () => {
 		const { workspaceId } = await makeWorkspace('owner1');
