@@ -5,6 +5,7 @@
 	import { invalidateAll } from '$app/navigation';
 	import { beep } from '$lib/sound';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+	import NotificationPromptModal from '$lib/components/NotificationPromptModal.svelte';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
 	import Snow from '$lib/components/Snow.svelte';
 	import Hearts from '$lib/components/Hearts.svelte';
@@ -313,6 +314,7 @@
 </div>
 
 <ConfirmDialog />
+<NotificationPromptModal vapidPublicKey={data.vapidPublicKey} />
 <CommandPalette bind:this={commandPalette} {data} />
 {#if seasonalVisible && seasonalIds.has('christmas')}<Snow />{/if}
 {#if seasonalVisible && seasonalIds.has('valentine')}<Hearts />{/if}

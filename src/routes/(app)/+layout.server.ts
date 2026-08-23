@@ -5,6 +5,7 @@ import { countPendingAbsences } from '$lib/server/services/absences';
 import { getCurrentDuty } from '$lib/server/services/support';
 import { getDailyQuotes } from '$lib/server/services/quotes';
 import { currentMoodPeriod, todayInParis, parseISODate, lastWorkdayOnOrBefore } from '$lib/utils/date';
+import { config } from '$lib/server/config';
 
 // En dessous de ce seuil de jours restants avant l'échéance de vote (dernier jour ouvré de la
 // plage), on relance visuellement (blink) les personnes qui n'ont pas encore voté. 0 = blink
@@ -58,6 +59,7 @@ export const load: LayoutServerLoad = async ({ locals }) => {
 		moodTotalVotes,
 		pendingAbsencesCount,
 		supportDuty,
-		motivationQuotes
+		motivationQuotes,
+		vapidPublicKey: config.vapidPublic
 	};
 };
