@@ -22,6 +22,29 @@
 
 		<!-- PWA -->
 		<link rel="manifest" href="/manifest.webmanifest" />
+		<!-- Écrans de démarrage iOS : Android/Chrome les génère seul depuis le manifest, mais iOS n'a
+		     pas d'équivalent — une image par (résolution exacte d'appareil, thème). Générées par
+		     scripts/gen-icons.sh, portrait iPhone uniquement (voir le commentaire du script). -->
+		<link rel="apple-touch-startup-image" href="/icons/splash/apple-splash-320-568-2.png" media="(device-width: 320px) and (device-height: 568px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait) and (prefers-color-scheme: light)" />
+		<link rel="apple-touch-startup-image" href="/icons/splash/apple-splash-320-568-2-dark.png" media="(device-width: 320px) and (device-height: 568px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait) and (prefers-color-scheme: dark)" />
+		<link rel="apple-touch-startup-image" href="/icons/splash/apple-splash-375-667-2.png" media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait) and (prefers-color-scheme: light)" />
+		<link rel="apple-touch-startup-image" href="/icons/splash/apple-splash-375-667-2-dark.png" media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait) and (prefers-color-scheme: dark)" />
+		<link rel="apple-touch-startup-image" href="/icons/splash/apple-splash-375-812-3.png" media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: light)" />
+		<link rel="apple-touch-startup-image" href="/icons/splash/apple-splash-375-812-3-dark.png" media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)" />
+		<link rel="apple-touch-startup-image" href="/icons/splash/apple-splash-390-844-3.png" media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: light)" />
+		<link rel="apple-touch-startup-image" href="/icons/splash/apple-splash-390-844-3-dark.png" media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)" />
+		<link rel="apple-touch-startup-image" href="/icons/splash/apple-splash-393-852-3.png" media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: light)" />
+		<link rel="apple-touch-startup-image" href="/icons/splash/apple-splash-393-852-3-dark.png" media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)" />
+		<link rel="apple-touch-startup-image" href="/icons/splash/apple-splash-414-736-3.png" media="(device-width: 414px) and (device-height: 736px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: light)" />
+		<link rel="apple-touch-startup-image" href="/icons/splash/apple-splash-414-736-3-dark.png" media="(device-width: 414px) and (device-height: 736px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)" />
+		<link rel="apple-touch-startup-image" href="/icons/splash/apple-splash-414-896-2.png" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait) and (prefers-color-scheme: light)" />
+		<link rel="apple-touch-startup-image" href="/icons/splash/apple-splash-414-896-2-dark.png" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait) and (prefers-color-scheme: dark)" />
+		<link rel="apple-touch-startup-image" href="/icons/splash/apple-splash-414-896-3.png" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: light)" />
+		<link rel="apple-touch-startup-image" href="/icons/splash/apple-splash-414-896-3-dark.png" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)" />
+		<link rel="apple-touch-startup-image" href="/icons/splash/apple-splash-428-926-3.png" media="(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: light)" />
+		<link rel="apple-touch-startup-image" href="/icons/splash/apple-splash-428-926-3-dark.png" media="(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)" />
+		<link rel="apple-touch-startup-image" href="/icons/splash/apple-splash-430-932-3.png" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: light)" />
+		<link rel="apple-touch-startup-image" href="/icons/splash/apple-splash-430-932-3-dark.png" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)" />
 		<!-- Couleur de la barre du navigateur mobile, alignée sur --bg clair/sombre (app.css) —
 		     sans ça elle reste au vert accent, y compris en thème sombre. -->
 		<meta name="theme-color" content="#f4f2ec" media="(prefers-color-scheme: light)" />
