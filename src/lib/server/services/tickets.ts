@@ -89,6 +89,9 @@ export type TicketRow = {
 	stateLabel: string | null;
 	stateEmoji: string | null;
 	stateColor: string | null;
+	/** Ordre du référentiel état (state.sortOrder) — sert à regrouper visuellement par état sans
+	 * dépendre de l'alphabet (cf. sprintDashboard.ts, tri de la liste plate "Tickets du sprint"). */
+	stateSortOrder: number | null;
 	/** Estimation résolue (somme des Estimés par activité si présents, sinon fallback ticket.estimationReal). */
 	estimationReal: number;
 	raeReal: number;
@@ -144,7 +147,8 @@ const TICKET_BASE_SELECT = {
 	sspLabel: ssp.label,
 	stateLabel: state.label,
 	stateEmoji: state.emoji,
-	stateColor: state.color
+	stateColor: state.color,
+	stateSortOrder: state.sortOrder
 };
 type BaseTicketRow = Awaited<ReturnType<typeof fetchBaseTickets>>[number];
 
@@ -329,6 +333,7 @@ async function enrichTickets(
 			stateLabel: t.stateLabel,
 			stateEmoji: t.stateEmoji,
 			stateColor: t.stateColor,
+			stateSortOrder: t.stateSortOrder,
 			estimationReal: estimationResolved,
 			raeReal: resolved.real,
 			estimationTest: num(t.estimationTest),

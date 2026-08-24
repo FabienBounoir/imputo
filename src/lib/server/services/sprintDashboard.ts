@@ -96,6 +96,7 @@ export async function getSprintDashboard(
 	let budgetTotal = 0;
 	const ticketRows: SprintDashboardTicket[] = [];
 	const groupIdsByTicket = new Map<string, string[]>();
+	const stateSortOrderByTicket = new Map<string, number>();
 	for (const t of tickets) {
 		const tEst = totalEstimation(String(t.estimationReal), String(t.estimationTest), testPhase);
 		const tRae = totalRae(String(t.raeReal), String(t.raeTest), testPhase);
@@ -106,6 +107,7 @@ export async function getSprintDashboard(
 		ecartBudgetTotal += t.ecartVsBudget ?? 0;
 		budgetTotal += t.enveloppeTotale ?? 0;
 		groupIdsByTicket.set(t.id, t.groupIds);
+		if (t.stateSortOrder !== null) stateSortOrderByTicket.set(t.id, t.stateSortOrder);
 		ticketRows.push({
 			id: t.id,
 			key: t.key,
@@ -128,8 +130,14 @@ export async function getSprintDashboard(
 	ecartEstimeTotal = round(ecartEstimeTotal);
 	ecartBudgetTotal = round(ecartBudgetTotal);
 	budgetTotal = round(budgetTotal);
-	// Tri naturel/numérique par clé (SBX-2 avant SBX-10) — plus lisible qu'un tri lexicographique brut.
-	ticketRows.sort((a, b) => a.key.localeCompare(b.key, undefined, { numeric: true }));
+	// Par état (ordre du référentiel, paramétrable dans Réglages → États) puis par clé — un même état
+	// reste groupé visuellement sans bandeau de section (retour utilisateur). Sert à la fois à la
+	// liste plate (vue non groupée) et à l'intérieur de chaque section groupe de tickets ci-dessous.
+	ticketRows.sort((a, b) => {
+		const sa = stateSortOrderByTicket.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+		const sb = stateSortOrderByTicket.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+		return sa !== sb ? sa - sb : a.key.localeCompare(b.key, undefined, { numeric: true });
+	});
 
 	// Sections par groupe (retour utilisateur) : un ticket dans plusieurs groupes apparaît dans
 	// chacune de ses sections — chaque sous-total reste exact pour son groupe, même si ça compte le

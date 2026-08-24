@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { navigating } from '$app/state';
+	import { downloadSvgAsPng } from '$lib/utils/svgToPng';
 
 	function round2(n: number) {
 		return Math.round((n + Number.EPSILON) * 100) / 100;
@@ -85,6 +86,24 @@
 	});
 	function onToggleGroup() {
 		localStorage.setItem(GROUP_KEY, groupByTicketGroup ? '1' : '0');
+	}
+
+	// Export en image (PNG) de la table Tickets — but : coller directement dans une diapo (retour
+	// utilisateur). Même table, même groupement que ce qui est affiché à l'écran.
+	let imgBusy = $state(false);
+	async function downloadTicketsPng() {
+		if (!dashboard) return;
+		imgBusy = true;
+		try {
+			const params = new URLSearchParams({ id: dashboard.sprintId, grouped: groupByTicketGroup ? '1' : '0' });
+			const res = await fetch(`/dashboard/tickets-export-image?${params}`);
+			if (!res.ok) return;
+			const svgText = await res.text();
+			const slug = dashboard.sprintName.replace(/[^\w-]+/g, '-');
+			await downloadSvgAsPng(svgText, `tickets-${slug}.png`);
+		} finally {
+			imgBusy = false;
+		}
 	}
 
 	// Repli d'un groupe : mémorisé par groupe, pas par sprint/version — un groupe de tickets est
@@ -300,11 +319,18 @@
 		<div class="card panel tickets-panel">
 			<div class="tickets-head">
 				<h3>{dashboard.kind === 'VERSION' ? 'Tickets de la version' : 'Tickets du sprint'}</h3>
-				<label class="group-toggle">
-					<input type="checkbox" bind:checked={groupByTicketGroup} onchange={onToggleGroup} />
-					<span class="switch"></span>
-					<span class="switch-label">Grouper par groupe de tickets</span>
-				</label>
+				<div class="tickets-head-actions">
+					<label class="group-toggle">
+						<input type="checkbox" bind:checked={groupByTicketGroup} onchange={onToggleGroup} />
+						<span class="switch"></span>
+						<span class="switch-label">Grouper par groupe de tickets</span>
+					</label>
+					{#if dashboard.tickets.length > 0}
+						<button type="button" class="btn btn-ghost export-btn" disabled={imgBusy} onclick={downloadTicketsPng}>
+							{imgBusy ? 'Génération…' : '⬇ Exporter en image (PNG)'}
+						</button>
+					{/if}
+				</div>
 			</div>
 			{#if dashboard.tickets.length === 0}
 				<p class="empty">Aucun ticket.</p>
@@ -642,6 +668,16 @@
 	.tickets-head h3 {
 		margin: 0;
 	}
+	.tickets-head-actions {
+		display: flex;
+		align-items: center;
+		gap: 16px;
+		flex-wrap: wrap;
+	}
+	.export-btn {
+		font-size: 12.5px;
+		padding: 7px 12px;
+	}
 	.group-toggle {
 		display: flex;
 		align-items: center;
@@ -781,9 +817,15 @@
 		font-size: 11px;
 		font-weight: 600;
 		color: var(--text-mute);
+		flex-shrink: 0;
 	}
 	.us-table .title {
 		font-weight: 500;
+		/* Plafonne le titre (pas la cellule elle-même, sinon la case se détache de sa colonne et
+		   laisse un trou sans fond/bordure) : un titre très long forçait sinon la table entière à
+		   déborder et à scroller horizontalement (retour utilisateur) — tronqué en ellipse à la place. */
+		max-width: 380px;
+		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
 	}

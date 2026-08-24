@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createTicket, upsertTicketActivityRae } from './tickets';
 import { setCell } from './imputation';
 import { createRef, listRefs } from './referentials';
-import { createActivity, listActivities, reorderActivities } from './params';
+import { createActivity, listActivities, reorderActivities, createState, listStates } from './params';
 import { makeWorkspace, addMember } from './test-helpers';
 import { getSprintDashboard } from './sprintDashboard';
 import { createTicketGroup, listTicketGroups, reorderTicketGroups, setTicketInGroup } from './ticketGroups';
@@ -161,5 +161,37 @@ describe('getSprintDashboard', () => {
 		await reorderActivities(ws.workspaceId, [alpha.id, zebra.id]);
 		const afterReorder = await getSprintDashboard(ws.workspaceId, sprint.id);
 		expect(afterReorder.byActivity.map((a) => a.label)).toEqual([`Alpha ${ws.id}`, `Zebra ${ws.id}`]);
+	});
+
+	it('regroupe par état (ordre du référentiel) puis par clé, liste plate ET intérieur des sections groupe', async () => {
+		const ws = await makeWorkspace('state-order');
+		await createRef(ws.workspaceId, 'sprint', `Sprint ${ws.id}`);
+		const [sprint] = (await listRefs(ws.workspaceId, 'sprint')).filter((s) => s.name === `Sprint ${ws.id}`);
+
+		// Créés dans l'ordre Doing puis Todo — le référentiel (sortOrder) doit primer sur cet ordre.
+		await createState(ws.workspaceId, `Doing ${ws.id}`, '🔧', '#16A34A');
+		await createState(ws.workspaceId, `Todo ${ws.id}`, '📋', '#94A3B8');
+		const states = await listStates(ws.workspaceId);
+		const doing = states.find((s) => s.label === `Doing ${ws.id}`)!;
+		const todo = states.find((s) => s.label === `Todo ${ws.id}`)!;
+
+		await createTicketGroup(ws.workspaceId, `Groupe ${ws.id}`);
+		const group = (await listTicketGroups(ws.workspaceId)).find((g) => g.label === `Groupe ${ws.id}`)!;
+
+		// Clés délibérément anti-triées pour vérifier que l'état prime, la clé départageant à égalité.
+		const t9 = await createTicket(ws.workspaceId, { key: `SO-9-${ws.id}`, title: 'x', sprintId: sprint.id, stateId: todo.id });
+		const t2 = await createTicket(ws.workspaceId, { key: `SO-2-${ws.id}`, title: 'x', sprintId: sprint.id, stateId: doing.id });
+		const t1 = await createTicket(ws.workspaceId, { key: `SO-1-${ws.id}`, title: 'x', sprintId: sprint.id, stateId: todo.id });
+		const t3 = await createTicket(ws.workspaceId, { key: `SO-3-${ws.id}`, title: 'x', sprintId: sprint.id, stateId: doing.id });
+		await createTicket(ws.workspaceId, { key: `SO-0-${ws.id}`, title: 'x', sprintId: sprint.id }); // pas d'état — en dernier
+		// Tous dans le même groupe, pour vérifier que le tri par état s'applique aussi à l'intérieur d'une section.
+		for (const t of [t9, t2, t1, t3]) await setTicketInGroup(ws.workspaceId, t.id, group.id, true);
+
+		const dash = await getSprintDashboard(ws.workspaceId, sprint.id);
+		const expectedOrder = [`SO-2-${ws.id}`, `SO-3-${ws.id}`, `SO-1-${ws.id}`, `SO-9-${ws.id}`, `SO-0-${ws.id}`];
+		expect(dash.tickets.map((t) => t.key)).toEqual(expectedOrder);
+
+		const section = dash.ticketGroups.find((g) => g.label === `Groupe ${ws.id}`)!;
+		expect(section.tickets.map((t) => t.key)).toEqual(expectedOrder.filter((k) => k !== `SO-0-${ws.id}`));
 	});
 });
