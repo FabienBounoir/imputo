@@ -7,6 +7,7 @@
 	import ExportModal from '$lib/components/ExportModal.svelte';
 	import AccentPicker from '$lib/components/AccentPicker.svelte';
 	import MemberAccessModal from '$lib/components/MemberAccessModal.svelte';
+	import UserAvatar from '$lib/components/UserAvatar.svelte';
 	import { confirmDialog } from '$lib/confirm.svelte';
 	import type { SubmitFunction } from '@sveltejs/kit';
 	let { data, form } = $props();
@@ -166,8 +167,6 @@
 	const rotationCandidates = $derived(
 		data.members.filter((m) => m.active && !data.supportMembers.some((rm) => rm.userId === m.id))
 	);
-
-	const initials = (n: string) => n.split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 
 	async function copyMessage() {
 		if (!form?.invite) return;
@@ -329,7 +328,7 @@
 							<tr class="member-sep"><td colspan="5">Désactivés</td></tr>
 						{/if}
 						<tr class:inactive={!m.active && !m.pending}>
-							<td><div class="mc"><span class="avatar">{initials(m.displayName)}</span><div><b>{m.displayName}{#if isSelf} <span class="you">vous</span>{/if}{#if m.factice} <span class="you factice-tag" title="Placeholder pour un arrangement entre projets (clôture) — exclu d'Objectifs de la semaine">factice</span>{/if}</b><span>{m.email}</span></div></div></td>
+							<td><div class="mc"><UserAvatar userId={m.id} name={m.displayName} /><div><b>{m.displayName}{#if isSelf} <span class="you">vous</span>{/if}{#if m.factice} <span class="you factice-tag" title="Placeholder pour un arrangement entre projets (clôture) — exclu d'Objectifs de la semaine">factice</span>{/if}</b><span>{m.email}</span></div></div></td>
 							<td>
 								{#if m.isOwner}
 									<span class="pill owner" title="Créateur de l'espace">👑 Créateur</span>

@@ -14,6 +14,7 @@
 	import MotivationBanner from '$lib/components/MotivationBanner.svelte';
 	import Fireworks from '$lib/components/Fireworks.svelte';
 	import HalloweenCorner from '$lib/components/HalloweenCorner.svelte';
+	import UserAvatar from '$lib/components/UserAvatar.svelte';
 	import { seasonalState, initSeasonal, activeSeasonalEffects } from '$lib/seasonal.svelte';
 	let { children, data } = $props();
 	let commandPalette: CommandPalette | undefined = $state();
@@ -282,7 +283,7 @@
 		<div class="side-foot">
 			<div class="user-card">
 				<a class="user-main" href="/settings" title="Réglages">
-					<div class="avatar">{initials(data.user?.displayName ?? '?')}</div>
+					<UserAvatar userId={data.user?.id} name={data.user?.displayName ?? '?'} />
 					<div class="um">
 					<b>{data.user?.displayName}</b>
 					<span>{isOwner ? 'Créateur' : roleLabel}{#if isOwner}<span class="owner-crown" title="Créateur de l'espace">👑</span>{/if}</span>
