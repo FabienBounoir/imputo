@@ -45,6 +45,7 @@
 	--text: #eceae3;
 	--text-soft: #b4b2a9;
 	--text-mute: #807e76;
+	--accent-ink: color-mix(in srgb, var(--accent) 78%, #fff);
 	--accent-tint: color-mix(in srgb, var(--accent) 26%, #1b1d24);
 	--accent-tint-2: color-mix(in srgb, var(--accent) 15%, #1b1d24);
 	--warn: #fb923c;
