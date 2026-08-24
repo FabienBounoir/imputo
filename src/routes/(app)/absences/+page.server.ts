@@ -9,6 +9,7 @@ import {
 	listAbsencesForRange,
 	listPendingAbsences,
 	createAbsenceFor,
+	createHalfDayRangeFor,
 	deleteAbsence,
 	updateAbsence,
 	validateAbsence,
@@ -65,6 +66,9 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		...visibleMembers.map((m) => ({ id: m.id, displayName: m.displayName, external: false as const })),
 		...externalMembers.map((m) => ({ id: m.id, displayName: m.displayName, external: true as const }))
 	];
+	// Sa propre ligne en premier (retour utilisateur : plus facile à retrouver dans la grille équipe).
+	const selfIdx = rows.findIndex((r) => r.id === user.id);
+	if (selfIdx > 0) rows.unshift(...rows.splice(selfIdx, 1));
 
 	return {
 		rows,
@@ -115,7 +119,14 @@ export const actions: Actions = {
 					: { userId: locals.user.id };
 
 		try {
-			const absenceId = await createAbsenceFor(ws.workspaceId, subject, { startDate, endDate, type, period });
+			// Demi-journée sur plusieurs jours (retour utilisateur : "faut faire 1/1" sinon) — une ligne
+			// par jour, période conservée sur chacune, le tout dans une seule transaction (cf.
+			// createHalfDayRangeFor : createAbsenceFor forcerait sinon FULL sur toute la plage, la
+			// demi-journée n'ayant de sens que pour un seul jour).
+			const absenceId =
+				period !== 'FULL' && startDate !== endDate
+					? (await createHalfDayRangeFor(ws.workspaceId, subject, { startDate, endDate, type, period }))[0]
+					: await createAbsenceFor(ws.workspaceId, subject, { startDate, endDate, type, period });
 			// Prévisionnel = en attente de validation : les admins doivent en être notifiés pour aller le traiter.
 			if (type === 'CONGE_PREVISIONNEL') {
 				await notifyAbsencePending(

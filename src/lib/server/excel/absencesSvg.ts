@@ -1,6 +1,14 @@
 import { getRefData } from '$lib/server/services/tickets';
 import { listAbsencesForRange, buildAbsenceGrid, listExternalMembers } from '$lib/server/services/absences';
-import { ABSENCE_TYPES, ABSENCE_TYPE_LABELS, ABSENCE_TYPE_COLORS, groupDaysByMonth, type AbsenceType } from '$lib/absenceTypes';
+import {
+	ABSENCE_TYPES,
+	ABSENCE_TYPE_LABELS,
+	ABSENCE_TYPE_COLORS,
+	ABSENCE_PERIOD_LABELS,
+	groupDaysByMonth,
+	type AbsenceType,
+	type AbsencePeriod
+} from '$lib/absenceTypes';
 import { formatDayRange, toISODate, parseISODate, addDays } from '$lib/utils/date';
 
 const DAY_W = 30;
@@ -86,22 +94,27 @@ export async function buildAbsencesSvg(
 		}
 	}
 
-	// Types réellement présents parmi les lignes filtrées → légende compacte, jamais plus large que nécessaire.
+	// Types réellement présents parmi les lignes filtrées → légende compacte, jamais plus large que
+	// nécessaire. AM/PM distingués (retour utilisateur : les deux dégradés étaient identiques) —
+	// une ligne de légende par (type, demi-journée) réellement utilisée, pas juste "demi-journée" générique.
 	const usedFull = new Set<AbsenceType>();
-	const usedHalf = new Set<AbsenceType>();
+	const usedAM = new Set<AbsenceType>();
+	const usedPM = new Set<AbsenceType>();
 	for (const r of rows) {
 		const dayMap = grid[r.id];
 		if (!dayMap) continue;
 		for (const day of days) {
 			const cell = dayMap[day];
 			if (!cell) continue;
-			(cell.period === 'FULL' ? usedFull : usedHalf).add(cell.type);
+			if (cell.period === 'FULL') usedFull.add(cell.type);
+			else (cell.period === 'AM' ? usedAM : usedPM).add(cell.type);
 		}
 	}
 	const legendLines = ABSENCE_TYPES.flatMap((t) => [
-		usedFull.has(t) ? { type: t, half: false } : null,
-		usedHalf.has(t) ? { type: t, half: true } : null
-	]).filter((x): x is { type: AbsenceType; half: boolean } => x !== null);
+		usedFull.has(t) ? { type: t, period: 'FULL' as const } : null,
+		usedAM.has(t) ? { type: t, period: 'AM' as const } : null,
+		usedPM.has(t) ? { type: t, period: 'PM' as const } : null
+	]).filter((x): x is { type: AbsenceType; period: AbsencePeriod } => x !== null);
 	const legendRowCount = Math.max(legendLines.length, 1);
 
 	const gridTop = MARGIN + TITLE_H;
@@ -121,8 +134,14 @@ export async function buildAbsencesSvg(
 
 	parts.push('<defs>');
 	for (const t of ABSENCE_TYPES) {
+		// Diagonale « / » nette (arrêt dur à 50%, pas un dégradé progressif — retour utilisateur : un
+		// vrai fondu se voyait mal, même découpe franche que sur la page en ligne) — matinée = couleur
+		// en haut, après-midi = couleur en bas, en inversant l'ordre des arrêts sur le même axe.
 		parts.push(
-			`<linearGradient id="grad-${t}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${WHITE}"/><stop offset="1" stop-color="${ABSENCE_TYPE_COLORS[t]}"/></linearGradient>`
+			`<linearGradient id="grad-${t}-am" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${ABSENCE_TYPE_COLORS[t]}"/><stop offset="0.5" stop-color="${ABSENCE_TYPE_COLORS[t]}"/><stop offset="0.5" stop-color="${WHITE}"/><stop offset="1" stop-color="${WHITE}"/></linearGradient>`
+		);
+		parts.push(
+			`<linearGradient id="grad-${t}-pm" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${WHITE}"/><stop offset="0.5" stop-color="${WHITE}"/><stop offset="0.5" stop-color="${ABSENCE_TYPE_COLORS[t]}"/><stop offset="1" stop-color="${ABSENCE_TYPE_COLORS[t]}"/></linearGradient>`
 		);
 	}
 	parts.push('</defs>');
@@ -172,7 +191,11 @@ export async function buildAbsencesSvg(
 			const x = dayX(i);
 			const cell = grid[m.id]?.[d];
 			let fillAttr: string;
-			if (cell) fillAttr = cell.period === 'FULL' ? `fill="${ABSENCE_TYPE_COLORS[cell.type]}"` : `fill="url(#grad-${cell.type})"`;
+			if (cell)
+				fillAttr =
+					cell.period === 'FULL'
+						? `fill="${ABSENCE_TYPE_COLORS[cell.type]}"`
+						: `fill="url(#grad-${cell.type}-${cell.period === 'AM' ? 'am' : 'pm'})"`;
 			else if (m.external) fillAttr = `fill="${EXTERNAL_TINT}" fill-opacity="0.12"`;
 			else if (isWeekend(d)) fillAttr = `fill="${WEEKEND_FILL}"`;
 			else if (zebra) fillAttr = `fill="${ZEBRA_FILL}"`;
@@ -197,9 +220,10 @@ export async function buildAbsencesSvg(
 	} else {
 		legendLines.forEach((l, i) => {
 			const y = legendTop + i * LEGEND_ROW_H;
-			const fill = l.half ? `url(#grad-${l.type})` : ABSENCE_TYPE_COLORS[l.type];
+			const fill =
+				l.period === 'FULL' ? ABSENCE_TYPE_COLORS[l.type] : `url(#grad-${l.type}-${l.period === 'AM' ? 'am' : 'pm'})`;
 			parts.push(`<rect x="${MARGIN}" y="${y}" width="14" height="14" fill="${fill}" stroke="${GRID_LINE}"/>`);
-			const label = ABSENCE_TYPE_LABELS[l.type] + (l.half ? ' (demi-journée)' : '');
+			const label = ABSENCE_TYPE_LABELS[l.type] + (l.period === 'FULL' ? '' : ` (${ABSENCE_PERIOD_LABELS[l.period].toLowerCase()})`);
 			parts.push(`<text x="${MARGIN + 20}" y="${y + 11}" font-size="12" fill="${TEXT_DARK}" ${FONT}>${esc(label)}</text>`);
 		});
 	}

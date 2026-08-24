@@ -6,6 +6,7 @@ const load = loadUntyped as (event: unknown) => Promise<Record<string, any>>;
 import { makeWorkspace, addMember } from '$lib/server/services/test-helpers';
 import { fakeLocals, formRequest } from '$lib/server/test-helpers/http';
 import { setMemberFactice } from '$lib/server/services/accounts';
+import { listAbsencesForUser } from '$lib/server/services/absences';
 
 describe('absences +page.server load', () => {
 	it("redirige vers /register si l'utilisateur n'a pas d'espace courant", async () => {
@@ -42,6 +43,23 @@ describe('absences +page.server load', () => {
 
 		const asManager = await load({ locals: await fakeLocals(managerId), url } as never);
 		expect(asManager.rows.map((r: { id: string }) => r.id)).not.toContain(facticeId);
+	});
+
+	it("place la ligne du membre courant en premier dans `rows` (retour utilisateur : plus facile à retrouver)", async () => {
+		const { userId: ownerId, workspaceId } = await makeWorkspace('absself');
+		await addMember(workspaceId, 'USER', 'absself-alice');
+		const { userId: bobId } = await addMember(workspaceId, 'USER', 'absself-bob');
+		const url = new URL('http://localhost/absences');
+
+		const asOwner = await load({ locals: await fakeLocals(ownerId), url } as never);
+		expect(asOwner.rows[0].id).toBe(ownerId);
+
+		const asBob = await load({ locals: await fakeLocals(bobId), url } as never);
+		expect(asBob.rows[0].id).toBe(bobId);
+		// Le reste garde son ordre relatif (pas juste un tri qui mélange tout).
+		expect(asBob.rows.slice(1).map((r: { id: string }) => r.id)).toEqual(
+			asOwner.rows.filter((r: { id: string }) => r.id !== bobId).map((r: { id: string }) => r.id)
+		);
 	});
 });
 
@@ -96,6 +114,39 @@ describe('absences +page.server actions.create', () => {
 		} as never);
 
 		expect(result).toEqual({ ok: true });
+	});
+
+	it('une demi-journée sur plusieurs jours crée une ligne par jour, période conservée (retour utilisateur)', async () => {
+		const { userId, workspaceId } = await makeWorkspace('abscreate');
+		const locals = await fakeLocals(userId);
+
+		const result = await actions.create({
+			locals,
+			request: formRequest({ startDate: '2026-06-01', endDate: '2026-06-03', type: 'FORMATION', period: 'PM' })
+		} as never);
+
+		expect(result).toEqual({ ok: true });
+		const rows = await listAbsencesForUser(workspaceId, userId);
+		const created = rows.filter((r) => r.startDate >= '2026-06-01' && r.startDate <= '2026-06-03');
+		expect(created).toHaveLength(3);
+		expect(created.every((r) => r.period === 'PM' && r.startDate === r.endDate)).toBe(true);
+		expect(created.map((r) => r.startDate).sort()).toEqual(['2026-06-01', '2026-06-02', '2026-06-03']);
+	});
+
+	it('une journée complète sur plusieurs jours reste une seule ligne (comportement inchangé)', async () => {
+		const { userId, workspaceId } = await makeWorkspace('abscreate');
+		const locals = await fakeLocals(userId);
+
+		const result = await actions.create({
+			locals,
+			request: formRequest({ startDate: '2026-06-08', endDate: '2026-06-10', type: 'FORMATION', period: 'FULL' })
+		} as never);
+
+		expect(result).toEqual({ ok: true });
+		const rows = await listAbsencesForUser(workspaceId, userId);
+		const created = rows.filter((r) => r.startDate === '2026-06-08');
+		expect(created).toHaveLength(1);
+		expect(created[0].endDate).toBe('2026-06-10');
 	});
 });
 

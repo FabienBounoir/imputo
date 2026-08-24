@@ -5,11 +5,13 @@ import {
 	buildAbsenceGrid,
 	type AbsenceWithUser,
 	createAbsenceFor,
+	createHalfDayRangeFor,
 	updateAbsence,
 	validateAbsence,
 	deleteAbsence,
 	addExternalMember,
-	listExternalMembers
+	listExternalMembers,
+	listAbsencesForUser
 } from './absences';
 import { getWeek } from './imputation';
 import { listCategories, setCategoryArchived } from './params';
@@ -274,5 +276,32 @@ describe('sync absence → "Mon imputation"', () => {
 		// catégorie "Congé" par défaut reste la seule, non modifiée par cet appel raté.
 		const cats = await listCategories(workspaceId);
 		expect(cats.filter((c) => c.label === 'Congé')).toHaveLength(1);
+	});
+});
+
+describe('createHalfDayRangeFor', () => {
+	it('crée une ligne par jour de la plage, période conservée sur chacune', async () => {
+		const { userId, workspaceId } = await makeWorkspace('half-range');
+		const ids = await createHalfDayRangeFor(
+			workspaceId,
+			{ userId },
+			{ startDate: '2026-06-01', endDate: '2026-06-03', type: 'FORMATION', period: 'AM' }
+		);
+		expect(ids).toHaveLength(3);
+
+		const rows = await listAbsencesForUser(workspaceId, userId);
+		const created = rows.filter((r) => r.startDate >= '2026-06-01' && r.startDate <= '2026-06-03');
+		expect(created).toHaveLength(3);
+		expect(created.every((r) => r.period === 'AM' && r.startDate === r.endDate)).toBe(true);
+	});
+
+	it('rejette une plage trop longue sans rien créer (garde-fou contre une boucle DB démesurée)', async () => {
+		const { userId, workspaceId } = await makeWorkspace('half-range-cap');
+		await expect(
+			createHalfDayRangeFor(workspaceId, { userId }, { startDate: '2026-01-01', endDate: '2026-12-31', type: 'FORMATION', period: 'AM' })
+		).rejects.toThrow(/plage trop longue/i);
+
+		const rows = await listAbsencesForUser(workspaceId, userId);
+		expect(rows).toHaveLength(0);
 	});
 });

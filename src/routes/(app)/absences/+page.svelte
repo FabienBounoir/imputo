@@ -193,7 +193,12 @@
 		if (!cell) return '';
 		const color = ABSENCE_TYPE_COLORS[cell.type];
 		if (cell.period === 'FULL') return `background:${color};`;
-		return `background:linear-gradient(135deg, transparent 0 50%, ${color} 50% 100%);`;
+		// Dégradé diagonal (« / »), comme avant — matinée = couleur en haut, après-midi = couleur en
+		// bas, en inversant l'ordre des arrêts sur le même axe (135deg). Auparavant le même dégradé
+		// pour les deux, impossible à distinguer à l'œil (retour utilisateur).
+		return cell.period === 'AM'
+			? `background:linear-gradient(135deg, ${color} 0 50%, transparent 50% 100%);`
+			: `background:linear-gradient(135deg, transparent 0 50%, ${color} 50% 100%);`;
 	}
 </script>
 
@@ -203,7 +208,7 @@
 
 <div class="content abs">
 	{#if form?.error}<div class="flash error">{form.error}</div>{/if}
-	{#if form?.ok}<div class="flash ok">Mis à jour ✓</div>{/if}
+	{#if form?.ok}<div class="flash ok toast-tr" role="status">Mis à jour ✓</div>{/if}
 
 	<div class="declare-cta">
 		<button class="btn btn-primary" type="button" onclick={openDeclareModal}>+ Déclarer une absence</button>
@@ -303,7 +308,7 @@
 									? "Membre externe : ce n'est pas un vrai membre de l'équipe. Ses congés sont posés directement en « Congé validé », il n'y a pas de congé prévisionnel pour ces personnes."
 									: undefined}
 							>
-								<td class="name-col">{m.displayName}{#if m.external}<span class="ext-dot"></span>{/if}</td>
+								<td class="name-col" class:self-row={m.id === data.selfId}>{m.displayName}{#if m.external}<span class="ext-dot"></span>{/if}</td>
 								{#each data.days as d (d)}
 									{@const cell = data.grid[m.id]?.[d]}
 									{@const editable = !!cell && (m.external ? data.canManageOthers : m.id === data.selfId || data.canManageOthers)}
@@ -331,7 +336,8 @@
 					{#each ABSENCE_TYPES as t (t)}
 						<span class="legend-item"><span class="swatch" style="background:{ABSENCE_TYPE_COLORS[t]};"></span>{ABSENCE_TYPE_LABELS[t]}</span>
 					{/each}
-					<span class="legend-item legend-note"><span class="swatch swatch-half"></span>Demi-journée</span>
+					<span class="legend-item legend-note"><span class="swatch swatch-half-am"></span>{ABSENCE_PERIOD_LABELS.AM}</span>
+					<span class="legend-item legend-note"><span class="swatch swatch-half-pm"></span>{ABSENCE_PERIOD_LABELS.PM}</span>
 				</div>
 				<div class="legend-row">
 					<span class="legend-row-label">Vacances scolaires</span>
@@ -432,7 +438,7 @@
 				<input type="hidden" name="startDate" value={startDate} />
 				<input type="hidden" name="endDate" value={endDate} />
 				<input type="hidden" name="type" value={type} />
-				<input type="hidden" name="period" value={sameDay ? period : 'FULL'} />
+				<input type="hidden" name="period" value={period} />
 
 				{#if wizardSteps[wizardStep].key === 'subject'}
 					<div class="field">
@@ -462,9 +468,9 @@
 							{/each}
 						</select>
 					</div>
-					{#if sameDay}
-						<div class="field period-field">
-							<span>Durée</span>
+					<div class="field period-field">
+						<span>Durée</span>
+						{#if sameDay || !editingId}
 							<div class="period-pick">
 								{#each ABSENCE_PERIODS as p (p)}
 									<label class="period-opt" class:active={period === p}>
@@ -473,8 +479,18 @@
 									</label>
 								{/each}
 							</div>
-						</div>
-					{/if}
+							<!-- Sur plusieurs jours, la demi-journée n'a de sens que jour par jour (une ligne par
+							     jour côté serveur, cf. actions.create) — rendu explicite ici plutôt que de
+							     masquer silencieusement le choix comme avant (retour utilisateur : "pas intuitif").
+							     Uniquement à la création : modifier une absence existante reste bornée à SA ligne
+							     (actions.update ne peut pas l'éclater en plusieurs lignes après coup). -->
+							{#if !sameDay && period !== 'FULL'}
+								<p class="hint period-hint">S'appliquera à chaque jour de la plage ({ABSENCE_PERIOD_LABELS[period]?.toLowerCase() ?? ''} tous les jours).</p>
+							{/if}
+						{:else}
+							<p class="hint period-hint">Journée complète — la demi-journée n'est disponible que sur un seul jour en modification.</p>
+						{/if}
+					</div>
 				{/if}
 
 				<div class="wizard-actions">
@@ -774,6 +790,9 @@
 	.period-opt input {
 		accent-color: var(--accent);
 	}
+	.period-hint {
+		margin: 0;
+	}
 
 	.ext-add {
 		display: flex;
@@ -1037,6 +1056,14 @@
 	.grid tr.external-row td.name-col {
 		background: color-mix(in srgb, var(--surface) 88%, rgb(148 163 184) 12%);
 	}
+	/* Ma propre ligne : petit surlignage or sur le nom, pour la repérer d'un coup d'œil (retour
+	   utilisateur) — même or que la pilule "Congé prévisionnel" (ABSENCE_TYPE_COLORS), fond opaque
+	   pour la même raison que ci-dessus (sticky au-dessus des colonnes de jours qui défilent). */
+	.grid td.name-col.self-row {
+		background: color-mix(in srgb, var(--surface) 82%, #ffc000 18%);
+		font-weight: 700;
+		color: color-mix(in srgb, #ffc000 60%, var(--text));
+	}
 	/* Survol : bascule en bleu + le title du <tr> explique que ce n'est pas un vrai membre. */
 	.grid tr.external-row:hover {
 		cursor: help;
@@ -1090,7 +1117,10 @@
 	.legend-note {
 		color: var(--text-mute);
 	}
-	.swatch-half {
+	.swatch-half-am {
+		background: linear-gradient(135deg, var(--text-mute) 0 50%, transparent 50% 100%);
+	}
+	.swatch-half-pm {
 		background: linear-gradient(135deg, transparent 0 50%, var(--text-mute) 50% 100%);
 	}
 
@@ -1248,6 +1278,28 @@
 
 	.declare-cta {
 		margin-bottom: 18px;
+	}
+
+	/* Toast générique haut-droite (même motif que admin/+page.svelte) : flottant plutôt qu'en tête de
+	   page, pour ne pas décaler le reste au succès. Fixe, reste visible quel que soit le scroll. */
+	.toast-tr {
+		position: fixed;
+		top: 20px;
+		right: 20px;
+		z-index: 50;
+		max-width: min(360px, calc(100vw - 40px));
+		box-shadow: var(--shadow-lg, 0 12px 30px rgba(0, 0, 0, 0.25));
+		animation: toast-tr-in 0.15s ease-out;
+	}
+	@keyframes toast-tr-in {
+		from {
+			opacity: 0;
+			transform: translateY(-6px);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0);
+		}
 	}
 
 	.wizard-modal {

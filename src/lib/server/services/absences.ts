@@ -227,42 +227,82 @@ export async function countPendingAbsences(workspaceId: string): Promise<number>
 	return row?.count ?? 0;
 }
 
+/** Un membre externe n'a personne pour valider son congé en son nom : on le pose directement validé. */
+function assertCreatable(startDate: string, endDate: string, subject: AbsenceSubject, type: AbsenceType) {
+	if (parseISODate(startDate) > parseISODate(endDate))
+		throw new Error('La date de fin doit être après la date de début.');
+	if ('externalMemberId' in subject && type === 'CONGE_PREVISIONNEL')
+		throw new Error("Un membre externe ne peut avoir qu'un congé validé (pas de congé prévisionnel).");
+}
+
+/** Cœur insert + sync, partagé par createAbsenceFor (transaction dédiée) et createHalfDayRangeFor
+ * (une transaction commune à tout le lot, cf. plus bas) — `tx` doit toujours venir d'un `db.transaction`. */
+async function insertAbsence(
+	tx: Tx,
+	workspaceId: string,
+	subject: AbsenceSubject,
+	input: { startDate: string; endDate: string; type: AbsenceType; period: AbsencePeriod }
+) {
+	// La demi-journée n'a de sens que pour une plage d'un seul jour.
+	const period = input.startDate === input.endDate ? input.period : 'FULL';
+	const [inserted] = await tx
+		.insert(absence)
+		.values({
+			workspaceId,
+			userId: 'userId' in subject ? subject.userId : null,
+			externalMemberId: 'externalMemberId' in subject ? subject.externalMemberId : null,
+			startDate: input.startDate,
+			endDate: input.endDate,
+			type: input.type,
+			period
+		})
+		.returning({
+			id: absence.id,
+			userId: absence.userId,
+			startDate: absence.startDate,
+			endDate: absence.endDate,
+			type: absence.type,
+			period: absence.period
+		});
+	await syncAbsenceEntries(tx, workspaceId, inserted);
+	return inserted.id;
+}
+
 export async function createAbsenceFor(
 	workspaceId: string,
 	subject: AbsenceSubject,
 	input: { startDate: string; endDate: string; type: AbsenceType; period: AbsencePeriod }
 ) {
-	if (parseISODate(input.startDate) > parseISODate(input.endDate))
-		throw new Error('La date de fin doit être après la date de début.');
-	// Un membre externe n'a personne pour valider son congé en son nom : on le pose directement validé.
-	if ('externalMemberId' in subject && input.type === 'CONGE_PREVISIONNEL')
-		throw new Error("Un membre externe ne peut avoir qu'un congé validé (pas de congé prévisionnel).");
-	// La demi-journée n'a de sens que pour une plage d'un seul jour.
-	const period = input.startDate === input.endDate ? input.period : 'FULL';
+	assertCreatable(input.startDate, input.endDate, subject, input.type);
 	// Transaction : si le sync échoue (cf. syncAbsenceEntries), l'absence ne doit pas rester
 	// commitée sans ses imputations — sinon elle apparaîtrait créée alors que l'appel a échoué.
+	return db.transaction((tx) => insertAbsence(tx, workspaceId, subject, input));
+}
+
+/** Plage maximale pour une demi-journée répétée jour par jour (cf. createHalfDayRangeFor) — au-delà,
+ * la boucle ferait trop d'allers-retours DB séquentiels pour un cas d'usage réaliste. */
+const MAX_HALF_DAY_RANGE_DAYS = 60;
+
+/**
+ * Demi-journée appliquée à chaque jour d'une plage (retour utilisateur : "faut faire 1/1" sinon) —
+ * une ligne par jour, mais dans UNE seule transaction (tout ou rien), contrairement à N appels
+ * séparés de createAbsenceFor qui laisseraient un lot partiellement créé si l'un d'eux échoue.
+ */
+export async function createHalfDayRangeFor(
+	workspaceId: string,
+	subject: AbsenceSubject,
+	input: { startDate: string; endDate: string; type: AbsenceType; period: AbsencePeriod }
+): Promise<string[]> {
+	assertCreatable(input.startDate, input.endDate, subject, input.type);
+	const days: string[] = [];
+	for (let d = parseISODate(input.startDate); toISODate(d) <= input.endDate; d = addDays(d, 1)) days.push(toISODate(d));
+	if (days.length > MAX_HALF_DAY_RANGE_DAYS)
+		throw new Error(`Plage trop longue pour une demi-journée (max ${MAX_HALF_DAY_RANGE_DAYS} jours).`);
 	return db.transaction(async (tx) => {
-		const [inserted] = await tx
-			.insert(absence)
-			.values({
-				workspaceId,
-				userId: 'userId' in subject ? subject.userId : null,
-				externalMemberId: 'externalMemberId' in subject ? subject.externalMemberId : null,
-				startDate: input.startDate,
-				endDate: input.endDate,
-				type: input.type,
-				period
-			})
-			.returning({
-				id: absence.id,
-				userId: absence.userId,
-				startDate: absence.startDate,
-				endDate: absence.endDate,
-				type: absence.type,
-				period: absence.period
-			});
-		await syncAbsenceEntries(tx, workspaceId, inserted);
-		return inserted.id;
+		const ids: string[] = [];
+		for (const day of days)
+			ids.push(await insertAbsence(tx, workspaceId, subject, { startDate: day, endDate: day, type: input.type, period: input.period }));
+		return ids;
 	});
 }
 

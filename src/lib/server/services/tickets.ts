@@ -647,7 +647,8 @@ export async function getRefData(workspaceId: string, sortActivitiesAlpha = fals
 			.select({ id: user.id, displayName: user.displayName, factice: membership.factice })
 			.from(membership)
 			.innerJoin(user, eq(membership.userId, user.id))
-			.where(and(eq(membership.workspaceId, workspaceId), eq(membership.active, true))),
+			.where(and(eq(membership.workspaceId, workspaceId), eq(membership.active, true)))
+			.orderBy(user.displayName),
 		db
 			.select({ id: ticketGroup.id, label: ticketGroup.label })
 			.from(ticketGroup)
