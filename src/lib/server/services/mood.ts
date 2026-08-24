@@ -1,5 +1,5 @@
-import { and, count, eq } from 'drizzle-orm';
-import { db, workspace, moodVote, membership, type MoodPeriodKind } from '$lib/server/db';
+import { and, count, eq, isNotNull } from 'drizzle-orm';
+import { db, workspace, moodVote, membership, user, type MoodPeriodKind } from '$lib/server/db';
 import { previousMoodPeriodStart } from '$lib/utils/date';
 
 export type { MoodPeriodKind };
@@ -18,7 +18,15 @@ export async function getPeriodParticipation(
 		db
 			.select({ n: count() })
 			.from(membership)
-			.where(and(eq(membership.workspaceId, workspaceId), eq(membership.active, true)))
+			.innerJoin(user, eq(membership.userId, user.id))
+			.where(
+				and(
+					eq(membership.workspaceId, workspaceId),
+					eq(membership.active, true),
+					eq(user.active, true),
+					isNotNull(user.passwordHash)
+				)
+			)
 	]);
 	return { voted: votedRows[0]?.n ?? 0, total: totalRows[0]?.n ?? 0 };
 }

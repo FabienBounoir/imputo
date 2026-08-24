@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { eq } from 'drizzle-orm';
+import { db, user } from '$lib/server/db';
 import {
 	submitVote,
 	getMyVote,
@@ -91,6 +93,9 @@ describe('listMoodResults / getPeriodParticipation', () => {
 	it('agrège les votes par plage sans jamais exposer userId', async () => {
 		const { workspaceId, userId: u1 } = await makeWorkspace();
 		const { userId: u2 } = await addMember(workspaceId, 'USER', 'voter2');
+		// addMember() invite sans finaliser (passwordHash null) : ce test veut un membre réellement
+		// actif, pas un member en attente — cf. le test dédié plus bas pour ce cas-là.
+		await db.update(user).set({ passwordHash: 'x' }).where(eq(user.id, u2));
 
 		await submitVote(workspaceId, u1, PERIOD, PERIOD_END, 4, 'top');
 		await submitVote(workspaceId, u2, PERIOD, PERIOD_END, 2, null);
@@ -104,5 +109,14 @@ describe('listMoodResults / getPeriodParticipation', () => {
 		expect(period?.distribution).toEqual({ 1: 0, 2: 1, 3: 0, 4: 1, 5: 0 });
 		expect(period?.messages).toEqual(['top']);
 		expect(Object.keys(period ?? {})).not.toContain('userId');
+	});
+
+	it('exclut les membres en attente (invitation non finalisée) du total', async () => {
+		const { workspaceId, userId: u1 } = await makeWorkspace();
+		await addMember(workspaceId, 'USER', 'pending1'); // jamais activé, passwordHash reste null
+
+		await submitVote(workspaceId, u1, PERIOD, PERIOD_END, 4, null);
+
+		expect(await getPeriodParticipation(workspaceId, PERIOD)).toEqual({ voted: 1, total: 1 });
 	});
 });

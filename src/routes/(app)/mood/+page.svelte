@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { scale } from 'svelte/transition';
+	import type { SubmitFunction } from '@sveltejs/kit';
 
 	let { data, form } = $props();
 
@@ -23,6 +24,15 @@
 		score = data.myVote?.score ?? 0;
 		message = data.myVote?.message ?? '';
 	}
+
+	// use:enhance reset le <form> natif par défaut après un succès : le texte de la textarea
+	// disparaît visuellement (le DOM est reset) sans que `message` (le state Svelte) le soit,
+	// et sans repasser en mode flouté. On désactive ce reset et on flout nous-mêmes, comme au
+	// chargement d'une page où on a déjà voté.
+	const handleVote: SubmitFunction = () => async ({ result, update }) => {
+		await update({ reset: false });
+		if (result.type === 'success') revealed = false;
+	};
 
 	const REACTIONS: Record<number, string> = {
 		1: 'On est là si besoin 💙',
@@ -58,7 +68,7 @@
 		{#if form?.ok}<div class="flash ok">Vote enregistré ✓</div>{/if}
 
 		<div class="reveal-wrap">
-			<form method="POST" use:enhance class:blurred={!revealed} inert={!revealed}>
+			<form method="POST" use:enhance={handleVote} class:blurred={!revealed} inert={!revealed}>
 				<div class="emoji-row">
 					{#each EMOJIS as e (e.score)}
 						<button
