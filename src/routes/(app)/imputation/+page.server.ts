@@ -110,8 +110,8 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 		capacity: num(membership?.capacityPerDay ?? '1'),
 		imputationStep: num(ws.imputationStep),
 		isAdmin,
-		// Suppression de ticket (TicketEditModal) réservée au créateur de l'espace (super admin).
-		isOwner: user.id === ws.createdByUserId,
+		// Édition clé / suppression de ticket (TicketEditModal) : créateur de l'espace (super admin) ou ADMIN.
+		isOwner: user.id === ws.createdByUserId || isAdmin,
 		canViewOthers,
 		members: canViewOthers ? visibleMembers : [],
 		selfId: user.id,

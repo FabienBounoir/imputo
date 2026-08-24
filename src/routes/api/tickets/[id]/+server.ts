@@ -11,7 +11,7 @@ export const GET: RequestHandler = async ({ locals, params }) => {
 	const ticket = await getTicketById(ws.workspaceId, params.id, ws.testPhase, isManagerOrAdmin(locals.role));
 	if (!ticket) error(404, 'Ticket introuvable.');
 	// imputationCount : sert uniquement à la modal d'édition pour savoir si la suppression (réservée
-	// au créateur de l'espace) doit être bloquée — cf. TicketEditModal.svelte.
+	// au créateur de l'espace ou à un ADMIN) doit être bloquée — cf. TicketEditModal.svelte.
 	const imputationCount = await countTicketImputations(ws.workspaceId, params.id);
 	return json({ ...ticket, imputationCount });
 };

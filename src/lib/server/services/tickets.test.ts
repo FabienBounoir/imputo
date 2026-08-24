@@ -103,6 +103,26 @@ describe('updateTicketField — permissions par rôle', () => {
 			'Champ non éditable.'
 		);
 	});
+
+	it('un ADMIN non créateur de l’espace peut éditer la clé (isOwner=false)', async () => {
+		const { workspaceId } = await makeWorkspace();
+		const { userId: adminId } = await addMember(workspaceId, 'ADMIN');
+		const t = await createTicket(workspaceId, { key: 'T-8', title: 'x' });
+
+		await updateTicketField(workspaceId, t.id, 'key', 'T-8-BIS', 'ADMIN', adminId);
+		const [updated] = await listTickets(workspaceId).then((rows) => rows.filter((r) => r.id === t.id));
+		expect(updated.key).toBe('T-8-BIS');
+	});
+
+	it('un MANAGER ne peut PAS éditer la clé', async () => {
+		const { workspaceId } = await makeWorkspace();
+		const { userId: managerId } = await addMember(workspaceId, 'MANAGER');
+		const t = await createTicket(workspaceId, { key: 'T-9', title: 'x' });
+
+		await expect(updateTicketField(workspaceId, t.id, 'key', 'T-9-BIS', 'MANAGER', managerId)).rejects.toThrow(
+			'Champ non éditable.'
+		);
+	});
 });
 
 describe('canEditActivityField — budget par activité (ADMIN strict)', () => {

@@ -143,8 +143,8 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		/** Chiffrage global (estimations, prépa) : lecture seule pour un USER standard. */
 		canEditEstimation: isManagerOrAdmin(locals.role),
 		selfId: locals.user!.id,
-		// Suppression de ticket réservée au créateur de l'espace (super admin), cf. deleteTicket().
-		isOwner: locals.user!.id === ws.createdByUserId,
+		// Édition de la clé / suppression de ticket : créateur de l'espace (super admin) ou ADMIN, cf. deleteTicket().
+		isOwner: locals.user!.id === ws.createdByUserId || locals.role === 'ADMIN',
 		compactTicketActivity: await getCompactTicketActivityPref(locals.user!.id)
 	};
 };
@@ -206,7 +206,7 @@ export const actions: Actions = {
 				value,
 				locals.role,
 				locals.user?.id ?? null,
-				locals.user!.id === ws.createdByUserId
+				locals.user!.id === ws.createdByUserId || locals.role === 'ADMIN'
 			);
 		} catch (e) {
 			return fail(400, {
@@ -253,12 +253,13 @@ export const actions: Actions = {
 		return { ok: true };
 	},
 
-	// Réservé au créateur de l'espace (super admin) — la modal ne propose le bouton qu'à lui, mais
-	// on revérifie ici, seul point de passage réel de la suppression.
+	// Réservé au créateur de l'espace (super admin) et aux ADMIN — la modal ne propose le bouton
+	// qu'à eux, mais on revérifie ici, seul point de passage réel de la suppression.
 	delete: async ({ request, locals }) => {
 		const ws = locals.workspace;
 		if (!ws || !locals.user) return fail(401, { error: 'Non authentifié.' });
-		if (locals.user.id !== ws.createdByUserId) return fail(403, { error: 'Réservé au créateur de l’espace.' });
+		if (locals.user.id !== ws.createdByUserId && locals.role !== 'ADMIN')
+			return fail(403, { error: 'Réservé au créateur de l’espace ou à un admin.' });
 		const f = await request.formData();
 		const ticketId = String(f.get('ticketId') ?? '');
 		if (!ticketId) return fail(400, { error: 'Données invalides.' });

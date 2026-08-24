@@ -36,7 +36,7 @@
 		testPhase: boolean;
 		canEditEstimation: boolean;
 		isAdmin: boolean;
-		/** Créateur de l'espace (super admin) — seul profil autorisé à supprimer un ticket. */
+		/** Créateur de l'espace (super admin) ou ADMIN — seuls profils autorisés à éditer la clé / supprimer un ticket. */
 		isOwner: boolean;
 		onClose: () => void;
 		/** Appelé après chaque sauvegarde — permet à l'appelant de patcher son propre affichage

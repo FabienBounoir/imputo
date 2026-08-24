@@ -355,7 +355,7 @@
 		actionError = '';
 	});
 
-	// Suppression réservée au créateur de l'espace (super admin, cf. data.isOwner). `rows` n'a pas le
+	// Suppression réservée au créateur de l'espace (super admin) ou ADMIN (cf. data.isOwner). `rows` n'a pas le
 	// nombre d'imputations liées (pas ajouté à listTicketsPage pour ne pas alourdir le chargement de
 	// toute la liste) — on le vérifie à la demande, seulement au moment de supprimer.
 	async function confirmDeleteTicket(row: Row, { cancel }: { cancel: () => void }) {

@@ -386,7 +386,7 @@ export async function countTicketImputations(workspaceId: string, ticketId: stri
 	return n;
 }
 
-/** Hard delete — réservé au créateur de l'espace (super admin), et bloqué si des imputations sont liées. */
+/** Hard delete — réservé au créateur de l'espace (super admin) et aux ADMIN, et bloqué si des imputations sont liées. */
 export async function deleteTicket(workspaceId: string, ticketId: string) {
 	const usage = await countTicketImputations(workspaceId, ticketId);
 	if (usage > 0) throw new Error('Des imputations sont liées à ce ticket : suppression impossible.');
@@ -688,7 +688,7 @@ export const ADMIN_ONLY_FIELDS = new Set(['estimationPrev', 'enveloppeTotale']);
 const NUMERIC_FIELDS = new Set([...MANAGER_ONLY_FIELDS, ...ADMIN_ONLY_FIELDS]);
 /**
  * La clé (ex. "SBX-42") identifie le ticket partout (imputation, liens, historique) — réservée au
- * créateur de l'espace (super admin), pas juste ADMIN, comme la suppression.
+ * créateur de l'espace (super admin) et aux ADMIN, comme la suppression.
  */
 const OWNER_ONLY_FIELDS = new Set(['key']);
 
@@ -705,7 +705,7 @@ export async function updateTicketField(
 	const allowedFields = new Set(EDITABLE_FIELDS);
 	if (isManagerOrAdmin(role))
 		for (const f of [...MANAGER_ONLY_FIELDS, ...ADMIN_ONLY_FIELDS]) allowedFields.add(f);
-	if (isOwner) for (const f of OWNER_ONLY_FIELDS) allowedFields.add(f);
+	if (isOwner || role === 'ADMIN') for (const f of OWNER_ONLY_FIELDS) allowedFields.add(f);
 	const numericFields = NUMERIC_FIELDS;
 	if (!allowedFields.has(field)) throw new Error('Champ non éditable.');
 	let value: string | null = rawValue === '' ? null : rawValue;
