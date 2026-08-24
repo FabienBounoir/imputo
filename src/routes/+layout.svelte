@@ -5,6 +5,7 @@
 	import { hslToHex } from '$lib/color';
 	import { beep } from '$lib/sound';
 	import { trackKonamiKey, initKonami } from '$lib/konami.svelte';
+	import { accentSpeedState, initAccentSpeed } from '$lib/accentSpeed.svelte';
 	import { Confetti } from 'svelte-confetti';
 
 	let { children, data } = $props();
@@ -37,18 +38,20 @@
 		const color = mode === 'CUSTOM' ? u!.accentColor : ws?.accentColor;
 
 		if (mode === 'RGB') {
+			const speed = accentSpeedState.speed;
 			let hue = 0;
 			const id = setInterval(() => {
 				hue = (hue + 1) % 360;
 				document.documentElement.style.setProperty('--accent', hslToHex(hue, 70, 50));
-			}, 120);
+			}, 120 / speed);
 			return () => clearInterval(id);
 		}
 		if (mode === 'DISCO') {
 			// Saut direct (pas d'incrément progressif comme RGB) : c'est ça qui donne l'effet "sans transition".
+			const speed = accentSpeedState.speed;
 			const id = setInterval(() => {
 				document.documentElement.style.setProperty('--accent', hslToHex(Math.random() * 360, 70, 50));
-			}, 400);
+			}, 400 / speed);
 			return () => clearInterval(id);
 		}
 		if (color) {
@@ -130,6 +133,7 @@
 
 	$effect(() => {
 		initKonami();
+		initAccentSpeed();
 		window.addEventListener('keydown', handleKonamiKey);
 		return () => window.removeEventListener('keydown', handleKonamiKey);
 	});

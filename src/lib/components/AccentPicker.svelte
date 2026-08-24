@@ -1,10 +1,33 @@
 <script lang="ts">
+	import { accentSpeedState, bumpAccentSpeed } from '$lib/accentSpeed.svelte';
+
 	let {
 		color = $bindable(),
 		rgbMode = $bindable(),
 		discoMode = $bindable(),
 		presets
 	}: { color: string; rgbMode: boolean; discoMode: boolean; presets: string[] } = $props();
+
+	const animated = $derived(rgbMode || discoMode);
+
+	// Ctrl/Cmd + ↑/↓ pour accélérer/ralentir le défilement RGB/Disco. Uniquement tant que le
+	// nuancier est monté et qu'un des deux modes est actif, sinon on laisse le raccourci au
+	// navigateur (rien à accélérer sur une couleur fixe).
+	function handleKey(e: KeyboardEvent) {
+		if (!animated || !(e.ctrlKey || e.metaKey)) return;
+		if (e.key === 'ArrowUp') {
+			e.preventDefault();
+			bumpAccentSpeed(0.25);
+		} else if (e.key === 'ArrowDown') {
+			e.preventDefault();
+			bumpAccentSpeed(-0.25);
+		}
+	}
+
+	$effect(() => {
+		window.addEventListener('keydown', handleKey);
+		return () => window.removeEventListener('keydown', handleKey);
+	});
 </script>
 
 <div class="swatches">
@@ -45,6 +68,9 @@
 		title="Disco (couleur aléatoire sans transition)"
 	>🪩</button>
 	<input class="hex" type="color" bind:value={color} disabled={rgbMode || discoMode} aria-label="Couleur personnalisée" />
+	{#if animated}
+		<span class="speed" title="Ctrl/Cmd + ↑ ↓ pour accélérer/ralentir">⚡ {accentSpeedState.speed}×</span>
+	{/if}
 </div>
 
 <style>
@@ -88,5 +114,12 @@
 		background: var(--surface-2);
 		border: 1px solid var(--border);
 		font-size: 15px;
+	}
+	.speed {
+		font-size: 12px;
+		font-weight: 600;
+		color: var(--text-mute);
+		white-space: nowrap;
+		cursor: help;
 	}
 </style>
