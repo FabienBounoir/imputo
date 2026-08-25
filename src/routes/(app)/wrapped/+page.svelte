@@ -273,7 +273,7 @@
 						});
 					});
 				},
-				// Orbite autour du centre, comme la spirale/le duo de la carte.
+				// Orbite autour du centre, comme la spirale de l'écran volume.
 				orbit: (slide) => {
 					spawn(slide, 22).forEach((p) => {
 						p.style.left = '50%';
@@ -302,6 +302,52 @@
 							delay: gsap.utils.random(0, 3)
 						});
 					});
+				},
+				// Balancement doux de gauche à droite, façon deux silhouettes qui bougent ensemble.
+				sway: (slide) => {
+					spawn(slide, 26).forEach((p) => {
+						p.style.left = gsap.utils.random(8, 92) + '%';
+						p.style.top = gsap.utils.random(10, 95) + '%';
+						const amp = gsap.utils.random(10, 28);
+						const proxy = { a: gsap.utils.random(0, 360) };
+						const applySway = () => {
+							const rad = (proxy.a * Math.PI) / 180;
+							p.style.transform = `translate(${Math.sin(rad) * amp}px, ${-Math.abs(Math.cos(rad)) * amp * 0.5}px)`;
+						};
+						applySway();
+						gsap.to(proxy, {
+							a: '+=360',
+							duration: () => gsap.utils.random(5, 9),
+							repeat: -1,
+							ease: 'none',
+							onUpdate: applySway
+						});
+						gsap.to(p, {
+							opacity: () => gsap.utils.random(0.25, 0.85),
+							duration: () => gsap.utils.random(1.5, 3),
+							repeat: -1,
+							yoyo: true,
+							ease: 'sine.inOut',
+							delay: gsap.utils.random(0, 3)
+						});
+					});
+				},
+				// Jaillissent du bas et montent en grand, façon feu d'artifice pour le récap final.
+				fountain: (slide) => {
+					spawn(slide, 34).forEach((p) => {
+						p.style.left = gsap.utils.random(20, 80) + '%';
+						p.style.top = '95%';
+						gsap.to(p, {
+							y: '-=' + gsap.utils.random(240, 420),
+							x: '+=' + gsap.utils.random(-60, 60),
+							opacity: () => gsap.utils.random(0.5, 1),
+							scale: () => gsap.utils.random(0.6, 1.4),
+							duration: () => gsap.utils.random(3, 5.5),
+							repeat: -1,
+							ease: 'power1.out',
+							delay: gsap.utils.random(0, 5)
+						});
+					});
 				}
 			};
 
@@ -327,15 +373,28 @@
 			/* stockage indisponible (navigation privée…) — on repart de l'écran 0 */
 		}
 
+		// Un chapitre reste un simple point tant que son écran n'a pas été atteint — l'icône
+		// (qui trahit le sujet de la stat) n'apparaît qu'à l'arrivée dessus, pour garder un peu de
+		// suspense. Une fois révélée, elle le reste (on ne re-cache jamais un chapitre déjà vu).
 		slides.forEach((slide, i) => {
 			const b = document.createElement('button');
 			b.className = 'chapter';
 			b.setAttribute('aria-label', `Aller à l'écran ${i + 1}`);
-			b.innerHTML = `<svg><use href="#${slide.dataset.icon}" /></svg>`;
+			b.innerHTML = `<span class="chapter-dot"></span><svg class="chapter-icon"><use href="#${slide.dataset.icon}" /></svg>`;
 			b.addEventListener('click', () => goTo(i));
 			chaptersWrap.appendChild(b);
 		});
 		const chapters = Array.from(chaptersWrap.children) as HTMLElement[];
+
+		function revealChapter(i: number, animate: boolean) {
+			const chapter = chapters[i];
+			if (!chapter || chapter.classList.contains('revealed')) return;
+			chapter.classList.add('revealed');
+			if (animate && !reduceMotion) {
+				const icon = chapter.querySelector('.chapter-icon');
+				gsap.fromTo(icon, { scale: 0.3, rotate: -25, opacity: 0 }, { scale: 1, rotate: 0, opacity: 1, duration: 0.5, ease: 'back.out(2.5)' });
+			}
+		}
 
 		function animateNumber(el: HTMLElement) {
 			const target = parseFloat(el.dataset.target ?? '0');
@@ -392,6 +451,7 @@
 			if (!reduceMotion) gsap.to(reel, { x, duration: 0.7, ease: 'power3.inOut' });
 			else reel.style.transform = `translateX(${x}px)`;
 			chapters.forEach((c, ci) => c.classList.toggle('active', ci === index));
+			revealChapter(index, true);
 			prevBtn.disabled = index === 0;
 			nextBtn.disabled = index === slides.length - 1;
 			const active = slides[index];
@@ -433,6 +493,9 @@
 			{ passive: true }
 		);
 
+		// Restauration d'une session précédente (index sauvegardé > 0) : les chapitres déjà vus se
+		// révèlent d'un coup, sans l'animation — celle-ci est réservée aux nouvelles découvertes.
+		for (let k = 0; k < index; k++) revealChapter(k, false);
 		place();
 		goTo(index);
 
@@ -809,7 +872,7 @@
 				{/if}
 
 				{#if w.duo}
-					<section class="slide" data-accent="violet" data-flip="1" data-icon="i-people" data-particles="orbit">
+					<section class="slide" data-accent="violet" data-flip="1" data-icon="i-people" data-particles="sway">
 						<div class="glow"></div>
 						<div class="content">
 							<div class="stat">
@@ -823,7 +886,7 @@
 					</section>
 				{/if}
 
-				<section class="slide" data-accent="green" data-layout="summary" data-icon="i-flag" data-particles="confetti">
+				<section class="slide" data-accent="green" data-layout="summary" data-icon="i-flag" data-particles="fountain">
 					<div class="glow"></div>
 					<div class="content">
 						<div class="pass" id="passCard">
@@ -994,9 +1057,34 @@
 			background 0.3s,
 			transform 0.3s;
 	}
-	.chapters :global(.chapter svg) {
+	/* Empilées dans la même cellule (grid-area partagée) : le point disparaît, l'icône apparaît —
+	   jamais les deux en même temps. Tant qu'un chapitre n'est pas "revealed", seul le point se
+	   voit : on ne sait pas encore ce que l'écran à venir raconte. */
+	.chapters :global(.chapter-dot) {
+		grid-area: 1 / 1;
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: currentColor;
+		opacity: 0.6;
+		transition: opacity 0.3s;
+	}
+	.chapters :global(.chapter-icon) {
+		grid-area: 1 / 1;
 		width: 15px;
 		height: 15px;
+		opacity: 0;
+		transform: scale(0.3);
+		transition:
+			opacity 0.3s,
+			transform 0.3s;
+	}
+	.chapters :global(.chapter.revealed .chapter-dot) {
+		opacity: 0;
+	}
+	.chapters :global(.chapter.revealed .chapter-icon) {
+		opacity: 1;
+		transform: scale(1);
 	}
 	.chapters :global(.chapter.active) {
 		color: var(--accent);
@@ -1647,7 +1735,7 @@
 			width: 24px;
 			height: 24px;
 		}
-		.chapters :global(.chapter svg) {
+		.chapters :global(.chapter-icon) {
 			width: 12px;
 			height: 12px;
 		}
