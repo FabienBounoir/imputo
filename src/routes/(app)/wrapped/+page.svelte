@@ -168,24 +168,146 @@
 			g.insertAdjacentHTML('afterend', '<div class="sweep"></div>');
 		});
 
+		// Particules de fond — un style de mouvement différent par écran (data-particles), pas
+		// juste le même flottement partout. La forme (cercle/carré) reste commune : la variété
+		// vient du mouvement, pas d'un nouveau jeu de CSS par style.
 		if (!reduceMotion) {
-			document.querySelectorAll<HTMLElement>('.slide').forEach((slide) => {
-				for (let s = 0; s < 9; s++) {
-					const spark = document.createElement('span');
-					spark.className = 'spark';
-					spark.style.left = gsap.utils.random(6, 94) + '%';
-					spark.style.top = gsap.utils.random(10, 90) + '%';
-					slide.appendChild(spark);
-					gsap.to(spark, {
-						y: '-=' + gsap.utils.random(20, 50),
-						opacity: () => gsap.utils.random(0.25, 0.7),
-						duration: () => gsap.utils.random(3, 6),
-						repeat: -1,
-						yoyo: true,
-						ease: 'sine.inOut',
-						delay: gsap.utils.random(0, 3)
+			function spawn(slide: HTMLElement, count: number, square = false) {
+				const pts: HTMLElement[] = [];
+				for (let i = 0; i < count; i++) {
+					const p = document.createElement('span');
+					p.className = square ? 'spark square' : 'spark';
+					const size = gsap.utils.random(2, 5);
+					p.style.width = size + 'px';
+					p.style.height = size + 'px';
+					slide.appendChild(p);
+					pts.push(p);
+				}
+				return pts;
+			}
+
+			const particleStyles: Record<string, (slide: HTMLElement) => void> = {
+				// Arrivée calme : ça monte doucement et ça respire.
+				drift: (slide) => {
+					spawn(slide, 34).forEach((p) => {
+						p.style.left = gsap.utils.random(4, 96) + '%';
+						p.style.top = gsap.utils.random(6, 96) + '%';
+						gsap.to(p, {
+							y: '-=' + gsap.utils.random(30, 70),
+							x: '+=' + gsap.utils.random(-15, 15),
+							opacity: () => gsap.utils.random(0.2, 0.75),
+							scale: () => gsap.utils.random(0.6, 1.5),
+							duration: () => gsap.utils.random(4, 8),
+							repeat: -1,
+							yoyo: true,
+							ease: 'sine.inOut',
+							delay: gsap.utils.random(0, 4)
+						});
+					});
+				},
+				// Confettis de ticket déchiré : tombent du haut en tournant.
+				confetti: (slide) => {
+					spawn(slide, 46, true).forEach((p) => {
+						p.style.left = gsap.utils.random(0, 100) + '%';
+						p.style.top = gsap.utils.random(-15, 15) + '%';
+						gsap.set(p, { rotation: gsap.utils.random(0, 360) });
+						gsap.to(p, {
+							y: '+=' + gsap.utils.random(320, 560),
+							x: '+=' + gsap.utils.random(-40, 40),
+							rotation: '+=' + gsap.utils.random(180, 540),
+							opacity: () => gsap.utils.random(0.35, 1),
+							duration: () => gsap.utils.random(4, 8),
+							repeat: -1,
+							ease: 'none',
+							delay: gsap.utils.random(0, 6)
+						});
+					});
+				},
+				// Braises qui montent vite depuis le bas, façon étincelles de feu.
+				ember: (slide) => {
+					spawn(slide, 42).forEach((p) => {
+						p.style.left = gsap.utils.random(0, 100) + '%';
+						p.style.top = gsap.utils.random(45, 100) + '%';
+						gsap.to(p, {
+							y: '-=' + gsap.utils.random(90, 180),
+							x: '+=' + gsap.utils.random(-25, 25),
+							opacity: () => gsap.utils.random(0.3, 0.95),
+							scale: () => gsap.utils.random(0.5, 1.3),
+							duration: () => gsap.utils.random(1.8, 3.6),
+							repeat: -1,
+							ease: 'power1.out',
+							delay: gsap.utils.random(0, 3.5)
+						});
+					});
+				},
+				// Bulles qui flottent lentement, un peu de tangage.
+				bubble: (slide) => {
+					spawn(slide, 30).forEach((p) => {
+						p.style.left = gsap.utils.random(4, 96) + '%';
+						p.style.top = gsap.utils.random(20, 100) + '%';
+						gsap.to(p, {
+							y: '-=' + gsap.utils.random(60, 130),
+							x: '+=' + gsap.utils.random(-20, 20),
+							opacity: () => gsap.utils.random(0.2, 0.7),
+							scale: () => gsap.utils.random(0.7, 1.8),
+							duration: () => gsap.utils.random(5, 9),
+							repeat: -1,
+							ease: 'sine.inOut',
+							delay: gsap.utils.random(0, 5)
+						});
+					});
+				},
+				// Points fixes qui clignotent, façon radar/scanner.
+				twinkle: (slide) => {
+					spawn(slide, 30).forEach((p) => {
+						p.style.left = gsap.utils.random(4, 96) + '%';
+						p.style.top = gsap.utils.random(6, 96) + '%';
+						gsap.to(p, {
+							opacity: () => gsap.utils.random(0.1, 0.95),
+							scale: () => gsap.utils.random(0.4, 2),
+							duration: () => gsap.utils.random(1, 2.6),
+							repeat: -1,
+							yoyo: true,
+							ease: 'sine.inOut',
+							delay: gsap.utils.random(0, 3)
+						});
+					});
+				},
+				// Orbite autour du centre, comme la spirale/le duo de la carte.
+				orbit: (slide) => {
+					spawn(slide, 22).forEach((p) => {
+						p.style.left = '50%';
+						p.style.top = '50%';
+						const radius = gsap.utils.random(14, 44);
+						const dir = Math.random() < 0.5 ? 1 : -1;
+						const proxy = { a: gsap.utils.random(0, 360) };
+						const applyOrbit = () => {
+							const rad = (proxy.a * Math.PI) / 180;
+							p.style.transform = `translate(${Math.cos(rad) * radius}vmin, ${Math.sin(rad) * radius}vmin)`;
+						};
+						applyOrbit();
+						gsap.to(proxy, {
+							a: '+=' + dir * 360,
+							duration: () => gsap.utils.random(7, 16),
+							repeat: -1,
+							ease: 'none',
+							onUpdate: applyOrbit
+						});
+						gsap.to(p, {
+							opacity: () => gsap.utils.random(0.3, 0.9),
+							duration: () => gsap.utils.random(1.5, 3),
+							repeat: -1,
+							yoyo: true,
+							ease: 'sine.inOut',
+							delay: gsap.utils.random(0, 3)
+						});
 					});
 				}
+			};
+
+			document.querySelectorAll<HTMLElement>('.slide').forEach((slide) => {
+				const style = slide.dataset.particles ?? 'drift';
+				(particleStyles[style] ?? particleStyles.drift)(slide);
 			});
 		}
 
@@ -580,7 +702,7 @@
 
 		<div class="stage">
 			<div class="reel" id="reel">
-				<section class="slide" data-accent="green" data-layout="cover" data-icon="i-home">
+				<section class="slide" data-accent="green" data-layout="cover" data-icon="i-home" data-particles="drift">
 					<div class="glow"></div>
 					<div class="content">
 						<div class="cover-mark" data-motion="spin">
@@ -598,7 +720,7 @@
 				</section>
 
 				{#if w.topTicket}
-					<section class="slide" data-accent="violet" data-icon="i-ticket">
+					<section class="slide" data-accent="violet" data-icon="i-ticket" data-particles="confetti">
 						<div class="glow"></div>
 						<div class="content">
 							<div class="stat">
@@ -613,7 +735,7 @@
 				{/if}
 
 				{#if w.streakDays > 0}
-					<section class="slide" data-accent="amber" data-flip="1" data-icon="i-flame">
+					<section class="slide" data-accent="amber" data-flip="1" data-icon="i-flame" data-particles="ember">
 						<div class="glow"></div>
 						<div class="content">
 							<div class="stat">
@@ -631,7 +753,7 @@
 				{/if}
 
 				{#if w.moodEnabled && w.moodAvg !== null}
-					<section class="slide" data-accent="magenta" data-icon="i-face">
+					<section class="slide" data-accent="magenta" data-icon="i-face" data-particles="bubble">
 						<div class="glow"></div>
 						<div class="content">
 							<div class="stat">
@@ -648,7 +770,7 @@
 				{/if}
 
 				{#if w.supportEnabled && w.supportCount > 0}
-					<section class="slide" data-accent="cyan" data-flip="1" data-icon="i-shield">
+					<section class="slide" data-accent="cyan" data-flip="1" data-icon="i-shield" data-particles="twinkle">
 						<div class="glow"></div>
 						<div class="content">
 							<div class="stat">
@@ -663,7 +785,7 @@
 				{/if}
 
 				{#if w.totalHours > 0}
-					<section class="slide" data-accent="violet" data-layout="headline" data-icon="i-activity">
+					<section class="slide" data-accent="violet" data-layout="headline" data-icon="i-activity" data-particles="orbit">
 						<div class="glow"></div>
 						<div class="content">
 							<div>
@@ -687,7 +809,7 @@
 				{/if}
 
 				{#if w.duo}
-					<section class="slide" data-accent="violet" data-flip="1" data-icon="i-people">
+					<section class="slide" data-accent="violet" data-flip="1" data-icon="i-people" data-particles="orbit">
 						<div class="glow"></div>
 						<div class="content">
 							<div class="stat">
@@ -701,7 +823,7 @@
 					</section>
 				{/if}
 
-				<section class="slide" data-accent="green" data-layout="summary" data-icon="i-flag">
+				<section class="slide" data-accent="green" data-layout="summary" data-icon="i-flag" data-particles="confetti">
 					<div class="glow"></div>
 					<div class="content">
 						<div class="pass" id="passCard">
@@ -752,10 +874,6 @@
 {/if}
 
 <style>
-	:global(body) {
-		margin: 0;
-	}
-
 	.empty {
 		min-height: 60vh;
 		display: flex;
@@ -767,7 +885,15 @@
 		padding: 3rem 1.5rem;
 	}
 
-	:root {
+	/* Scopé à .app (pas :root) : ce fichier CSS reste chargé après avoir quitté la page en
+	   navigation SPA — un :root ici écraserait durablement --accent (et le thème RGB/Disco) sur
+	   le reste de l'appli. */
+	.app,
+	.app * {
+		box-sizing: border-box;
+	}
+
+	.app {
 		--ink: #0a0a10;
 		--ink-2: #14121c;
 		--fg: #f4f2fb;
@@ -781,14 +907,7 @@
 		--font-display: 'Unbounded', 'Arial Black', sans-serif;
 		--font-pixel: 'Press Start 2P', 'Courier New', monospace;
 		--font-mono: 'Space Mono', 'SF Mono', Consolas, monospace;
-	}
 
-	.app,
-	.app * {
-		box-sizing: border-box;
-	}
-
-	.app {
 		position: fixed;
 		inset: 0;
 		background: var(--ink);
@@ -1027,13 +1146,14 @@
 	}
 	.slide :global(.spark) {
 		position: absolute;
-		width: 3px;
-		height: 3px;
 		border-radius: 50%;
 		background: var(--accent);
 		opacity: 0;
 		pointer-events: none;
 		z-index: 0;
+	}
+	.slide :global(.spark.square) {
+		border-radius: 1px;
 	}
 
 	.content {
@@ -1064,14 +1184,16 @@
 	}
 
 	.ring-wrap :global(.rw-outer),
-	.pass-gear :global(.rw-outer) {
+	.pass-gear :global(.rw-outer),
+	.cover-mark :global(.rw-outer) {
 		fill: color-mix(in srgb, var(--accent) 16%, transparent);
 		stroke: var(--accent);
 		stroke-width: 3.5;
 		stroke-linejoin: round;
 	}
 	.ring-wrap :global(.rw-inner),
-	.pass-gear :global(.rw-inner) {
+	.pass-gear :global(.rw-inner),
+	.cover-mark :global(.rw-inner) {
 		fill: none;
 		stroke: var(--accent);
 		stroke-width: 2.5;
@@ -1082,7 +1204,9 @@
 		stroke: var(--accent);
 		stroke-width: 3;
 	}
-	.ring-wrap :global(.rw-hub) {
+	.ring-wrap :global(.rw-hub),
+	.pass-gear :global(.rw-hub),
+	.cover-mark :global(.rw-hub) {
 		fill: var(--accent);
 	}
 	.ring-wrap :global(.rw-hole) {
