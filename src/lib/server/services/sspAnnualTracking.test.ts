@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { db, ssp, ticket, timeEntry, workspace } from '$lib/server/db';
+import { db, ssp, ticket, timeEntry, workspace, sspAnnualProd } from '$lib/server/db';
 import { makeWorkspace } from './test-helpers';
 import { computeRaeChain, getAnnualTrackingView, setProd, setRaeOverride, advanceCursor } from './sspAnnualTracking';
 
@@ -107,6 +107,32 @@ describe('sspAnnualTracking (intégration DB)', () => {
 		const cell = view.rows.find((r) => r.sspId === sspA)!.cells.find((c) => c.month === '2024-06-01')!;
 		expect(cell.rae).toBe(42);
 		expect(cell.raeOverridden).toBe(true);
+	});
+
+	it('totalConso/totalProd/totalTnf couvrent tout l\'historique, pas seulement la fenêtre de 12 mois affichée', async () => {
+		// Curseur = 2024-06-01, fenêtre = 2023-07-01..2024-06-01. On ajoute de la conso et de la prod
+		// sur un mois hors fenêtre (2023-01) pour vérifier que les totaux les incluent quand même,
+		// alors qu'aucune cellule affichée ne les représente.
+		await db.insert(timeEntry).values({
+			workspaceId: ws.workspaceId,
+			userId: ws.userId,
+			targetType: 'TICKET',
+			ticketId: ticketA,
+			day: '2023-01-10',
+			amount: '7'
+		});
+		// Hors fenêtre ET hors curseur : setProd le refuserait, on passe par la table directement,
+		// comme le ferait une donnée saisie avant l'existence de la fenêtre glissante actuelle.
+		await db.insert(sspAnnualProd).values({ workspaceId: ws.workspaceId, sspId: sspA, month: '2023-01-01', value: '3' });
+
+		const view = await getAnnualTrackingView(ws.workspaceId);
+		const row = view.rows.find((r) => r.sspId === sspA)!;
+
+		expect(row.cells.find((c) => c.month === '2023-01-01')).toBeUndefined(); // hors fenêtre affichée
+		// Conso cumulée = 5 (juin, test précédent) + 7 (janvier 2023) ; Prod cumulée = 4 (juin) + 3.
+		expect(row.totalConso).toBe(12);
+		expect(row.totalProd).toBe(7);
+		expect(row.totalTnf).toBe(5); // 12 - 7
 	});
 
 	it('advanceCursor amorce depuis le curseur courant puis incrémente d\'un mois à chaque appel, et la fenêtre suit', async () => {

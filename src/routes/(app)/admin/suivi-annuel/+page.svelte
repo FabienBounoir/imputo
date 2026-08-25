@@ -112,6 +112,29 @@
 	}
 
 	const fmt = (n: number | null) => (n === null ? '—' : String(n));
+
+	// Totaux Conso/Prod/TNF demandés en plus de la grille, en mise en page « Par indicateur ». Pas de
+	// total RAE : c'est un solde, pas une quantité qui s'additionne dans le temps ni entre codes.
+	// Deux portées bien distinctes, jamais mélangées dans une même valeur :
+	//  - colonne de droite (« Cumul ») : depuis l'origine, calculée côté serveur (row.totalConso
+	//    etc., cf. sspAnnualTracking.ts) — pas la fenêtre de 12 mois, sinon le total serait faux dès
+	//    qu'un SSP a de l'historique plus ancien que la fenêtre affichée.
+	//  - ligne du bas (« Total ») : uniquement les 12 mois affichés, un mois réel par colonne — sans
+	//    ambiguïté puisque chaque cellule correspond à un mois précis. Son coin en bas à droite suit
+	//    la portée de la colonne « Cumul » (tous SSP, depuis l'origine), pas celle de la ligne.
+	const round2 = (n: number) => Math.round(n * 100) / 100;
+	function monthTotal(month: string, field: 'conso' | 'prod' | 'tnf'): number {
+		return round2(
+			view.rows.reduce((a, row) => {
+				const c = row.cells.find((c) => c.month === month);
+				return a + (c ? (c[field] ?? 0) : 0);
+			}, 0)
+		);
+	}
+	function grandTotal(field: 'conso' | 'prod' | 'tnf'): number {
+		const totalKey = field === 'conso' ? 'totalConso' : field === 'prod' ? 'totalProd' : 'totalTnf';
+		return round2(view.rows.reduce((a, row) => a + row[totalKey], 0));
+	}
 </script>
 
 <svelte:head><title>Suivi annuel — Imputo</title></svelte:head>
@@ -132,17 +155,37 @@
 	</button>
 {/snippet}
 
-{#snippet monthHeadRow(firstLabel: string)}
+{#snippet monthHeadRow(firstLabel: string, withTotal: boolean = false)}
 	<tr>
 		<th>{firstLabel}</th>
 		{#each view.windowMonths as m (m)}
 			<th class="num" class:current-month={m === view.cursorMonth}>{formatMonthShortLabel(m)}</th>
 		{/each}
+		{#if withTotal}<th class="num total-col" title="Cumul depuis l'origine, pas seulement les 12 mois affichés">Cumul</th>{/if}
+	</tr>
+{/snippet}
+
+{#snippet totalCell(t: number, field: 'conso' | 'prod' | 'tnf')}
+	<td
+		class="num tabnum total-col computed"
+		class:warn={field === 'tnf' && t < 0}
+		class:ok-cell={field === 'tnf' && t > 0}>{t}</td
+	>
+{/snippet}
+
+{#snippet monthsTotalRow(field: 'conso' | 'prod' | 'tnf', label: string)}
+	<tr class="total-row">
+		<td>{label}</td>
+		{#each view.windowMonths as m (m)}
+			{@const t = monthTotal(m, field)}
+			<td class="num tabnum" class:warn={field === 'tnf' && t < 0} class:ok-cell={field === 'tnf' && t > 0}>{t}</td>
+		{/each}
+		{@render totalCell(grandTotal(field), field)}
 	</tr>
 {/snippet}
 
 {#snippet raeCell(row: AnnualTrackingSspRow, c: AnnualTrackingMonthCell)}
-	<td class="num" class:current-month={c.month === view.cursorMonth}>
+	<td class="num" class:computed={!c.raeEditable} class:current-month={c.month === view.cursorMonth}>
 		{#if c.raeEditable}
 			<input
 				class="grid-input tabnum"
@@ -243,24 +286,28 @@
 					<div class="scroll" use:scrollToEnd>
 						<table class="weekly-table annual-table">
 							<thead>
-								{@render monthHeadRow('Indicateur')}
+								{@render monthHeadRow('Indicateur', true)}
 							</thead>
 							<tbody>
 								<tr>
 									<td>RAE</td>
 									{#each row.cells as c (c.month)}{@render raeCell(row, c)}{/each}
+									<td class="num total-col computed">—</td>
 								</tr>
 								<tr>
 									<td>Conso</td>
 									{#each row.cells as c (c.month)}{@render consoCell(c)}{/each}
+									{@render totalCell(row.totalConso, 'conso')}
 								</tr>
 								<tr>
 									<td>Prod</td>
 									{#each row.cells as c (c.month)}{@render prodCell(row, c)}{/each}
+									{@render totalCell(row.totalProd, 'prod')}
 								</tr>
 								<tr>
 									<td>TNF</td>
 									{#each row.cells as c (c.month)}{@render tnfCell(c)}{/each}
+									{@render totalCell(row.totalTnf, 'tnf')}
 								</tr>
 							</tbody>
 						</table>
@@ -294,14 +341,16 @@
 			{#if !collapsed['ind-conso']}
 				<div class="scroll" use:scrollToEnd>
 					<table class="weekly-table annual-table by-indicator">
-						<thead>{@render monthHeadRow('Code SSP')}</thead>
+						<thead>{@render monthHeadRow('Code SSP', true)}</thead>
 						<tbody>
 							{#each view.rows as row (row.sspId)}
 								<tr>
 									{@render sspLabelCell(row)}
 									{#each row.cells as c (c.month)}{@render consoCell(c)}{/each}
+									{@render totalCell(row.totalConso, 'conso')}
 								</tr>
 							{/each}
+							{@render monthsTotalRow('conso', 'Total')}
 						</tbody>
 					</table>
 				</div>
@@ -313,14 +362,16 @@
 			{#if !collapsed['ind-prod']}
 				<div class="scroll" use:scrollToEnd>
 					<table class="weekly-table annual-table by-indicator">
-						<thead>{@render monthHeadRow('Code SSP')}</thead>
+						<thead>{@render monthHeadRow('Code SSP', true)}</thead>
 						<tbody>
 							{#each view.rows as row (row.sspId)}
 								<tr>
 									{@render sspLabelCell(row)}
 									{#each row.cells as c (c.month)}{@render prodCell(row, c)}{/each}
+									{@render totalCell(row.totalProd, 'prod')}
 								</tr>
 							{/each}
+							{@render monthsTotalRow('prod', 'Total')}
 						</tbody>
 					</table>
 				</div>
@@ -332,14 +383,16 @@
 			{#if !collapsed['ind-tnf']}
 				<div class="scroll" use:scrollToEnd>
 					<table class="weekly-table annual-table by-indicator">
-						<thead>{@render monthHeadRow('Code SSP')}</thead>
+						<thead>{@render monthHeadRow('Code SSP', true)}</thead>
 						<tbody>
 							{#each view.rows as row (row.sspId)}
 								<tr>
 									{@render sspLabelCell(row)}
 									{#each row.cells as c (c.month)}{@render tnfCell(c)}{/each}
+									{@render totalCell(row.totalTnf, 'tnf')}
 								</tr>
 							{/each}
+							{@render monthsTotalRow('tnf', 'Total')}
 						</tbody>
 					</table>
 				</div>
@@ -474,6 +527,14 @@
 	.weekly-table tbody tr:last-child td {
 		border-bottom: none;
 	}
+	/* Cellule dérivée / verrouillée (Conso, TNF, RAE/Prod hors saisie) : fond plat et texte estompé
+	   pour qu'elle se distingue nettement d'un <input> éditable (fond plein + bordure marquée) —
+	   déclarée avant .current-month pour que le surlignage du mois en cours reste prioritaire. */
+	.computed {
+		font-style: italic;
+		color: var(--text-mute);
+		background: color-mix(in srgb, var(--text-mute) 8%, var(--surface));
+	}
 	/* Mois en cours : seule colonne où Prod se saisit — mise en évidence sur toute la hauteur du bloc. */
 	.current-month {
 		background: var(--accent-tint);
@@ -481,11 +542,6 @@
 	.weekly-table th:first-child.current-month,
 	.weekly-table td:first-child.current-month {
 		background: color-mix(in srgb, var(--accent-tint) 100%, var(--surface));
-	}
-	/* Cellule dérivée (Conso, TNF, RAE/Prod hors saisie) : distincte visuellement des <input> éditables. */
-	.computed {
-		font-style: italic;
-		color: var(--text-mute);
 	}
 	.warn {
 		color: var(--warn);
@@ -495,14 +551,33 @@
 		color: var(--success);
 		font-weight: 600;
 	}
+	.total-col {
+		border-left: 2px solid var(--border);
+		font-weight: 700;
+		font-style: normal;
+		color: var(--text);
+	}
+	.total-row td {
+		border-top: 2px solid var(--border);
+		font-weight: 700;
+	}
 	.grid-input {
 		width: 100%;
 		padding: 4px 6px;
 		border-radius: 6px;
-		border: 1px solid var(--border);
-		background: var(--surface-2, var(--surface));
+		border: 1px solid var(--text-mute);
+		background: var(--surface);
 		color: var(--text);
 		font-size: 13px;
+		font-weight: 600;
 		text-align: right;
+	}
+	.grid-input:hover {
+		border-color: var(--accent);
+	}
+	.grid-input:focus {
+		border-color: var(--accent);
+		outline: 2px solid var(--accent-tint);
+		outline-offset: -1px;
 	}
 </style>

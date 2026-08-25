@@ -42,6 +42,9 @@ export type AnnualTrackingSspRow = {
 	archived: boolean;
 	budgetDays: number | null;
 	cells: AnnualTrackingMonthCell[]; // 12, du plus ancien au plus récent, se termine au curseur
+	totalConso: number; // depuis l'origine (pas juste la fenêtre de 12 mois), agrégé en BDD
+	totalProd: number; // idem
+	totalTnf: number; // totalConso - totalProd
 };
 
 export type AnnualTrackingView = {
@@ -104,6 +107,37 @@ export async function getConsoBySspByMonth(
 	return rows.map((r) => ({ ...r, total: round(num(r.total)) }));
 }
 
+/**
+ * Totaux Conso/Prod « depuis l'origine » par SSP (pas seulement la fenêtre de 12 mois affichée) —
+ * agrégés en BDD (deux `SUM ... GROUP BY sspId`) pour ne pas rapatrier tout l'historique des
+ * imputations côté serveur applicatif juste pour une somme.
+ */
+async function getAllTimeTotalsBySsp(
+	workspaceId: string,
+	upToMonth: string
+): Promise<{ consoBySsp: Map<string, number>; prodBySsp: Map<string, number> }> {
+	const to = monthBounds(upToMonth).end;
+	const [consoRows, prodRows] = await Promise.all([
+		db
+			.select({ sspId: ticket.sspId, total: sql<string>`sum(${timeEntry.amount})` })
+			.from(timeEntry)
+			.innerJoin(ticket, eq(timeEntry.ticketId, ticket.id))
+			.where(and(eq(timeEntry.workspaceId, workspaceId), lte(timeEntry.day, to)))
+			.groupBy(ticket.sspId),
+		db
+			.select({ sspId: sspAnnualProd.sspId, total: sql<string>`sum(${sspAnnualProd.value})` })
+			.from(sspAnnualProd)
+			.where(and(eq(sspAnnualProd.workspaceId, workspaceId), lte(sspAnnualProd.month, upToMonth)))
+			.groupBy(sspAnnualProd.sspId)
+	]);
+	return {
+		consoBySsp: new Map(
+			consoRows.filter((r): r is { sspId: string; total: string } => r.sspId !== null).map((r) => [r.sspId, round(num(r.total))])
+		),
+		prodBySsp: new Map(prodRows.map((r) => [r.sspId, round(num(r.total))]))
+	};
+}
+
 /** Vue complète du Suivi annuel : curseur, fenêtre de 12 mois, grille RAE/Conso/Prod/TNF par SSP. */
 export async function getAnnualTrackingView(workspaceId: string): Promise<AnnualTrackingView> {
 	const [ws] = await db
@@ -117,7 +151,7 @@ export async function getAnnualTrackingView(workspaceId: string): Promise<Annual
 	const from = windowMonths[0];
 	const to = monthBounds(cursorMonth).end;
 
-	const [allSsps, consoRows, prodRows, overrideRows] = await Promise.all([
+	const [allSsps, consoRows, prodRows, overrideRows, allTimeTotals] = await Promise.all([
 		db
 			.select({ id: ssp.id, code: ssp.code, label: ssp.label, budgetDays: ssp.budgetDays, archivedAt: ssp.archivedAt })
 			.from(ssp)
@@ -137,7 +171,8 @@ export async function getAnnualTrackingView(workspaceId: string): Promise<Annual
 					gte(sspAnnualRaeOverride.month, from),
 					lte(sspAnnualRaeOverride.month, cursorMonth)
 				)
-			)
+			),
+		getAllTimeTotalsBySsp(workspaceId, cursorMonth)
 	]);
 
 	// Colonnes retenues : un SSP avec du budget, de la conso ou de la prod dans la fenêtre — un
@@ -190,13 +225,18 @@ export async function getAnnualTrackingView(workspaceId: string): Promise<Annual
 					tnf: p === null ? null : tnf(c, p)
 				};
 			});
+			const totalConso = allTimeTotals.consoBySsp.get(s.id) ?? 0;
+			const totalProd = allTimeTotals.prodBySsp.get(s.id) ?? 0;
 			return {
 				sspId: s.id,
 				code: s.code,
 				label: s.label,
 				archived: s.archivedAt !== null,
 				budgetDays: s.budgetDays === null ? null : num(s.budgetDays),
-				cells
+				cells,
+				totalConso,
+				totalProd,
+				totalTnf: round(totalConso - totalProd)
 			};
 		});
 
