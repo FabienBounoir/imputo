@@ -100,7 +100,7 @@ export type SupportDuty = {
 	overridden: boolean;
 };
 
-function pickFromChain(
+export function pickFromChain(
 	cadence: SupportCadence,
 	members: RotationMemberItem[],
 	offset: number,

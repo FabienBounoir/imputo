@@ -227,6 +227,12 @@
 				{#if data.moodStatus?.voted}<span class="mood-check" title="Vous avez voté">✓</span>{/if}
 			</a>
 		{/if}
+		{#if data.wrappedAvailable}
+			<a class="nav-item" class:active={isActive('/wrapped')} href="/wrapped">
+				<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18"/></svg>
+				Wrapped {data.wrappedYear}
+			</a>
+		{/if}
 
 		<div class="nav-label">Pilotage</div>
 		<a class="nav-item" class:active={isActive('/dashboard', true)} href="/dashboard">

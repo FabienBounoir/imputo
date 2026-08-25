@@ -393,6 +393,13 @@
       "when": 1787484472384,
       "tag": "0055_talented_logan",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1787661942921,
+      "tag": "0056_wrapped_snapshot",
+      "breakpoints": true
     }
   ]
 }

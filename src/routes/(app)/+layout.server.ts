@@ -3,6 +3,7 @@ import type { LayoutServerLoad } from './$types';
 import { getPeriodParticipation, getMoodConfig, getMyVote } from '$lib/server/services/mood';
 import { countPendingAbsences } from '$lib/server/services/absences';
 import { getCurrentDuty } from '$lib/server/services/support';
+import { isWrappedWindowOpen, wrappedYearFor } from '$lib/server/services/wrapped';
 import { getDailyQuotes } from '$lib/server/services/quotes';
 import { currentMoodPeriod, todayInParis, parseISODate, lastWorkdayOnOrBefore } from '$lib/utils/date';
 import { config } from '$lib/server/config';
@@ -59,6 +60,8 @@ export const load: LayoutServerLoad = async ({ locals }) => {
 		moodTotalVotes,
 		pendingAbsencesCount,
 		supportDuty,
+		wrappedAvailable: isWrappedWindowOpen(todayInParis()),
+		wrappedYear: wrappedYearFor(todayInParis()),
 		motivationQuotes,
 		vapidPublicKey: config.vapidPublic
 	};

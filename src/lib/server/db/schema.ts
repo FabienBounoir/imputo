@@ -8,6 +8,7 @@ import {
 	date,
 	integer,
 	numeric,
+	jsonb,
 	index,
 	uniqueIndex
 } from 'drizzle-orm/pg-core';
@@ -950,6 +951,28 @@ export const monthlyClosingMember = pgTable(
 	(t) => [uniqueIndex('monthly_closing_member_uq').on(t.closingId, t.userId)]
 );
 
+// ---------- Wrapped (récap annuel perso, actif 1 déc → 5 jan — cf. docs/SPECS-wrapped.md) ----------
+// Instantané figé par le cron (api/jobs/wrapped) : les chiffres ne doivent pas bouger si on corrige
+// une imputation après avoir vu son wrap, et tout le monde doit comparer des chiffres calculés au
+// même instant. `payload` en jsonb plutôt que colonnes typées : le contenu du wrap est amené à
+// s'enrichir (nouvelles stats) sans migration à chaque fois.
+export const wrappedSnapshot = pgTable(
+	'wrapped_snapshot',
+	{
+		id: id(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspace.id, { onDelete: 'cascade' }),
+		userId: uuid('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		year: integer('year').notNull(),
+		payload: jsonb('payload').notNull(),
+		generatedAt: timestamp('generated_at', { withTimezone: true }).defaultNow().notNull()
+	},
+	(t) => [uniqueIndex('wrapped_snapshot_ws_user_year_uq').on(t.workspaceId, t.userId, t.year)]
+);
+
 // ---------- Relations ----------
 export const ticketRelations = relations(ticket, ({ one, many }) => ({
 	parent: one(ticket, { fields: [ticket.parentId], references: [ticket.id], relationName: 'parent' }),
@@ -994,3 +1017,4 @@ export type MoodPeriodKind = (typeof moodPeriodKindEnum.enumValues)[number];
 export type SupportRotationMember = typeof supportRotationMember.$inferSelect;
 export type SupportOverride = typeof supportOverride.$inferSelect;
 export type SupportCadence = (typeof supportCadenceEnum.enumValues)[number];
+export type WrappedSnapshot = typeof wrappedSnapshot.$inferSelect;
