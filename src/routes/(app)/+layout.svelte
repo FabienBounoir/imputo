@@ -231,7 +231,6 @@
 			<a class="nav-item wrapped-hype" class:active={isActive('/wrapped')} href="/wrapped">
 				<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="8" width="18" height="13" rx="1.5"/><path d="M3 8h18M12 8v13M12 8C9 8 7 5.5 8.5 3.8 10 2.2 12 4 12 8ZM12 8c3 0 5-2.5 3.5-4.2C14 2.2 12 4 12 8Z"/></svg>
 				<span class="wrapped-label">Wrapped {data.wrappedYear}</span>
-				<span class="wrapped-sparkle" aria-hidden="true">✨</span>
 			</a>
 		{/if}
 

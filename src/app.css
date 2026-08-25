@@ -585,11 +585,6 @@ select {
 	font-weight: 700;
 	animation: wrapped-shimmer 4s linear infinite;
 }
-.nav-item.wrapped-hype .wrapped-sparkle {
-	margin-left: auto;
-	display: inline-block;
-	animation: wrapped-sparkle-spin 2.2s ease-in-out infinite;
-}
 @keyframes wrapped-icon-color {
 	0%,
 	100% {
@@ -613,18 +608,9 @@ select {
 		background-position: 300% 0;
 	}
 }
-@keyframes wrapped-sparkle-spin {
-	0%, 100% {
-		transform: scale(1) rotate(0deg);
-	}
-	50% {
-		transform: scale(1.35) rotate(20deg);
-	}
-}
 @media (prefers-reduced-motion: reduce) {
 	.nav-item.wrapped-hype .ic,
-	.nav-item.wrapped-hype .wrapped-label,
-	.nav-item.wrapped-hype .wrapped-sparkle {
+	.nav-item.wrapped-hype .wrapped-label {
 		animation: none;
 	}
 	.nav-item.wrapped-hype .wrapped-label {
