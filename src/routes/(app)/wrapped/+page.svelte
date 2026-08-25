@@ -440,6 +440,42 @@
 			}
 		}
 
+		// Sélecteurs génériques (pas de classe "reveal-item" à poser partout dans le markup) : couvre
+		// les blocs de texte/actions de chaque mise en page (stat / cover / headline / summary) d'un
+		// coup. .stat-number matche aussi les deux chiffres de l'écran volume (headline-stats) sans
+		// avoir besoin de cibler leur conteneur séparément (évite un double décalage imbriqué).
+		const REVEAL_SELECTOR = [
+			'.eyebrow',
+			'.stat-number',
+			'.desc',
+			'.icon-row',
+			'.cover-title',
+			'.cover-sub',
+			'.cover-cta',
+			'.headline-title',
+			'.headline-sub',
+			'.swatch-grid',
+			'.summary-eyebrow',
+			'.summary-title',
+			'.summary-desc',
+			'.summary-actions',
+			'.pass'
+		].join(', ');
+
+		function revealContent(slide: HTMLElement) {
+			const items = slide.querySelectorAll<HTMLElement>(REVEAL_SELECTOR);
+			if (items.length === 0) return;
+			if (reduceMotion) {
+				gsap.set(items, { clearProps: 'all' });
+				return;
+			}
+			gsap.fromTo(
+				items,
+				{ y: 24, opacity: 0 },
+				{ y: 0, opacity: 1, duration: 0.65, ease: 'power3.out', stagger: 0.08, overwrite: true }
+			);
+		}
+
 		function place() {
 			const x = -index * window.innerWidth;
 			gsap.set(reel, { x });
@@ -457,6 +493,7 @@
 			const active = slides[index];
 			active.querySelectorAll<HTMLElement>('.count').forEach(animateNumber);
 			revealRing(active);
+			revealContent(active);
 			try {
 				localStorage.setItem('imputo-wrapped-index', String(index));
 			} catch {
@@ -498,6 +535,12 @@
 		for (let k = 0; k < index; k++) revealChapter(k, false);
 		place();
 		goTo(index);
+		if (!reduceMotion) {
+			gsap.from('.chrome', { y: -18, opacity: 0, duration: 0.7, ease: 'power2.out' });
+			// Petit pouls continu sur "Commencer" pour attirer l'œil dès l'arrivée sur la couverture.
+			const cta = document.getElementById('startBtn');
+			if (cta) gsap.to(cta, { scale: 1.045, duration: 1.1, repeat: -1, yoyo: true, ease: 'sine.inOut' });
+		}
 
 		// ---- musique d'ambiance (loop natif, cf. l'attribut sur <audio>) ----
 		// L'état affiché (icône, aria-pressed) est dérivé des événements play/pause réels de
@@ -538,6 +581,7 @@
 		function showToast(msg: string) {
 			actionToast.textContent = msg;
 			actionToast.classList.add('show');
+			if (!reduceMotion) gsap.fromTo(actionToast, { scale: 0.85 }, { scale: 1, duration: 0.4, ease: 'back.out(3)' });
 			setTimeout(() => actionToast.classList.remove('show'), 2200);
 		}
 
