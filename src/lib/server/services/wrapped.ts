@@ -1,12 +1,17 @@
 import { and, asc, desc, eq, gte, lte, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { db, workspace, membership, user, timeEntry, ticket, category, moodVote, supportOverride, wrappedSnapshot } from '$lib/server/db';
+import { config } from '$lib/server/config';
 import { num, round } from './calc';
 import { getSupportConfig, listRotationMembers, pickFromChain } from './support';
 import { currentSupportPeriod, supportPeriodIndex, formatMonthLabel, parseISODate, addDays, toISODate, workdaysBetween } from '$lib/utils/date';
 
-/** Fenêtre d'activation du wrapped : 1 déc → 5 jan (cf. docs/SPECS-wrapped.md). */
+/**
+ * Fenêtre d'activation du wrapped : 1 déc → 5 jan (cf. docs/SPECS-wrapped.md), sauf
+ * WRAPPED_FORCE_OPEN=1 (démo/QA — jamais posé en préprod/prod) qui l'ouvre toute l'année.
+ */
 export function isWrappedWindowOpen(dateISO: string): boolean {
+	if (config.wrappedForceOpen) return true;
 	const d = parseISODate(dateISO);
 	const month = d.getUTCMonth(); // 0 = janvier, 11 = décembre
 	if (month === 11) return true;
