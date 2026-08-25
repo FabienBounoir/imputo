@@ -20,6 +20,11 @@ describe('isWrappedWindowOpen / wrappedYearFor', () => {
 		expect(wrappedYearFor('2026-12-15')).toBe(2026);
 		expect(wrappedYearFor('2027-01-03')).toBe(2026);
 	});
+
+	it('reste sur l’année en cours le reste de l’année (aperçu admin hors fenêtre)', () => {
+		expect(wrappedYearFor('2026-08-25')).toBe(2026);
+		expect(wrappedYearFor('2026-01-06')).toBe(2026);
+	});
 });
 
 describe('computeUserWrapped', () => {

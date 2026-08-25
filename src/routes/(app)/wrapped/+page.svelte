@@ -346,7 +346,7 @@
 		const summaryText = [
 			`Mon Imputo Wrapped ${w.year} :`,
 			`${w.totalHours}h imputées`,
-			w.topTicket ? `${w.topTicket.hours}h sur ${w.topTicket.key}` : null,
+			w.topTicket ? `${Math.round(w.topTicket.hours)}h sur ${w.topTicket.key}` : null,
 			w.streakDays ? `série de ${w.streakDays} jours` : null,
 			w.moodAvg !== null ? `humeur ${w.moodAvg}/5` : null,
 			w.supportEnabled && w.supportCount ? `${w.supportCount}× de perm support` : null
@@ -413,7 +413,7 @@
 			ctx.setLineDash([]);
 
 			const rows: [string, string][] = [
-				...(w.topTicket ? ([['Ticket le + chronophage', `${w.topTicket.key} · ${w.topTicket.hours}h`]] as [string, string][]) : []),
+				...(w.topTicket ? ([['Ticket le + chronophage', `${w.topTicket.key} · ${Math.round(w.topTicket.hours)}h`]] as [string, string][]) : []),
 				...(w.streakDays ? ([['Série max', `${w.streakDays} jours`]] as [string, string][]) : []),
 				...(w.moodAvg !== null ? ([['Humeur moyenne', `${w.moodAvg} / 5`]] as [string, string][]) : []),
 				...(w.supportEnabled && w.supportCount ? ([['Perm support', `${w.supportCount} fois`]] as [string, string][]) : []),
@@ -692,7 +692,7 @@
 							<div class="pass-hero-label">Heures imputées cette année</div>
 							<div class="pass-divider"></div>
 							{#if w.topTicket}
-								<div class="pass-row"><span class="who"><svg><use href="#i-ticket" /></svg>Ticket le + chronophage</span><span class="amt">{w.topTicket.hours}h</span></div>
+								<div class="pass-row"><span class="who"><svg><use href="#i-ticket" /></svg>Ticket le + chronophage</span><span class="amt">{Math.round(w.topTicket.hours)}h</span></div>
 							{/if}
 							{#if w.streakDays > 0}
 								<div class="pass-row"><span class="who"><svg><use href="#i-flame" /></svg>Série max</span><span class="amt">{w.streakDays}j</span></div>

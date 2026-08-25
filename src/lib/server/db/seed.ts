@@ -13,6 +13,10 @@ import { eq, inArray } from 'drizzle-orm';
 import { hashPassword } from '../auth/password';
 import { DEFAULT_STATES, DEFAULT_ACTIVITIES, DEFAULT_CATEGORIES } from '../services/defaults';
 import { round, plannedDays } from '../services/calc';
+// Type seulement : ce module importe $lib/server/db (singleton lié à $env, indisponible sous tsx
+// nu) — voir la note sur l'alias $lib en tête de jira-sync.ts pour la même contrainte. Le calcul
+// ci-dessous reste donc une version locale, sur les données déjà en mémoire pendant le seed.
+import type { WrappedPayload } from '../services/wrapped';
 import {
 	toISODate,
 	addDays,
@@ -23,7 +27,9 @@ import {
 	currentSupportPeriod,
 	supportPeriodIndex,
 	monthRange,
-	countWorkdaysNonHoliday
+	countWorkdaysNonHoliday,
+	workdaysBetween,
+	formatMonthLabel
 } from '../../utils/date';
 import {
 	workspace,
@@ -52,7 +58,8 @@ import {
 	supportOverride,
 	monthlyClosing,
 	monthlyClosingLine,
-	monthlyClosingMember
+	monthlyClosingMember,
+	wrappedSnapshot
 } from './schema';
 import { getDb, wipeSandbox, WORKSPACE_NAME, SEED_DOMAIN, SEED_USERS, getSeedScale, type SeedScale } from './seed.shared';
 
@@ -1018,12 +1025,124 @@ async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, pe
 
 	for (const batch of chunk(changeLogRows, 500)) await db.insert(changeLog).values(batch);
 
+	// ---------- Wrapped : figé directement sur les données déjà en mémoire (entryDrafts,
+	// moodVoteRows, rotationUserIds…) plutôt que via computeUserWrapped/runWrapped, qui vivent
+	// derrière $lib/server/db — indisponible sous tsx nu (cf. note d'import plus haut). Année en
+	// cours au moment du seed ; /wrapped?preview=1 (ADMIN) permet de la consulter sans attendre la
+	// vraie fenêtre du 1 déc → 5 jan. ----------
+	const wrappedYear = today.getUTCFullYear();
+	const ticketById = new Map(insertedTickets.map((t) => [t.id, t]));
+	const categoryKindById = new Map(insertedCategories.map((c) => [c.id, c.kind]));
+	const wrappedFromISO = `${wrappedYear}-01-01`;
+	const wrappedToISO = `${wrappedYear}-12-31`;
+	const yearDrafts = entryDrafts.filter((d) => d.day >= wrappedFromISO && d.day <= wrappedToISO);
+
+	// Périodes de perm (cadence WEEK, jamais changée dans ce seed) sur l'année du wrapped — mêmes
+	// deux lignes que pickFromChain (support.ts), non importées pour la même raison que ci-dessus.
+	const supportPeriodStarts: string[] = [];
+	const seenSupportPeriods = new Set<string>();
+	for (let d = parseISODate(wrappedFromISO); d <= parseISODate(wrappedToISO); d = addDays(d, 1)) {
+		const { start } = currentSupportPeriod('WEEK', toISODate(d), false);
+		if (!seenSupportPeriods.has(start)) {
+			seenSupportPeriods.add(start);
+			supportPeriodStarts.push(start);
+		}
+	}
+
+	for (const p of personas) {
+		const userId = userByEmail.get(p.email)!.id;
+		const mine = yearDrafts.filter((d) => d.userId === userId);
+
+		const totalHours = round(mine.reduce((s, d) => s + d.amount, 0));
+		const productiveHours = mine.reduce((s, d) => {
+			const productive = d.targetType === 'TICKET' || categoryKindById.get(d.categoryId!) === 'PRODUCTIVE';
+			return s + (productive ? d.amount : 0);
+		}, 0);
+		const productivePct = totalHours > 0 ? round((productiveHours / totalHours) * 100) : 0;
+
+		const hoursByTicket = new Map<string, number>();
+		for (const d of mine) if (d.targetType === 'TICKET') hoursByTicket.set(d.ticketId!, (hoursByTicket.get(d.ticketId!) ?? 0) + d.amount);
+		const topTicketId = [...hoursByTicket.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+		const topTicket = topTicketId
+			? { key: ticketById.get(topTicketId)!.key, title: ticketById.get(topTicketId)!.title, hours: round(hoursByTicket.get(topTicketId)!) }
+			: null;
+
+		const daySet = new Set(mine.map((d) => d.day));
+		let streak = 0;
+		let streakDays = 0;
+		for (const day of workdaysBetween(wrappedFromISO, wrappedToISO)) {
+			if (daySet.has(day)) {
+				streak++;
+				streakDays = Math.max(streakDays, streak);
+			} else streak = 0;
+		}
+
+		const myMoodRows = moodVoteRows.filter((r) => r.userId === userId && r.periodStart >= wrappedFromISO && r.periodStart <= wrappedToISO);
+		let moodAvg: number | null = null;
+		let moodBestMonth: string | null = null;
+		let moodWorstMonth: string | null = null;
+		if (myMoodRows.length > 0) {
+			moodAvg = round(myMoodRows.reduce((s, r) => s + r.score, 0) / myMoodRows.length);
+			const byMonth = new Map<string, number[]>();
+			for (const r of myMoodRows) {
+				const monthKey = r.periodStart.slice(0, 7);
+				(byMonth.get(monthKey) ?? byMonth.set(monthKey, []).get(monthKey)!).push(r.score);
+			}
+			const monthAverages = [...byMonth.entries()]
+				.map(([monthKey, scores]) => ({ monthKey, avg: scores.reduce((a, b) => a + b, 0) / scores.length }))
+				.sort((a, b) => b.avg - a.avg);
+			moodBestMonth = formatMonthLabel(`${monthAverages[0].monthKey}-01`);
+			moodWorstMonth = formatMonthLabel(`${monthAverages[monthAverages.length - 1].monthKey}-01`);
+		}
+
+		let supportCount = 0;
+		for (const start of supportPeriodStarts) {
+			const idx = ((supportPeriodIndex('WEEK', start, false) % rotationUserIds.length) + rotationUserIds.length) % rotationUserIds.length;
+			const effective = start === currentPeriodStart ? overrideUserId : rotationUserIds[idx];
+			if (effective === userId) supportCount++;
+		}
+
+		const myTicketIds = new Set(hoursByTicket.keys());
+		const duoCounts = new Map<string, number>();
+		for (const other of personas) {
+			if (other.email === p.email) continue;
+			const otherId = userByEmail.get(other.email)!.id;
+			const otherTicketIds = new Set(yearDrafts.filter((d) => d.userId === otherId && d.targetType === 'TICKET').map((d) => d.ticketId!));
+			const shared = [...myTicketIds].filter((id) => otherTicketIds.has(id)).length;
+			if (shared > 0) duoCounts.set(otherId, shared);
+		}
+		const topDuo = [...duoCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+		const duo = topDuo ? { displayName: personas.find((x) => userByEmail.get(x.email)!.id === topDuo[0])!.displayName, ticketsInCommon: topDuo[1] } : null;
+
+		const payload: WrappedPayload = {
+			year: wrappedYear,
+			totalHours,
+			productivePct,
+			topTicket,
+			streakDays,
+			moodEnabled: true,
+			moodAvg,
+			moodBestMonth,
+			moodWorstMonth,
+			supportEnabled: true,
+			supportCount,
+			duo
+		};
+		await db
+			.insert(wrappedSnapshot)
+			.values({ workspaceId: ws.id, userId, year: wrappedYear, payload })
+			.onConflictDoUpdate({
+				target: [wrappedSnapshot.workspaceId, wrappedSnapshot.userId, wrappedSnapshot.year],
+				set: { payload, generatedAt: new Date() }
+			});
+	}
+
 	const totalTickets =
 		insertedTickets.length + insertedRecentTickets.length + Math.max(0, scale.ticketsPerWorkspace - insertedTickets.length);
 	const totalAbsences = insertedAbsences.length + clientAbsenceRows.length;
 	console.log(
 		`✓ "${wsName}" créé — ${totalTickets} tickets sur ${sprintDefs.length} sprints / ${VERSION_NAMES.length} versions, ` +
-			`${entryDrafts.length} imputations (${allDays.length} jours ouvrés, du ${allDays[0]} au ${allDays[allDays.length - 1]}), ${snapshotRows.length} snapshots, ${moodVoteRows.length} votes team mood sur 7 semaines, ${totalAbsences} absences (dont 1 membre externe), ${changeLogRows.length} entrées d'historique, 6 objectifs de semaine (dont David en vacances la semaine prochaine, sans objectif), 3 runs de sync Jira (import initial de ${insertedTickets.length} tickets, run récent de ${insertedRecentTickets.length} tickets encore annulables, 1 en échec), perm support activée (${rotationUserIds.length} personnes en rotation, 1 override sur la période courante), ${monthKeys.length} clôtures mensuelles (${monthKeys.length - 1} intégrées + 1 en brouillon sur ${currentMonthKey}).`
+			`${entryDrafts.length} imputations (${allDays.length} jours ouvrés, du ${allDays[0]} au ${allDays[allDays.length - 1]}), ${snapshotRows.length} snapshots, ${moodVoteRows.length} votes team mood sur 7 semaines, ${totalAbsences} absences (dont 1 membre externe), ${changeLogRows.length} entrées d'historique, 6 objectifs de semaine (dont David en vacances la semaine prochaine, sans objectif), 3 runs de sync Jira (import initial de ${insertedTickets.length} tickets, run récent de ${insertedRecentTickets.length} tickets encore annulables, 1 en échec), perm support activée (${rotationUserIds.length} personnes en rotation, 1 override sur la période courante), ${monthKeys.length} clôtures mensuelles (${monthKeys.length - 1} intégrées + 1 en brouillon sur ${currentMonthKey}), wrapped ${wrappedYear} figé pour ${personas.length} personnes (voir /wrapped?preview=1 en ADMIN).`
 	);
 	for (const p of personas) console.log(`  ${p.email.padEnd(32)} ${p.password.padEnd(14)} (${p.role})`);
 }

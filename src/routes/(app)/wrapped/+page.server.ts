@@ -3,9 +3,11 @@ import type { PageServerLoad } from './$types';
 import { getMyWrapped, isWrappedWindowOpen, wrappedYearFor } from '$lib/server/services/wrapped';
 import { todayInParis } from '$lib/utils/date';
 
-export const load: PageServerLoad = async ({ locals }) => {
+export const load: PageServerLoad = async ({ locals, url }) => {
 	const today = todayInParis();
-	if (!isWrappedWindowOpen(today)) redirect(303, '/imputation');
+	// Aperçu admin hors fenêtre (?preview=1) : pratique pour QA/démo sans attendre le 1er décembre.
+	const preview = locals.role === 'ADMIN' && url.searchParams.get('preview') === '1';
+	if (!isWrappedWindowOpen(today) && !preview) redirect(303, '/imputation');
 
 	const ws = locals.workspace!;
 	const year = wrappedYearFor(today);

@@ -14,10 +14,11 @@ export function isWrappedWindowOpen(dateISO: string): boolean {
 	return false;
 }
 
-/** Année couverte par le wrap actif à `dateISO` — en janvier, on montre toujours l'année précédente. */
+/** Année couverte par le wrap actif à `dateISO` — seule la queue du 1 au 5 janvier retombe sur l'année précédente. */
 export function wrappedYearFor(dateISO: string): number {
 	const d = parseISODate(dateISO);
-	return d.getUTCMonth() === 11 ? d.getUTCFullYear() : d.getUTCFullYear() - 1;
+	if (d.getUTCMonth() === 0 && d.getUTCDate() <= 5) return d.getUTCFullYear() - 1;
+	return d.getUTCFullYear();
 }
 
 export type WrappedPayload = {
