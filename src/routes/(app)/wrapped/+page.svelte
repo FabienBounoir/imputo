@@ -365,13 +365,8 @@
 		const chaptersWrap = document.getElementById('chapters')!;
 		const prevBtn = document.getElementById('prevBtn') as HTMLButtonElement;
 		const nextBtn = document.getElementById('nextBtn') as HTMLButtonElement;
+		// Toujours reparti de la couverture à l'ouverture — jamais de reprise sur le dernier écran vu.
 		let index = 0;
-		try {
-			const saved = parseInt(localStorage.getItem('imputo-wrapped-index') || '0', 10);
-			if (saved > 0 && saved < slides.length) index = saved;
-		} catch {
-			/* stockage indisponible (navigation privée…) — on repart de l'écran 0 */
-		}
 
 		// Un chapitre reste un simple point tant que son écran n'a pas été atteint — l'icône
 		// (qui trahit le sujet de la stat) n'apparaît qu'à l'arrivée dessus, pour garder un peu de
@@ -414,7 +409,11 @@
 			});
 		}
 
-		function revealRing(slide: HTMLElement) {
+		// Cache le tracé instantanément, dès le départ de la navigation (pendant que l'écran glisse
+		// encore hors champ) — sans ça, le dessin masqué/redessiné (revealRing ci-dessous, retardé
+		// jusqu'à l'arrivée) se voit d'abord complet le temps du glissement, puis "saute" à vide
+		// avant de se redessiner : un reset visible plutôt qu'une révélation propre.
+		function prepareRing(slide: HTMLElement) {
 			const paths = slide.querySelectorAll<SVGPathElement>('.ring-wrap path, .pass-gear path');
 			paths.forEach((p) => {
 				const len = p.getTotalLength ? p.getTotalLength() : 0;
@@ -424,8 +423,19 @@
 					return;
 				}
 				p.style.strokeDasharray = String(len);
-				gsap.fromTo(p, { strokeDashoffset: len }, { strokeDashoffset: 0, duration: 1.3, ease: 'power2.out' });
+				p.style.strokeDashoffset = String(len);
 			});
+		}
+
+		function revealRing(slide: HTMLElement) {
+			if (!reduceMotion) {
+				const paths = slide.querySelectorAll<SVGPathElement>('.ring-wrap path, .pass-gear path');
+				paths.forEach((p) => {
+					const len = p.getTotalLength ? p.getTotalLength() : 0;
+					if (!len) return;
+					gsap.fromTo(p, { strokeDashoffset: len }, { strokeDashoffset: 0, duration: 1.3, ease: 'power2.out' });
+				});
+			}
 			const ring = slide.querySelector<SVGElement>('.ring-wrap svg, .cover-mark svg');
 			if (ring && !reduceMotion) {
 				gsap.killTweensOf(ring);
@@ -462,6 +472,15 @@
 			'.pass'
 		].join(', ');
 
+		// Même logique que prepareRing/revealRing : caché tout de suite (pendant que l'écran est
+		// encore hors champ), animé seulement une fois arrivé — sinon le texte s'affiche en entier
+		// pendant le glissement et "l'animation" qu'on voit n'est qu'un sursaut sur un contenu déjà là.
+		function prepareContent(slide: HTMLElement) {
+			const items = slide.querySelectorAll<HTMLElement>(REVEAL_SELECTOR);
+			if (items.length === 0 || reduceMotion) return;
+			gsap.set(items, { y: 24, opacity: 0 });
+		}
+
 		function revealContent(slide: HTMLElement) {
 			const items = slide.querySelectorAll<HTMLElement>(REVEAL_SELECTOR);
 			if (items.length === 0) return;
@@ -469,11 +488,7 @@
 				gsap.set(items, { clearProps: 'all' });
 				return;
 			}
-			gsap.fromTo(
-				items,
-				{ y: 24, opacity: 0 },
-				{ y: 0, opacity: 1, duration: 0.65, ease: 'power3.out', stagger: 0.08, overwrite: true }
-			);
+			gsap.to(items, { y: 0, opacity: 1, duration: 0.65, ease: 'power3.out', stagger: 0.08, overwrite: true });
 		}
 
 		function place() {
@@ -481,24 +496,38 @@
 			gsap.set(reel, { x });
 		}
 
+		// Au tout premier appel (chargement de page), le reel est déjà à la bonne position (posée
+		// par place()) — inutile d'attendre un tween qui ne bouge visuellement rien. Pour toute
+		// navigation suivante en revanche, le contenu ne doit se révéler qu'une fois l'écran
+		// vraiment arrivé à l'écran : le lancer en même temps que le glissement du reel (comme
+		// avant) le fait apparaître pendant qu'il est encore hors champ, donc invisible.
+		let firstGoTo = true;
 		function goTo(i: number) {
 			index = Math.max(0, Math.min(slides.length - 1, i));
 			const x = -index * window.innerWidth;
-			if (!reduceMotion) gsap.to(reel, { x, duration: 0.7, ease: 'power3.inOut' });
-			else reel.style.transform = `translateX(${x}px)`;
+			const active = slides[index];
 			chapters.forEach((c, ci) => c.classList.toggle('active', ci === index));
 			revealChapter(index, true);
 			prevBtn.disabled = index === 0;
 			nextBtn.disabled = index === slides.length - 1;
-			const active = slides[index];
-			active.querySelectorAll<HTMLElement>('.count').forEach(animateNumber);
-			revealRing(active);
-			revealContent(active);
-			try {
-				localStorage.setItem('imputo-wrapped-index', String(index));
-			} catch {
-				/* stockage indisponible */
+			prepareRing(active);
+			prepareContent(active);
+
+			function finishReveal() {
+				active.querySelectorAll<HTMLElement>('.count').forEach(animateNumber);
+				revealRing(active);
+				revealContent(active);
 			}
+
+			if (reduceMotion) {
+				reel.style.transform = `translateX(${x}px)`;
+				finishReveal();
+			} else if (firstGoTo) {
+				finishReveal();
+			} else {
+				gsap.to(reel, { x, duration: 0.7, ease: 'power3.inOut', onComplete: finishReveal });
+			}
+			firstGoTo = false;
 		}
 
 		window.addEventListener('resize', place);
@@ -530,9 +559,6 @@
 			{ passive: true }
 		);
 
-		// Restauration d'une session précédente (index sauvegardé > 0) : les chapitres déjà vus se
-		// révèlent d'un coup, sans l'animation — celle-ci est réservée aux nouvelles découvertes.
-		for (let k = 0; k < index; k++) revealChapter(k, false);
 		place();
 		goTo(index);
 		if (!reduceMotion) {
@@ -959,7 +985,6 @@
 							<p class="summary-desc">Ta carte Wrapped, prête à garder ou à montrer à l'équipe.</p>
 							<div class="summary-actions">
 								<button class="btn btn-primary" id="downloadBtn"><svg><use href="#i-download" /></svg>Télécharger l'image</button>
-								<button class="btn btn-ghost" id="shareBtn"><svg><use href="#i-copy" /></svg>Copier le texte</button>
 							</div>
 							<span class="share-toast" id="actionToast"></span>
 						</div>
@@ -1467,6 +1492,11 @@
 		transition:
 			background 0.25s,
 			color 0.25s;
+	}
+	.cover-cta svg {
+		width: 15px;
+		height: 15px;
+		flex-shrink: 0;
 	}
 	.cover-cta:hover {
 		background: var(--green);
