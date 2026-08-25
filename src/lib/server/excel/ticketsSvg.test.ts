@@ -96,4 +96,17 @@ describe('buildSprintTicketsSvg', () => {
 		const { svg } = buildSprintTicketsSvg(makeDashboard({ tickets: [], ticketGroups: [] }), false);
 		expect(svg).toContain('Aucun ticket.');
 	});
+
+	it("colore l'écart négatif en vert fixe, jamais avec l'accent de l'espace", () => {
+		const dashboard = makeDashboard({ tickets: [makeTicket({ ecartVsEstime: -2 })] });
+		const { svg } = buildSprintTicketsSvg(dashboard, false, '#FF0000');
+		expect(svg).toContain('fill="#22C55E"');
+		expect(svg).not.toContain('fill="#FF0000">-2');
+	});
+
+	it("colore l'écart positif en orange fixe (WARN)", () => {
+		const dashboard = makeDashboard({ tickets: [makeTicket({ ecartVsEstime: 2 })] });
+		const { svg } = buildSprintTicketsSvg(dashboard, false, '#FF0000');
+		expect(svg).toContain('fill="#C2410C"');
+	});
 });

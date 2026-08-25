@@ -17,6 +17,7 @@ const HEADER_TEXT = '#969185';
 const TEXT_DARK = '#26241E';
 const TEXT_SOFT = '#5C5950';
 const WARN = '#C2410C';
+const SUCCESS = '#22C55E'; // même vert que --success (app.css) : écart négatif = bon signe, jamais teinté par l'accent
 const SUBTOTAL_FILL = '#FBFAF6';
 const BAR_BG = '#F3F1EA';
 
@@ -123,7 +124,7 @@ export function buildSprintTicketsSvg(dashboard: SprintDashboard, grouped: boole
 		);
 	}
 	function ecartCell(x: number, w: number, y: number, v: number): string {
-		const color = v > 0 ? WARN : v < 0 ? accent : TEXT_DARK;
+		const color = v > 0 ? WARN : v < 0 ? SUCCESS : TEXT_DARK;
 		const weight = v !== 0 ? 700 : 400;
 		return `<text x="${x + w - 10}" y="${y + ROW_H / 2 + 4}" font-size="12" font-weight="${weight}" text-anchor="end" fill="${color}" ${FONT}>${v > 0 ? '+' : ''}${v || 0}</text>`;
 	}

@@ -842,7 +842,7 @@
 		font-weight: 700;
 	}
 	.us-table td.under {
-		color: var(--accent);
+		color: var(--success);
 		font-weight: 700;
 	}
 	.prog {
