@@ -314,27 +314,39 @@
 		place();
 		goTo(index);
 
-		// ---- musique d'ambiance : bouton câblé, source à brancher plus tard ----
+		// ---- musique d'ambiance (loop natif, cf. l'attribut sur <audio>) ----
+		// L'état affiché (icône, aria-pressed) est dérivé des événements play/pause réels de
+		// l'élément plutôt que d'une variable à part : rien à resynchroniser si play()/pause()
+		// est déclenché depuis plusieurs endroits (autoplay, clic mute, déblocage 1ère interaction).
 		const bgm = document.getElementById('bgm') as HTMLAudioElement;
+		bgm.volume = 0.55;
 		const muteBtn = document.getElementById('muteBtn')!;
 		const muteIconUse = document.getElementById('muteIconUse')!;
-		let muted = true;
+		function syncMuteUI() {
+			const playing = !bgm.paused;
+			muteBtn.setAttribute('aria-pressed', String(playing));
+			muteIconUse.setAttribute('href', playing ? '#i-speaker' : '#i-mute');
+		}
+		bgm.addEventListener('play', syncMuteUI);
+		bgm.addEventListener('pause', syncMuteUI);
 		function startAudio() {
-			if (!bgm.src) return;
-			bgm.volume = 0.55;
 			bgm.play().catch(() => {});
-			muted = false;
-			muteBtn.setAttribute('aria-pressed', 'true');
-			muteIconUse.setAttribute('href', '#i-speaker');
 		}
 		muteBtn.addEventListener('click', () => {
-			if (!bgm.src) return;
-			muted = !muted;
-			if (muted) bgm.pause();
-			else bgm.play().catch(() => {});
-			muteBtn.setAttribute('aria-pressed', String(!muted));
-			muteIconUse.setAttribute('href', muted ? '#i-mute' : '#i-speaker');
+			if (bgm.paused) startAudio();
+			else bgm.pause();
 		});
+		// Tentative de lecture dès l'arrivée sur la page — la plupart des navigateurs la bloquent
+		// sans geste utilisateur au préalable (surtout après un simple rechargement, où l'atterrissage
+		// peut se faire sur un écran autre que la couverture, donc sans passer par "Commencer").
+		// Filet : la toute première interaction ailleurs que sur le bouton mute la débloque.
+		startAudio();
+		function unlockAudioOnce(e: Event) {
+			if (muteBtn.contains(e.target as Node)) return; // laisse son propre clic gérer ce cas
+			if (bgm.paused) startAudio();
+		}
+		window.addEventListener('pointerdown', unlockAudioOnce, { once: true });
+		window.addEventListener('keydown', unlockAudioOnce, { once: true });
 
 		// ---- carte résumé : copie texte + export PNG (téléchargement navigateur classique) ----
 		const actionToast = document.getElementById('actionToast')!;
@@ -735,8 +747,8 @@
 
 	<canvas id="exportCanvas" width="900" height="1260" style="display:none"></canvas>
 
-	<!-- Musique d'ambiance : src à brancher (fichier statique) une fois le mp3 fourni. -->
-	<audio id="bgm" loop preload="none"></audio>
+	<!-- Musique d'ambiance : loop natif (relance automatiquement à la fin). -->
+	<audio id="bgm" src="/wrapped_music.mp3" loop preload="auto"></audio>
 {/if}
 
 <style>
