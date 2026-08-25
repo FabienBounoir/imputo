@@ -68,6 +68,42 @@ spec:
                       name: imputo-secrets
                       key: CRON_SECRET
 ---
+# Wrapped : no-op hors fenêtre (1 déc → 5 jan, cf. isWrappedWindowOpen) — tourne tous les jours
+# comme les autres jobs, sans schedule à part pour la fenêtre elle-même.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: imputo-cron-wrapped
+  labels:
+    app: imputo
+spec:
+  timeZone: Europe/Paris
+  schedule: '0 4 * * *'
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 60
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: curl
+              image: curlimages/curl:latest
+              args:
+                - -fsS
+                - --max-time
+                - '30'
+                - -X
+                - POST
+                - -H
+                - 'Authorization: Bearer $(CRON_SECRET)'
+                - http://imputo:3000/api/jobs/wrapped
+              env:
+                - name: CRON_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: imputo-secrets
+                      key: CRON_SECRET
+---
 # Relances du matin : chacune ne renotifie que ceux encore en défaut (verrou par slot en base).
 apiVersion: batch/v1
 kind: CronJob
