@@ -28,7 +28,7 @@ describe('POST /api/push/unsubscribe', () => {
 
 	it('supprime un abonnement existant', async () => {
 		const { userId } = await makeWorkspace('push-unsub2');
-		const endpoint = `https://push.example/${userId}`;
+		const endpoint = `https://fcm.googleapis.com/fcm/send/${userId}`;
 		await saveSubscription(userId, { endpoint, keys: { p256dh: 'p', auth: 'a' } }, null);
 		expect(await hasSubscription(userId)).toBe(true);
 

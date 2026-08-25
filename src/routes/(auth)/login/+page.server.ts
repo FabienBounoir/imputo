@@ -17,6 +17,13 @@ export const actions: Actions = {
 			return fail(400, { error: parsed.error.issues[0].message, values: { email: form.email } });
 
 		const res = await login(parsed.data.email, parsed.data.password);
+		if (res && 'locked' in res) {
+			return fail(429, {
+				error: 'Trop de tentatives. Réessayez plus tard.',
+				retryAfterMs: res.retryAfterMs,
+				values: { email: form.email }
+			});
+		}
 		if (!res) return fail(400, { error: 'Email ou mot de passe incorrect.', values: { email: form.email } });
 
 		const memberships = await listMembershipsForUser(res.userId);

@@ -32,11 +32,22 @@ describe('POST /api/push/subscribe', () => {
 		const { userId } = await makeWorkspace('push-sub2');
 		const locals = await fakeLocals(userId);
 		const request = jsonRequest({
-			endpoint: `https://push.example/${userId}`,
+			endpoint: `https://fcm.googleapis.com/fcm/send/${userId}`,
 			keys: { p256dh: 'p', auth: 'a' }
 		});
 		const res = await POST({ locals, request } as never);
 		expect((await res.json()).ok).toBe(true);
 		expect(await hasSubscription(userId)).toBe(true);
+	});
+
+	it("rejette un endpoint hors des hôtes push connus (SSRF)", async () => {
+		const { userId } = await makeWorkspace('push-sub3');
+		const locals = await fakeLocals(userId);
+		const request = jsonRequest({
+			endpoint: 'https://internal.cluster.local/whatever',
+			keys: { p256dh: 'p', auth: 'a' }
+		});
+		await expect(POST({ locals, request } as never)).rejects.toMatchObject({ status: 400 });
+		expect(await hasSubscription(userId)).toBe(false);
 	});
 });

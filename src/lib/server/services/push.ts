@@ -5,6 +5,26 @@ import { config } from '$lib/server/config';
 
 export type PushPayload = { title: string; body: string; url?: string; tag?: string };
 
+// Hôtes des services push des navigateurs supportés — un `endpoint` en dehors de cette liste ne
+// peut être qu'une cible forgée (SSRF : le serveur y enverrait ensuite une requête authentifiée
+// VAPID via sendToUser), jamais un vrai abonnement Push API.
+const ALLOWED_PUSH_HOSTS = [
+	'fcm.googleapis.com', // Chrome / Edge / autres navigateurs Chromium
+	'updates.push.services.mozilla.com', // Firefox
+	'web.push.apple.com', // Safari
+	'notify.windows.com' // Edge legacy / WNS — sous-domaines en *.notify.windows.com
+];
+
+function isAllowedPushEndpoint(endpoint: string): boolean {
+	let host: string;
+	try {
+		host = new URL(endpoint).hostname;
+	} catch {
+		return false;
+	}
+	return ALLOWED_PUSH_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
+}
+
 let configured: boolean | null = null;
 /** Initialise VAPID une fois ; renvoie false si les clés ne sont pas configurées. */
 function ensureVapid(): boolean {
@@ -19,6 +39,7 @@ export async function saveSubscription(
 	sub: { endpoint: string; keys: { p256dh: string; auth: string } },
 	userAgent: string | null
 ) {
+	if (!isAllowedPushEndpoint(sub.endpoint)) throw new Error('Point de terminaison push non autorisé.');
 	await db
 		.insert(pushSubscription)
 		.values({

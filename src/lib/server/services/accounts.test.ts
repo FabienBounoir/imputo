@@ -62,6 +62,37 @@ describe('changePassword', () => {
 	});
 });
 
+describe('login — verrou anti brute-force', () => {
+	it('bloque après 5 échecs, un mot de passe correct ne débloque pas avant le délai', async () => {
+		const email = `bf-${rnd}@acme.test`;
+		const { userId, workspaceId } = await createWorkspaceWithOwner({
+			displayName: 'Eve',
+			email,
+			password: 'password123',
+			workspaceName: 'Espace Brute Force'
+		});
+		wsIds.push(workspaceId);
+
+		for (let i = 0; i < 5; i++) expect(await login(email, 'wrong-password')).toBeNull();
+
+		const res = await login(email, 'password123');
+		expect(res).not.toBeNull();
+		expect(res).toMatchObject({ locked: true });
+		if (res && 'retryAfterMs' in res) expect(res.retryAfterMs).toBeGreaterThan(0);
+
+		// Un autre compte n'est pas affecté par le verrou de celui-ci.
+		const otherEmail = `bf-other-${rnd}@acme.test`;
+		const other = await createWorkspaceWithOwner({
+			displayName: 'Frank',
+			email: otherEmail,
+			password: 'password123',
+			workspaceName: 'Espace Brute Force Autre'
+		});
+		wsIds.push(other.workspaceId);
+		expect(await login(otherEmail, 'password123')).toEqual({ userId: other.userId });
+	});
+});
+
 describe('regenerateInvite pour un membre déjà actif', () => {
 	it('génère un lien qui réinitialise le mot de passe d’un compte déjà activé', async () => {
 		const email = `reinvite-${rnd}@acme.test`;

@@ -9,16 +9,42 @@ import { parseISODate } from '$lib/utils/date';
 import { logChange } from './changeLog';
 import { config } from '$lib/server/config';
 
+// Verrou anti brute-force en mémoire, par email — protège contre le credential stuffing sans
+// dépendre d'une IP client (l'app tourne derrière le routeur OpenShift sans ADDRESS_HEADER
+// configuré : event.getClientAddress() renverrait l'IP du routeur, pas celle de l'appelant).
+// ponytail: process unique (1 réplique, stratégie Recreate) — passer à une table Postgres si un
+// jour l'app tourne en plusieurs répliques, sinon chaque pod a son propre compteur.
+const LOGIN_MAX_ATTEMPTS = 5;
+const LOGIN_LOCK_MS = 15 * 60 * 1000;
+const loginAttempts = new Map<string, { failures: number; lockedUntil: number }>();
+
 /** Connexion par email + mot de passe. */
-export async function login(email: string, password: string): Promise<{ userId: string } | null> {
-	const rows = await db
-		.select()
-		.from(user)
-		.where(eq(user.email, email.trim().toLowerCase()));
+export async function login(
+	email: string,
+	password: string
+): Promise<{ userId: string } | { locked: true; retryAfterMs: number } | null> {
+	const key = email.trim().toLowerCase();
+	const now = Date.now();
+	const attempt = loginAttempts.get(key);
+	if (attempt && attempt.lockedUntil > now) {
+		return { locked: true, retryAfterMs: attempt.lockedUntil - now };
+	}
+
+	const rows = await db.select().from(user).where(eq(user.email, key));
 	const u = rows[0];
-	if (!u || !u.passwordHash || !u.active) return null;
-	const ok = await verifyPassword(u.passwordHash, password);
-	return ok ? { userId: u.id } : null;
+	const ok = u?.passwordHash && u.active ? await verifyPassword(u.passwordHash, password) : false;
+
+	if (!ok) {
+		const failures = (attempt?.failures ?? 0) + 1;
+		loginAttempts.set(key, {
+			failures,
+			lockedUntil: failures >= LOGIN_MAX_ATTEMPTS ? now + LOGIN_LOCK_MS : 0
+		});
+		return null;
+	}
+
+	loginAttempts.delete(key);
+	return { userId: u!.id };
 }
 
 /**
