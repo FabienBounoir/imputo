@@ -1,4 +1,4 @@
-import { json } from '@sveltejs/kit';
+import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { listTicketsPage, type TicketFilters } from '$lib/server/services/tickets';
 import { isManagerOrAdmin } from '$lib/server/services/workspaces';
@@ -8,7 +8,8 @@ const PAGE_SIZE = 50;
 // Pages suivantes du tableau tickets (scroll infini) — mêmes filtres/tri que
 // +page.server.ts, appelé côté client pour ajouter une page sans recharger la liste.
 export const GET: RequestHandler = async ({ locals, url }) => {
-	const ws = locals.workspace!;
+	const ws = locals.workspace;
+	if (!ws || !locals.user) error(401, 'Non authentifié.');
 	const isAdmin = isManagerOrAdmin(locals.role);
 	const page = Math.max(1, Number(url.searchParams.get('page')) || 1);
 	const filters: TicketFilters = {
