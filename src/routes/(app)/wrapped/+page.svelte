@@ -295,6 +295,7 @@
 		window.addEventListener('keydown', (e) => {
 			if (e.key === 'ArrowRight') goTo(index + 1);
 			if (e.key === 'ArrowLeft') goTo(index - 1);
+			if (e.key === 'Escape') window.location.href = '/imputation';
 		});
 
 		let touchX: number | null = null;
@@ -543,6 +544,9 @@
 				<symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
 					<rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
 				</symbol>
+				<symbol id="i-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M6 6l12 12M18 6L6 18" />
+				</symbol>
 			</defs>
 		</svg>
 
@@ -556,6 +560,9 @@
 				<button class="icon-btn" id="restartBtn" aria-label="Recommencer le wrapped">
 					<svg><use href="#i-restart" /></svg>
 				</button>
+				<a class="icon-btn" href="/imputation" aria-label="Quitter le wrapped">
+					<svg><use href="#i-close" /></svg>
+				</a>
 			</div>
 		</div>
 
