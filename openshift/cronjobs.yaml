@@ -69,7 +69,9 @@ spec:
                       key: CRON_SECRET
 ---
 # Wrapped : no-op hors fenêtre (1 déc → 5 jan, cf. isWrappedWindowOpen) — tourne tous les jours
-# comme les autres jobs, sans schedule à part pour la fenêtre elle-même.
+# comme les autres jobs, sans schedule à part pour la fenêtre elle-même. Idempotent (cf.
+# runWrapped) : ne calcule vraiment qu'une fois par personne et par saison, les passages suivants
+# ne font que rattraper un run précédent manqué.
 apiVersion: batch/v1
 kind: CronJob
 metadata:

@@ -10,10 +10,16 @@ Fonctionnalité façon "Spotify Wrapped" : récap annuel perso, actif début dé
   consultation. Aucune table/service/route existant à modifier.
 - **Fenêtre d'activation** : 1 déc → 5 jan. Pas de cron spécifique à cette plage — le job tourne tous les
   jours comme celui du snapshot, et no-op si `today` est hors fenêtre.
-- **Perf** : non-problème. `time_entry` est indexé `(workspace_id, user_id, day)`, un an de données pour
-  une personne = quelques centaines à ~2000 lignes. La table dédiée sert à figer le snapshot (comme
-  Spotify) et à garantir que les corrélations d'équipe sont calculées au même instant pour tout le monde
-  — pas à économiser du calcul.
+- **Données jusqu'au 30 novembre, pas au 31 décembre** (comme le vrai Spotify Wrapped) : décembre n'est
+  pas terminé quand la fenêtre ouvre le 1er, donc une donnée sur l'année complète serait partielle et
+  demanderait un recalcul chaque jour pour se compléter. En s'arrêtant fin novembre, chaque personne n'est
+  calculée et figée **qu'une seule fois** pour la saison (`runWrapped` est idempotent : skip si un
+  snapshot existe déjà pour `workspace_id`/`user_id`/`year`) — le passage quotidien du cron ne sert qu'à
+  rattraper un run manqué (déploi, base indisponible…), pas à recalculer.
+- **Perf** : non-problème de toute façon. `time_entry` est indexé `(workspace_id, user_id, day)`, un an de
+  données pour une personne = quelques centaines à ~2000 lignes. La table dédiée sert à figer le snapshot
+  et à garantir que les corrélations d'équipe sont calculées au même instant pour tout le monde — pas à
+  économiser du calcul.
 - **Mood = anonyme, invariant existant** (cf. commentaire schema.ts ligne ~706) : jamais de comparaison
   nominative du score d'un collègue précis. Moyenne/évolution perso OK, agrégats d'équipe OK, classement
   nominatif interdit.

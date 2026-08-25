@@ -93,10 +93,16 @@ async function computeSupportCount(workspaceId: string, userId: string, fromISO:
 	return count;
 }
 
-/** Calcule le contenu du wrap d'une personne pour une année donnée, sans rien écrire en base. */
+/**
+ * Calcule le contenu du wrap d'une personne pour une année donnée, sans rien écrire en base.
+ * S'arrête au 30 novembre (pas le 31 décembre) — comme Spotify Wrapped : décembre n'est pas encore
+ * terminé quand la page ouvre le 1er décembre, un calcul sur l'année complète serait donc partiel
+ * et devrait être refait chaque jour pour se compléter. En s'arrêtant fin novembre, la donnée est
+ * définitive dès l'ouverture de la fenêtre — un seul calcul suffit (cf. runWrapped).
+ */
 export async function computeUserWrapped(workspaceId: string, userId: string, year: number): Promise<WrappedPayload> {
 	const fromISO = `${year}-01-01`;
-	const toISO = `${year}-12-31`;
+	const toISO = `${year}-11-30`;
 	const range = and(
 		eq(timeEntry.workspaceId, workspaceId),
 		eq(timeEntry.userId, userId),
@@ -191,9 +197,11 @@ export async function computeUserWrapped(workspaceId: string, userId: string, ye
 }
 
 /**
- * Cron quotidien (api/jobs/wrapped) : no-op hors fenêtre (1 déc → 5 jan). Recalcule et fige le
- * wrap de chaque membre actif — un upsert par personne, pour absorber les imputations saisies en
- * retard sur la fin de l'année tant que la fenêtre reste ouverte.
+ * Cron quotidien (api/jobs/wrapped) : no-op hors fenêtre (1 déc → 5 jan). La donnée (jusqu'au 30
+ * novembre, cf. computeUserWrapped) ne change plus une fois la fenêtre ouverte — chaque membre
+ * n'est donc calculé et figé qu'une seule fois pour la saison, jamais recalculé les jours suivants.
+ * Le passage quotidien du cron sert uniquement de filet : si le run du 1er décembre échoue (déploi
+ * en cours, base indisponible…), celui du 2 décembre termine le travail à sa place.
  */
 export async function runWrapped(dateISO: string, workspaceId?: string): Promise<{ workspaces: number; users: number }> {
 	if (!isWrappedWindowOpen(dateISO)) return { workspaces: 0, users: 0 };
@@ -211,14 +219,17 @@ export async function runWrapped(dateISO: string, workspaceId?: string): Promise
 			.from(membership)
 			.where(and(eq(membership.workspaceId, ws.id), eq(membership.active, true)));
 		for (const m of members) {
+			const already = await db
+				.select({ id: wrappedSnapshot.id })
+				.from(wrappedSnapshot)
+				.where(and(eq(wrappedSnapshot.workspaceId, ws.id), eq(wrappedSnapshot.userId, m.userId), eq(wrappedSnapshot.year, year)));
+			if (already.length > 0) continue;
+
 			const payload = await computeUserWrapped(ws.id, m.userId, year);
 			await db
 				.insert(wrappedSnapshot)
 				.values({ workspaceId: ws.id, userId: m.userId, year, payload })
-				.onConflictDoUpdate({
-					target: [wrappedSnapshot.workspaceId, wrappedSnapshot.userId, wrappedSnapshot.year],
-					set: { payload, generatedAt: new Date() }
-				});
+				.onConflictDoNothing();
 			userCount++;
 		}
 	}

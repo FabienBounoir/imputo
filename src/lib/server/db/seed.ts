@@ -1028,13 +1028,14 @@ async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, pe
 	// ---------- Wrapped : figé directement sur les données déjà en mémoire (entryDrafts,
 	// moodVoteRows, rotationUserIds…) plutôt que via computeUserWrapped/runWrapped, qui vivent
 	// derrière $lib/server/db — indisponible sous tsx nu (cf. note d'import plus haut). Année en
-	// cours au moment du seed ; /wrapped?preview=1 (ADMIN) permet de la consulter sans attendre la
-	// vraie fenêtre du 1 déc → 5 jan. ----------
+	// cours au moment du seed, arrêtée au 30 novembre comme computeUserWrapped (cf. sa docstring) ;
+	// /wrapped?preview=1 (ADMIN) permet de la consulter sans attendre la vraie fenêtre du 1 déc → 5
+	// jan. ----------
 	const wrappedYear = today.getUTCFullYear();
 	const ticketById = new Map(insertedTickets.map((t) => [t.id, t]));
 	const categoryKindById = new Map(insertedCategories.map((c) => [c.id, c.kind]));
 	const wrappedFromISO = `${wrappedYear}-01-01`;
-	const wrappedToISO = `${wrappedYear}-12-31`;
+	const wrappedToISO = `${wrappedYear}-11-30`;
 	const yearDrafts = entryDrafts.filter((d) => d.day >= wrappedFromISO && d.day <= wrappedToISO);
 
 	// Périodes de perm (cadence WEEK, jamais changée dans ce seed) sur l'année du wrapped — mêmes

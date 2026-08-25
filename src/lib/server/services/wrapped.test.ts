@@ -68,6 +68,17 @@ describe('computeUserWrapped', () => {
 		expect(wrapped.totalHours).toBe(0);
 		expect(wrapped.productivePct).toBe(0);
 	});
+
+	it('exclut décembre (comme Spotify Wrapped — le mois n’est pas terminé à l’ouverture de la fenêtre)', async () => {
+		const ws = await makeWorkspace('wrapdec');
+		const t = await createTicket(ws.workspaceId, { key: `WRAPDEC-${ws.id}`, title: 'Ticket décembre' });
+		await setCell(ws.workspaceId, ws.userId, { targetType: 'TICKET', targetId: t.id, activityId: null, day: '2026-11-30', amount: 3 });
+		await setCell(ws.workspaceId, ws.userId, { targetType: 'TICKET', targetId: t.id, activityId: null, day: '2026-12-15', amount: 5 });
+
+		const wrapped = await computeUserWrapped(ws.workspaceId, ws.userId, 2026);
+
+		expect(wrapped.totalHours).toBe(3);
+	});
 });
 
 describe('runWrapped', () => {
@@ -80,6 +91,22 @@ describe('runWrapped', () => {
 		const inside = await runWrapped('2026-12-10', ws.workspaceId);
 		expect(inside.workspaces).toBe(1);
 		expect(inside.users).toBeGreaterThanOrEqual(1);
+
+		const rows = await db
+			.select()
+			.from(wrappedSnapshot)
+			.where(and(eq(wrappedSnapshot.workspaceId, ws.workspaceId), eq(wrappedSnapshot.userId, ws.userId), eq(wrappedSnapshot.year, 2026)));
+		expect(rows).toHaveLength(1);
+	});
+
+	it('est idempotent : un second passage dans la fenêtre ne recalcule personne', async () => {
+		const ws = await makeWorkspace('wrapjob2');
+
+		const first = await runWrapped('2026-12-01', ws.workspaceId);
+		expect(first.users).toBeGreaterThanOrEqual(1);
+
+		const second = await runWrapped('2026-12-02', ws.workspaceId);
+		expect(second.users).toBe(0);
 
 		const rows = await db
 			.select()
