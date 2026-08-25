@@ -572,6 +572,67 @@ select {
 	}
 }
 
+/* Wrapped : le seul moment de l'année où le menu a le droit de faire n'importe quoi. */
+.nav-item.wrapped-hype .ic {
+	animation: wrapped-icon-color 4s linear infinite;
+}
+.nav-item.wrapped-hype .wrapped-label {
+	background: linear-gradient(90deg, #22c55e, #a78bfa, #f5b84a, #ff4fa0, #45e0d8, #22c55e);
+	background-size: 300% 100%;
+	-webkit-background-clip: text;
+	background-clip: text;
+	color: transparent;
+	font-weight: 700;
+	animation: wrapped-shimmer 4s linear infinite;
+}
+.nav-item.wrapped-hype .wrapped-sparkle {
+	margin-left: auto;
+	display: inline-block;
+	animation: wrapped-sparkle-spin 2.2s ease-in-out infinite;
+}
+@keyframes wrapped-icon-color {
+	0%,
+	100% {
+		color: #22c55e;
+	}
+	20% {
+		color: #a78bfa;
+	}
+	40% {
+		color: #f5b84a;
+	}
+	60% {
+		color: #ff4fa0;
+	}
+	80% {
+		color: #45e0d8;
+	}
+}
+@keyframes wrapped-shimmer {
+	to {
+		background-position: 300% 0;
+	}
+}
+@keyframes wrapped-sparkle-spin {
+	0%, 100% {
+		transform: scale(1) rotate(0deg);
+	}
+	50% {
+		transform: scale(1.35) rotate(20deg);
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.nav-item.wrapped-hype .ic,
+	.nav-item.wrapped-hype .wrapped-label,
+	.nav-item.wrapped-hype .wrapped-sparkle {
+		animation: none;
+	}
+	.nav-item.wrapped-hype .wrapped-label {
+		background: none;
+		color: var(--accent);
+	}
+}
+
 /* La carte utilisateur reste visible quand la nav déborde. Sticky plutôt qu'un wrapper scrollable
    autour des liens : la nav est faite d'enfants directs de .sidebar (sections conditionnelles
    incluses), l'isoler dans un bloc coûterait un remaniement du markup pour le même résultat.
