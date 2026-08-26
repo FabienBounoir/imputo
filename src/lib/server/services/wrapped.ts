@@ -38,7 +38,7 @@ export type WrappedPayload = {
 	moodWorstMonth: string | null;
 	supportEnabled: boolean;
 	supportCount: number;
-	duo: { displayName: string; ticketsInCommon: number } | null;
+	duo: { userId: string; displayName: string; ticketsInCommon: number } | null;
 };
 
 /** Plus longue série de jours ouvrés consécutifs avec au moins une imputation saisie. */
@@ -167,7 +167,7 @@ export async function computeUserWrapped(workspaceId: string, userId: string, ye
 
 	const te2 = alias(timeEntry, 'te2');
 	const duoRows = await db
-		.select({ displayName: user.displayName, ticketsInCommon: sql<string>`count(distinct ${timeEntry.ticketId})` })
+		.select({ userId: user.id, displayName: user.displayName, ticketsInCommon: sql<string>`count(distinct ${timeEntry.ticketId})` })
 		.from(timeEntry)
 		.innerJoin(
 			te2,
@@ -175,10 +175,12 @@ export async function computeUserWrapped(workspaceId: string, userId: string, ye
 		)
 		.innerJoin(user, eq(user.id, te2.userId))
 		.where(and(range, eq(timeEntry.targetType, 'TICKET')))
-		.groupBy(te2.userId, user.displayName)
+		.groupBy(user.id, te2.userId, user.displayName)
 		.orderBy(desc(sql`count(distinct ${timeEntry.ticketId})`))
 		.limit(1);
-	const duo = duoRows[0] ? { displayName: duoRows[0].displayName, ticketsInCommon: Number(duoRows[0].ticketsInCommon) } : null;
+	const duo = duoRows[0]
+		? { userId: duoRows[0].userId, displayName: duoRows[0].displayName, ticketsInCommon: Number(duoRows[0].ticketsInCommon) }
+		: null;
 
 	return {
 		year,

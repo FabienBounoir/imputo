@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { gsap } from 'gsap';
+	import UserAvatar from '$lib/components/UserAvatar.svelte';
+	import { beep } from '$lib/sound';
 
 	let { data } = $props();
 	const w = data.wrapped;
@@ -168,16 +170,33 @@
 			g.insertAdjacentHTML('afterend', '<div class="sweep"></div>');
 		});
 
-		// Particules de fond — un style de mouvement différent par écran (data-particles), pas
-		// juste le même flottement partout. La forme (cercle/carré) reste commune : la variété
-		// vient du mouvement, pas d'un nouveau jeu de CSS par style.
+		// Ambiance de fond — deux couches complémentaires, toutes deux propres à chaque écran :
+		//   • data-backdrop : le décor, purement CSS (rayons, perforations, grille en perspective,
+		//     ondes concentriques, balayage radar…). Injecté ici plutôt qu'écrit dans le markup de
+		//     chaque section : ça reste un détail décoratif, pas du contenu.
+		//   • data-particles : les éléments animés. La forme change autant que la trajectoire
+		//     (points, traits, anneaux, croix, confettis) — un seul type de particule pour huit
+		//     écrans, ça se voit tout de suite, quelle que soit la variété des mouvements.
+		//
+		// Les animations de chaque écran sont mémorisées ici pour pouvoir être mises en pause dès
+		// qu'il sort du champ (cf. setIdle plus bas) : sans ça, les huit décors et leurs ~250
+		// particules tournent tous à chaque frame en permanence, qu'on les regarde ou non.
+		const slideAnims = new Map<HTMLElement, gsap.core.Animation[]>();
 		if (!reduceMotion) {
-			function spawn(slide: HTMLElement, count: number, square = false) {
+			const rnd = gsap.utils.random;
+
+			document.querySelectorAll<HTMLElement>('.slide[data-backdrop]').forEach((slide) => {
+				const bd = document.createElement('div');
+				bd.className = 'backdrop bd-' + slide.dataset.backdrop;
+				slide.querySelector('.glow')?.insertAdjacentElement('afterend', bd);
+			});
+
+			function spawn(slide: HTMLElement, count: number, variant = '') {
 				const pts: HTMLElement[] = [];
 				for (let i = 0; i < count; i++) {
 					const p = document.createElement('span');
-					p.className = square ? 'spark square' : 'spark';
-					const size = gsap.utils.random(2, 5);
+					p.className = variant ? 'spark ' + variant : 'spark';
+					const size = rnd(2, 5);
 					p.style.width = size + 'px';
 					p.style.height = size + 'px';
 					slide.appendChild(p);
@@ -185,175 +204,191 @@
 				}
 				return pts;
 			}
+			const at = (p: HTMLElement, left: number, top: number) => {
+				p.style.left = left + '%';
+				p.style.top = top + '%';
+			};
+			const size = (p: HTMLElement, w: number, h: number) => {
+				p.style.width = w + 'px';
+				p.style.height = h + 'px';
+			};
 
 			const particleStyles: Record<string, (slide: HTMLElement) => void> = {
-				// Arrivée calme : ça monte doucement et ça respire.
+				// Couverture : poussière qui monte doucement, traversée de fins traits de lumière —
+				// le rideau se lève, rien ne presse encore.
 				drift: (slide) => {
-					spawn(slide, 34).forEach((p) => {
-						p.style.left = gsap.utils.random(4, 96) + '%';
-						p.style.top = gsap.utils.random(6, 96) + '%';
+					spawn(slide, 26).forEach((p) => {
+						at(p, rnd(4, 96), rnd(6, 96));
 						gsap.to(p, {
-							y: '-=' + gsap.utils.random(30, 70),
-							x: '+=' + gsap.utils.random(-15, 15),
-							opacity: () => gsap.utils.random(0.2, 0.75),
-							scale: () => gsap.utils.random(0.6, 1.5),
-							duration: () => gsap.utils.random(4, 8),
+							y: '-=' + rnd(30, 70),
+							x: '+=' + rnd(-15, 15),
+							opacity: () => rnd(0.2, 0.75),
+							scale: () => rnd(0.6, 1.5),
+							duration: () => rnd(4, 8),
 							repeat: -1,
 							yoyo: true,
 							ease: 'sine.inOut',
-							delay: gsap.utils.random(0, 4)
+							delay: rnd(0, 4)
 						});
 					});
+					spawn(slide, 12, 'streak').forEach((p) => {
+						size(p, 1.5, rnd(40, 120));
+						at(p, rnd(2, 98), rnd(55, 105));
+						const rise = rnd(5, 9);
+						gsap
+							.timeline({ repeat: -1, delay: rnd(0, 8) })
+							.fromTo(p, { opacity: 0 }, { opacity: rnd(0.25, 0.6), duration: 0.9 }, 0)
+							.to(p, { y: '-=' + rnd(300, 560), duration: rise, ease: 'none' }, 0)
+							.to(p, { opacity: 0, duration: 1.4 }, rise - 1.4);
+					});
 				},
-				// Confettis de ticket déchiré : tombent du haut en tournant.
+				// Ticket déchiré : confettis carrés et bouts de coupon qui tombent en se retournant
+				// (la bascule sur scaleX suffit à faire croire à une vraie rotation dans l'espace).
 				confetti: (slide) => {
-					spawn(slide, 46, true).forEach((p) => {
-						p.style.left = gsap.utils.random(0, 100) + '%';
-						p.style.top = gsap.utils.random(-15, 15) + '%';
-						gsap.set(p, { rotation: gsap.utils.random(0, 360) });
+					const fall = (p: HTMLElement, spin: number) => {
+						at(p, rnd(0, 100), rnd(-20, 12));
+						gsap.set(p, { rotation: rnd(0, 360) });
 						gsap.to(p, {
-							y: '+=' + gsap.utils.random(320, 560),
-							x: '+=' + gsap.utils.random(-40, 40),
-							rotation: '+=' + gsap.utils.random(180, 540),
-							opacity: () => gsap.utils.random(0.35, 1),
-							duration: () => gsap.utils.random(4, 8),
+							y: '+=' + rnd(340, 620),
+							x: '+=' + rnd(-60, 60),
+							rotation: '+=' + spin,
+							opacity: () => rnd(0.35, 1),
+							duration: () => rnd(4, 8),
 							repeat: -1,
 							ease: 'none',
-							delay: gsap.utils.random(0, 6)
+							delay: rnd(0, 6)
 						});
+						gsap.to(p, { scaleX: 0.35, duration: rnd(0.6, 1.5), repeat: -1, yoyo: true, ease: 'sine.inOut', delay: rnd(0, 2) });
+					};
+					spawn(slide, 28, 'square').forEach((p) => {
+						size(p, rnd(5, 9), rnd(5, 9));
+						fall(p, rnd(180, 540));
+					});
+					spawn(slide, 18, 'square').forEach((p) => {
+						size(p, rnd(4, 6), rnd(12, 22));
+						fall(p, rnd(-540, -180));
 					});
 				},
-				// Braises qui montent vite depuis le bas, façon étincelles de feu.
+				// Braises : des points qui montent vite, doublés de traînées plus longues et plus
+				// lumineuses — un feu ne crache pas que des points de la même taille.
 				ember: (slide) => {
-					spawn(slide, 42).forEach((p) => {
-						p.style.left = gsap.utils.random(0, 100) + '%';
-						p.style.top = gsap.utils.random(45, 100) + '%';
+					spawn(slide, 34).forEach((p) => {
+						at(p, rnd(0, 100), rnd(45, 100));
 						gsap.to(p, {
-							y: '-=' + gsap.utils.random(90, 180),
-							x: '+=' + gsap.utils.random(-25, 25),
-							opacity: () => gsap.utils.random(0.3, 0.95),
-							scale: () => gsap.utils.random(0.5, 1.3),
-							duration: () => gsap.utils.random(1.8, 3.6),
+							y: '-=' + rnd(90, 180),
+							x: '+=' + rnd(-25, 25),
+							opacity: () => rnd(0.3, 0.95),
+							scale: () => rnd(0.5, 1.3),
+							duration: () => rnd(1.8, 3.6),
 							repeat: -1,
 							ease: 'power1.out',
-							delay: gsap.utils.random(0, 3.5)
+							delay: rnd(0, 3.5)
 						});
 					});
+					spawn(slide, 14, 'streak').forEach((p) => {
+						size(p, 2, rnd(14, 38));
+						at(p, rnd(0, 100), rnd(80, 105));
+						const rise = rnd(2.2, 4);
+						gsap
+							.timeline({ repeat: -1, delay: rnd(0, 4) })
+							.fromTo(p, { opacity: 0 }, { opacity: rnd(0.4, 0.9), duration: 0.35 }, 0)
+							.to(p, { y: '-=' + rnd(220, 420), x: '+=' + rnd(-50, 50), duration: rise, ease: 'power1.out' }, 0)
+							.to(p, { opacity: 0, duration: 0.9 }, rise - 0.9);
+					});
 				},
-				// Bulles qui flottent lentement, un peu de tangage.
+				// Humeur : des anneaux creux qui remontent en tanguant. Le contour plutôt que le
+				// plein donne tout de suite un registre plus doux que les autres écrans.
 				bubble: (slide) => {
-					spawn(slide, 30).forEach((p) => {
-						p.style.left = gsap.utils.random(4, 96) + '%';
-						p.style.top = gsap.utils.random(20, 100) + '%';
-						gsap.to(p, {
-							y: '-=' + gsap.utils.random(60, 130),
-							x: '+=' + gsap.utils.random(-20, 20),
-							opacity: () => gsap.utils.random(0.2, 0.7),
-							scale: () => gsap.utils.random(0.7, 1.8),
-							duration: () => gsap.utils.random(5, 9),
-							repeat: -1,
-							ease: 'sine.inOut',
-							delay: gsap.utils.random(0, 5)
-						});
+					spawn(slide, 24, 'ring').forEach((p) => {
+						const d = rnd(6, 24);
+						size(p, d, d);
+						at(p, rnd(4, 96), rnd(30, 115));
+						gsap.to(p, { y: '-=' + rnd(240, 480), duration: rnd(8, 14), repeat: -1, ease: 'none', delay: rnd(0, 9) });
+						gsap.to(p, { x: '+=' + rnd(-28, 28), duration: rnd(2, 4), repeat: -1, yoyo: true, ease: 'sine.inOut' });
+						gsap.to(p, { opacity: () => rnd(0.15, 0.6), duration: rnd(2, 4), repeat: -1, yoyo: true, ease: 'sine.inOut', delay: rnd(0, 3) });
 					});
 				},
-				// Points fixes qui clignotent, façon radar/scanner.
+				// Support : des croix de visée qui clignotent et pivotent, sous le balayage radar du
+				// décor — on surveille, on ne flotte pas.
 				twinkle: (slide) => {
-					spawn(slide, 30).forEach((p) => {
-						p.style.left = gsap.utils.random(4, 96) + '%';
-						p.style.top = gsap.utils.random(6, 96) + '%';
+					spawn(slide, 26, 'cross').forEach((p) => {
+						const d = rnd(7, 17);
+						size(p, d, d);
+						at(p, rnd(4, 96), rnd(6, 96));
+						gsap.set(p, { rotation: rnd(-20, 20) });
 						gsap.to(p, {
-							opacity: () => gsap.utils.random(0.1, 0.95),
-							scale: () => gsap.utils.random(0.4, 2),
-							duration: () => gsap.utils.random(1, 2.6),
+							opacity: () => rnd(0.1, 0.9),
+							scale: () => rnd(0.5, 1.4),
+							rotation: '+=90',
+							duration: () => rnd(1.4, 3),
 							repeat: -1,
 							yoyo: true,
 							ease: 'sine.inOut',
-							delay: gsap.utils.random(0, 3)
+							delay: rnd(0, 3)
 						});
 					});
 				},
-				// Orbite autour du centre, comme la spirale de l'écran volume.
+				// Volume : tout tourne autour du centre, en écho à la spirale de l'écran.
 				orbit: (slide) => {
 					spawn(slide, 22).forEach((p) => {
-						p.style.left = '50%';
-						p.style.top = '50%';
-						const radius = gsap.utils.random(14, 44);
+						at(p, 50, 50);
+						const radius = rnd(14, 44);
 						const dir = Math.random() < 0.5 ? 1 : -1;
-						const proxy = { a: gsap.utils.random(0, 360) };
+						const proxy = { a: rnd(0, 360) };
 						const applyOrbit = () => {
 							const rad = (proxy.a * Math.PI) / 180;
 							p.style.transform = `translate(${Math.cos(rad) * radius}vmin, ${Math.sin(rad) * radius}vmin)`;
 						};
 						applyOrbit();
-						gsap.to(proxy, {
-							a: '+=' + dir * 360,
-							duration: () => gsap.utils.random(7, 16),
-							repeat: -1,
-							ease: 'none',
-							onUpdate: applyOrbit
-						});
-						gsap.to(p, {
-							opacity: () => gsap.utils.random(0.3, 0.9),
-							duration: () => gsap.utils.random(1.5, 3),
-							repeat: -1,
-							yoyo: true,
-							ease: 'sine.inOut',
-							delay: gsap.utils.random(0, 3)
-						});
+						gsap.to(proxy, { a: '+=' + dir * 360, duration: () => rnd(7, 16), repeat: -1, ease: 'none', onUpdate: applyOrbit });
+						gsap.to(p, { opacity: () => rnd(0.3, 0.9), duration: () => rnd(1.5, 3), repeat: -1, yoyo: true, ease: 'sine.inOut', delay: rnd(0, 3) });
 					});
 				},
-				// Balancement doux de gauche à droite, façon deux silhouettes qui bougent ensemble.
+				// Duo : deux courants qui se croisent en sens inverse, l'un à l'accent, l'autre
+				// éteint — les mêmes deux couleurs que les cercles de l'illustration.
 				sway: (slide) => {
-					spawn(slide, 26).forEach((p) => {
-						p.style.left = gsap.utils.random(8, 92) + '%';
-						p.style.top = gsap.utils.random(10, 95) + '%';
-						const amp = gsap.utils.random(10, 28);
-						const proxy = { a: gsap.utils.random(0, 360) };
-						const applySway = () => {
-							const rad = (proxy.a * Math.PI) / 180;
-							p.style.transform = `translate(${Math.sin(rad) * amp}px, ${-Math.abs(Math.cos(rad)) * amp * 0.5}px)`;
-						};
-						applySway();
-						gsap.to(proxy, {
-							a: '+=360',
-							duration: () => gsap.utils.random(5, 9),
-							repeat: -1,
-							ease: 'none',
-							onUpdate: applySway
-						});
-						gsap.to(p, {
-							opacity: () => gsap.utils.random(0.25, 0.85),
-							duration: () => gsap.utils.random(1.5, 3),
-							repeat: -1,
-							yoyo: true,
-							ease: 'sine.inOut',
-							delay: gsap.utils.random(0, 3)
-						});
+					spawn(slide, 30).forEach((p, i) => {
+						const rightward = i % 2 === 0;
+						if (!rightward) p.classList.add('dim');
+						at(p, rightward ? rnd(-12, 42) : rnd(58, 112), rnd(10, 94));
+						gsap.to(p, { x: (rightward ? 1 : -1) * rnd(440, 780), duration: rnd(9, 17), repeat: -1, ease: 'none', delay: rnd(0, 9) });
+						gsap.to(p, { y: '+=' + rnd(18, 48), duration: rnd(2.2, 4.2), repeat: -1, yoyo: true, ease: 'sine.inOut' });
+						gsap.to(p, { opacity: () => rnd(0.2, 0.8), duration: rnd(1.6, 3), repeat: -1, yoyo: true, ease: 'sine.inOut', delay: rnd(0, 3) });
 					});
 				},
-				// Jaillissent du bas et montent en grand, façon feu d'artifice pour le récap final.
+				// Récap : vraie gerbe de feu d'artifice — montée en power2.out, retombée en
+				// power2.in. Une seule tween linéaire ne donnerait qu'une pluie, pas une gerbe.
 				fountain: (slide) => {
-					spawn(slide, 34).forEach((p) => {
-						p.style.left = gsap.utils.random(20, 80) + '%';
-						p.style.top = '95%';
-						gsap.to(p, {
-							y: '-=' + gsap.utils.random(240, 420),
-							x: '+=' + gsap.utils.random(-60, 60),
-							opacity: () => gsap.utils.random(0.5, 1),
-							scale: () => gsap.utils.random(0.6, 1.4),
-							duration: () => gsap.utils.random(3, 5.5),
-							repeat: -1,
-							ease: 'power1.out',
-							delay: gsap.utils.random(0, 5)
-						});
+					const shoot = (p: HTMLElement) => {
+						at(p, rnd(15, 85), 100);
+						gsap.set(p, { rotation: rnd(0, 360) });
+						const up = rnd(1.6, 2.4);
+						const down = rnd(1.8, 2.6);
+						gsap
+							.timeline({ repeat: -1, delay: rnd(0, 5) })
+							.fromTo(p, { opacity: 0 }, { opacity: rnd(0.5, 1), duration: 0.3 }, 0)
+							.to(p, { x: '+=' + rnd(-160, 160), rotation: '+=' + rnd(180, 720), duration: up + down, ease: 'none' }, 0)
+							.to(p, { y: '-=' + rnd(300, 520), duration: up, ease: 'power2.out' }, 0)
+							.to(p, { y: '+=' + rnd(260, 460), duration: down, ease: 'power2.in' }, up)
+							.to(p, { opacity: 0, duration: 0.9 }, up + down - 0.9);
+					};
+					spawn(slide, 24).forEach(shoot);
+					spawn(slide, 14, 'square').forEach((p) => {
+						size(p, rnd(3, 5), rnd(3, 10));
+						shoot(p);
 					});
 				}
 			};
 
+			// On relève ce que la construction a ajouté à la timeline globale, plutôt que de faire
+			// remonter la liste par chaque style : ça capture aussi les tweens qui n'animent pas
+			// l'élément lui-même mais un proxy (orbit, sway), introuvables via getTweensOf(élément).
+			const running = () => new Set(gsap.globalTimeline.getChildren(false, true, true));
 			document.querySelectorAll<HTMLElement>('.slide').forEach((slide) => {
 				const style = slide.dataset.particles ?? 'drift';
+				const before = running();
 				(particleStyles[style] ?? particleStyles.drift)(slide);
+				slideAnims.set(slide, [...running()].filter((a) => !before.has(a)));
 			});
 		}
 
@@ -456,6 +491,7 @@
 		// avoir besoin de cibler leur conteneur séparément (évite un double décalage imbriqué).
 		const REVEAL_SELECTOR = [
 			'.eyebrow',
+			'.avatar-pair',
 			'.stat-number',
 			'.desc',
 			'.icon-row',
@@ -491,6 +527,23 @@
 			gsap.to(items, { y: 0, opacity: 1, duration: 0.65, ease: 'power3.out', stagger: 0.08, overwrite: true });
 		}
 
+		// Met un écran en veille : ses tweens de particules (GSAP) et les animations CSS de son décor
+		// (grain, halo, balayage, backdrop) sont mis en pause. Un écran hors champ ne coûte alors
+		// plus rien par frame — c'était ça le vrai poids, pas telle ou telle animation isolée.
+		// getAnimations({subtree:true}) atteint les ::before/::after des décors, qu'une règle CSS ne
+		// pourrait pas viser ici : la classe qui pilote l'état serait posée en JS, donc absente du
+		// markup, donc la règle serait élaguée du build par Svelte. Les transitions sont laissées
+		// tranquilles (les figer à mi-course laisserait un état visuel bloqué).
+		// Les tweens infinis posés par revealRing visent le SVG directement : getTweensOf suffit.
+		function setIdle(slide: HTMLElement, idle: boolean) {
+			for (const a of slide.getAnimations({ subtree: true })) {
+				if ('animationName' in a) idle ? a.pause() : a.play();
+			}
+			const ring = slide.querySelector('.ring-wrap svg, .cover-mark svg');
+			for (const a of slideAnims.get(slide) ?? []) a.paused(idle);
+			if (ring) for (const t of gsap.getTweensOf(ring)) t.paused(idle);
+		}
+
 		function place() {
 			const x = -index * window.innerWidth;
 			gsap.set(reel, { x });
@@ -502,8 +555,20 @@
 		// vraiment arrivé à l'écran : le lancer en même temps que le glissement du reel (comme
 		// avant) le fait apparaître pendant qu'il est encore hors champ, donc invisible.
 		let firstGoTo = true;
-		function goTo(i: number) {
+		// Sons de navigation : un tick discret par changement d'écran, un petit "rewind" distinct pour
+		// le bouton recommencer — coupés dès que bgm est en pause (le mute doit couper toute l'ambiance
+		// sonore de la page, pas juste la musique).
+		function goTo(i: number, sound: 'step' | 'restart' | 'none' = 'step') {
+			const prevIndex = index;
 			index = Math.max(0, Math.min(slides.length - 1, i));
+			if (index !== prevIndex && !firstGoTo && !bgm.paused) {
+				if (sound === 'restart') {
+					beep(659.25, { duration: 0.1, type: 'triangle', volume: 0.55 });
+					beep(392, { offset: 0.09, duration: 0.16, type: 'triangle', volume: 0.55 });
+				} else if (sound === 'step') {
+					beep(523.25, { duration: 0.06, type: 'triangle', volume: 0.4 });
+				}
+			}
 			const x = -index * window.innerWidth;
 			const active = slides[index];
 			chapters.forEach((c, ci) => c.classList.toggle('active', ci === index));
@@ -512,8 +577,13 @@
 			nextBtn.disabled = index === slides.length - 1;
 			prepareRing(active);
 			prepareContent(active);
+			// Réveillé avant le glissement (il traverse l'écran, il doit être vivant pendant le
+			// trajet), les autres endormis seulement à l'arrivée — sinon on couperait l'écran qu'on
+			// est encore en train de quitter, en plein champ.
+			setIdle(active, false);
 
 			function finishReveal() {
+				slides.forEach((s) => s !== active && setIdle(s, true));
 				active.querySelectorAll<HTMLElement>('.count').forEach(animateNumber);
 				revealRing(active);
 				revealContent(active);
@@ -530,6 +600,45 @@
 			firstGoTo = false;
 		}
 
+		// Sortie du wrapped : le miroir exact de l'entrée (cf. .wrap-glitch dans app.css) — l'écran
+		// s'éteint comme un tube cathodique, l'image se compresse sur une ligne de lumière qui se
+		// referme sur elle-même, et c'est seulement là qu'on part. Un signal sonore descendant
+		// accompagne la coupure, et la musique baisse en même temps plutôt que d'être coupée net par
+		// le déchargement de la page.
+		// La navigation reste un rechargement complet (l'appli reprend la main sur une page propre :
+		// .app est en position:fixed par-dessus tout, et l'AudioContext meurt avec la page).
+		let leaving = false;
+		function closeWrapped() {
+			if (leaving) return;
+			leaving = true;
+			if (!bgm.paused) {
+				beep(392, { duration: 0.14, type: 'sine', volume: 0.55 });
+				beep(261.63, { offset: 0.1, duration: 0.18, type: 'sine', volume: 0.55 });
+				gsap.to(bgm, { volume: 0, duration: 0.6, ease: 'power2.in' });
+			}
+			const leave = () => (window.location.href = '/imputation');
+			if (reduceMotion) {
+				setTimeout(leave, 160);
+				return;
+			}
+			const line = document.createElement('div');
+			line.className = 'crt-line';
+			appEl!.appendChild(line);
+			gsap
+				.timeline({ onComplete: leave })
+				.to('.chrome', { y: -34, opacity: 0, duration: 0.28, ease: 'power2.in' }, 0)
+				.to('.nav-arrow', { y: 34, opacity: 0, duration: 0.28, ease: 'power2.in' }, 0)
+				.to('.spark', { opacity: 0, scale: 0, duration: 0.3, ease: 'power2.in', stagger: { amount: 0.22, from: 'random' } }, 0)
+				.to('.stage', { scaleY: 0.004, scaleX: 1.06, duration: 0.34, ease: 'power3.in' }, 0.16)
+				.set(line, { opacity: 1 }, 0.5)
+				.set('.stage', { opacity: 0 }, 0.5)
+				.to(line, { scaleX: 0, opacity: 0, duration: 0.32, ease: 'power2.in' }, 0.54);
+		}
+		document.getElementById('closeBtn')?.addEventListener('click', (e) => {
+			e.preventDefault();
+			closeWrapped();
+		});
+
 		window.addEventListener('resize', place);
 		prevBtn.addEventListener('click', () => goTo(index - 1));
 		nextBtn.addEventListener('click', () => goTo(index + 1));
@@ -539,11 +648,11 @@
 			goTo(index + 1);
 			startAudio();
 		});
-		document.getElementById('restartBtn')?.addEventListener('click', () => goTo(0));
+		document.getElementById('restartBtn')?.addEventListener('click', () => goTo(0, 'restart'));
 		window.addEventListener('keydown', (e) => {
 			if (e.key === 'ArrowRight') goTo(index + 1);
 			if (e.key === 'ArrowLeft') goTo(index - 1);
-			if (e.key === 'Escape') window.location.href = '/imputation';
+			if (e.key === 'Escape') closeWrapped();
 		});
 
 		let touchX: number | null = null;
@@ -562,6 +671,9 @@
 		place();
 		goTo(index);
 		if (!reduceMotion) {
+			// L'image "se stabilise" en arrivant : ça prolonge le rideau qui vient de s'ouvrir côté
+			// layout (transition glitch) au lieu de laisser la couverture apparaître déjà posée.
+			gsap.from('.stage', { opacity: 0, scaleY: 0.86, scaleX: 1.04, duration: 0.75, ease: 'power3.out' });
 			gsap.from('.chrome', { y: -18, opacity: 0, duration: 0.7, ease: 'power2.out' });
 			// Petit pouls continu sur "Commencer" pour attirer l'œil dès l'arrivée sur la couverture.
 			const cta = document.getElementById('startBtn');
@@ -587,8 +699,16 @@
 			bgm.play().catch(() => {});
 		}
 		muteBtn.addEventListener('click', () => {
-			if (bgm.paused) startAudio();
-			else bgm.pause();
+			// Toujours audible (même en train de couper le son) : c'est le clic qui confirme le
+			// changement d'état, contrairement aux autres sons de la page qui, eux, se taisent en muet.
+			if (bgm.paused) {
+				startAudio();
+				beep(440, { duration: 0.05, type: 'triangle', volume: 0.5 });
+				beep(659.25, { offset: 0.05, duration: 0.09, type: 'triangle', volume: 0.52 });
+			} else {
+				beep(349.23, { duration: 0.1, type: 'triangle', volume: 0.52 });
+				bgm.pause();
+			}
 		});
 		// Tentative de lecture dès l'arrivée sur la page — la plupart des navigateurs la bloquent
 		// sans geste utilisateur au préalable (surtout après un simple rechargement, où l'atterrissage
@@ -602,7 +722,7 @@
 		window.addEventListener('pointerdown', unlockAudioOnce, { once: true });
 		window.addEventListener('keydown', unlockAudioOnce, { once: true });
 
-		// ---- carte résumé : copie texte + export PNG (téléchargement navigateur classique) ----
+		// ---- carte résumé : export PNG (téléchargement navigateur classique) ----
 		const actionToast = document.getElementById('actionToast')!;
 		function showToast(msg: string) {
 			actionToast.textContent = msg;
@@ -610,23 +730,6 @@
 			if (!reduceMotion) gsap.fromTo(actionToast, { scale: 0.85 }, { scale: 1, duration: 0.4, ease: 'back.out(3)' });
 			setTimeout(() => actionToast.classList.remove('show'), 2200);
 		}
-
-		const summaryText = [
-			`Mon Imputo Wrapped ${w.year} :`,
-			`${w.totalHours}h imputées`,
-			w.topTicket ? `${Math.round(w.topTicket.hours)}h sur ${w.topTicket.key}` : null,
-			w.streakDays ? `série de ${w.streakDays} jours` : null,
-			w.moodAvg !== null ? `humeur ${w.moodAvg}/5` : null,
-			w.supportEnabled && w.supportCount ? `${w.supportCount}× de perm support` : null
-		]
-			.filter(Boolean)
-			.join(', ');
-
-		document.getElementById('shareBtn')?.addEventListener('click', () => {
-			const ok = () => showToast('Copié ✓');
-			if (navigator.clipboard?.writeText) navigator.clipboard.writeText(summaryText).then(ok, ok);
-			else ok();
-		});
 
 		document.getElementById('downloadBtn')?.addEventListener('click', async () => {
 			try {
@@ -827,7 +930,7 @@
 				<button class="icon-btn" id="restartBtn" aria-label="Recommencer le wrapped">
 					<svg><use href="#i-restart" /></svg>
 				</button>
-				<a class="icon-btn" href="/imputation" aria-label="Quitter le wrapped">
+				<a class="icon-btn" id="closeBtn" href="/imputation" aria-label="Quitter le wrapped">
 					<svg><use href="#i-close" /></svg>
 				</a>
 			</div>
@@ -835,7 +938,7 @@
 
 		<div class="stage">
 			<div class="reel" id="reel">
-				<section class="slide" data-accent="green" data-layout="cover" data-icon="i-home" data-particles="drift">
+				<section class="slide" data-accent="green" data-layout="cover" data-icon="i-home" data-particles="drift" data-backdrop="rays">
 					<div class="glow"></div>
 					<div class="content">
 						<div class="cover-mark" data-motion="spin">
@@ -853,7 +956,7 @@
 				</section>
 
 				{#if w.topTicket}
-					<section class="slide" data-accent="violet" data-icon="i-ticket" data-particles="confetti">
+					<section class="slide" data-accent="violet" data-icon="i-ticket" data-particles="confetti" data-backdrop="dashes">
 						<div class="glow"></div>
 						<div class="content">
 							<div class="stat">
@@ -868,7 +971,7 @@
 				{/if}
 
 				{#if w.streakDays > 0}
-					<section class="slide" data-accent="amber" data-flip="1" data-icon="i-flame" data-particles="ember">
+					<section class="slide" data-accent="amber" data-flip="1" data-icon="i-flame" data-particles="ember" data-backdrop="heat">
 						<div class="glow"></div>
 						<div class="content">
 							<div class="stat">
@@ -886,7 +989,7 @@
 				{/if}
 
 				{#if w.moodEnabled && w.moodAvg !== null}
-					<section class="slide" data-accent="magenta" data-icon="i-face" data-particles="bubble">
+					<section class="slide" data-accent="magenta" data-icon="i-face" data-particles="bubble" data-backdrop="waves">
 						<div class="glow"></div>
 						<div class="content">
 							<div class="stat">
@@ -903,7 +1006,7 @@
 				{/if}
 
 				{#if w.supportEnabled && w.supportCount > 0}
-					<section class="slide" data-accent="cyan" data-flip="1" data-icon="i-shield" data-particles="twinkle">
+					<section class="slide" data-accent="cyan" data-flip="1" data-icon="i-shield" data-particles="twinkle" data-backdrop="radar">
 						<div class="glow"></div>
 						<div class="content">
 							<div class="stat">
@@ -918,7 +1021,7 @@
 				{/if}
 
 				{#if w.totalHours > 0}
-					<section class="slide" data-accent="violet" data-layout="headline" data-icon="i-activity" data-particles="orbit">
+					<section class="slide" data-accent="violet" data-layout="headline" data-icon="i-activity" data-particles="orbit" data-backdrop="grid">
 						<div class="glow"></div>
 						<div class="content">
 							<div>
@@ -942,11 +1045,15 @@
 				{/if}
 
 				{#if w.duo}
-					<section class="slide" data-accent="violet" data-flip="1" data-icon="i-people" data-particles="sway">
+					<section class="slide" data-accent="violet" data-flip="1" data-icon="i-people" data-particles="sway" data-backdrop="beams">
 						<div class="glow"></div>
 						<div class="content">
 							<div class="stat">
 								<div class="eyebrow"><svg><use href="#i-people" /></svg>Duo de l'année</div>
+								<div class="avatar-pair">
+									<div class="avatar-chip me"><UserAvatar userId={data.user?.id} name={data.user?.displayName ?? 'Toi'} size={44} /></div>
+									<div class="avatar-chip them"><UserAvatar userId={w.duo.userId} name={w.duo.displayName} size={44} /></div>
+								</div>
 								<div class="stat-number"><span class="count" data-target={w.duo.ticketsInCommon}>0</span><span class="unit">tickets en commun</span></div>
 								<p class="desc">Toi et <mark>{w.duo.displayName}</mark> avez bossé sur {w.duo.ticketsInCommon} tickets ensemble cette année. Ton duo le plus productif.</p>
 								<div class="icon-row"><svg><use href="#i-globe" /></svg><svg><use href="#i-ticket" /></svg></div>
@@ -956,7 +1063,7 @@
 					</section>
 				{/if}
 
-				<section class="slide" data-accent="green" data-layout="summary" data-icon="i-flag" data-particles="fountain">
+				<section class="slide" data-accent="green" data-layout="summary" data-icon="i-flag" data-particles="fountain" data-backdrop="burst">
 					<div class="glow"></div>
 					<div class="content">
 						<div class="pass" id="passCard">
@@ -995,8 +1102,12 @@
 
 		<button class="nav-arrow prev" id="prevBtn" aria-label="Écran précédent"><svg><use href="#i-arrow-l" /></svg></button>
 		<button class="nav-arrow next" id="nextBtn" aria-label="Écran suivant"><svg><use href="#i-arrow-r" /></svg></button>
-		<button class="tap-zone tap-left" id="tapLeft" aria-hidden="true" tabindex="-1"></button>
-		<button class="tap-zone tap-right" id="tapRight" aria-hidden="true" tabindex="-1"></button>
+		<!-- Des div, pas des button : un button prend le focus au clic (tabindex="-1" ne bloque que le
+		     Tab), et la flèche suivante le repasse en :focus-visible — soit un cadre d'accent autour
+		     de 22% de l'écran. Ces zones ne sont qu'un raccourci tactile qui double les flèches, déjà
+		     focusables et accessibles : elles n'ont rien à recevoir. -->
+		<div class="tap-zone tap-left" id="tapLeft" aria-hidden="true"></div>
+		<div class="tap-zone tap-right" id="tapRight" aria-hidden="true"></div>
 	</div>
 
 	<canvas id="exportCanvas" width="900" height="1260" style="display:none"></canvas>
@@ -1214,11 +1325,15 @@
 		overflow: hidden;
 	}
 
+	/* Empilement du fond, du plus loin au plus près : dégradé de base (::after) < grain (::before) <
+	   halo < décor + balayage < particules < contenu. Tout est en z-index négatif explicite parce
+	   qu'un ::after compte comme le DERNIER enfant : à z-index égal il repassait par-dessus le halo
+	   et le décor (donc un aplat opaque sur toute l'ambiance), l'ordre du DOM ne suffit pas ici. */
 	.slide::before {
 		content: '';
 		position: absolute;
 		inset: -40px;
-		z-index: -2;
+		z-index: -4;
 		background-image: radial-gradient(circle, var(--accent) 1px, transparent 1.3px);
 		background-size: 15px 15px;
 		opacity: 0.22;
@@ -1228,7 +1343,7 @@
 		content: '';
 		position: absolute;
 		inset: 0;
-		z-index: -1;
+		z-index: -5;
 		background:
 			radial-gradient(120% 90% at 50% 30%, transparent 0%, var(--ink) 78%),
 			linear-gradient(180deg, var(--ink-2), var(--ink));
@@ -1259,7 +1374,7 @@
 		background: radial-gradient(circle, var(--accent) 0%, transparent 62%);
 		filter: blur(80px);
 		opacity: 0.2;
-		z-index: -1;
+		z-index: -3;
 		pointer-events: none;
 		animation: glow-pulse 6s ease-in-out infinite;
 	}
@@ -1296,7 +1411,7 @@
 	.slide :global(.sweep) {
 		position: absolute;
 		inset: -50%;
-		z-index: -1;
+		z-index: -2;
 		pointer-events: none;
 		background: linear-gradient(115deg, transparent 42%, color-mix(in srgb, var(--accent) 9%, transparent) 50%, transparent 58%);
 		animation: sweep-move 8s ease-in-out infinite;
@@ -1307,10 +1422,278 @@
 		background: var(--accent);
 		opacity: 0;
 		pointer-events: none;
-		z-index: 0;
+		z-index: -1;
 	}
 	.slide :global(.spark.square) {
 		border-radius: 1px;
+	}
+	/* Traînée : le dégradé (transparent -> accent) donne le sens du mouvement, un trait plein
+	   ressemblerait juste à une barre qui glisse. */
+	.slide :global(.spark.streak) {
+		border-radius: 2px;
+		background: linear-gradient(180deg, transparent, var(--accent));
+	}
+	.slide :global(.spark.ring) {
+		background: none;
+		border: 1.5px solid var(--accent);
+	}
+	.slide :global(.spark.cross) {
+		border-radius: 0;
+		background:
+			linear-gradient(var(--accent), var(--accent)) center / 100% 1.5px no-repeat,
+			linear-gradient(var(--accent), var(--accent)) center / 1.5px 100% no-repeat;
+	}
+	.slide :global(.spark.dim) {
+		background: var(--fg-dim);
+	}
+
+	/* ============================================================
+	   Décors de fond, un par écran (cf. data-backdrop). Tout est en gradients animés par
+	   transform/opacity : aucune boucle JS ne tourne pour ces couches, seules les particules ont
+	   besoin de GSAP. Chaque décor est teinté par --accent de l'écran, donc change de couleur en
+	   même temps que lui.
+	   ============================================================ */
+	.slide :global(.backdrop) {
+		position: absolute;
+		inset: 0;
+		z-index: -2;
+		pointer-events: none;
+		overflow: hidden;
+	}
+
+	/* Couverture : colonnes de lumière qui défilent lentement, fondues en haut et en bas. */
+	.slide :global(.bd-rays) {
+		-webkit-mask-image: linear-gradient(0deg, transparent 2%, #000 34%, #000 62%, transparent 96%);
+		mask-image: linear-gradient(0deg, transparent 2%, #000 34%, #000 62%, transparent 96%);
+	}
+	.slide :global(.bd-rays)::before {
+		content: '';
+		position: absolute;
+		inset: -10% -20%;
+		background: repeating-linear-gradient(96deg, transparent 0 78px, color-mix(in srgb, var(--accent) 38%, transparent) 78px 81px);
+		opacity: 0.6;
+		animation: bd-slide-x 16s linear infinite;
+	}
+	@keyframes bd-slide-x {
+		to {
+			transform: translateX(-160px);
+		}
+	}
+
+	/* Ticket : rangées de perforations qui défilent, comme un coupon qu'on déroule. */
+	.slide :global(.bd-dashes)::before {
+		content: '';
+		position: absolute;
+		inset: -10%;
+		background-image: repeating-linear-gradient(90deg, color-mix(in srgb, var(--accent) 55%, transparent) 0 16px, transparent 16px 34px);
+		-webkit-mask-image: repeating-linear-gradient(0deg, #000 0 2.5px, transparent 2.5px 66px);
+		mask-image: repeating-linear-gradient(0deg, #000 0 2.5px, transparent 2.5px 66px);
+		opacity: 0.8;
+		animation: bd-dashes 5s linear infinite;
+	}
+	@keyframes bd-dashes {
+		to {
+			transform: translateX(68px);
+		}
+	}
+
+	/* Série : deux panaches de chaleur qui montent du bas, décalés dans le temps. */
+	.slide :global(.bd-heat)::before,
+	.slide :global(.bd-heat)::after {
+		content: '';
+		position: absolute;
+		left: -20%;
+		right: -20%;
+		bottom: -25%;
+		height: 80%;
+		background: radial-gradient(58% 100% at 32% 100%, color-mix(in srgb, var(--accent) 40%, transparent), transparent 72%);
+		filter: blur(30px);
+		animation: bd-heat 6s ease-in-out infinite alternate;
+	}
+	.slide :global(.bd-heat)::after {
+		background: radial-gradient(46% 100% at 74% 100%, color-mix(in srgb, var(--accent) 32%, transparent), transparent 72%);
+		animation-duration: 8s;
+		animation-delay: -3s;
+	}
+	@keyframes bd-heat {
+		from {
+			transform: translateY(8%) scaleX(1);
+			opacity: 0.3;
+		}
+		to {
+			transform: translateY(-10%) scaleX(1.18);
+			opacity: 0.62;
+		}
+	}
+
+	/* Humeur : ondes concentriques qui s'écartent — un dégradé radial répété qu'on grossit, les
+	   anneaux s'écartent tout seuls sans avoir à en animer un par un. */
+	.slide :global(.bd-waves)::before,
+	.slide :global(.bd-waves)::after {
+		content: '';
+		position: absolute;
+		left: 50%;
+		top: 50%;
+		width: 120vmax;
+		height: 120vmax;
+		margin: -60vmax;
+		border-radius: 50%;
+		background: repeating-radial-gradient(circle at 50% 50%, transparent 0 48px, color-mix(in srgb, var(--accent) 26%, transparent) 48px 50px);
+		animation: bd-waves 8s linear infinite;
+	}
+	.slide :global(.bd-waves)::after {
+		animation-delay: -4s;
+	}
+	@keyframes bd-waves {
+		0% {
+			transform: scale(0.5);
+			opacity: 0;
+		}
+		25% {
+			opacity: 0.5;
+		}
+		100% {
+			transform: scale(1);
+			opacity: 0;
+		}
+	}
+
+	/* Support : balayage radar + cercles de portée. */
+	.slide :global(.bd-radar)::before {
+		content: '';
+		position: absolute;
+		left: 50%;
+		top: 50%;
+		width: 130vmax;
+		height: 130vmax;
+		margin: -65vmax;
+		border-radius: 50%;
+		background: conic-gradient(from 0deg, color-mix(in srgb, var(--accent) 30%, transparent) 0deg, transparent 46deg);
+		opacity: 0.38;
+		animation: bd-spin 7s linear infinite;
+	}
+	.slide :global(.bd-radar)::after {
+		content: '';
+		position: absolute;
+		left: 50%;
+		top: 50%;
+		width: 110vmin;
+		height: 110vmin;
+		margin: -55vmin;
+		border-radius: 50%;
+		background: repeating-radial-gradient(circle at 50% 50%, transparent 0 62px, color-mix(in srgb, var(--accent) 22%, transparent) 62px 63px);
+		opacity: 0.5;
+	}
+	@keyframes bd-spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+
+	/* Volume : sol en perspective qui défile vers l'horizon. */
+	/* La perspective place l'horizon à `perspective / tan(angle)` au-dessus de l'origine (ici ~300px)
+	   : c'est toute la hauteur d'écran que le sol peut occuper. Une origine posée trop bas sortait
+	   donc la grille entière du cadre — d'où bottom:0 et une perspective large plutôt que courte. */
+	.slide :global(.bd-grid)::before {
+		content: '';
+		position: absolute;
+		left: -60%;
+		right: -60%;
+		bottom: 0;
+		height: 180%;
+		background-image:
+			repeating-linear-gradient(90deg, color-mix(in srgb, var(--accent) 55%, transparent) 0 1px, transparent 1px 72px),
+			repeating-linear-gradient(0deg, color-mix(in srgb, var(--accent) 55%, transparent) 0 1px, transparent 1px 72px);
+		transform: perspective(1600px) rotateX(68deg);
+		transform-origin: 50% 100%;
+		-webkit-mask-image: linear-gradient(0deg, #000 0 6%, transparent 62%);
+		mask-image: linear-gradient(0deg, #000 0 6%, transparent 62%);
+		opacity: 0.5;
+		animation: bd-grid 3.4s linear infinite;
+	}
+	/* Le défilement passe par translateY (dans le repère du plan, donc "vers l'horizon") et pas par
+	   background-position : celui-ci repeint tout le calque à chaque frame — un calque haut de 180%
+	   d'écran, masqué et mis en perspective — alors qu'une transform reste sur le compositeur. */
+	@keyframes bd-grid {
+		from {
+			transform: perspective(1600px) rotateX(68deg) translateY(0);
+		}
+		to {
+			transform: perspective(1600px) rotateX(68deg) translateY(72px);
+		}
+	}
+
+	/* Duo : deux faisceaux inclinés qui se croisent et se recroisent lentement. */
+	.slide :global(.bd-beams)::before,
+	.slide :global(.bd-beams)::after {
+		content: '';
+		position: absolute;
+		top: -70%;
+		bottom: -70%;
+		left: 50%;
+		width: 34vmax;
+		background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 22%, transparent), transparent);
+		filter: blur(10px);
+		animation: bd-beam-a 10s ease-in-out infinite alternate;
+	}
+	.slide :global(.bd-beams)::after {
+		background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--fg-dim) 20%, transparent), transparent);
+		animation-name: bd-beam-b;
+		animation-duration: 13s;
+	}
+	@keyframes bd-beam-a {
+		from {
+			transform: translateX(-125%) rotate(19deg);
+		}
+		to {
+			transform: translateX(-55%) rotate(19deg);
+		}
+	}
+	@keyframes bd-beam-b {
+		from {
+			transform: translateX(-40%) rotate(-19deg);
+		}
+		to {
+			transform: translateX(20%) rotate(-19deg);
+		}
+	}
+
+	/* Récap : gerbe de rayons qui tourne très lentement derrière la carte. */
+	.slide :global(.bd-burst)::before {
+		content: '';
+		position: absolute;
+		left: 50%;
+		top: 50%;
+		width: 130vmax;
+		height: 130vmax;
+		margin: -65vmax;
+		background: repeating-conic-gradient(
+			from 0deg at 50% 50%,
+			color-mix(in srgb, var(--accent) 20%, transparent) 0deg 4deg,
+			transparent 4deg 15deg
+		);
+		-webkit-mask-image: radial-gradient(circle at 50% 50%, transparent 10%, #000 40%, transparent 70%);
+		mask-image: radial-gradient(circle at 50% 50%, transparent 10%, #000 40%, transparent 70%);
+		opacity: 0.35;
+		animation: bd-spin 48s linear infinite;
+	}
+
+	/* Ligne de coupure de l'écran de sortie (cf. closeWrapped) : c'est elle qui reste une fraction
+	   de seconde quand l'image s'est écrasée, avant de se refermer sur elle-même. */
+	.app :global(.crt-line) {
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: 50%;
+		height: 2px;
+		margin-top: -1px;
+		z-index: 30;
+		background: #fff;
+		box-shadow:
+			0 0 24px 6px color-mix(in srgb, var(--green) 75%, transparent),
+			0 0 70px 18px color-mix(in srgb, var(--green) 30%, transparent);
+		opacity: 0;
+		pointer-events: none;
 	}
 
 	.content {
@@ -1413,6 +1796,23 @@
 		height: 15px;
 	}
 
+	.avatar-pair {
+		display: flex;
+	}
+	.avatar-chip {
+		width: 44px;
+		height: 44px;
+		border-radius: 50%;
+		border: 2px solid var(--ink);
+		overflow: hidden;
+	}
+	.avatar-chip.me {
+		z-index: 1;
+	}
+	.avatar-chip.them {
+		margin-left: -14px;
+	}
+
 	.stat-number {
 		font-family: var(--font-pixel);
 		font-size: clamp(3rem, 10vw, 6.4rem);
@@ -1503,10 +1903,6 @@
 		color: var(--ink);
 	}
 
-	.slide[data-layout='headline'] {
-		background-image: repeating-linear-gradient(115deg, color-mix(in srgb, var(--accent) 22%, transparent) 0px, transparent 1px 90px);
-		background-position: center;
-	}
 	.slide[data-layout='headline'] .content {
 		grid-template-columns: 1.15fr 0.85fr;
 	}
@@ -1700,15 +2096,6 @@
 	.btn-primary:hover {
 		filter: brightness(1.12);
 	}
-	.btn-ghost {
-		background: transparent;
-		border: 1.6px solid var(--fg-dim);
-		color: var(--fg);
-	}
-	.btn-ghost:hover {
-		border-color: var(--green);
-		color: var(--green);
-	}
 	.share-toast {
 		display: block;
 		margin-top: 0.8rem;
@@ -1717,7 +2104,9 @@
 		opacity: 0;
 		transition: opacity 0.25s;
 	}
-	.share-toast.show {
+	/* Même raison que .idle ci-dessus : la classe est ajoutée par showToast(), donc élaguée si elle
+	   n'est pas globale — le toast « Image enregistrée » restait invisible. */
+	:global(.share-toast.show) {
 		opacity: 1;
 	}
 
@@ -1765,9 +2154,7 @@
 		bottom: 0;
 		width: 22%;
 		z-index: 10;
-		background: transparent;
-		border: none;
-		padding: 0;
+		cursor: pointer;
 	}
 	.tap-left {
 		left: 0;

@@ -619,6 +619,221 @@ select {
 	}
 }
 
+/* Transition vers /wrapped (cf. +layout.svelte onWrappedNavClick), en deux temps séparés par le
+   changement de route lui-même :
+   1. EXTINCTION — la page se déchire en bandes décalées, tremble et se désature (le glitch porte
+      sur la vraie page, pas seulement sur un calque par-dessus), puis deux volets noirs se
+      referment sur une ligne de lumière au centre, façon tube cathodique qu'on éteint.
+   2. ALLUMAGE — la route a changé sous le rideau : les volets se rouvrent depuis cette même ligne,
+      qui se dilate et s'efface. La couverture du wrapped "monte" au lieu d'apparaître d'un coup.
+   Le point de bascule est piloté par la navigation (goto awaité), pas par un minuteur en aveugle :
+   l'écran reste couvert tant que la page suivante n'est pas prête. */
+.wrap-glitch-host .app {
+	transform-origin: 50% 50%;
+	animation: wg-host 0.62s cubic-bezier(0.55, 0, 0.85, 0.35) forwards;
+}
+@keyframes wg-host {
+	0% {
+		transform: none;
+		filter: none;
+	}
+	16% {
+		transform: translateX(-5px) scale(1.012);
+		filter: contrast(1.7) saturate(2.2) hue-rotate(-14deg);
+	}
+	32% {
+		transform: translateX(6px) scale(0.994);
+		filter: contrast(0.75) saturate(0.3) brightness(1.35);
+	}
+	48% {
+		transform: translateX(-3px) scale(1.006);
+		filter: contrast(1.5) saturate(1.6) hue-rotate(12deg);
+	}
+	66% {
+		transform: none;
+		filter: brightness(1.15);
+	}
+	100% {
+		transform: scaleX(1.04) scaleY(0.86);
+		filter: brightness(2.6) saturate(0);
+	}
+}
+
+.wrap-glitch {
+	position: fixed;
+	inset: 0;
+	z-index: 500;
+	pointer-events: none;
+	overflow: hidden;
+}
+/* Bandes légèrement translucides plutôt qu'en mix-blend-mode : l'overlay porte un z-index, donc il
+   forme un groupe isolé et un blend n'aurait rien à quoi se mélanger (il ne voit pas la page
+   dessous). C'est le tremblement + la désaturation de la page elle-même (wg-host) qui donnent le
+   déchirement ; les bandes ne font que le trancher en couleurs. */
+.wg-band {
+	position: absolute;
+	left: -6%;
+	right: -6%;
+	z-index: 1;
+	opacity: 0.92;
+}
+.wg-b1 {
+	top: 2%;
+	height: 13%;
+	background: rgba(255, 79, 160, 0.82);
+	animation:
+		wg-shift-r 0.16s steps(1, end) 3,
+		wg-fade-out 0.16s linear 0.36s forwards;
+}
+.wg-b2 {
+	top: 23%;
+	height: 9%;
+	background: rgba(69, 224, 216, 0.82);
+	animation:
+		wg-shift-l 0.16s steps(1, end) 3,
+		wg-fade-out 0.16s linear 0.36s forwards;
+}
+.wg-b3 {
+	top: 45%;
+	height: 15%;
+	background: rgba(245, 184, 74, 0.82);
+	animation:
+		wg-shift-r 0.16s steps(1, end) 3 0.04s,
+		wg-fade-out 0.16s linear 0.36s forwards;
+}
+.wg-b4 {
+	top: 72%;
+	height: 11%;
+	background: rgba(167, 139, 250, 0.82);
+	animation:
+		wg-shift-l 0.16s steps(1, end) 3 0.04s,
+		wg-fade-out 0.16s linear 0.36s forwards;
+}
+.wg-scan {
+	position: absolute;
+	inset: 0;
+	z-index: 1;
+	background: repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.08) 0px, transparent 2px, transparent 4px);
+	animation: wg-fade-out 0.5s linear forwards;
+}
+/* Les deux volets partent hors champ et se rejoignent au centre : une fois fermés (fill: forwards)
+   ils masquent complètement le swap de route, quelle que soit sa durée. */
+.wg-shutter {
+	position: absolute;
+	left: 0;
+	right: 0;
+	height: 51%;
+	z-index: 2;
+	background: #05050a;
+}
+.wg-shutter.top {
+	top: 0;
+	transform: translateY(-100%);
+	animation: wg-close 0.36s cubic-bezier(0.7, 0, 0.3, 1) 0.24s forwards;
+}
+.wg-shutter.bottom {
+	bottom: 0;
+	transform: translateY(100%);
+	animation: wg-close 0.36s cubic-bezier(0.7, 0, 0.3, 1) 0.24s forwards;
+}
+.wg-line {
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 50%;
+	height: 3px;
+	margin-top: -1.5px;
+	z-index: 3;
+	background: #eafff2;
+	box-shadow:
+		0 0 18px 4px rgba(34, 197, 94, 0.85),
+		0 0 70px 16px rgba(34, 197, 94, 0.35);
+	opacity: 0;
+	transform: scaleX(0.15);
+	animation: wg-line-in 0.24s ease-out 0.46s forwards;
+}
+.wrap-glitch.opening .wg-band,
+.wrap-glitch.opening .wg-scan {
+	display: none;
+}
+.wrap-glitch.opening .wg-shutter.top {
+	animation: wg-open-up 0.66s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+.wrap-glitch.opening .wg-shutter.bottom {
+	animation: wg-open-down 0.66s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+.wrap-glitch.opening .wg-line {
+	animation: wg-line-out 0.5s ease-out forwards;
+}
+@keyframes wg-shift-r {
+	0%,
+	100% {
+		transform: translateX(0);
+	}
+	50% {
+		transform: translateX(4%);
+	}
+}
+@keyframes wg-shift-l {
+	0%,
+	100% {
+		transform: translateX(0);
+	}
+	50% {
+		transform: translateX(-4%);
+	}
+}
+@keyframes wg-close {
+	to {
+		transform: translateY(0);
+	}
+}
+@keyframes wg-open-up {
+	from {
+		transform: translateY(0);
+	}
+	to {
+		transform: translateY(-100%);
+	}
+}
+@keyframes wg-open-down {
+	from {
+		transform: translateY(0);
+	}
+	to {
+		transform: translateY(100%);
+	}
+}
+@keyframes wg-line-in {
+	to {
+		opacity: 1;
+		transform: scaleX(1);
+	}
+}
+@keyframes wg-line-out {
+	0% {
+		opacity: 1;
+		transform: scaleX(1) scaleY(1);
+	}
+	100% {
+		opacity: 0;
+		transform: scaleX(1) scaleY(14);
+	}
+}
+@keyframes wg-fade-out {
+	to {
+		opacity: 0;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.wrap-glitch {
+		display: none;
+	}
+	.wrap-glitch-host .app {
+		animation: none;
+	}
+}
+
 /* La carte utilisateur reste visible quand la nav déborde. Sticky plutôt qu'un wrapper scrollable
    autour des liens : la nav est faite d'enfants directs de .sidebar (sections conditionnelles
    incluses), l'isoler dans un bloc coûterait un remaniement du markup pour le même résultat.

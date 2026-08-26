@@ -1113,7 +1113,9 @@ async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, pe
 			if (shared > 0) duoCounts.set(otherId, shared);
 		}
 		const topDuo = [...duoCounts.entries()].sort((a, b) => b[1] - a[1])[0];
-		const duo = topDuo ? { displayName: personas.find((x) => userByEmail.get(x.email)!.id === topDuo[0])!.displayName, ticketsInCommon: topDuo[1] } : null;
+		const duo = topDuo
+			? { userId: topDuo[0], displayName: personas.find((x) => userByEmail.get(x.email)!.id === topDuo[0])!.displayName, ticketsInCommon: topDuo[1] }
+			: null;
 
 		const payload: WrappedPayload = {
 			year: wrappedYear,
