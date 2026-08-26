@@ -1,6 +1,6 @@
 {
-  "id": "41cffed1-d755-4b7a-80ef-0fe752d2f605",
-  "prevId": "220d1870-54d8-44c4-b222-123f07b66dfd",
+  "id": "bac4e25f-2bb9-4cfa-adbd-0c101917bcd4",
+  "prevId": "913cc147-b362-4866-89cb-5ad989cff451",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -2530,6 +2530,206 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.ssp_annual_prod": {
+      "name": "ssp_annual_prod",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "workspace_id": {
+          "name": "workspace_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ssp_id": {
+          "name": "ssp_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "month": {
+          "name": "month",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "value": {
+          "name": "value",
+          "type": "numeric(8, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "ssp_annual_prod_ssp_month_uq": {
+          "name": "ssp_annual_prod_ssp_month_uq",
+          "columns": [
+            {
+              "expression": "ssp_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "month",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "ssp_annual_prod_workspace_id_workspace_id_fk": {
+          "name": "ssp_annual_prod_workspace_id_workspace_id_fk",
+          "tableFrom": "ssp_annual_prod",
+          "tableTo": "workspace",
+          "columnsFrom": [
+            "workspace_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "ssp_annual_prod_ssp_id_ssp_id_fk": {
+          "name": "ssp_annual_prod_ssp_id_ssp_id_fk",
+          "tableFrom": "ssp_annual_prod",
+          "tableTo": "ssp",
+          "columnsFrom": [
+            "ssp_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.ssp_annual_rae_override": {
+      "name": "ssp_annual_rae_override",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "workspace_id": {
+          "name": "workspace_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ssp_id": {
+          "name": "ssp_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "month": {
+          "name": "month",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "value": {
+          "name": "value",
+          "type": "numeric(8, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "ssp_annual_rae_override_ssp_month_uq": {
+          "name": "ssp_annual_rae_override_ssp_month_uq",
+          "columns": [
+            {
+              "expression": "ssp_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "month",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "ssp_annual_rae_override_workspace_id_workspace_id_fk": {
+          "name": "ssp_annual_rae_override_workspace_id_workspace_id_fk",
+          "tableFrom": "ssp_annual_rae_override",
+          "tableTo": "workspace",
+          "columnsFrom": [
+            "workspace_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "ssp_annual_rae_override_ssp_id_ssp_id_fk": {
+          "name": "ssp_annual_rae_override_ssp_id_ssp_id_fk",
+          "tableFrom": "ssp_annual_rae_override",
+          "tableTo": "ssp",
+          "columnsFrom": [
+            "ssp_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.state": {
       "name": "state",
       "schema": "",
@@ -4314,6 +4514,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": false
+        },
+        "annual_tracking_month": {
+          "name": "annual_tracking_month",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
         },
         "jira_sync_enabled": {
           "name": "jira_sync_enabled",
