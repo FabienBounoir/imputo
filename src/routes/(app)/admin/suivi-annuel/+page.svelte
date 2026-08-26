@@ -80,6 +80,9 @@
 		const result = deserialize(await res.text());
 		if (result.type === 'failure') {
 			saveError = (result.data?.error as string) ?? 'Erreur lors de l\'enregistrement.';
+			// Rien n'a été écrit : on refait le tour du serveur pour que la case reprenne la valeur
+			// réelle. Sans ça la saisie refusée reste affichée et se lit comme un chiffre enregistré.
+			await invalidateAll();
 			return;
 		}
 		saveError = '';
@@ -165,11 +168,13 @@
 	</tr>
 {/snippet}
 
+<!-- TNF = conso − prod : positif = dérapage (rouge), négatif = marge (vert). Même convention que
+     l'écart vs budget des tickets et du dashboard sprint — surtout pas l'inverse. -->
 {#snippet totalCell(t: number, field: 'conso' | 'prod' | 'tnf')}
 	<td
 		class="num tabnum total-col computed"
-		class:warn={field === 'tnf' && t < 0}
-		class:ok-cell={field === 'tnf' && t > 0}>{t}</td
+		class:warn={field === 'tnf' && t > 0}
+		class:ok-cell={field === 'tnf' && t < 0}>{t}</td
 	>
 {/snippet}
 
@@ -178,7 +183,7 @@
 		<td>{label}</td>
 		{#each view.windowMonths as m (m)}
 			{@const t = monthTotal(m, field)}
-			<td class="num tabnum" class:warn={field === 'tnf' && t < 0} class:ok-cell={field === 'tnf' && t > 0}>{t}</td>
+			<td class="num tabnum" class:warn={field === 'tnf' && t > 0} class:ok-cell={field === 'tnf' && t < 0}>{t}</td>
 		{/each}
 		{@render totalCell(grandTotal(field), field)}
 	</tr>
@@ -226,8 +231,8 @@
 	<td
 		class="num tabnum computed"
 		class:current-month={c.month === view.cursorMonth}
-		class:warn={c.tnf !== null && c.tnf < 0}
-		class:ok-cell={c.tnf !== null && c.tnf > 0}>{fmt(c.tnf)}</td
+		class:warn={c.tnf !== null && c.tnf > 0}
+		class:ok-cell={c.tnf !== null && c.tnf < 0}>{fmt(c.tnf)}</td
 	>
 {/snippet}
 

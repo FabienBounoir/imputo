@@ -54,8 +54,10 @@ export type AnnualTrackingView = {
 };
 
 /**
- * Calcule la chaîne RAE(M) = RAE(M-1) - Prod(M) sur la fenêtre, amorcée par `seedBudgetDays` au
- * premier mois. Un override casse la chaîne : tout mois postérieur repart de sa valeur. `null` =
+ * Calcule la chaîne RAE(M) = RAE(M-1) - Prod(M), amorcée par `seedBudgetDays` au premier mois de
+ * `months`. `months` est la chaîne complète depuis l'origine des données, PAS la fenêtre affichée :
+ * amorcer au début de la fenêtre ferait remonter le RAE d'autant à chaque mois qui en sort.
+ * Un override casse la chaîne : tout mois postérieur repart de sa valeur. `null` =
  * rien d'affichable (pas de budget connu et pas encore d'override) — jamais 0 par défaut, un 0
  * affiché doit vouloir dire « RAE épuisé », pas « pas de données ».
  */
@@ -158,31 +160,34 @@ export async function getAnnualTrackingView(workspaceId: string): Promise<Annual
 			.where(eq(ssp.workspaceId, workspaceId))
 			.orderBy(ssp.code),
 		getConsoBySspByMonth(workspaceId, { from, to }),
+		// Prod et overrides depuis l'origine (pas seulement la fenêtre) : la chaîne RAE est récursive,
+		// l'amorcer au début de la fenêtre rendrait au RAE la prod de chaque mois qui en sort.
 		db
 			.select({ sspId: sspAnnualProd.sspId, month: sspAnnualProd.month, value: sspAnnualProd.value })
 			.from(sspAnnualProd)
-			.where(and(eq(sspAnnualProd.workspaceId, workspaceId), gte(sspAnnualProd.month, from), lte(sspAnnualProd.month, cursorMonth))),
+			.where(and(eq(sspAnnualProd.workspaceId, workspaceId), lte(sspAnnualProd.month, cursorMonth))),
 		db
 			.select({ sspId: sspAnnualRaeOverride.sspId, month: sspAnnualRaeOverride.month, value: sspAnnualRaeOverride.value })
 			.from(sspAnnualRaeOverride)
-			.where(
-				and(
-					eq(sspAnnualRaeOverride.workspaceId, workspaceId),
-					gte(sspAnnualRaeOverride.month, from),
-					lte(sspAnnualRaeOverride.month, cursorMonth)
-				)
-			),
+			.where(and(eq(sspAnnualRaeOverride.workspaceId, workspaceId), lte(sspAnnualRaeOverride.month, cursorMonth))),
 		getAllTimeTotalsBySsp(workspaceId, cursorMonth)
 	]);
 
 	// Colonnes retenues : un SSP avec du budget, de la conso ou de la prod dans la fenêtre — un
 	// référentiel de 30 codes dont la moitié est hors sujet cette année n'a rien à faire à l'écran.
+	// prod/overrides sont filtrés sur la fenêtre ici : ils sont chargés depuis l'origine pour la
+	// chaîne RAE, mais une prod de 2019 seule ne justifie pas d'afficher une ligne vide.
 	const activeSspIds = new Set<string>([
 		...consoRows.map((r) => r.sspId).filter((v): v is string => v !== null),
-		...prodRows.map((r) => r.sspId),
-		...overrideRows.map((r) => r.sspId),
+		...prodRows.filter((r) => r.month >= from).map((r) => r.sspId),
+		...overrideRows.filter((r) => r.month >= from).map((r) => r.sspId),
 		...allSsps.filter((s) => s.archivedAt === null && s.budgetDays !== null).map((s) => s.id)
 	]);
+
+	// Chaîne RAE : de l'origine des données jusqu'au curseur ; seuls les 12 derniers mois sont lus.
+	const earliest = [...prodRows, ...overrideRows].reduce((min, r) => (r.month < min ? r.month : min), from);
+	const chainMonths: string[] = [];
+	for (let m = earliest; m <= cursorMonth; m = addMonths(m, 1)) chainMonths.push(m);
 
 	const consoBySsp = new Map<string, Record<string, number>>();
 	for (const r of consoRows) {
@@ -210,7 +215,7 @@ export async function getAnnualTrackingView(workspaceId: string): Promise<Annual
 			const conso = consoBySsp.get(s.id) ?? {};
 			const prod = prodBySsp.get(s.id) ?? {};
 			const overrides = overridesBySsp.get(s.id) ?? {};
-			const rae = computeRaeChain(s.budgetDays === null ? null : num(s.budgetDays), windowMonths, overrides, prod);
+			const rae = computeRaeChain(s.budgetDays === null ? null : num(s.budgetDays), chainMonths, overrides, prod);
 			const cells: AnnualTrackingMonthCell[] = windowMonths.map((month) => {
 				const p = month in prod ? prod[month] : null;
 				const c = conso[month] ?? 0;

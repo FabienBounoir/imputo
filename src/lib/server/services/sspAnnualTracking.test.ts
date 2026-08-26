@@ -143,4 +143,16 @@ describe('sspAnnualTracking (intégration DB)', () => {
 		expect(view.windowMonths[view.windowMonths.length - 1]).toBe('2024-07-01');
 		expect(view.windowMonths).toHaveLength(12);
 	});
+
+	it('la prod antérieure à la fenêtre reste décomptée du RAE (sinon il remonte tout seul quand un mois sort de la fenêtre)', async () => {
+		// Curseur = 2024-07-01 (test précédent), fenêtre = 2023-08-01..2024-07-01. La prod de
+		// 2023-01 (3 j) est hors fenêtre : le RAE du premier mois affiché doit valoir 50 - 3, pas 50.
+		const view = await getAnnualTrackingView(ws.workspaceId);
+		const cells = view.rows.find((r) => r.sspId === sspA)!.cells;
+		expect(cells[0].month).toBe('2023-08-01');
+		expect(cells[0].rae).toBe(47);
+		// L'override de juin 2024 casse toujours la chaîne, et juillet repart de lui.
+		expect(cells.find((c) => c.month === '2024-06-01')!.rae).toBe(42);
+		expect(cells.find((c) => c.month === '2024-07-01')!.rae).toBe(42);
+	});
 });
