@@ -10,14 +10,16 @@
 	let appEl: HTMLDivElement | undefined = $state();
 
 	onMount(() => {
-		if (!w) return;
 		const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 		// ============================================================
-		// Procedural wireframe illustrations — same faceted technique
-		// reused for every slide's signature shape, one distinct
-		// silhouette per stat category. Only the brand mark (cover /
-		// summary watermark) is an actual cog.
+		// Illustrations : de vrais volumes, un par catégorie de stat (seule la marque — couverture et
+		// filigrane du récap — est un engrenage). Chaque solide est décrit par ses sommets en 3D et
+		// ses facettes ; on les projette et on les trie par profondeur à chaque frame (algorithme du
+		// peintre). Pas de moteur 3D en dépendance : il ne s'agit que de projeter des points et de
+		// trier des faces, three.js pèserait ~600 ko pour remplacer une trentaine de lignes. Et le
+		// rendu reste des <path> SVG, donc le tracé progressif au stylo (cf. revealRing) continue de
+		// marcher exactement pareil.
 		// ============================================================
 		const SVGNS = 'http://www.w3.org/2000/svg';
 		function pathFromPoints(pts: number[][], close: boolean) {
@@ -30,13 +32,6 @@
 			for (const k in attrs) e.setAttribute(k, String(attrs[k]));
 			return e;
 		}
-		function addPath(svg: SVGElement, pts: number[][], cls: string, close = true) {
-			svg.appendChild(svgEl('path', { d: pathFromPoints(pts, close), class: cls }));
-		}
-		function addCircle(svg: SVGElement, cx: number, cy: number, r: number, cls: string) {
-			svg.appendChild(svgEl('circle', { cx, cy, r, class: cls }));
-		}
-
 		function gearPoints(teeth: number, outerR: number, innerR: number, cx: number, cy: number) {
 			const pts: number[][] = [];
 			const step = (Math.PI * 2) / (teeth * 2);
@@ -44,24 +39,6 @@
 				const r = i % 2 === 0 ? outerR : innerR;
 				const a = i * step - Math.PI / 2;
 				pts.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
-			}
-			return pts;
-		}
-		function circlePoints(cx: number, cy: number, r: number, segments: number) {
-			const pts: number[][] = [];
-			for (let i = 0; i < segments; i++) {
-				const a = (i / segments) * Math.PI * 2 - Math.PI / 2;
-				pts.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
-			}
-			return pts;
-		}
-		function teardropPoints(cx: number, cy: number, r: number, steps: number) {
-			const pts: number[][] = [];
-			for (let i = 0; i <= steps; i++) {
-				const t = (i / steps) * Math.PI * 2;
-				const x = r * Math.cos(t);
-				const y = r * Math.sin(t) * Math.sin(t / 2);
-				pts.push([cx + y, cy - x]);
 			}
 			return pts;
 		}
@@ -94,67 +71,270 @@
 			pts.push([x1 - c, y1], [x0 + c, y1], [x0, y1 - c], [x0, y0 + c]);
 			return pts;
 		}
-		function spiralPoints(turns: number, cx: number, cy: number, rMax: number, steps: number) {
-			const pts: number[][] = [];
-			for (let i = 0; i <= steps; i++) {
-				const t = i / steps;
-				const a = t * Math.PI * 2 * turns;
-				const r = t * rMax;
-				pts.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
-			}
-			return pts;
+
+		type V3 = [number, number, number];
+		type Face = { v: number[]; cls: string };
+		type Model = { verts: V3[]; faces: Face[] };
+
+		const CAM = 3.4; // distance caméra, en unités modèle
+		const UNIT = 74; // 1 unité modèle = 74 px dans le viewBox 200×200
+
+		function rot3(v: V3, ry: number, rx: number): V3 {
+			const cy = Math.cos(ry),
+				sy = Math.sin(ry);
+			const x = v[0] * cy + v[2] * sy;
+			const z = v[2] * cy - v[0] * sy;
+			const cx = Math.cos(rx),
+				sx = Math.sin(rx);
+			return [x, v[1] * cx - z * sx, v[1] * sx + z * cx];
+		}
+		// Projection perspective : ce qui est loin rétrécit. Sans ce rapport, un solide qui tourne
+		// ressemble à une silhouette qui se déforme, pas à un volume.
+		function project(v: V3) {
+			const k = CAM / (CAM - v[2]);
+			return [100 + v[0] * UNIT * k, 100 + v[1] * UNIT * k];
 		}
 
-		const shapeBuilders: Record<string, (svg: SVGElement, opts?: { face?: boolean }) => void> = {
-			gear: (svg) => {
-				addPath(svg, gearPoints(6, 88, 66, 100, 100), 'rw-outer');
-				addCircle(svg, 100, 100, 15, 'rw-hub');
-			},
-			ticket: (svg) => {
-				addPath(svg, ticketPoints(100, 100, 152, 100, 7), 'rw-outer');
-				addCircle(svg, 100, 100, 7, 'rw-hole');
-			},
-			flame: (svg) => {
-				addPath(svg, teardropPoints(100, 108, 80, 40), 'rw-outer');
-				addPath(svg, teardropPoints(100, 116, 42, 40), 'rw-inner');
-			},
-			coin: (svg, opts) => {
-				addPath(svg, circlePoints(100, 100, 86, 28), 'rw-outer');
-				addPath(svg, circlePoints(100, 100, 60, 24), 'rw-inner');
-				if (opts?.face) {
-					addCircle(svg, 82, 90, 6, 'rw-mark-fill');
-					addCircle(svg, 118, 90, 6, 'rw-mark-fill');
-					addPath(
-						svg,
-						[
-							[78, 116],
-							[100, 130],
-							[122, 116]
-						],
-						'rw-mark',
-						false
-					);
-				}
-			},
-			shield: (svg) => {
-				addPath(svg, shieldPoints(100, 100, 148, 158, 1), 'rw-outer');
-				addPath(svg, shieldPoints(100, 100, 148, 158, 0.68), 'rw-inner');
-			},
-			spiral: (svg) => {
-				addPath(svg, spiralPoints(3.2, 100, 100, 92, 140), 'rw-line', false);
-			},
-			duo: (svg) => {
-				addPath(svg, circlePoints(80, 100, 60, 26), 'rw-outer');
-				addPath(svg, circlePoints(80, 100, 40, 22), 'rw-inner');
-				addPath(svg, circlePoints(124, 100, 60, 26), 'rw-outer-dim');
-				addPath(svg, circlePoints(124, 100, 40, 22), 'rw-inner-dim');
+		const tilt = (m: Model, ry: number, rx: number): Model => ({ verts: m.verts.map((v) => rot3(v, ry, rx)), faces: m.faces });
+
+		function merge(...parts: Model[]): Model {
+			const out: Model = { verts: [], faces: [] };
+			for (const part of parts) {
+				const off = out.verts.length;
+				out.verts.push(...part.verts);
+				out.faces.push(...part.faces.map((f) => ({ v: f.v.map((i) => i + off), cls: f.cls })));
 			}
+			return out;
+		}
+
+		// Un contour fermé + une épaisseur = un volume : deux capots et une facette par arête.
+		// Quatre des sept solides sortent de là, sans une seule coordonnée écrite à la main.
+		function extrude(pts: number[][], depth: number, cap = 'rw-outer', side = 'rw-side'): Model {
+			const n = pts.length;
+			const verts: V3[] = [
+				...pts.map(([x, y]) => [x, y, depth] as V3),
+				...pts.map(([x, y]) => [x, y, -depth] as V3)
+			];
+			const faces: Face[] = [
+				{ v: pts.map((_, i) => i), cls: cap },
+				{ v: pts.map((_, i) => 2 * n - 1 - i), cls: cap }
+			];
+			for (let i = 0; i < n; i++) {
+				const j = (i + 1) % n;
+				faces.push({ v: [i, j, n + j, n + i], cls: side });
+			}
+			return { verts, faces };
+		}
+
+		const circle2 = (r: number, n: number) =>
+			Array.from({ length: n }, (_, i) => {
+				const a = (i / n) * Math.PI * 2 - Math.PI / 2;
+				return [Math.cos(a) * r, Math.sin(a) * r];
+			});
+
+		// Les silhouettes ci-dessus sont posées en coordonnées d'écran (centrées sur 100,100) parce
+		// que l'export PNG les réutilise telles quelles : on les ramène ici en unités modèle plutôt
+		// que d'en maintenir deux versions.
+		const toModel = (pts: number[][]) => pts.map(([x, y]) => [(x - 100) / UNIT, (y - 100) / UNIT]);
+
+		// Révolution d'un profil (rayon, hauteur) autour de l'axe vertical : une silhouette suffit à
+		// décrire un volume rond. Un rayon nul ferme le solide en pointe.
+		// `curl` décale les anneaux d'autant plus qu'ils sont hauts : une goutte parfaitement
+		// symétrique se lit comme une larme, c'est la pointe qui penche qui fait la flamme.
+		function lathe(profile: number[][], segs: number, curl = 0): Model {
+			const verts: V3[] = [];
+			const rings: number[][] = [];
+			for (const [r, y] of profile) {
+				const idx: number[] = [];
+				const dx = curl * Math.max(0, -y) ** 2;
+				if (r < 1e-4) {
+					idx.push(verts.length);
+					verts.push([dx, y, 0]);
+				} else
+					for (let i = 0; i < segs; i++) {
+						const a = (i / segs) * Math.PI * 2;
+						idx.push(verts.length);
+						verts.push([Math.cos(a) * r + dx, y, Math.sin(a) * r]);
+					}
+				rings.push(idx);
+			}
+			const faces: Face[] = [];
+			for (let k = 0; k < rings.length - 1; k++) {
+				const A = rings[k],
+					B = rings[k + 1];
+				for (let i = 0; i < segs; i++) {
+					const j = (i + 1) % segs;
+					const cls = (k + i) % 2 ? 'rw-outer' : 'rw-side';
+					if (A.length === 1) faces.push({ v: [A[0], B[i], B[j]], cls });
+					else if (B.length === 1) faces.push({ v: [A[i], A[j], B[0]], cls });
+					else faces.push({ v: [A[i], A[j], B[j], B[i]], cls });
+				}
+			}
+			return { verts, faces };
+		}
+
+		// Anneau plein (tore à section carrée). Deux exemplaires dans des plans perpendiculaires et
+		// décalés d'un rayon s'enchaînent vraiment l'un dans l'autre — le tri par face suffit à
+		// rendre l'entrelacement, il n'y a rien à trancher à la main.
+		function torus(R: number, r: number, segs: number, sides: number, rotY: number, dx: number, cls: string, clsAlt: string): Model {
+			const verts: V3[] = [];
+			const faces: Face[] = [];
+			const cy = Math.cos(rotY),
+				sy = Math.sin(rotY);
+			for (let i = 0; i < segs; i++) {
+				const a = (i / segs) * Math.PI * 2;
+				for (let j = 0; j < sides; j++) {
+					const b = (j / sides) * Math.PI * 2;
+					const rr = R + Math.cos(b) * r;
+					const x = Math.cos(a) * rr,
+						z = Math.sin(b) * r;
+					verts.push([x * cy + z * sy + dx, Math.sin(a) * rr, z * cy - x * sy]);
+				}
+			}
+			for (let i = 0; i < segs; i++) {
+				const i2 = (i + 1) % segs;
+				for (let j = 0; j < sides; j++) {
+					const j2 = (j + 1) % sides;
+					faces.push({ v: [i * sides + j, i2 * sides + j, i2 * sides + j2, i * sides + j2], cls: (i + j) % 2 ? cls : clsAlt });
+				}
+			}
+			return { verts, faces };
+		}
+
+		// Ressort : un ruban qui s'enroule. « On a tenu le rythme » se lit mieux en volume qu'une
+		// spirale plate — et c'est la forme qui gagne le plus à tourner.
+		function coilSolid(): Model {
+			const steps = 46;
+			const verts: V3[] = [];
+			const faces: Face[] = [];
+			for (let i = 0; i <= steps; i++) {
+				const t = i / steps;
+				const a = t * Math.PI * 2 * 2.6;
+				const r = 0.78 - t * 0.16;
+				const y = -0.8 + t * 1.6;
+				verts.push([Math.cos(a) * r, y - 0.11, Math.sin(a) * r]);
+				verts.push([Math.cos(a) * r, y + 0.11, Math.sin(a) * r]);
+			}
+			for (let i = 0; i < steps; i++)
+				faces.push({ v: [2 * i, 2 * i + 1, 2 * i + 3, 2 * i + 2], cls: i % 2 ? 'rw-outer' : 'rw-side' });
+			return { verts, faces };
+		}
+
+		// Anneau plat posé dans un plan incliné : deux exemplaires penchés en sens inverse se
+		// croisent en tournant, comme deux trajectoires qui se rejoignent.
+		function ringSolid(rOut: number, rIn: number, segs: number, tilt: number, dx: number, cls: string): Model {
+			const verts: V3[] = [];
+			const faces: Face[] = [];
+			const ct = Math.cos(tilt),
+				st = Math.sin(tilt);
+			for (let i = 0; i < segs; i++) {
+				const a = (i / segs) * Math.PI * 2;
+				for (const r of [rOut, rIn]) {
+					const x = Math.cos(a) * r;
+					verts.push([x * ct + dx, Math.sin(a) * r, -x * st]);
+				}
+			}
+			for (let i = 0; i < segs; i++) {
+				const j = (i + 1) % segs;
+				faces.push({ v: [2 * i, 2 * j, 2 * j + 1, 2 * i + 1], cls });
+			}
+			return { verts, faces };
+		}
+
+		// Yeux et sourire posés juste devant le capot de la pièce : le tri par profondeur les fait
+		// disparaître tout seuls quand elle se retourne, sans test de visibilité à écrire.
+		function smileySolid(z: number): Model {
+			const verts: V3[] = [];
+			const faces: Face[] = [];
+			const add = (pts: number[][]) => {
+				const off = verts.length;
+				pts.forEach(([x, y]) => verts.push([x, y, z]));
+				faces.push({ v: pts.map((_, i) => off + i), cls: 'rw-mark-fill' });
+			};
+			for (const ex of [-0.28, 0.28]) add(circle2(0.09, 8).map(([x, y]) => [x + ex, y - 0.2]));
+			const outer: number[][] = [];
+			const inner: number[][] = [];
+			for (let i = 0; i <= 10; i++) {
+				const a = Math.PI * (0.2 + (i / 10) * 0.6);
+				outer.push([Math.cos(a) * 0.5, Math.sin(a) * 0.5 + 0.02]);
+				inner.push([Math.cos(a) * 0.39, Math.sin(a) * 0.39 + 0.02]);
+			}
+			add(outer.concat(inner.reverse()));
+			return { verts, faces };
+		}
+
+		const solidBuilders: Record<string, () => Model> = {
+			gear: () =>
+				merge(extrude(toModel(gearPoints(9, 86, 63, 100, 100)), 0.19), extrude(circle2(0.15, 12), 0.38, 'rw-hub', 'rw-hub')),
+			ticket: () => extrude(toModel(ticketPoints(100, 100, 150, 98, 7)), 0.16),
+			shield: () => extrude(toModel(shieldPoints(100, 100, 146, 156, 1)), 0.17),
+			coin: () => merge(extrude(circle2(0.92, 26), 0.15), smileySolid(0.17)),
+			// Flamme : col étroit en haut, ventre bas, pointe qui part sur le côté.
+			flame: () =>
+				lathe(
+					[
+						[0, -1.2],
+						[0.19, -0.82],
+						[0.38, -0.4],
+						[0.62, 0.06],
+						[0.72, 0.46],
+						[0.44, 0.86],
+						[0, 1.04]
+					],
+					9,
+					0.24
+				),
+			spiral: coilSolid,
+			// Une étoile pour le récap : c'est le seul écran qui conclut, autant qu'il le montre.
+			star: () => extrude(toModel(gearPoints(5, 82, 36, 100, 100)), 0.2),
+			// Deux maillons enchaînés : le second est centré pile sur le bord du premier, donc il le
+			// traverse. Vus de face, l'anneau perpendiculaire se réduit à un trait et l'enchaînement
+			// ne se voit pas — d'où l'inclinaison posée dans le modèle, qui les montre tous les deux
+			// de trois quarts.
+			duo: () =>
+				tilt(
+					merge(
+						torus(0.6, 0.15, 12, 4, 0, -0.3, 'rw-outer', 'rw-side'),
+						torus(0.6, 0.15, 12, 4, Math.PI / 2, 0.3, 'rw-outer-dim', 'rw-side-dim')
+					),
+					0,
+					0.5
+				)
 		};
 
+		type Solid = { model: Model; paths: SVGPathElement[]; rot: { ry: number; rx: number }; spin?: gsap.core.Tween };
+		const solids = new Map<SVGElement, Solid>();
+
+		// Algorithme du peintre : on dessine du plus loin au plus près. Les <path> ne bougent jamais
+		// dans le DOM — on réécrit juste leur `d` et leur classe dans l'ordre trié, ce qui évite de
+		// réordonner des nœuds à chaque frame.
+		function drawSolid(s: Solid) {
+			const rv = s.model.verts.map((v) => rot3(v, s.rot.ry, s.rot.rx));
+			const order = s.model.faces
+				.map((f, i) => [i, f.v.reduce((acc, k) => acc + rv[k][2], 0) / f.v.length] as [number, number])
+				.sort((a, b) => a[1] - b[1]);
+			order.forEach(([fi], i) => {
+				const f = s.model.faces[fi];
+				const p = s.paths[i];
+				p.setAttribute('d', pathFromPoints(f.v.map((k) => project(rv[k])), true));
+				if (p.dataset.cls !== f.cls) {
+					p.setAttribute('class', f.cls);
+					p.dataset.cls = f.cls;
+				}
+			});
+		}
+
 		document.querySelectorAll<SVGElement>('svg[data-shape]').forEach((svg) => {
-			const type = svg.dataset.shape!;
-			const face = svg.dataset.face === 'true';
-			shapeBuilders[type]?.(svg, { face });
+			const build = solidBuilders[svg.dataset.shape!];
+			if (!build) return;
+			const model = build();
+			const paths = model.faces.map(() => svg.appendChild(svgEl('path', {})) as SVGPathElement);
+			// Un solide qui tourne peut partir de trois quarts ; un solide fixe, non : le filigrane de
+			// la carte récap est rogné par son bord, et de biais il ne ressemblait plus à rien.
+			const spun = !!svg.closest('[data-motion]');
+			const solid: Solid = { model, paths, rot: spun ? { ry: -0.62, rx: -0.14 } : { ry: -0.2, rx: -0.1 } };
+			solids.set(svg, solid);
+			drawSolid(solid);
 		});
 
 		document.querySelectorAll<HTMLElement>('.swatch-grid').forEach((grid) => {
@@ -392,6 +572,28 @@
 			});
 		}
 
+		// Écran « pas encore de wrapped » : un seul écran, donc rien à câbler en dessous (navigation,
+		// chapitres, musique, export — tout ça n'existe pas dans ce cas). Il traverse en revanche tout
+		// le décor ci-dessus, et prepareRing/revealRing lui vont tels quels : c'est ce qui le fait
+		// appartenir au même monde que le récap, au lieu d'être une page d'attente posée à côté.
+		if (!w) {
+			const screen = document.querySelector<HTMLElement>('.slide');
+			if (screen && !reduceMotion) {
+				prepareRing(screen);
+				gsap.from('.empty-content > :not(.cover-mark)', {
+					y: 26,
+					opacity: 0,
+					duration: 0.7,
+					ease: 'power3.out',
+					stagger: 0.09,
+					delay: 0.35
+				});
+				gsap.from('.chrome', { y: -18, opacity: 0, duration: 0.7, ease: 'power2.out' });
+				revealRing(screen);
+			}
+			return;
+		}
+
 		// ============================================================
 		// Navigation
 		// ============================================================
@@ -449,7 +651,7 @@
 		// jusqu'à l'arrivée) se voit d'abord complet le temps du glissement, puis "saute" à vide
 		// avant de se redessiner : un reset visible plutôt qu'une révélation propre.
 		function prepareRing(slide: HTMLElement) {
-			const paths = slide.querySelectorAll<SVGPathElement>('.ring-wrap path, .pass-gear path');
+			const paths = slide.querySelectorAll<SVGPathElement>('svg[data-shape] path');
 			paths.forEach((p) => {
 				const len = p.getTotalLength ? p.getTotalLength() : 0;
 				if (!len) return;
@@ -459,30 +661,46 @@
 				}
 				p.style.strokeDasharray = String(len);
 				p.style.strokeDashoffset = String(len);
+				// Remplissage coupé au départ : sinon le volume est déjà là, plein, avant que le
+				// moindre trait ne soit tracé — on ne verrait qu'un contour se poser sur une forme
+				// déjà visible. Le fil de fer se dessine, la matière arrive ensuite.
+				p.style.fillOpacity = '0';
 			});
 		}
 
 		function revealRing(slide: HTMLElement) {
 			if (!reduceMotion) {
-				const paths = slide.querySelectorAll<SVGPathElement>('.ring-wrap path, .pass-gear path');
-				paths.forEach((p) => {
+				// Léger décalage d'une facette à l'autre : le volume se construit sous les yeux au lieu
+				// d'apparaître d'un bloc — c'est ce qui rend le tracé lisible sur un solide à 30 faces.
+				slide.querySelectorAll<SVGPathElement>('svg[data-shape] path').forEach((p, i) => {
 					const len = p.getTotalLength ? p.getTotalLength() : 0;
 					if (!len) return;
-					gsap.fromTo(p, { strokeDashoffset: len }, { strokeDashoffset: 0, duration: 1.3, ease: 'power2.out' });
+					gsap.fromTo(
+						p,
+						{ strokeDashoffset: len },
+						{ strokeDashoffset: 0, duration: 1.1, ease: 'power2.out', delay: i * 0.012 }
+					);
+					gsap.to(p, { fillOpacity: 1, duration: 0.7, ease: 'power1.out', delay: 0.75 + i * 0.012 });
 				});
 			}
-			const ring = slide.querySelector<SVGElement>('.ring-wrap svg, .cover-mark svg');
-			if (ring && !reduceMotion) {
-				gsap.killTweensOf(ring);
-				gsap.fromTo(ring, { rotate: -6, transformOrigin: '50% 50%' }, { rotate: 0, duration: 1.1, ease: 'power2.out' });
-				const host = ring.closest<HTMLElement>('[data-motion]');
-				const mode = host?.getAttribute('data-motion') ?? 'spin';
-				if (mode === 'spin') {
-					gsap.to(ring, { rotate: 360, duration: 90, ease: 'none', repeat: -1, delay: 1.1 });
-				} else {
-					gsap.to(ring, { y: '+=12', duration: 2.4, ease: 'sine.inOut', repeat: -1, yoyo: true, delay: 1.1 });
-				}
-			}
+			const ring = slide.querySelector<SVGElement>('[data-motion] svg[data-shape]');
+			const solid = ring ? solids.get(ring) : undefined;
+			if (!ring || !solid || reduceMotion) return;
+			gsap.killTweensOf(ring);
+			solid.spin?.kill();
+			const mode = ring.closest<HTMLElement>('[data-motion]')?.getAttribute('data-motion') ?? 'spin';
+			// Le tracé doit être fini avant que les faces bougent : tant que le pointillé est posé,
+			// un `d` qui change à chaque frame décalerait le trait en cours de dessin.
+			const onStart = () => solid.paths.forEach((p) => (p.style.strokeDasharray = 'none'));
+			const onUpdate = () => drawSolid(solid);
+			solid.spin =
+				mode === 'spin'
+					? gsap.to(solid.rot, { ry: solid.rot.ry + Math.PI * 2, duration: 26, ease: 'none', repeat: -1, delay: 1.6, onStart, onUpdate })
+					: // Un tour complet mettrait les silhouettes plates (ticket, bouclier) de profil, donc
+						// invisibles la moitié du temps : un balancement les garde lisibles tout en donnant
+						// le relief.
+						gsap.to(solid.rot, { ry: 0.62, rx: 0.08, duration: 7, ease: 'sine.inOut', repeat: -1, yoyo: true, delay: 1.6, onStart, onUpdate });
+			if (mode !== 'spin') gsap.to(ring, { y: '+=12', duration: 2.4, ease: 'sine.inOut', repeat: -1, yoyo: true, delay: 1.1 });
 		}
 
 		// Sélecteurs génériques (pas de classe "reveal-item" à poser partout dans le markup) : couvre
@@ -539,9 +757,12 @@
 			for (const a of slide.getAnimations({ subtree: true })) {
 				if ('animationName' in a) idle ? a.pause() : a.play();
 			}
-			const ring = slide.querySelector('.ring-wrap svg, .cover-mark svg');
+			const ring = slide.querySelector('[data-motion] svg[data-shape]');
 			for (const a of slideAnims.get(slide) ?? []) a.paused(idle);
 			if (ring) for (const t of gsap.getTweensOf(ring)) t.paused(idle);
+			// La rotation 3D anime un objet proxy, pas le SVG : getTweensOf ne la trouverait pas.
+			// Sans ça, un solide hors champ continuerait à reprojeter ses ~30 faces à chaque frame.
+			for (const svg of slide.querySelectorAll<SVGElement>('svg[data-shape]')) solids.get(svg)?.spin?.paused(idle);
 		}
 
 		function place() {
@@ -849,10 +1070,42 @@
 </svelte:head>
 
 {#if !w}
-	<div class="empty">
-		<h1>Pas encore de wrapped {data.year}</h1>
-		<p>Le récap se génère automatiquement chaque nuit pendant la période — reviens un peu plus tard.</p>
-		<a href="/imputation">Retour à mon imputation</a>
+	<!-- Même coquille que le récap (chrome, stage, slide) : le décor injecté au montage — grain,
+	     halo, rayons, particules, engrenage 3D — s'applique sans une ligne de code en plus. -->
+	<div class="app" data-accent="red">
+		<div class="chrome">
+			<div class="brand">✦ IMPUTO <span>WRAPPED</span></div>
+			<div class="chrome-actions">
+				<a class="icon-btn" href="/imputation" aria-label="Retour à mon imputation">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"
+						><path d="M6 6l12 12M18 6L6 18" /></svg
+					>
+				</a>
+			</div>
+		</div>
+
+		<div class="stage">
+			<section class="slide" data-layout="cover" data-particles="drift" data-backdrop="rays">
+				<div class="glow"></div>
+				<div class="content empty-content">
+					<!-- L'engrenage tourne pour de bon : c'est lui qui dit « ça travaille, repasse plus
+					     tard », mieux qu'une phrase de plus. -->
+					<div class="cover-mark" data-motion="spin">
+						<svg data-shape="gear" viewBox="0 0 200 200"></svg>
+					</div>
+					<h1 class="cover-title">Ton wrapped {data.year} est encore en fabrication.</h1>
+					<p class="cover-sub">
+						Le récap se génère automatiquement chaque nuit pendant la période. Reviens un peu plus tard — les engrenages tournent.
+					</p>
+					<a class="cover-cta" href="/imputation">
+						Retour à mon imputation
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"
+							><path d="M5 12h14M13 6l6 6-6 6" /></svg
+						>
+					</a>
+				</div>
+			</section>
+		</div>
 	</div>
 {:else}
 	<div class="app" bind:this={appEl}>
@@ -1000,7 +1253,7 @@
 								</p>
 								<div class="icon-row"><svg><use href="#i-globe" /></svg><svg><use href="#i-people" /></svg></div>
 							</div>
-							<div class="ring-wrap" data-motion="float"><svg data-shape="coin" data-face="true" viewBox="0 0 200 200"></svg></div>
+							<div class="ring-wrap" data-motion="float"><svg data-shape="coin" viewBox="0 0 200 200"></svg></div>
 						</div>
 					</section>
 				{/if}
@@ -1086,7 +1339,8 @@
 							{/if}
 							<div class="pass-foot">imputo · année {data.year}</div>
 						</div>
-						<div>
+						<div class="summary-side">
+							<div class="summary-mark" data-motion="spin"><svg data-shape="star" viewBox="0 0 200 200"></svg></div>
 							<div class="summary-eyebrow"><svg><use href="#i-flag" /></svg>Ton année</div>
 							<h2 class="summary-title">En résumé</h2>
 							<p class="summary-desc">Ta carte Wrapped, prête à garder ou à montrer à l'équipe.</p>
@@ -1117,17 +1371,6 @@
 {/if}
 
 <style>
-	.empty {
-		min-height: 60vh;
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		text-align: center;
-		gap: 0.6rem;
-		padding: 3rem 1.5rem;
-	}
-
 	/* Scopé à .app (pas :root) : ce fichier CSS reste chargé après avoir quitté la page en
 	   navigation SPA — un :root ici écraserait durablement --accent (et le thème RGB/Disco) sur
 	   le reste de l'appli. */
@@ -1146,6 +1389,7 @@
 		--amber: #f5b84a;
 		--magenta: #ff4fa0;
 		--cyan: #45e0d8;
+		--red: #ff5468;
 		--accent: var(--green);
 		--font-display: 'Unbounded', 'Arial Black', sans-serif;
 		--font-pixel: 'Press Start 2P', 'Courier New', monospace;
@@ -1274,6 +1518,9 @@
 	}
 
 	.chrome-actions {
+		/* Colonne fixée : l'écran d'attente n'a pas de chapitres au centre, sans ça les actions
+		   viendraient se caler au milieu de la barre. */
+		grid-column: 3;
 		justify-self: end;
 		display: flex;
 		gap: 0.5rem;
@@ -1362,6 +1609,11 @@
 	}
 	.slide[data-accent='cyan'] {
 		--accent: var(--cyan);
+	}
+	/* Posé sur .app (et non sur la slide) pour que le chrome — la marque en haut à gauche — vire
+	   aussi : l'écran d'attente doit être rouge en entier, pas rouge avec un logo vert. */
+	.app[data-accent='red'] {
+		--accent: var(--red);
 	}
 
 	.glow {
@@ -1723,57 +1975,47 @@
 		overflow: visible;
 	}
 
-	.ring-wrap :global(.rw-outer),
-	.pass-gear :global(.rw-outer),
-	.cover-mark :global(.rw-outer) {
-		fill: color-mix(in srgb, var(--accent) 16%, transparent);
+	/* Capots translucides + parois plus sourdes : chaque arête reste visible (le solide se lit comme
+	   un fil de fer) mais l'empilement des faces donne la matière. Traits fins : là où il y avait
+	   deux chemins, il y en a maintenant une trentaine.
+	   Portée `.slide` plutôt qu'une liste de conteneurs : les quatre emplacements de solides
+	   (illustration, marque de couverture, filigrane de la carte, étoile du récap) partagent le même
+	   rendu, les énumérer un par un ne faisait qu'inviter à en oublier un au prochain ajout. */
+	.slide :global(.rw-outer) {
+		fill: color-mix(in srgb, var(--accent) 20%, transparent);
 		stroke: var(--accent);
-		stroke-width: 3.5;
+		stroke-width: 2.4;
 		stroke-linejoin: round;
 	}
-	.ring-wrap :global(.rw-inner),
-	.pass-gear :global(.rw-inner),
-	.cover-mark :global(.rw-inner) {
-		fill: none;
-		stroke: var(--accent);
-		stroke-width: 2.5;
-		opacity: 0.6;
-	}
-	.ring-wrap :global(.rw-line) {
-		fill: none;
-		stroke: var(--accent);
-		stroke-width: 3;
-	}
-	.ring-wrap :global(.rw-hub),
-	.pass-gear :global(.rw-hub),
-	.cover-mark :global(.rw-hub) {
-		fill: var(--accent);
-	}
-	.ring-wrap :global(.rw-hole) {
-		fill: var(--ink);
-		stroke: var(--accent);
-		stroke-width: 2.5;
-	}
-	.ring-wrap :global(.rw-mark) {
-		fill: none;
-		stroke: var(--fg);
-		stroke-width: 3;
-		stroke-linecap: round;
+	.slide :global(.rw-side) {
+		fill: color-mix(in srgb, var(--accent) 9%, transparent);
+		stroke: color-mix(in srgb, var(--accent) 55%, transparent);
+		stroke-width: 1.6;
 		stroke-linejoin: round;
 	}
-	.ring-wrap :global(.rw-mark-fill) {
+	.slide :global(.rw-hub) {
+		fill: color-mix(in srgb, var(--accent) 55%, transparent);
+		stroke: var(--accent);
+		stroke-width: 1.6;
+		stroke-linejoin: round;
+	}
+	.slide :global(.rw-mark-fill) {
 		fill: var(--fg);
+		stroke: var(--fg);
+		stroke-width: 1.2;
+		stroke-linejoin: round;
 	}
-	.ring-wrap :global(.rw-outer-dim) {
-		fill: color-mix(in srgb, var(--fg-dim) 10%, transparent);
-		stroke: var(--fg-dim);
-		stroke-width: 3;
-	}
-	.ring-wrap :global(.rw-inner-dim) {
-		fill: none;
+	.slide :global(.rw-outer-dim) {
+		fill: color-mix(in srgb, var(--fg-dim) 14%, transparent);
 		stroke: var(--fg-dim);
 		stroke-width: 2;
-		opacity: 0.7;
+		stroke-linejoin: round;
+	}
+	.slide :global(.rw-side-dim) {
+		fill: color-mix(in srgb, var(--fg-dim) 7%, transparent);
+		stroke: color-mix(in srgb, var(--fg-dim) 60%, transparent);
+		stroke-width: 1.4;
+		stroke-linejoin: round;
 	}
 
 	.stat {
@@ -1855,7 +2097,7 @@
 		justify-items: center;
 	}
 	.cover-mark {
-		color: var(--green);
+		color: var(--accent);
 		margin-bottom: 0.6rem;
 	}
 	.cover-mark svg {
@@ -1878,9 +2120,9 @@
 	}
 	.cover-cta {
 		margin-top: 2.6rem;
-		border: 1.6px solid var(--green);
+		border: 1.6px solid var(--accent);
 		background: transparent;
-		color: var(--green);
+		color: var(--accent);
 		font-family: var(--font-mono);
 		font-weight: 700;
 		letter-spacing: 0.06em;
@@ -1898,8 +2140,22 @@
 		height: 15px;
 		flex-shrink: 0;
 	}
+	/* Le CTA est un <button> sur la couverture, un <a> sur l'écran d'attente. */
+	a.cover-cta {
+		text-decoration: none;
+	}
+	/* Titre un cran plus large et plus petit que sur la couverture : la phrase est plus longue, et à
+	   16ch elle tombait sur trois lignes qui écrasaient l'engrenage. */
+	.empty-content .cover-title {
+		max-width: 24ch;
+		font-size: clamp(2rem, 5.2vw, 3.4rem);
+	}
+	.empty-content .cover-sub {
+		max-width: 52ch;
+		text-wrap: balance;
+	}
 	.cover-cta:hover {
-		background: var(--green);
+		background: var(--accent);
 		color: var(--ink);
 	}
 
@@ -2045,6 +2301,20 @@
 		text-align: center;
 	}
 
+	.summary-side {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+	}
+	.summary-mark {
+		color: var(--green);
+		margin-bottom: 1.4rem;
+	}
+	.summary-mark svg {
+		width: 112px;
+		height: 112px;
+		overflow: visible;
+	}
 	.summary-eyebrow {
 		color: var(--green);
 		font-size: 0.78rem;
@@ -2054,6 +2324,13 @@
 		align-items: center;
 		gap: 0.5em;
 		margin-bottom: 0.4rem;
+	}
+	/* Sans dimensions, un <svg> inline se dessine en 300×150 : le petit drapeau occupait la moitié
+	   de la colonne. Les autres eyebrows ont toujours eu leur règle, celle-ci manquait. */
+	.summary-eyebrow svg {
+		width: 15px;
+		height: 15px;
+		flex-shrink: 0;
 	}
 	.summary-title {
 		font-family: var(--font-display);
