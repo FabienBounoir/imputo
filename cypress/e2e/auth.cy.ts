@@ -7,7 +7,8 @@ describe('auth', () => {
 			cy.typeReliably('#em', email);
 			cy.typeReliably('#pw', 'wrong-password');
 			cy.get('button[type=submit]').click();
-			cy.contains('.flash.error', /.+/);
+			// L'erreur de login est un toast fixe (ModalErrorToast), plus le `.flash.error` en flux.
+			cy.contains('.modal-error-toast', /.+/);
 
 			cy.typeReliably('#pw', password);
 			cy.get('button[type=submit]').click();
