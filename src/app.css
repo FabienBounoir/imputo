@@ -78,6 +78,34 @@ body {
 ::selection {
 	background: color-mix(in srgb, var(--accent) 28%, transparent);
 }
+/* Ascenseurs discrets façon macOS, partout : rail invisible, pouce fin et arrondi qui se marque au
+   survol. `width` sert aux verticaux, `height` aux horizontaux (tableaux qui débordent, barres de
+   jours), il faut les deux. `--text-mute` étant thémé, le pouce suit clair/sombre tout seul.
+   Uniquement les pseudo-éléments WebKit — poser `scrollbar-width`/`scrollbar-color` en plus ferait
+   ignorer ces règles par Chrome. Firefox garde son ascenseur natif, déjà fin.
+   Le pouce reste affiché en permanence : `X:hover::-webkit-scrollbar-thumb` ne redéclenche pas le
+   repaint de l'ascenseur dans Chrome (vérifié), un pouce qui n'apparaîtrait qu'au survol du
+   conteneur ne marcherait donc qu'une fois sur deux.
+   Un composant qui veut masquer complètement son ascenseur le fait chez lui : un sélecteur porté
+   par une classe l'emporte sur ces règles nues (cf. .daybar dans ImputationMobile.svelte). */
+::-webkit-scrollbar {
+	width: 6px;
+	height: 6px;
+}
+::-webkit-scrollbar-track {
+	background: transparent;
+}
+::-webkit-scrollbar-thumb {
+	background: color-mix(in srgb, var(--text-mute) 35%, transparent);
+	border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+	background: color-mix(in srgb, var(--text-mute) 70%, transparent);
+}
+/* Angle entre un ascenseur vertical et un horizontal : sans ça, WebKit y peint un carré gris. */
+::-webkit-scrollbar-corner {
+	background: transparent;
+}
 a {
 	color: inherit;
 }
@@ -150,25 +178,6 @@ select {
 	background: color-mix(in srgb, var(--surface) 55%, transparent);
 	backdrop-filter: blur(14px);
 	overflow-y: auto;
-}
-/* Ascenseur discret façon macOS : rail invisible, pouce fin et arrondi, qui se marque au survol.
-   Uniquement les pseudo-éléments WebKit — poser `scrollbar-width`/`scrollbar-color` en plus ferait
-   ignorer ces règles par Chrome. Firefox garde son ascenseur natif, déjà fin.
-   Le pouce reste affiché en permanence : `.sidebar:hover::-webkit-scrollbar-thumb` ne redéclenche
-   pas le repaint de l'ascenseur dans Chrome (vérifié), un pouce qui n'apparaît qu'au survol du
-   conteneur ne marcherait donc qu'une fois sur deux. */
-.sidebar::-webkit-scrollbar {
-	width: 6px;
-}
-.sidebar::-webkit-scrollbar-track {
-	background: transparent;
-}
-.sidebar::-webkit-scrollbar-thumb {
-	background: color-mix(in srgb, var(--text-mute) 35%, transparent);
-	border-radius: 999px;
-}
-.sidebar::-webkit-scrollbar-thumb:hover {
-	background: color-mix(in srgb, var(--text-mute) 70%, transparent);
 }
 .mobile-topbar {
 	display: none;
