@@ -3,9 +3,13 @@
 	import { gsap } from 'gsap';
 	import UserAvatar from '$lib/components/UserAvatar.svelte';
 	import { beep } from '$lib/sound';
+	import { plural, wrappedCopy } from '$lib/wrappedCopy';
 
 	let { data } = $props();
 	const w = data.wrapped;
+	// Commentaires choisis par palier selon les chiffres de la personne (cf. wrappedCopy) : la
+	// partie factuelle des phrases reste dans le markup ci-dessous, seul le ton varie.
+	const copy = w ? wrappedCopy(w, w.year) : null;
 
 	let appEl: HTMLDivElement | undefined = $state();
 
@@ -1006,10 +1010,15 @@
 
 			const rows: [string, string][] = [
 				...(w.topTicket ? ([['Ticket le + chronophage', `${w.topTicket.key} · ${Math.round(w.topTicket.hours)}h`]] as [string, string][]) : []),
-				...(w.streakDays ? ([['Série max', `${w.streakDays} jours`]] as [string, string][]) : []),
+				...(w.streakDays ? ([['Série max', `${w.streakDays} ${plural(w.streakDays, 'jour', 'jours')}`]] as [string, string][]) : []),
 				...(w.moodAvg !== null ? ([['Humeur moyenne', `${w.moodAvg} / 5`]] as [string, string][]) : []),
 				...(w.supportEnabled && w.supportCount ? ([['Perm support', `${w.supportCount} fois`]] as [string, string][]) : []),
-				...(w.duo ? ([['Duo de l’année', `${w.duo.displayName} · ${w.duo.ticketsInCommon} tickets`]] as [string, string][]) : [])
+				...(w.duo
+					? ([['Duo de l’année', `${w.duo.displayName} · ${w.duo.ticketsInCommon} ${plural(w.duo.ticketsInCommon, 'ticket', 'tickets')}`]] as [
+							string,
+							string
+						][])
+					: [])
 			];
 			let y = 350;
 			for (const [label, value] of rows) {
@@ -1214,8 +1223,8 @@
 						<div class="content">
 							<div class="stat">
 								<div class="eyebrow"><svg><use href="#i-ticket" /></svg>Ticket le plus chronophage</div>
-								<div class="stat-number"><span class="count" data-target={Math.round(w.topTicket.hours)}>0</span><span class="unit">heures</span></div>
-								<p class="desc">C'est le temps que tu as donné à <mark>{w.topTicket.key}</mark> cette année. Il te le doit bien.</p>
+								<div class="stat-number"><span class="count" data-target={Math.round(w.topTicket.hours)}>0</span><span class="unit">{plural(Math.round(w.topTicket.hours), 'heure', 'heures')}</span></div>
+								<p class="desc">C'est le temps que tu as donné à <mark>{w.topTicket.key}</mark> cette année. {copy?.ticket}</p>
 								<div class="icon-row"><svg><use href="#i-globe" /></svg><svg><use href="#i-calendar" /></svg></div>
 							</div>
 							<div class="ring-wrap" data-motion="float"><svg data-shape="ticket" viewBox="0 0 200 200"></svg></div>
@@ -1229,10 +1238,10 @@
 						<div class="content">
 							<div class="stat">
 								<div class="eyebrow"><svg><use href="#i-flame" /></svg>Série en cours</div>
-								<div class="stat-number"><span class="count" data-target={w.streakDays}>0</span><span class="unit">jours d'affilée</span></div>
+								<div class="stat-number"><span class="count" data-target={w.streakDays}>0</span><span class="unit">{plural(w.streakDays, "jour d'affilée", "jours d'affilée")}</span></div>
 								<p class="desc">
-									{w.streakDays} jours ouvrés consécutifs sans oublier une seule imputation. Ton passé de retardataire ne te rattrapera pas cette
-									année.
+									{w.streakDays}
+									{plural(w.streakDays, 'jour ouvré consécutif', 'jours ouvrés consécutifs')} sans oublier une seule imputation. {copy?.streak}
 								</p>
 								<div class="icon-row"><svg><use href="#i-globe" /></svg><svg><use href="#i-clock" /></svg></div>
 							</div>
@@ -1248,9 +1257,7 @@
 							<div class="stat">
 								<div class="eyebrow"><svg><use href="#i-face" /></svg>Humeur moyenne</div>
 								<div class="stat-number"><span class="count" data-target={w.moodAvg} data-decimals="1">0</span><span class="unit">sur 5</span></div>
-								<p class="desc">
-									Ta moyenne sur toute l'année. Meilleur mois : <mark>{w.moodBestMonth}</mark>. Le plus dur : {w.moodWorstMonth}.
-								</p>
+								<p class="desc">{copy?.mood} Meilleur mois : <mark>{w.moodBestMonth}</mark>. Le plus dur : {w.moodWorstMonth}.</p>
 								<div class="icon-row"><svg><use href="#i-globe" /></svg><svg><use href="#i-people" /></svg></div>
 							</div>
 							<div class="ring-wrap" data-motion="float"><svg data-shape="coin" viewBox="0 0 200 200"></svg></div>
@@ -1265,7 +1272,7 @@
 							<div class="stat">
 								<div class="eyebrow"><svg><use href="#i-shield" /></svg>Perm support</div>
 								<div class="stat-number"><span class="count" data-target={w.supportCount}>0</span><span class="unit">fois cette année</span></div>
-								<p class="desc">{w.supportCount} fois à surveiller les tickets pour l'équipe. Elle te doit bien un café.</p>
+								<p class="desc">{w.supportCount} fois à surveiller les tickets pour l'équipe. {copy?.support}</p>
 								<div class="icon-row"><svg><use href="#i-globe" /></svg><svg><use href="#i-calendar" /></svg></div>
 							</div>
 							<div class="ring-wrap" data-motion="float"><svg data-shape="shield" viewBox="0 0 200 200"></svg></div>
@@ -1278,8 +1285,8 @@
 						<div class="glow"></div>
 						<div class="content">
 							<div>
-								<h2 class="headline-title">On a tenu le rythme en {data.year}.</h2>
-								<p class="headline-sub">Heures imputées, jours ouvrés, café bu</p>
+								<h2 class="headline-title">{copy?.volumeTitle}</h2>
+								<p class="headline-sub">{copy?.volumeSub}</p>
 								<div class="headline-stats">
 									<div class="headline-stat">
 										<div class="stat-number"><span class="count" data-target={w.totalHours}>0</span><span class="unit">h</span></div>
@@ -1307,8 +1314,9 @@
 									<div class="avatar-chip me"><UserAvatar userId={data.user?.id} name={data.user?.displayName ?? 'Toi'} size={44} /></div>
 									<div class="avatar-chip them"><UserAvatar userId={w.duo.userId} name={w.duo.displayName} size={44} /></div>
 								</div>
-								<div class="stat-number"><span class="count" data-target={w.duo.ticketsInCommon}>0</span><span class="unit">tickets en commun</span></div>
-								<p class="desc">Toi et <mark>{w.duo.displayName}</mark> avez bossé sur {w.duo.ticketsInCommon} tickets ensemble cette année. Ton duo le plus productif.</p>
+								<div class="stat-number"><span class="count" data-target={w.duo.ticketsInCommon}>0</span><span class="unit">{plural(w.duo.ticketsInCommon, 'ticket en commun', 'tickets en commun')}</span></div>
+								<p class="desc">Toi et <mark>{w.duo.displayName}</mark> avez bossé sur {w.duo.ticketsInCommon}
+									{plural(w.duo.ticketsInCommon, 'ticket', 'tickets')} ensemble cette année. {copy?.duo}</p>
 								<div class="icon-row"><svg><use href="#i-globe" /></svg><svg><use href="#i-ticket" /></svg></div>
 							</div>
 							<div class="ring-wrap" data-motion="float"><svg data-shape="duo" viewBox="0 0 200 200"></svg></div>
