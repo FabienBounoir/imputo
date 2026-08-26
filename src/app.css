@@ -78,6 +78,34 @@ body {
 ::selection {
 	background: color-mix(in srgb, var(--accent) 28%, transparent);
 }
+/* Ascenseurs discrets façon macOS, partout : rail invisible, pouce fin et arrondi qui se marque au
+   survol. `width` sert aux verticaux, `height` aux horizontaux (tableaux qui débordent, barres de
+   jours), il faut les deux. `--text-mute` étant thémé, le pouce suit clair/sombre tout seul.
+   Uniquement les pseudo-éléments WebKit — poser `scrollbar-width`/`scrollbar-color` en plus ferait
+   ignorer ces règles par Chrome. Firefox garde son ascenseur natif, déjà fin.
+   Le pouce reste affiché en permanence : `X:hover::-webkit-scrollbar-thumb` ne redéclenche pas le
+   repaint de l'ascenseur dans Chrome (vérifié), un pouce qui n'apparaîtrait qu'au survol du
+   conteneur ne marcherait donc qu'une fois sur deux.
+   Un composant qui veut masquer complètement son ascenseur le fait chez lui : un sélecteur porté
+   par une classe l'emporte sur ces règles nues (cf. .daybar dans ImputationMobile.svelte). */
+::-webkit-scrollbar {
+	width: 6px;
+	height: 6px;
+}
+::-webkit-scrollbar-track {
+	background: transparent;
+}
+::-webkit-scrollbar-thumb {
+	background: color-mix(in srgb, var(--text-mute) 35%, transparent);
+	border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+	background: color-mix(in srgb, var(--text-mute) 70%, transparent);
+}
+/* Angle entre un ascenseur vertical et un horizontal : sans ça, WebKit y peint un carré gris. */
+::-webkit-scrollbar-corner {
+	background: transparent;
+}
 a {
 	color: inherit;
 }
@@ -544,7 +572,16 @@ select {
 	}
 }
 
+/* La carte utilisateur reste visible quand la nav déborde. Sticky plutôt qu'un wrapper scrollable
+   autour des liens : la nav est faite d'enfants directs de .sidebar (sections conditionnelles
+   incluses), l'isoler dans un bloc coûterait un remaniement du markup pour le même résultat.
+   Ni fond ni bordure ici : .user-card porte déjà les siens et occupe tout le bloc, c'est elle qui
+   masque le contenu défilant dessous. Les 18px sous la carte viennent du padding de .sidebar, qui
+   borne le bloc de confinement du sticky — `bottom: 0` suffit donc, pas besoin d'un offset (18px
+   ici en donnerait 36). Contrepartie assumée : dans ces 18px, le contenu reste visible au scroll. */
 .side-foot {
+	position: sticky;
+	bottom: 0;
 	margin-top: auto;
 	display: flex;
 	flex-direction: column;

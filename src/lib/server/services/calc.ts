@@ -129,3 +129,8 @@ export function plannedDays(workdays: number, absenceDays: number): number {
 export function toAllocate(planned: number, conso: number, complement: number): number {
 	return round(planned - conso - complement);
 }
+
+/** Suivi annuel — TNF mensuel par SSP = conso − prod. Positif = dérapage, comme ecartVsBudget. */
+export function tnf(conso: number, prod: number): number {
+	return round(conso - prod);
+}
