@@ -407,6 +407,20 @@
       "when": 1787850304956,
       "tag": "0057_spicy_lady_mastermind",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1787852723310,
+      "tag": "0058_eager_glorian",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1787855629699,
+      "tag": "0059_unknown_gamora",
+      "breakpoints": true
     }
   ]
 }

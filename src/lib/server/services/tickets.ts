@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, notExists, or, ilike, sql, count } from 'drizzle-orm';
+import { and, eq, inArray, isNull, notExists, or, ilike, sql, count, desc } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import {
 	db,
@@ -119,6 +119,8 @@ export type TicketRow = {
 	/** Dénormalisés depuis le référentiel `ssp` — le picker affiche le libellé, pas l'uuid. */
 	sspCode: string | null;
 	sspLabel: string | null;
+	/** 0 (plus bas) à 5 (plus haut) — slider dans la modale d'édition, cf. schema.ts. */
+	priority: number;
 };
 
 /** Colonnes de base communes à listTickets/listTicketsPage (avant enrichissement). */
@@ -145,6 +147,7 @@ const TICKET_BASE_SELECT = {
 	sspId: ticket.sspId,
 	sspCode: ssp.code,
 	sspLabel: ssp.label,
+	priority: ticket.priority,
 	stateLabel: state.label,
 	stateEmoji: state.emoji,
 	stateColor: state.color,
@@ -345,6 +348,7 @@ async function enrichTickets(
 			sspId: t.sspId,
 			sspCode: t.sspCode,
 			sspLabel: t.sspLabel,
+			priority: t.priority,
 			consumed,
 			ecartVsEstime: ecartVsEstime(resolved.real, consumed, estimationResolved),
 			ecartVsBudget: enveloppeTotale === null ? null : ecartVsBudget(resolved.real, consumed, enveloppeTotale),
@@ -555,7 +559,10 @@ export async function listTicketsPage(
 	paging?: { pageSize: number; page: number },
 	/** Le kanban et la recherche de la palette de commandes n'affichent jamais le détail par
 	 *  activité (cf. commentaire sur enrichTickets) — passer `false` pour l'appelant l'économiser. */
-	includeBreakdown = true
+	includeBreakdown = true,
+	/** 'created' (défaut) = ordre historique par date de création. 'priority' = priorité décroissante
+	 *  d'abord, mêmes tie-breakers ensuite (le groupement parent/enfant n'est donc plus garanti). */
+	sort: 'created' | 'priority' = 'created'
 ): Promise<{ rows: (TicketRow & { isChild: boolean })[]; total: number }> {
 	const where = ticketFilterConditions(workspaceId, filters);
 	const parentTicket = alias(ticket, 'parent_ticket');
@@ -568,6 +575,7 @@ export async function listTicketsPage(
 			.leftJoin(parentTicket, eq(ticket.parentId, parentTicket.id))
 			.where(where)
 			.orderBy(
+				...(sort === 'priority' ? [desc(ticket.priority)] : []),
 				sql`coalesce(${parentTicket.createdAt}, ${ticket.createdAt})`,
 				sql`(${ticket.parentId} is not null)`,
 				ticket.createdAt,
@@ -672,7 +680,8 @@ const EDITABLE_FIELDS = new Set([
 	'projectId',
 	'sprintId',
 	'versionId',
-	'sspId'
+	'sspId',
+	'priority'
 ]);
 /**
  * Chiffrage global du ticket — ADMIN/MANAGER seulement (retour utilisateur : un USER ne doit
@@ -718,6 +727,11 @@ export async function updateTicketField(
 	if (numericFields.has(field) && value !== null) {
 		const n = Number(value);
 		if (!Number.isFinite(n) || n < 0) throw new Error('Valeur numérique invalide.');
+		value = String(n);
+	}
+	if (field === 'priority') {
+		const n = Number(value);
+		if (!Number.isInteger(n) || n < 0 || n > 5) throw new Error('Priorité invalide (0 à 5).');
 		value = String(n);
 	}
 	if (field === 'key') {

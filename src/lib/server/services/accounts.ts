@@ -407,6 +407,9 @@ export async function getJiraConfig(workspaceId: string) {
 		syncVersion: row.jiraSyncVersion,
 		regexPattern: row.jiraKeyRegexPattern ?? '',
 		regexReplacement: row.jiraKeyRegexReplacement ?? '',
+		linkEnabled: row.jiraLinkEnabled,
+		linkRegexPattern: row.jiraLinkKeyRegexPattern ?? '',
+		linkRegexReplacement: row.jiraLinkKeyRegexReplacement ?? '',
 		patUpdatedByName,
 		patUpdatedAt: row.jiraPatUpdatedAt,
 		updatedSince: row.jiraUpdatedSince,
@@ -486,6 +489,9 @@ export async function saveJiraConfig(
 		syncVersion: boolean;
 		regexPattern: string;
 		regexReplacement: string;
+		linkEnabled: boolean;
+		linkRegexPattern: string;
+		linkRegexReplacement: string;
 		pat: string;
 		updatedSinceDate: string;
 		createdSinceDate: string;
@@ -498,6 +504,13 @@ export async function saveJiraConfig(
 			new RegExp(input.regexPattern);
 		} catch {
 			throw new Error('Regex de mapping de clé invalide.');
+		}
+	}
+	if (input.linkRegexPattern) {
+		try {
+			new RegExp(input.linkRegexPattern);
+		} catch {
+			throw new Error('Regex du lien Jira invalide.');
 		}
 	}
 	// ORDER BY casse une fois le JQL wrappé pour jiraUpdatedSince (jiraSync.ts) — rejeté sans
@@ -516,7 +529,10 @@ export async function saveJiraConfig(
 		jiraSyncSprint: input.syncSprint,
 		jiraSyncVersion: input.syncVersion,
 		jiraKeyRegexPattern: input.regexPattern || null,
-		jiraKeyRegexReplacement: input.regexReplacement || null
+		jiraKeyRegexReplacement: input.regexReplacement || null,
+		jiraLinkEnabled: input.linkEnabled,
+		jiraLinkKeyRegexPattern: input.linkRegexPattern || null,
+		jiraLinkKeyRegexReplacement: input.linkRegexReplacement || null
 	};
 	if (input.pat) {
 		if (!input.patEncryptionKey) throw new Error('Clé de chiffrement serveur non configurée (JIRA_PAT_ENCRYPTION_KEY).');

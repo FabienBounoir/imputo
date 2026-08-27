@@ -22,8 +22,19 @@
 	import ImputationMobile from '$lib/components/ImputationMobile.svelte';
 	import { ABSENCE_TYPE_COLORS, ABSENCE_TYPE_LABELS, ABSENCE_PERIOD_LABELS } from '$lib/absenceTypes';
 	import type { Row } from '$lib/imputationRow';
+	import { jiraTicketUrl } from '$lib/jiraLink';
 
 	let { data } = $props();
+
+	const jiraCfg = $derived({
+		jiraBaseUrl: data.jiraBaseUrl,
+		jiraLinkEnabled: data.workspace!.jiraLinkEnabled,
+		jiraLinkKeyRegexPattern: data.workspace!.jiraLinkKeyRegexPattern,
+		jiraLinkKeyRegexReplacement: data.workspace!.jiraLinkKeyRegexReplacement
+	});
+	function ticketJiraUrl(row: Row): string | null {
+		return row.targetType === 'TICKET' ? jiraTicketUrl(jiraCfg, row.sublabel) : null;
+	}
 
 	// Le tableau (colonnes jour + colonnes figées + navigation clavier) n'est pas utilisable au doigt
 	// sur un écran étroit : en dessous de ce seuil on rend ImputationMobile (un jour à la fois) à la
@@ -834,7 +845,11 @@
 										<span class="pill pill-ico">{@render rowIcon(row)}</span>
 										<div class="tt">
 											<b>{row.objectiveNote || row.label}</b>
-											<span class="sub">{row.sublabel}</span>
+											{#if ticketJiraUrl(row)}
+												<a class="sub" href={ticketJiraUrl(row)} target="_blank" rel="noopener noreferrer" title="Ouvrir dans Jira" onclick={(e) => e.stopPropagation()}>{row.sublabel}</a>
+											{:else}
+												<span class="sub">{row.sublabel}</span>
+											{/if}
 										</div>
 									</div>
 								</td>
@@ -1003,7 +1018,11 @@
 								<div class="tt">
 									<b>{row.objectiveNote || row.label}</b>
 									<span class="sub">
-										{row.sublabel}
+										{#if ticketJiraUrl(row)}
+											<a href={ticketJiraUrl(row)} target="_blank" rel="noopener noreferrer" title="Ouvrir dans Jira">{row.sublabel}</a>
+										{:else}
+											{row.sublabel}
+										{/if}
 										{#if !data.readOnly}
 											{#if activityLabel(row)}
 												<button

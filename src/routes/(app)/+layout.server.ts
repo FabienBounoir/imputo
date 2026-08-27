@@ -71,6 +71,7 @@ export const load: LayoutServerLoad = async ({ locals }) => {
 		wrappedAvailable,
 		wrappedYear,
 		motivationQuotes,
-		vapidPublicKey: config.vapidPublic
+		vapidPublicKey: config.vapidPublic,
+		jiraBaseUrl: config.jiraBaseUrl
 	};
 };

@@ -7,8 +7,16 @@
 	import { confirmDialog } from '$lib/confirm.svelte';
 	import ModalErrorToast from '$lib/components/ModalErrorToast.svelte';
 	import SspPicker from '$lib/components/SspPicker.svelte';
+	import { jiraTicketUrl } from '$lib/jiraLink';
 	import { slide } from 'svelte/transition';
 	let { data, form } = $props();
+
+	const jiraCfg = $derived({
+		jiraBaseUrl: data.jiraBaseUrl,
+		jiraLinkEnabled: data.workspace!.jiraLinkEnabled,
+		jiraLinkKeyRegexPattern: data.workspace!.jiraLinkKeyRegexPattern,
+		jiraLinkKeyRegexReplacement: data.workspace!.jiraLinkKeyRegexReplacement
+	});
 
 	let showCreate = $state(false);
 	let savedFlash = $state(false);
@@ -57,6 +65,7 @@
 			sprint: data.filters.sprintId ?? '',
 			version: data.filters.versionId ?? '',
 			view: data.view,
+			sort: data.sort,
 			page: '1', // tout changement de filtre/vue revient en page 1 (sauf override explicite)
 			...partial
 		};
@@ -151,6 +160,7 @@
 		hasActivityEstimation: boolean;
 		groupIds: string[];
 		activityBreakdown: ActivityBreakdownRow[];
+		priority: number;
 	};
 
 	type ActivityBreakdownRow = {
@@ -242,7 +252,8 @@
 			enveloppeTotale: t.enveloppeTotale,
 			hasActivityEstimation: t.hasActivityEstimation,
 			groupIds: [...t.groupIds],
-			activityBreakdown: t.activityBreakdown.map((a) => ({ ...a, contributors: [...a.contributors] }))
+			activityBreakdown: t.activityBreakdown.map((a) => ({ ...a, contributors: [...a.contributors] })),
+			priority: t.priority
 		};
 	}
 
@@ -468,6 +479,43 @@
 			flash();
 		}
 	}
+	// Slider de priorité maison (0-5, 6 crans) — pas de <input type="range"> : le thumb natif ne se
+	// stylise pas de façon cohérente entre navigateurs, alors qu'ici on veut le même rendu "pilule +
+	// dégradé accent" que la barre d'avancement (cf. .prog .bar ci-dessous). setPriority no-op déjà
+	// si la valeur ne change pas : un drag déclenche donc `save` seulement en franchissant un cran,
+	// jamais à chaque pixel — pas besoin de debounce séparé.
+	function setPriority(row: Row, value: number) {
+		const v = Math.max(0, Math.min(5, Math.round(value)));
+		if (v === row.priority) return;
+		row.priority = v;
+		save(row, 'priority', v);
+	}
+	function priorityValueAt(e: PointerEvent, el: HTMLElement) {
+		const rect = el.getBoundingClientRect();
+		const ratio = (e.clientX - rect.left) / rect.width;
+		return Math.min(1, Math.max(0, ratio)) * 5;
+	}
+	// setPointerCapture route tous les pointermove/pointerup suivants vers CET élément même si le
+	// curseur sort du petit rectangle du slider pendant le drag — sans ça, un mouvement un peu trop
+	// rapide vers le bas/haut interromprait le suivi dès que le pointeur quitte la piste.
+	function onPriorityPointerDown(e: PointerEvent, row: Row) {
+		const el = e.currentTarget as HTMLElement;
+		el.setPointerCapture(e.pointerId);
+		setPriority(row, priorityValueAt(e, el));
+	}
+	function onPriorityPointerMove(e: PointerEvent, row: Row) {
+		if (e.buttons !== 1) return; // pas de bouton enfoncé : pas un drag en cours
+		setPriority(row, priorityValueAt(e, e.currentTarget as HTMLElement));
+	}
+	function onPriorityKey(e: KeyboardEvent, row: Row) {
+		if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
+			e.preventDefault();
+			setPriority(row, row.priority + 1);
+		} else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
+			e.preventDefault();
+			setPriority(row, row.priority - 1);
+		}
+	}
 	// Saisie d'une estimation : pré-remplit le RAE correspondant s'il est encore vide
 	// (sinon un ticket estimé mais sans RAE afficherait 100 % d'avancement).
 	async function saveEst(row: Row, which: 'real' | 'test') {
@@ -575,9 +623,36 @@
 		<!-- Recherche exclue du fieldset : elle reste tapable pendant qu'une frappe précédente
 		     est encore en vol (le goto suivant, debouncé, remplace l'ancien de toute façon). -->
 		<fieldset class="filter-fields" disabled={isNavigating}>
-			<div class="seg2">
-				<button class:on={data.view === 'table'} onclick={() => navigateWith({ view: 'table' })}>Tableau</button>
-				<button class:on={data.view === 'kanban'} onclick={() => navigateWith({ view: 'kanban' })}>Kanban</button>
+			<div class="seg2" data-active={data.view}>
+				<span class="seg2-thumb"></span>
+				<button
+					type="button"
+					class:on={data.view === 'table'}
+					onclick={() => navigateWith({ view: 'table' })}
+					title="Vue tableau"
+					aria-label="Vue tableau"
+					aria-pressed={data.view === 'table'}
+				>
+					<svg class="seg2-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<rect x="3" y="4" width="18" height="16" rx="2" />
+						<line x1="3" y1="10" x2="21" y2="10" />
+						<line x1="3" y1="15" x2="21" y2="15" />
+					</svg>
+				</button>
+				<button
+					type="button"
+					class:on={data.view === 'kanban'}
+					onclick={() => navigateWith({ view: 'kanban' })}
+					title="Vue kanban"
+					aria-label="Vue kanban"
+					aria-pressed={data.view === 'kanban'}
+				>
+					<svg class="seg2-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<rect x="3" y="4" width="18" height="16" rx="2" />
+						<line x1="9" y1="4" x2="9" y2="20" />
+						<line x1="15" y1="4" x2="15" y2="20" />
+					</svg>
+				</button>
 			</div>
 			{#if data.view === 'table'}
 				<button
@@ -588,7 +663,11 @@
 					aria-label={compact ? 'Tout déplier' : 'Tout replier'}
 					title={compact ? 'Tout déplier' : 'Tout replier'}
 				>
-					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 5-5-5-5" /><path d="m13 17 5-5-5-5" /></svg>
+					<!-- Chevrons vers le bas = "déplier" ; la même icône tourne à 180° (donc vers le haut) pour
+					     "replier" — pas deux icônes séparées à permuter. Les deux chevrons pointent dans le
+					     MÊME sens (pas en miroir) : une paire en miroir serait symétrique par rotation de
+					     180°, donc visuellement identique une fois tournée — inutile pour cet usage. -->
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 8 5 5 5-5" /><path d="m7 15 5 5 5-5" /></svg>
 				</button>
 			{/if}
 			{#if data.view !== 'kanban'}
@@ -608,6 +687,10 @@
 			<select class="filter-sel" value={data.filters.versionId ?? ''} onchange={(e) => navigateWith({ version: e.currentTarget.value })} aria-label="Filtrer par version">
 				<option value="">Toutes les versions</option>
 				{#each data.ref.versions as v (v.id)}<option value={v.id}>{v.name}</option>{/each}
+			</select>
+			<select class="filter-sel" value={data.sort} onchange={(e) => navigateWith({ sort: e.currentTarget.value })} aria-label="Trier par">
+				<option value="created">Trier : création</option>
+				<option value="priority">Trier : priorité</option>
 			</select>
 			{#if hasFilters}
 				<button class="reset-btn" onclick={resetFilters}>✕ Réinitialiser</button>
@@ -695,7 +778,14 @@
 							</button>
 								<div class="ttl-main">
 									<div class="key-row">
-										<div class="key tabnum">{r.key}</div>
+										{#if jiraTicketUrl(jiraCfg, r.key)}
+											<a class="key tabnum" href={jiraTicketUrl(jiraCfg, r.key)} target="_blank" rel="noopener noreferrer" title="Ouvrir dans Jira" onclick={(e) => e.stopPropagation()}>{r.key}</a>
+										{:else}
+											<div class="key tabnum">{r.key}</div>
+										{/if}
+										{#if r.priority !== 2}
+											<span class="priority-badge" class:high={r.priority >= 4} class:low={r.priority <= 1} title="Priorité {r.priority}/5">P{r.priority}</span>
+										{/if}
 										<select
 											class="cell-select state-select"
 											style={st?.color ? `color:${st.color};font-weight:600;` : ''}
@@ -973,7 +1063,18 @@
 				{:else}
 					<span class="tk-key tabnum">{editRow.key}</span>
 				{/if}
-				<button class="tk-x" onclick={() => (editId = null)} aria-label="Fermer">✕</button>
+				<div class="tk-head-actions">
+					{#if jiraTicketUrl(jiraCfg, editRow.key)}
+						<a class="tk-jira-icon" href={jiraTicketUrl(jiraCfg, editRow.key)} target="_blank" rel="noopener noreferrer" title="Ouvrir dans Jira" aria-label="Ouvrir dans Jira">
+							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+								<path d="M15 3h6v6" />
+								<path d="M10 14 21 3" />
+							</svg>
+						</a>
+					{/if}
+					<button class="tk-x" onclick={() => (editId = null)} aria-label="Fermer">✕</button>
+				</div>
 			</div>
 			<input class="tk-title" bind:value={editRow.title} onchange={() => save(editRow!, 'title', editRow!.title)} aria-label="Titre" />
 			<div class="tk-grid">
@@ -997,6 +1098,29 @@
 						<option value={null}>—</option>{#each data.ref.versions as v (v.id)}<option value={v.id}>{v.name}</option>{/each}
 					</select>
 				</label>
+				<div class="dfield"><span>Priorité</span>
+					<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+					<div
+						class="priority-slider"
+						role="slider"
+						tabindex="0"
+						aria-label="Priorité (0 à 5)"
+						aria-valuemin="0"
+						aria-valuemax="5"
+						aria-valuenow={editRow.priority}
+						onpointerdown={(e) => onPriorityPointerDown(e, editRow!)}
+						onpointermove={(e) => onPriorityPointerMove(e, editRow!)}
+						onkeydown={(e) => onPriorityKey(e, editRow!)}
+					>
+						<div class="priority-track">
+							<div class="priority-fill" style="width:{editRow.priority * 20}%"></div>
+							{#each [0, 1, 2, 3, 4, 5] as n (n)}
+								<span class="priority-tick" class:filled={n <= editRow.priority} style="left:{n * 20}%"></span>
+							{/each}
+						</div>
+						<div class="priority-thumb tabnum" style="left:{editRow.priority * 20}%">{editRow.priority}</div>
+					</div>
+				</div>
 				<label class="dfield"><span>Estimé</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationReal} disabled={!data.canEditEstimation || editRow.hasActivityEstimation} title={editRow.hasActivityEstimation ? "Estimé = compilation des Estimés par activité ci-dessous (non éditable ici)" : estTitle} onchange={() => debouncedSave(`est-${editRow!.id}-real`, () => saveEst(editRow!, 'real'))} /></label>
 				<label class="dfield"><span>RAE Réal</span><input class="cell-input" type="number" step="0.25" min="0" value={editRow.raeReal} disabled title="Compilation des RAE par activité (voir le tableau)" /></label>
 				{#if data.testPhase}
@@ -1368,9 +1492,19 @@
 	}
 	.icon-toggle {
 		padding: 9px 11px;
+		/* Remplace le transform 0.12s linéaire du .btn global par le même rebond que le switch
+		   Tableau/Kanban (cubic-bezier avec dépassement) — cohérent, plus "envie de cliquer". */
+		transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s, background 0.2s;
 	}
 	.icon-toggle.open {
-		transform: rotate(90deg);
+		transform: rotate(180deg);
+	}
+	.icon-toggle:active {
+		transform: scale(0.85);
+		transition-duration: 0.1s;
+	}
+	.icon-toggle.open:active {
+		transform: rotate(180deg) scale(0.85);
 	}
 	.group-chips {
 		display: flex;
@@ -1471,6 +1605,104 @@
 	.dfield .cell-select {
 		border-color: var(--border);
 		background: var(--surface);
+	}
+	.priority-slider {
+		position: relative;
+		width: 100%;
+		height: 24px;
+		margin-top: 10px;
+		cursor: grab;
+		outline: none;
+		/* Le navigateur ne doit pas interpréter un drag vertical comme un scroll de page pendant
+		   qu'on tient le thumb (tactile) — cf. onPriorityPointerMove. */
+		touch-action: none;
+	}
+	.priority-slider:active {
+		cursor: grabbing;
+	}
+	.priority-slider:active .priority-thumb {
+		transform: translateY(-50%) scale(1.15);
+		/* Pas de délai pendant qu'on tient le thumb : il doit suivre le doigt/curseur au pixel près,
+		   la transition ne sert qu'aux sauts par clic/clavier. */
+		transition: none;
+	}
+	.priority-slider:active .priority-fill {
+		transition: none;
+	}
+	.priority-track {
+		position: absolute;
+		inset: 50% 0 auto 0;
+		height: 7px;
+		transform: translateY(-50%);
+		border-radius: 20px;
+		background: var(--surface-sunk);
+		border: 1px solid var(--border);
+	}
+	.priority-fill {
+		position: absolute;
+		inset: 0 auto 0 0;
+		height: 100%;
+		border-radius: 20px;
+		background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 70%, #000), var(--accent));
+		transition: width 0.15s ease;
+	}
+	.priority-tick {
+		position: absolute;
+		top: 50%;
+		width: 5px;
+		height: 5px;
+		border-radius: 50%;
+		background: var(--surface);
+		border: 1px solid var(--border-strong);
+		transform: translate(-50%, -50%);
+		transition:
+			background 0.15s ease,
+			border-color 0.15s ease;
+	}
+	.priority-tick.filled {
+		background: var(--accent-ink);
+		border-color: transparent;
+	}
+	.priority-thumb {
+		position: absolute;
+		top: 50%;
+		width: 20px;
+		height: 20px;
+		margin-left: -10px;
+		border-radius: 50%;
+		background: var(--surface);
+		border: 2px solid var(--accent);
+		color: var(--accent-ink);
+		font-size: 10.5px;
+		font-weight: 700;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		transform: translateY(-50%);
+		box-shadow: var(--shadow-sm);
+		transition: left 0.15s ease;
+		pointer-events: none;
+	}
+	.priority-slider:focus-visible .priority-thumb {
+		box-shadow:
+			0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent),
+			var(--shadow-sm);
+	}
+	.priority-badge {
+		font-size: 10px;
+		font-weight: 700;
+		padding: 1px 5px;
+		border-radius: 4px;
+		color: var(--text-mute);
+		background: var(--surface-2);
+		flex-shrink: 0;
+	}
+	.priority-badge.high {
+		color: var(--warn);
+		background: var(--warn-tint);
+	}
+	.priority-badge.low {
+		opacity: 0.6;
 	}
 	.consumed {
 		font-weight: 700;
@@ -1608,6 +1840,7 @@
 		}
 	}
 	.seg2 {
+		position: relative;
 		display: flex;
 		gap: 2px;
 		padding: 3px;
@@ -1615,18 +1848,47 @@
 		background: var(--surface-sunk);
 		border: 1px solid var(--border);
 	}
-	.seg2 button {
-		padding: 6px 14px;
+	/* Pastille qui glisse derrière le bouton actif — le rebond (cubic-bezier avec dépassement) est
+	   ce qui rend le switch "satisfaisant" plutôt qu'un simple fondu. */
+	.seg2-thumb {
+		position: absolute;
+		top: 3px;
+		left: 3px;
+		width: calc(50% - 4px);
+		height: calc(100% - 6px);
 		border-radius: 30px;
-		font-size: 12.5px;
-		font-weight: 600;
+		background: var(--surface);
+		box-shadow: var(--shadow-sm);
+		transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+		pointer-events: none;
+	}
+	.seg2[data-active='kanban'] .seg2-thumb {
+		transform: translateX(calc(100% + 4px));
+	}
+	.seg2 button {
+		position: relative;
+		z-index: 1;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 34px;
+		height: 28px;
+		border-radius: 30px;
 		color: var(--text-mute);
-		transition: background 0.15s, color 0.15s;
+		transition: color 0.2s ease;
 	}
 	.seg2 button.on {
-		background: var(--surface);
 		color: var(--text);
-		box-shadow: var(--shadow-sm);
+	}
+	.seg2-icon {
+		transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+	}
+	.seg2 button.on .seg2-icon {
+		transform: scale(1.15);
+	}
+	.seg2 button:active .seg2-icon {
+		transform: scale(0.82);
+		transition-duration: 0.1s;
 	}
 
 	/* Kanban */
@@ -1796,6 +2058,18 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
+	}
+	.tk-head-actions {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+	}
+	.tk-jira-icon {
+		display: inline-flex;
+		color: var(--text-mute);
+	}
+	.tk-jira-icon:hover {
+		color: var(--accent);
 	}
 	.tk-danger {
 		margin-top: 14px;

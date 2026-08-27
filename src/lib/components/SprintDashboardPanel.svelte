@@ -2,6 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { navigating } from '$app/state';
 	import { downloadSvgAsPng } from '$lib/utils/svgToPng';
+	import { jiraTicketUrl, type JiraLinkConfig } from '$lib/jiraLink';
 
 	function round2(n: number) {
 		return Math.round((n + Number.EPSILON) * 100) / 100;
@@ -60,7 +61,8 @@
 		options,
 		selectedId,
 		dashboard,
-		emptyLabel
+		emptyLabel,
+		jiraCfg
 	}: {
 		title: string;
 		baseHref: string;
@@ -68,6 +70,7 @@
 		selectedId: string | null;
 		dashboard: SprintDashboard | null;
 		emptyLabel: string;
+		jiraCfg: JiraLinkConfig;
 	} = $props();
 
 	const pct = (x: number) => Math.round(x * 100);
@@ -352,7 +355,11 @@
 							>{t.stateEmoji ?? ''} {t.stateLabel ?? '—'}</span>
 						</td>
 						<td class="ttl">
-							<span class="key tabnum">{t.key}</span>
+							{#if jiraTicketUrl(jiraCfg, t.key)}
+								<a class="key tabnum" href={jiraTicketUrl(jiraCfg, t.key)} target="_blank" rel="noopener noreferrer" title="Ouvrir dans Jira" onclick={(e) => e.stopPropagation()}>{t.key}</a>
+							{:else}
+								<span class="key tabnum">{t.key}</span>
+							{/if}
 							<span class="title">{t.title}</span>
 						</td>
 						{#if dashboard.kpis.budgetTotal !== null}<td class="num tabnum">{t.budget ?? '—'}</td>{/if}

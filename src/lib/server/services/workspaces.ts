@@ -110,6 +110,9 @@ export type MembershipInfo = {
 	allowedDomain: string;
 	moodEnabled: boolean;
 	supportEnabled: boolean;
+	jiraLinkEnabled: boolean;
+	jiraLinkKeyRegexPattern: string | null;
+	jiraLinkKeyRegexReplacement: string | null;
 	role: Role;
 	canViewImputations: boolean;
 	canViewMoodResults: boolean;
@@ -131,6 +134,9 @@ export async function listMembershipsForUser(userId: string): Promise<Membership
 			allowedDomain: workspace.allowedDomain,
 			moodEnabled: workspace.moodEnabled,
 			supportEnabled: workspace.supportEnabled,
+			jiraLinkEnabled: workspace.jiraLinkEnabled,
+			jiraLinkKeyRegexPattern: workspace.jiraLinkKeyRegexPattern,
+			jiraLinkKeyRegexReplacement: workspace.jiraLinkKeyRegexReplacement,
 			role: membership.role,
 			canViewImputations: membership.canViewImputations,
 			canViewMoodResults: membership.canViewMoodResults,

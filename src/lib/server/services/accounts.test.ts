@@ -201,6 +201,10 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 			syncParent: true,
 			syncSprint: true,
 			syncVersion: true,
+			// Désactivé par défaut : sans ça un espace n'utilisant pas Jira afficherait des liens cassés.
+			linkEnabled: false,
+			linkRegexPattern: '',
+			linkRegexReplacement: '',
 			patUpdatedByName: null,
 			updatedSince: null,
 			createdSince: null,
@@ -229,6 +233,9 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 			syncVersion: true,
 			regexPattern: '^X_',
 			regexReplacement: '',
+			linkEnabled: false,
+			linkRegexPattern: '',
+			linkRegexReplacement: '',
 			pat: '',
 			updatedSinceDate: '',
 			createdSinceDate: '',
@@ -260,6 +267,9 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 			syncVersion: true,
 			regexPattern: '',
 			regexReplacement: '',
+			linkEnabled: false,
+			linkRegexPattern: '',
+			linkRegexReplacement: '',
 			pat: 'un-vrai-pat',
 			updatedSinceDate: '',
 			createdSinceDate: '',
@@ -290,6 +300,9 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 				syncVersion: true,
 				regexPattern: '(unclosed',
 				regexReplacement: '',
+				linkEnabled: false,
+				linkRegexPattern: '',
+				linkRegexReplacement: '',
 				pat: '',
 				updatedSinceDate: '',
 				createdSinceDate: '',
@@ -298,6 +311,59 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 			})
 		).rejects.toThrow(/regex/i);
 		expect((await getJiraConfig(workspaceId)).jql).toBe(''); // rien n'a été sauvegardé
+	});
+
+	it('saveJiraConfig : regex de lien invalide lève une erreur claire, rien n’est écrit', async () => {
+		const { workspaceId } = await makeWs('jira-badlinkregex');
+		await expect(
+			saveJiraConfig(workspaceId, {
+				jql: 'project = Z',
+				conflictStrategy: 'KEEP_LOCAL',
+				syncTitle: true,
+				syncProject: true,
+				syncParent: true,
+				syncSprint: true,
+				syncVersion: true,
+				regexPattern: '',
+				regexReplacement: '',
+				linkEnabled: true,
+				linkRegexPattern: '(unclosed',
+				linkRegexReplacement: '',
+				pat: '',
+				updatedSinceDate: '',
+				createdSinceDate: '',
+				patEncryptionKey: encKey,
+				changedByUserId: 'unused'
+			})
+		).rejects.toThrow(/lien jira/i);
+		expect((await getJiraConfig(workspaceId)).jql).toBe(''); // rien n'a été sauvegardé
+	});
+
+	it('saveJiraConfig : enregistre le mapping de lien Jira', async () => {
+		const { workspaceId } = await makeWs('jira-link-save');
+		await saveJiraConfig(workspaceId, {
+			jql: 'project = Z',
+			conflictStrategy: 'KEEP_LOCAL',
+			syncTitle: true,
+			syncProject: true,
+			syncParent: true,
+			syncSprint: true,
+			syncVersion: true,
+			regexPattern: '',
+			regexReplacement: '',
+			linkEnabled: true,
+			linkRegexPattern: '^',
+			linkRegexReplacement: 'CARTEJEUNE_',
+			pat: '',
+			updatedSinceDate: '',
+			createdSinceDate: '',
+			patEncryptionKey: encKey,
+			changedByUserId: 'unused'
+		});
+		const cfg = await getJiraConfig(workspaceId);
+		expect(cfg.linkEnabled).toBe(true);
+		expect(cfg.linkRegexPattern).toBe('^');
+		expect(cfg.linkRegexReplacement).toBe('CARTEJEUNE_');
 	});
 
 	it('saveJiraConfig avec une date minimum : parse en minuit UTC', async () => {
@@ -312,6 +378,9 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 			syncVersion: true,
 			regexPattern: '',
 			regexReplacement: '',
+			linkEnabled: false,
+			linkRegexPattern: '',
+			linkRegexReplacement: '',
 			pat: '',
 			updatedSinceDate: '2026-06-01',
 			createdSinceDate: '',
@@ -336,6 +405,9 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 			syncVersion: true,
 			regexPattern: '',
 			regexReplacement: '',
+			linkEnabled: false,
+			linkRegexPattern: '',
+			linkRegexReplacement: '',
 			pat: '',
 			updatedSinceDate: '',
 			createdSinceDate: '',
@@ -359,6 +431,9 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 				syncVersion: true,
 				regexPattern: '',
 				regexReplacement: '',
+				linkEnabled: false,
+				linkRegexPattern: '',
+				linkRegexReplacement: '',
 				pat: '',
 				updatedSinceDate: 'pas-une-date',
 				createdSinceDate: '',
@@ -382,6 +457,9 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 				syncVersion: true,
 				regexPattern: '',
 				regexReplacement: '',
+				linkEnabled: false,
+				linkRegexPattern: '',
+				linkRegexReplacement: '',
 				pat: '',
 				updatedSinceDate: '',
 				createdSinceDate: '',
@@ -413,6 +491,9 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 			syncVersion: true,
 			regexPattern: '',
 			regexReplacement: '',
+			linkEnabled: false,
+			linkRegexPattern: '',
+			linkRegexReplacement: '',
 			pat: '',
 			updatedSinceDate: '',
 			createdSinceDate: '2020-01-01',
@@ -437,6 +518,9 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 			syncVersion: true,
 			regexPattern: '',
 			regexReplacement: '',
+			linkEnabled: false,
+			linkRegexPattern: '',
+			linkRegexReplacement: '',
 			pat: '',
 			updatedSinceDate: '',
 			createdSinceDate: '',
@@ -460,6 +544,9 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 				syncVersion: true,
 				regexPattern: '',
 				regexReplacement: '',
+				linkEnabled: false,
+				linkRegexPattern: '',
+				linkRegexReplacement: '',
 				pat: '',
 				updatedSinceDate: '',
 				createdSinceDate: 'pas-une-date',
