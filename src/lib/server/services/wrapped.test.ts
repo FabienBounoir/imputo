@@ -1,19 +1,21 @@
 import { describe, it, expect } from 'vitest';
 import { and, eq } from 'drizzle-orm';
-import { db, category, wrappedSnapshot } from '$lib/server/db';
-import { makeWorkspace } from './test-helpers';
+import { db, category, supportDutyLog, wrappedSnapshot } from '$lib/server/db';
+import { makeWorkspace, addMember } from './test-helpers';
 import { createTicket } from './tickets';
 import { setCell } from './imputation';
+import { setSupportEnabled } from './support';
 import { round } from './calc';
 import { computeUserWrapped, isWrappedWindowOpen, wrappedYearFor, runWrapped } from './wrapped';
 
 describe('isWrappedWindowOpen / wrappedYearFor', () => {
-	it('ouvre du 1 décembre au 5 janvier, fermé le reste de l’année', () => {
-		expect(isWrappedWindowOpen('2026-12-01')).toBe(true);
+	it('ouvre du 1 novembre au 5 janvier, fermé le reste de l’année', () => {
+		expect(isWrappedWindowOpen('2026-11-01')).toBe(true);
+		expect(isWrappedWindowOpen('2026-11-30')).toBe(true);
 		expect(isWrappedWindowOpen('2026-12-31')).toBe(true);
 		expect(isWrappedWindowOpen('2027-01-05')).toBe(true);
 		expect(isWrappedWindowOpen('2027-01-06')).toBe(false);
-		expect(isWrappedWindowOpen('2026-11-30')).toBe(false);
+		expect(isWrappedWindowOpen('2026-10-31')).toBe(false);
 	});
 
 	it('reste sur l’année en cours en décembre, bascule sur l’année précédente en janvier', () => {
@@ -78,6 +80,32 @@ describe('computeUserWrapped', () => {
 		const wrapped = await computeUserWrapped(ws.workspaceId, ws.userId, 2026);
 
 		expect(wrapped.totalHours).toBe(3);
+	});
+
+	it('compte les lignes de supportDutyLog dans la plage, filtrées par utilisateur et espace', async () => {
+		const ws = await makeWorkspace('wrapsupport');
+		const { userId: other } = await addMember(ws.workspaceId, 'USER', 'other');
+		await setSupportEnabled(ws.workspaceId, true);
+
+		await db.insert(supportDutyLog).values([
+			{ workspaceId: ws.workspaceId, periodStart: '2026-02-02', userId: ws.userId }, // dans la plage
+			{ workspaceId: ws.workspaceId, periodStart: '2026-05-04', userId: ws.userId }, // dans la plage
+			{ workspaceId: ws.workspaceId, periodStart: '2025-12-29', userId: ws.userId }, // avant l'année, exclu
+			{ workspaceId: ws.workspaceId, periodStart: '2026-03-02', userId: other } // autre personne, exclu
+		]);
+
+		const wrapped = await computeUserWrapped(ws.workspaceId, ws.userId, 2026);
+		expect(wrapped.supportEnabled).toBe(true);
+		expect(wrapped.supportCount).toBe(2);
+	});
+
+	it('reste à 0 quand supportEnabled est faux, même avec des lignes déjà journalisées', async () => {
+		const ws = await makeWorkspace('wrapsupportoff');
+		await db.insert(supportDutyLog).values({ workspaceId: ws.workspaceId, periodStart: '2026-02-02', userId: ws.userId });
+
+		const wrapped = await computeUserWrapped(ws.workspaceId, ws.userId, 2026);
+		expect(wrapped.supportEnabled).toBe(false);
+		expect(wrapped.supportCount).toBe(0);
 	});
 });
 

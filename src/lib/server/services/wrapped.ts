@@ -1,20 +1,24 @@
 import { and, asc, desc, eq, gte, lte, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
-import { db, workspace, membership, user, timeEntry, ticket, category, moodVote, supportOverride, wrappedSnapshot } from '$lib/server/db';
+import { db, workspace, membership, user, timeEntry, ticket, category, moodVote, supportDutyLog, wrappedSnapshot } from '$lib/server/db';
 import { config } from '$lib/server/config';
 import { num, round } from './calc';
-import { getSupportConfig, listRotationMembers, pickFromChain } from './support';
-import { currentSupportPeriod, supportPeriodIndex, formatMonthLabel, parseISODate, addDays, toISODate, workdaysBetween } from '$lib/utils/date';
+import { formatMonthLabel, parseISODate, workdaysBetween } from '$lib/utils/date';
 
 /**
- * Fenêtre d'activation du wrapped : 1 déc → 5 jan (cf. docs/SPECS-wrapped.md), sauf
+ * Fenêtre d'activation du wrapped : 1 nov → 5 jan (élargie depuis le 1 déc pour laisser de la
+ * marge à un déclenchement manuel de runWrapped, cron désormais suspendu), sauf
  * WRAPPED_FORCE_OPEN=1 (démo/QA — jamais posé en préprod/prod) qui l'ouvre toute l'année.
+ * ⚠️ computeUserWrapped fige les données au 30 novembre : un déclenchement manuel avant cette
+ * date via runWrapped produit un snapshot incomplet (novembre pas encore joué) qui reste figé
+ * pour le reste de la saison (pas de recalcul, cf. runWrapped) — ne PAS lancer le job avant le
+ * 1er décembre malgré la fenêtre ouverte plus tôt.
  */
 export function isWrappedWindowOpen(dateISO: string): boolean {
 	if (config.wrappedForceOpen) return true;
 	const d = parseISODate(dateISO);
-	const month = d.getUTCMonth(); // 0 = janvier, 11 = décembre
-	if (month === 11) return true;
+	const month = d.getUTCMonth(); // 0 = janvier, 10 = novembre, 11 = décembre
+	if (month >= 10) return true;
 	if (month === 0) return d.getUTCDate() <= 5;
 	return false;
 }
@@ -57,40 +61,27 @@ function longestWorkdayStreak(daysWithEntries: string[], fromISO: string, toISO:
 	return best;
 }
 
+/**
+ * Compte les périodes de perm réellement journalisées (cf. supportDutyLog, alimenté par le cron
+ * /api/jobs/support-duty) plutôt que de recalculer via la chaîne + offset courant : l'offset est
+ * une valeur unique mutable (décalée définitivement par "passer son tour"), sans date d'effet —
+ * un recalcul rétroactif sur toute l'année serait donc faux dès qu'un skip a eu lieu en cours de
+ * route. Le log ne contient que les périodes effectivement passées, ce qui résout aussi le cas
+ * d'un espace créé en cours d'année (rien à compter avant sa création).
+ */
 async function computeSupportCount(workspaceId: string, userId: string, fromISO: string, toISO: string): Promise<number> {
-	const [{ cadence, offset, includeSaturday }, members] = await Promise.all([
-		getSupportConfig(workspaceId),
-		listRotationMembers(workspaceId)
-	]);
-	if (members.length === 0) return 0;
-
-	// Périodes distinctes de l'année : on balaie chaque jour et on retombe systématiquement sur le
-	// début de la période active qui le contient (currentSupportPeriod snap déjà le week-end sur le
-	// dernier jour actif) — pas besoin de ré-implémenter le calcul "jour actif" ici.
-	const periodStarts: string[] = [];
-	const seen = new Set<string>();
-	const to = parseISODate(toISO);
-	for (let d = parseISODate(fromISO); d <= to; d = addDays(d, 1)) {
-		const { start } = currentSupportPeriod(cadence, toISODate(d), includeSaturday);
-		if (!seen.has(start)) {
-			seen.add(start);
-			periodStarts.push(start);
-		}
-	}
-
-	const overrides = await db
-		.select({ periodStart: supportOverride.periodStart, userId: supportOverride.userId })
-		.from(supportOverride)
-		.where(and(eq(supportOverride.workspaceId, workspaceId), gte(supportOverride.periodStart, fromISO), lte(supportOverride.periodStart, toISO)));
-	const overrideByPeriod = new Map(overrides.map((o) => [o.periodStart, o.userId]));
-
-	let count = 0;
-	for (const periodStart of periodStarts) {
-		const overridden = overrideByPeriod.get(periodStart);
-		const effectiveUserId = overridden ?? pickFromChain(cadence, members, offset, periodStart, includeSaturday).userId;
-		if (effectiveUserId === userId) count++;
-	}
-	return count;
+	const rows = await db
+		.select({ count: sql<string>`count(*)` })
+		.from(supportDutyLog)
+		.where(
+			and(
+				eq(supportDutyLog.workspaceId, workspaceId),
+				eq(supportDutyLog.userId, userId),
+				gte(supportDutyLog.periodStart, fromISO),
+				lte(supportDutyLog.periodStart, toISO)
+			)
+		);
+	return Number(rows[0]?.count ?? 0);
 }
 
 /**

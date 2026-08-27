@@ -816,6 +816,26 @@ export const supportOverride = pgTable(
 	(t) => [uniqueIndex('support_override_ws_period_uq').on(t.workspaceId, t.periodStart)]
 );
 
+// Trace, un jour à la fois (cron), qui a effectivement été de perm — plutôt que de recalculer
+// l'historique via la chaîne + offset courant, qui dérive dès qu'un "passer son tour" a eu lieu
+// pendant l'année (supportRotationOffset n'a pas de date d'effet, cf. computeSupportCount dans
+// wrapped.ts). Une ligne par période déjà passée = un fait figé, jamais recalculé.
+export const supportDutyLog = pgTable(
+	'support_duty_log',
+	{
+		id: id(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspace.id, { onDelete: 'cascade' }),
+		periodStart: date('period_start').notNull(),
+		userId: uuid('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		createdAt: createdAt()
+	},
+	(t) => [uniqueIndex('support_duty_log_ws_period_uq').on(t.workspaceId, t.periodStart)]
+);
+
 // ---------- Notifications (Web Push) ----------
 export const pushSubscription = pgTable(
 	'push_subscription',

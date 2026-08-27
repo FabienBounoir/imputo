@@ -72,6 +72,8 @@ spec:
 # comme les autres jobs, sans schedule à part pour la fenêtre elle-même. Idempotent (cf.
 # runWrapped) : ne calcule vraiment qu'une fois par personne et par saison, les passages suivants
 # ne font que rattraper un run précédent manqué.
+# suspend: déclenchement manuel pour l'instant (cf. POST/GET /api/jobs/wrapped?workspaceId=...) —
+# repasser à false (ou retirer la ligne) pour redonner la main au cron.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -79,6 +81,7 @@ metadata:
   labels:
     app: imputo
 spec:
+  suspend: true
   timeZone: Europe/Paris
   schedule: '0 4 * * *'
   jobTemplate:
@@ -99,6 +102,43 @@ spec:
                 - -H
                 - 'Authorization: Bearer $(CRON_SECRET)'
                 - http://imputo:3000/api/jobs/wrapped
+              env:
+                - name: CRON_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: imputo-secrets
+                      key: CRON_SECRET
+---
+# Fige qui est de perm aujourd'hui dans support_duty_log — condition pour que le comptage wrapped
+# (computeSupportCount) reste correct après un "passer son tour" en cours d'année (cf. commentaire
+# de isWrappedWindowOpen et de la table support_duty_log dans schema.ts).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: imputo-cron-support-duty
+  labels:
+    app: imputo
+spec:
+  timeZone: Europe/Paris
+  schedule: '30 3 * * *'
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 60
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: curl
+              image: curlimages/curl:latest
+              args:
+                - -fsS
+                - --max-time
+                - '30'
+                - -X
+                - POST
+                - -H
+                - 'Authorization: Bearer $(CRON_SECRET)'
+                - http://imputo:3000/api/jobs/support-duty
               env:
                 - name: CRON_SECRET
                   valueFrom:

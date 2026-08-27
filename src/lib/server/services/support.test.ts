@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { and, eq } from 'drizzle-orm';
+import { db, supportDutyLog } from '$lib/server/db';
 import {
 	getSupportConfig,
 	setSupportEnabled,
@@ -12,7 +14,9 @@ import {
 	listDutyCalendar,
 	setOverride,
 	clearOverride,
-	skipCurrentTurn
+	skipCurrentTurn,
+	logDutyForToday,
+	runSupportDutyLog
 } from './support';
 import { makeWorkspace, addMember } from './test-helpers';
 
@@ -195,5 +199,110 @@ describe('skipCurrentTurn', () => {
 
 		await skipCurrentTurn(workspaceId, before!.periodStart);
 		expect((await getCurrentDuty(workspaceId, '2026-08-11'))?.overridden).toBe(false);
+	});
+});
+
+describe('logDutyForToday / runSupportDutyLog', () => {
+	it('ne journalise rien si la perm est désactivée ou la rotation vide', async () => {
+		const { workspaceId, userId } = await makeWorkspace();
+		await addRotationMember(workspaceId, userId);
+		expect(await logDutyForToday(workspaceId, '2026-08-11')).toBe(false); // désactivée par défaut
+
+		const { workspaceId: ws2 } = await makeWorkspace('emptyrotation');
+		await setSupportEnabled(ws2, true);
+		expect(await logDutyForToday(ws2, '2026-08-11')).toBe(false); // rotation vide
+	});
+
+	it('journalise la période courante, idempotent sur un second passage le même jour', async () => {
+		const { workspaceId, userId: owner } = await makeWorkspace();
+		const { userId: a } = await addMember(workspaceId, 'USER', 'a');
+		await addRotationMember(workspaceId, owner);
+		await addRotationMember(workspaceId, a);
+		await setSupportEnabled(workspaceId, true);
+
+		const duty = await getCurrentDuty(workspaceId, '2026-08-11');
+		expect(await logDutyForToday(workspaceId, '2026-08-11')).toBe(true);
+		expect(await logDutyForToday(workspaceId, '2026-08-12')).toBe(true); // même période (mardi), pas d'écriture en double
+
+		const rows = await db
+			.select()
+			.from(supportDutyLog)
+			.where(and(eq(supportDutyLog.workspaceId, workspaceId), eq(supportDutyLog.periodStart, duty!.periodStart)));
+		expect(rows).toHaveLength(1);
+		expect(rows[0].userId).toBe(duty!.userId);
+	});
+
+	it('runSupportDutyLog ne journalise que l’espace ciblé quand workspaceId est précisé', async () => {
+		const { workspaceId: wsA, userId: a } = await makeWorkspace('runlogA');
+		const { workspaceId: wsB, userId: b } = await makeWorkspace('runlogB');
+		await addRotationMember(wsA, a);
+		await addRotationMember(wsB, b);
+		await setSupportEnabled(wsA, true);
+		await setSupportEnabled(wsB, true);
+
+		const result = await runSupportDutyLog('2026-08-11', wsA);
+		expect(result).toEqual({ workspaces: 1, logged: 1 });
+
+		const rowsB = await db.select().from(supportDutyLog).where(eq(supportDutyLog.workspaceId, wsB));
+		expect(rowsB).toHaveLength(0);
+	});
+});
+
+describe('refresh de supportDutyLog après override/skip sur une période déjà journalisée', () => {
+	async function loggedUserFor(workspaceId: string, periodStart: string) {
+		const [row] = await db
+			.select({ userId: supportDutyLog.userId })
+			.from(supportDutyLog)
+			.where(and(eq(supportDutyLog.workspaceId, workspaceId), eq(supportDutyLog.periodStart, periodStart)));
+		return row?.userId;
+	}
+
+	it('setOverride corrige immédiatement la ligne déjà journalisée (sinon figée par onConflictDoNothing)', async () => {
+		const { workspaceId, userId: owner } = await makeWorkspace();
+		const { userId: a } = await addMember(workspaceId, 'USER', 'a');
+		await addRotationMember(workspaceId, owner);
+		await addRotationMember(workspaceId, a);
+		await setSupportEnabled(workspaceId, true);
+
+		const before = await getCurrentDuty(workspaceId, '2026-08-11');
+		await logDutyForToday(workspaceId, '2026-08-11'); // journalisé AVANT l'override, comme le ferait le cron du matin
+		expect(await loggedUserFor(workspaceId, before!.periodStart)).toBe(before!.userId);
+
+		const target = a === before!.userId ? owner : a;
+		await setOverride(workspaceId, before!.periodStart, target);
+		expect(await loggedUserFor(workspaceId, before!.periodStart)).toBe(target);
+
+		await clearOverride(workspaceId, before!.periodStart);
+		expect(await loggedUserFor(workspaceId, before!.periodStart)).toBe(before!.userId); // repasse sur la chaîne normale
+	});
+
+	it('skipCurrentTurn corrige la ligne déjà journalisée sur la personne suivante de la chaîne', async () => {
+		const { workspaceId, userId: owner } = await makeWorkspace();
+		const { userId: a } = await addMember(workspaceId, 'USER', 'a');
+		const { userId: b } = await addMember(workspaceId, 'USER', 'b');
+		await addRotationMember(workspaceId, owner);
+		await addRotationMember(workspaceId, a);
+		await addRotationMember(workspaceId, b);
+		await setSupportEnabled(workspaceId, true);
+
+		const before = await getCurrentDuty(workspaceId, '2026-08-11');
+		await logDutyForToday(workspaceId, '2026-08-11');
+
+		await skipCurrentTurn(workspaceId, before!.periodStart);
+		const after = await getCurrentDuty(workspaceId, '2026-08-11');
+		expect(after!.userId).not.toBe(before!.userId);
+		expect(await loggedUserFor(workspaceId, before!.periodStart)).toBe(after!.userId);
+	});
+
+	it("ne fait rien si la période n'a pas encore de ligne journalisée", async () => {
+		const { workspaceId, userId: owner } = await makeWorkspace();
+		const { userId: a } = await addMember(workspaceId, 'USER', 'a');
+		await addRotationMember(workspaceId, owner);
+		await addRotationMember(workspaceId, a);
+		await setSupportEnabled(workspaceId, true);
+
+		const duty = await getCurrentDuty(workspaceId, '2026-08-11');
+		await setOverride(workspaceId, duty!.periodStart, a === duty!.userId ? owner : a); // aucun logDutyForToday avant
+		expect(await loggedUserFor(workspaceId, duty!.periodStart)).toBeUndefined();
 	});
 });
