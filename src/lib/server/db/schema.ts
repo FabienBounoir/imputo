@@ -8,6 +8,7 @@ import {
 	date,
 	integer,
 	numeric,
+	jsonb,
 	index,
 	uniqueIndex
 } from 'drizzle-orm/pg-core';
@@ -815,6 +816,26 @@ export const supportOverride = pgTable(
 	(t) => [uniqueIndex('support_override_ws_period_uq').on(t.workspaceId, t.periodStart)]
 );
 
+// Trace, un jour à la fois (cron), qui a effectivement été de perm — plutôt que de recalculer
+// l'historique via la chaîne + offset courant, qui dérive dès qu'un "passer son tour" a eu lieu
+// pendant l'année (supportRotationOffset n'a pas de date d'effet, cf. computeSupportCount dans
+// wrapped.ts). Une ligne par période déjà passée = un fait figé, jamais recalculé.
+export const supportDutyLog = pgTable(
+	'support_duty_log',
+	{
+		id: id(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspace.id, { onDelete: 'cascade' }),
+		periodStart: date('period_start').notNull(),
+		userId: uuid('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		createdAt: createdAt()
+	},
+	(t) => [uniqueIndex('support_duty_log_ws_period_uq').on(t.workspaceId, t.periodStart)]
+);
+
 // ---------- Notifications (Web Push) ----------
 export const pushSubscription = pgTable(
 	'push_subscription',
@@ -950,6 +971,28 @@ export const monthlyClosingMember = pgTable(
 	(t) => [uniqueIndex('monthly_closing_member_uq').on(t.closingId, t.userId)]
 );
 
+// ---------- Wrapped (récap annuel perso, actif 1 déc → 5 jan — cf. docs/SPECS-wrapped.md) ----------
+// Instantané figé par le cron (api/jobs/wrapped) : les chiffres ne doivent pas bouger si on corrige
+// une imputation après avoir vu son wrap, et tout le monde doit comparer des chiffres calculés au
+// même instant. `payload` en jsonb plutôt que colonnes typées : le contenu du wrap est amené à
+// s'enrichir (nouvelles stats) sans migration à chaque fois.
+export const wrappedSnapshot = pgTable(
+	'wrapped_snapshot',
+	{
+		id: id(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspace.id, { onDelete: 'cascade' }),
+		userId: uuid('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		year: integer('year').notNull(),
+		payload: jsonb('payload').notNull(),
+		generatedAt: timestamp('generated_at', { withTimezone: true }).defaultNow().notNull()
+	},
+	(t) => [uniqueIndex('wrapped_snapshot_ws_user_year_uq').on(t.workspaceId, t.userId, t.year)]
+);
+
 // ---------- Relations ----------
 export const ticketRelations = relations(ticket, ({ one, many }) => ({
 	parent: one(ticket, { fields: [ticket.parentId], references: [ticket.id], relationName: 'parent' }),
@@ -994,3 +1037,4 @@ export type MoodPeriodKind = (typeof moodPeriodKindEnum.enumValues)[number];
 export type SupportRotationMember = typeof supportRotationMember.$inferSelect;
 export type SupportOverride = typeof supportOverride.$inferSelect;
 export type SupportCadence = (typeof supportCadenceEnum.enumValues)[number];
+export type WrappedSnapshot = typeof wrappedSnapshot.$inferSelect;

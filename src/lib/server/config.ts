@@ -20,7 +20,10 @@ export const config = {
 	azureClientId: env.AZURE_CLIENT_ID ?? '',
 	azureClientSecret: env.AZURE_CLIENT_SECRET ?? '',
 	jiraBaseUrl: env.JIRA_BASE_URL ?? 'https://jira.constellation.soprasteria.com',
-	jiraPatEncryptionKey: env.JIRA_PAT_ENCRYPTION_KEY ?? ''
+	jiraPatEncryptionKey: env.JIRA_PAT_ENCRYPTION_KEY ?? '',
+	// Force le wrapped visible/accessible à tout le monde toute l'année (démo, QA) — jamais mis en
+	// préprod/prod, absent de l'env par défaut donc la fenêtre du 1 déc → 5 jan s'applique normalement.
+	wrappedForceOpen: env.WRAPPED_FORCE_OPEN === '1'
 };
 
 export function emailDomain(email: string): string {

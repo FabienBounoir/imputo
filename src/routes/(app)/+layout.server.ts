@@ -3,6 +3,7 @@ import type { LayoutServerLoad } from './$types';
 import { getPeriodParticipation, getMoodConfig, getMyVote } from '$lib/server/services/mood';
 import { countPendingAbsences } from '$lib/server/services/absences';
 import { getCurrentDuty } from '$lib/server/services/support';
+import { getMyWrapped, isWrappedWindowOpen, wrappedYearFor } from '$lib/server/services/wrapped';
 import { getDailyQuotes } from '$lib/server/services/quotes';
 import { currentMoodPeriod, todayInParis, parseISODate, lastWorkdayOnOrBefore } from '$lib/utils/date';
 import { config } from '$lib/server/config';
@@ -42,6 +43,14 @@ export const load: LayoutServerLoad = async ({ locals }) => {
 	// Nom affiché dans le lien "Support" du menu, pour voir qui est de perm sans ouvrir la page.
 	const supportDuty = locals.workspace.supportEnabled ? await getCurrentDuty(locals.workspace.workspaceId) : null;
 
+	// Lien "Wrapped" du menu masqué tant que le snapshot de CETTE personne n'existe pas : la fenêtre
+	// (1 déc → 5 jan) est ouverte pour tout le monde, mais le cron peut ne pas être encore passé, ou
+	// la personne peut avoir rejoint après coup — inutile d'afficher un lien qui mène à une redirection.
+	const wrappedYear = wrappedYearFor(todayInParis());
+	const wrappedAvailable =
+		isWrappedWindowOpen(todayInParis()) &&
+		Boolean(await getMyWrapped(locals.workspace.workspaceId, locals.user.id, wrappedYear));
+
 	// Phrases du jour du bandeau motivation (cache mémoire côté serveur, cf. services/quotes.ts).
 	// Volontairement PAS awaité : sur cache manqué (1x/jour/process), le fetch réseau sous-jacent
 	// peut prendre jusqu'à 5s (timeout), et ce load tourne sur CHAQUE navigation de CHAQUE page —
@@ -59,6 +68,8 @@ export const load: LayoutServerLoad = async ({ locals }) => {
 		moodTotalVotes,
 		pendingAbsencesCount,
 		supportDuty,
+		wrappedAvailable,
+		wrappedYear,
 		motivationQuotes,
 		vapidPublicKey: config.vapidPublic
 	};

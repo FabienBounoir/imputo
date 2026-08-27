@@ -1,5 +1,5 @@
 import { and, asc, eq, sql } from 'drizzle-orm';
-import { db, workspace, user, membership, supportRotationMember, supportOverride, type SupportCadence } from '$lib/server/db';
+import { db, workspace, user, membership, supportRotationMember, supportOverride, supportDutyLog, type SupportCadence } from '$lib/server/db';
 import { addDays, currentSupportPeriod, mondayOf, parseISODate, supportPeriodIndex, toISODate, todayInParis } from '$lib/utils/date';
 
 export type { SupportCadence };
@@ -100,7 +100,7 @@ export type SupportDuty = {
 	overridden: boolean;
 };
 
-function pickFromChain(
+export function pickFromChain(
 	cadence: SupportCadence,
 	members: RotationMemberItem[],
 	offset: number,
@@ -188,6 +188,27 @@ export async function listDutyCalendar(
 }
 
 /**
+ * Recale supportDutyLog sur la personne effective actuelle d'une période, après un override/skip.
+ * logDutyForToday n'écrit qu'une fois par période (onConflictDoNothing) : sans ce recalage, changer
+ * qui est de perm sur la période EN COURS (déjà journalisée par le cron du jour même ou d'un jour
+ * précédent de cette période) laisserait l'ancienne personne créditée dans le wrapped. No-op si la
+ * période n'a pas encore de ligne (rien à corriger, le prochain passage du cron lira la bonne
+ * valeur directement via pickDuty) — includeSaturday vient de getSupportConfig, donc déjà respecté.
+ */
+async function refreshDutyLog(workspaceId: string, periodStart: string) {
+	const [{ cadence, offset, includeSaturday }, members] = await Promise.all([
+		getSupportConfig(workspaceId),
+		listRotationMembers(workspaceId)
+	]);
+	if (members.length === 0) return;
+	const duty = await pickDuty(cadence, members, offset, periodStart, periodStart, includeSaturday, workspaceId);
+	await db
+		.update(supportDutyLog)
+		.set({ userId: duty.userId })
+		.where(and(eq(supportDutyLog.workspaceId, workspaceId), eq(supportDutyLog.periodStart, periodStart)));
+}
+
+/**
  * "Passer son tour" : décale toute la chaîne d'un cran, définitivement (la période courante ET
  * toutes les suivantes). Contrairement à setOverride, ne cible pas une personne précise — on
  * avance juste au suivant dans l'ordre. Efface un override existant sur cette période : il n'aurait
@@ -203,6 +224,7 @@ export async function skipCurrentTurn(workspaceId: string, periodStart: string) 
 			.delete(supportOverride)
 			.where(and(eq(supportOverride.workspaceId, workspaceId), eq(supportOverride.periodStart, periodStart)));
 	});
+	await refreshDutyLog(workspaceId, periodStart);
 }
 
 /** Remplace la personne calculée pour cette période précise, sans toucher à l'ordre de rotation. */
@@ -216,10 +238,45 @@ export async function setOverride(workspaceId: string, periodStart: string, user
 		.insert(supportOverride)
 		.values({ workspaceId, periodStart, userId })
 		.onConflictDoUpdate({ target: [supportOverride.workspaceId, supportOverride.periodStart], set: { userId } });
+	await refreshDutyLog(workspaceId, periodStart);
 }
 
 export async function clearOverride(workspaceId: string, periodStart: string) {
 	await db
 		.delete(supportOverride)
 		.where(and(eq(supportOverride.workspaceId, workspaceId), eq(supportOverride.periodStart, periodStart)));
+	await refreshDutyLog(workspaceId, periodStart);
+}
+
+/**
+ * Fige qui est de perm aujourd'hui dans supportDutyLog (une ligne par période, cf. schema.ts) —
+ * appelé par le cron quotidien /api/jobs/support-duty. Idempotent (onConflictDoNothing sur
+ * workspaceId+periodStart) : plusieurs passages sur la même période n'écrivent qu'une fois.
+ * Ne journalise rien si la perm est désactivée ou la rotation vide, pour ne pas polluer
+ * l'historique de wrapped (cf. computeSupportCount) avec une perm éteinte à l'époque.
+ */
+export async function logDutyForToday(workspaceId: string, todayISO: string = todayInParis()): Promise<boolean> {
+	const { enabled, cadence, offset, includeSaturday } = await getSupportConfig(workspaceId);
+	if (!enabled) return false;
+	const members = await listRotationMembers(workspaceId);
+	if (members.length === 0) return false;
+
+	const { start, end } = currentSupportPeriod(cadence, todayISO, includeSaturday);
+	const duty = await pickDuty(cadence, members, offset, start, end, includeSaturday, workspaceId);
+	await db.insert(supportDutyLog).values({ workspaceId, periodStart: start, userId: duty.userId }).onConflictDoNothing();
+	return true;
+}
+
+/** Cron quotidien : journalise la perm du jour pour un espace, ou tous si non précisé. */
+export async function runSupportDutyLog(dateISO: string, workspaceId?: string): Promise<{ workspaces: number; logged: number }> {
+	const workspaces = await db
+		.select({ id: workspace.id })
+		.from(workspace)
+		.where(workspaceId ? eq(workspace.id, workspaceId) : undefined);
+
+	let logged = 0;
+	for (const ws of workspaces) {
+		if (await logDutyForToday(ws.id, dateISO)) logged++;
+	}
+	return { workspaces: workspaces.length, logged };
 }

@@ -115,11 +115,13 @@ Jobs planifiés, tous protégés par `CRON_SECRET` (header `Authorization: Beare
 | `POST /api/jobs/cleanup` | purge des archives, nettoyage des magic links | 1×/jour |
 | `POST /api/jobs/notify` | rappels d'imputation (`?kind=morning\|evening\|weekly`) | plusieurs fois/jour |
 | `POST /api/jobs/snapshot` | fige l'état des tickets (courbe conso/RAE des dashboards) | 1×/jour |
+| `POST /api/jobs/wrapped` | fige le récap annuel par personne (no-op hors 1 déc → 5 jan) | 1×/jour |
 
 ## Variables d'environnement
 
 Voir [`.env.example`](./.env.example). Principales : `DATABASE_URL`, `SESSION_SECRET`,
-`MAGIC_LINK_TTL` (7d), `ARCHIVE_RETENTION` (30d), `BASE_URL`, `CRON_SECRET`, `BUILD_ADAPTER`.
+`MAGIC_LINK_TTL` (7d), `ARCHIVE_RETENTION` (30d), `BASE_URL`, `CRON_SECRET`, `BUILD_ADAPTER`,
+`WRAPPED_FORCE_OPEN` (démo/QA uniquement — ouvre le wrapped toute l'année, jamais en préprod/prod).
 
 ## État (Lot 1 livré)
 

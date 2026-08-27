@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { browser } from '$app/environment';
 	import { page, navigating } from '$app/state';
-	import { invalidateAll } from '$app/navigation';
+	import { invalidateAll, goto } from '$app/navigation';
 	import { beep } from '$lib/sound';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import NotificationPromptModal from '$lib/components/NotificationPromptModal.svelte';
@@ -63,6 +63,37 @@
 	function isActive(path: string, exact = false) {
 		if (exact) return page.url.pathname === path;
 		return page.url.pathname === path || page.url.pathname.startsWith(path + '/');
+	}
+
+	// Effet glitch joué au clic sur "Wrapped" avant la navigation — cette layout englobe aussi
+	// /wrapped (même groupe de route), donc l'overlay reste monté pendant le swap et se contente de
+	// masquer l'instant de la transition plutôt que de la recréer à chaque route.
+	//
+	// Deux temps (cf. .wrap-glitch dans app.css) : extinction glitchée -> volets fermés -> changement
+	// de route -> volets rouverts. Le basculement se fait sur la fin réelle de `goto` plutôt que sur
+	// un minuteur : si le chargement traîne, l'écran reste couvert au lieu de dévoiler une page à
+	// moitié prête. Le `finally` garantit qu'on rouvre même si la navigation échoue (sans ça, un
+	// rejet laisserait l'utilisateur devant un écran noir définitif).
+	let wrapGlitchActive = $state(false);
+	let wrapGlitchOpening = $state(false);
+	async function onWrappedNavClick(e: MouseEvent) {
+		if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; // ouverture nouvel onglet : laisser faire
+		const href = (e.currentTarget as HTMLAnchorElement).href;
+		if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return; // navigation native normale
+		e.preventDefault();
+		// Zap descendant, façon écran qu'on coupe — le son fait la moitié du travail de l'illusion.
+		[784, 466.16, 174.61].forEach((freq, i) => beep(freq, { offset: i * 0.07, duration: 0.09, type: 'square', volume: 0.09 }));
+		wrapGlitchOpening = false;
+		wrapGlitchActive = true;
+		document.body.classList.add('wrap-glitch-host');
+		await new Promise((r) => setTimeout(r, 640));
+		document.body.classList.remove('wrap-glitch-host'); // l'écran est couvert : on rend sa tête normale à la page qu'on quitte
+		try {
+			await goto(href);
+		} finally {
+			wrapGlitchOpening = true;
+			setTimeout(() => (wrapGlitchActive = false), 700);
+		}
 	}
 
 	// Barre de progression globale : uniquement pour un changement de PAGE (route différente), pas
@@ -227,6 +258,17 @@
 				{#if data.moodStatus?.voted}<span class="mood-check" title="Vous avez voté">✓</span>{/if}
 			</a>
 		{/if}
+		{#if data.wrappedAvailable}
+			<a
+				class="nav-item wrapped-hype"
+				class:active={isActive('/wrapped')}
+				href="/wrapped"
+				onclick={onWrappedNavClick}
+			>
+				<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="8" width="18" height="13" rx="1.5"/><path d="M3 8h18M12 8v13M12 8C9 8 7 5.5 8.5 3.8 10 2.2 12 4 12 8ZM12 8c3 0 5-2.5 3.5-4.2C14 2.2 12 4 12 8Z"/></svg>
+				<span class="wrapped-label">Wrapped {data.wrappedYear}</span>
+			</a>
+		{/if}
 
 		<div class="nav-label">Pilotage</div>
 		<a class="nav-item" class:active={isActive('/dashboard', true)} href="/dashboard">
@@ -325,3 +367,15 @@
 {#if seasonalVisible && seasonalIds.has('valentine')}<Hearts />{/if}
 {#if seasonalVisible && (seasonalIds.has('new-year') || seasonalIds.has('bastille-day'))}<Fireworks />{/if}
 {#if seasonalVisible && seasonalIds.has('halloween')}<HalloweenCorner />{/if}
+{#if wrapGlitchActive}
+	<div class="wrap-glitch" class:opening={wrapGlitchOpening} aria-hidden="true">
+		<div class="wg-band wg-b1"></div>
+		<div class="wg-band wg-b2"></div>
+		<div class="wg-band wg-b3"></div>
+		<div class="wg-band wg-b4"></div>
+		<div class="wg-scan"></div>
+		<div class="wg-shutter top"></div>
+		<div class="wg-shutter bottom"></div>
+		<div class="wg-line"></div>
+	</div>
+{/if}
