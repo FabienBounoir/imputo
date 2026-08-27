@@ -128,6 +128,14 @@ export const workspace = pgTable('workspace', {
 	// Remplace la 1ère occurrence uniquement (pas de flag global) ; appliqué à key ET parentKey.
 	jiraKeyRegexPattern: text('jira_key_regex_pattern'),
 	jiraKeyRegexReplacement: text('jira_key_regex_replacement'),
+	// Lien "Ouvrir dans Jira" (clé locale -> clé Jira réelle) : sens INVERSE de jiraKeyRegexPattern/
+	// Replacement ci-dessus, qui vont de la clé Jira réelle vers la clé locale au moment du sync.
+	// Une regex/remplacement arbitraire n'est pas fiable à inverser automatiquement (ex. groupes de
+	// capture, remplacements non injectifs) — l'admin configure donc les deux sens séparément.
+	// Désactivé par défaut : sans ça, un espace qui n'utilise pas Jira afficherait des liens cassés.
+	jiraLinkEnabled: boolean('jira_link_enabled').notNull().default(false),
+	jiraLinkKeyRegexPattern: text('jira_link_key_regex_pattern'),
+	jiraLinkKeyRegexReplacement: text('jira_link_key_regex_replacement'),
 	jiraConflictStrategy: jiraConflictStrategyEnum('jira_conflict_strategy').notNull().default('KEEP_LOCAL'),
 	// Quels champs le sync a le droit de toucher, par espace — indépendant de jiraConflictStrategy
 	// (qui ne dit que "écraser ou pas" un champ déjà inclus ici). Défaut à true partout : décoché
@@ -464,6 +472,10 @@ export const ticket = pgTable(
 		// Admin only, invisible pour un USER standard.
 		enveloppeTotale: numeric('enveloppe_totale', { precision: 7, scale: 2 }),
 		sspId: uuid('ssp_id').references(() => ssp.id, { onDelete: 'set null' }),
+		// 0 (plus bas) à 5 (plus haut) — slider dans la modale d'édition. Défaut 2 : couvre aussi bien
+		// la création (nouveau ticket) que le rattrapage (tickets déjà existants avant cette colonne,
+		// remplis par Postgres à l'ajout de la colonne).
+		priority: integer('priority').notNull().default(2),
 		comment: text('comment'),
 		flags: text('flags'), // jsonb léger sérialisé (cypress, docTech…) — simple au MVP
 		// Renseigné uniquement à la création par un sync Jira (jamais réécrit après) — sert de portée à

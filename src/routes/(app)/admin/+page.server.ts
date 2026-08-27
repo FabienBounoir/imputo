@@ -115,6 +115,9 @@ const jiraConfigSchema = z.object({
 	syncVersion: jiraCheckbox,
 	regexPattern: z.string().trim().max(200).optional().default(''),
 	regexReplacement: z.string().trim().max(200).optional().default(''),
+	linkEnabled: jiraCheckbox,
+	linkRegexPattern: z.string().trim().max(200).optional().default(''),
+	linkRegexReplacement: z.string().trim().max(200).optional().default(''),
 	// Forme seulement (longueur d'un "YYYY-MM-DD") — validité réelle de la date faite dans
 	// accounts.ts/saveJiraConfig, cohérent avec regexPattern (forme ici, compilation là-bas).
 	updatedSinceDate: z.string().trim().max(10).optional().default(''),

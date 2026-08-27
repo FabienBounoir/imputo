@@ -73,6 +73,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
 	const view = url.searchParams.get('view') === 'kanban' ? 'kanban' : 'table';
 	const page = Math.max(1, Number(url.searchParams.get('page')) || 1);
+	const sort = url.searchParams.get('sort') === 'priority' ? 'priority' : 'created';
 	const filters: TicketFilters = {
 		query: url.searchParams.get('q') ?? undefined,
 		stateId: url.searchParams.get('state') ?? undefined,
@@ -119,7 +120,8 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 				view === 'table' ? { pageSize: PAGE_SIZE, page } : undefined,
 				// Le détail par activité n'est rendu que dans les lignes fines de la vue tableau — le
 				// kanban charge tout le board sans pagination, l'économiser y compte double (cf. audit).
-				view === 'table'
+				view === 'table',
+				sort
 			).then(({ rows: tickets, total }) => ({
 				tickets,
 				total,
@@ -131,6 +133,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		page,
 		pageSize: PAGE_SIZE,
 		view,
+		sort,
 		kanbanNeedsScope,
 		filters,
 		highlightKey,

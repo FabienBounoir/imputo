@@ -1,0 +1,1 @@
+ALTER TABLE "ticket" ADD COLUMN "priority" integer DEFAULT 2 NOT NULL;

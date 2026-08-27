@@ -104,6 +104,27 @@ describe('updateTicketField — permissions par rôle', () => {
 		);
 	});
 
+	it('priority : vaut 2 par défaut à la création, éditable par un USER, rejette hors 0-5', async () => {
+		const { workspaceId, userId } = await makeWorkspace();
+		const t = await createTicket(workspaceId, { key: 'T-PRIO', title: 'x' });
+		const [created] = await listTickets(workspaceId).then((rows) => rows.filter((r) => r.id === t.id));
+		expect(created.priority).toBe(2);
+
+		await updateTicketField(workspaceId, t.id, 'priority', '5', 'USER', userId);
+		const [updated] = await listTickets(workspaceId).then((rows) => rows.filter((r) => r.id === t.id));
+		expect(updated.priority).toBe(5);
+
+		await expect(updateTicketField(workspaceId, t.id, 'priority', '6', 'USER', userId)).rejects.toThrow(
+			'Priorité invalide (0 à 5).'
+		);
+		await expect(updateTicketField(workspaceId, t.id, 'priority', '-1', 'USER', userId)).rejects.toThrow(
+			'Priorité invalide (0 à 5).'
+		);
+		await expect(updateTicketField(workspaceId, t.id, 'priority', '2.5', 'USER', userId)).rejects.toThrow(
+			'Priorité invalide (0 à 5).'
+		);
+	});
+
 	it('un ADMIN non créateur de l’espace peut éditer la clé (isOwner=false)', async () => {
 		const { workspaceId } = await makeWorkspace();
 		const { userId: adminId } = await addMember(workspaceId, 'ADMIN');
@@ -313,5 +334,17 @@ describe('deleteUntouchedSyncedTickets', () => {
 		expect(filtered.rows.map((r) => r.key).sort()).toEqual(['NS-2', 'NS-3']);
 		expect(filtered.total).toBe(2);
 		expect((await listTicketsPage(workspaceId, true, true, {})).total).toBe(3);
+	});
+
+	it('listTicketsPage: sort=priority ordonne par priorité décroissante', async () => {
+		const { workspaceId } = await makeWorkspace();
+		await db.insert(ticket).values([
+			{ workspaceId, key: 'PRIO-LOW', title: 'Basse', priority: 0 },
+			{ workspaceId, key: 'PRIO-HIGH', title: 'Haute', priority: 5 },
+			{ workspaceId, key: 'PRIO-MID', title: 'Défaut' } // priority: default 2
+		]);
+
+		const byPriority = await listTicketsPage(workspaceId, true, true, {}, undefined, true, 'priority');
+		expect(byPriority.rows.map((r) => r.key)).toEqual(['PRIO-HIGH', 'PRIO-MID', 'PRIO-LOW']);
 	});
 });

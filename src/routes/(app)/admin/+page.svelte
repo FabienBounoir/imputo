@@ -250,6 +250,19 @@
 			return null; // regex invalide, cf. message sous le champ
 		}
 	});
+	// Lien "Ouvrir dans Jira" : sens inverse du mapping ci-dessus (clé locale -> clé Jira réelle).
+	let jiraLinkEnabled = $state(data.jira.linkEnabled);
+	let jiraLinkRegexPattern = $state(data.jira.linkRegexPattern);
+	let jiraLinkRegexReplacement = $state(data.jira.linkRegexReplacement);
+	let jiraLinkSampleKey = $state('BLM-123');
+	const jiraLinkSampleResult = $derived.by(() => {
+		if (!jiraLinkRegexPattern) return jiraLinkSampleKey;
+		try {
+			return jiraLinkSampleKey.replace(new RegExp(jiraLinkRegexPattern), jiraLinkRegexReplacement);
+		} catch {
+			return null; // regex invalide, cf. message sous le champ
+		}
+	});
 	const jiraAutoDisabled = $derived(!data.jira.enabled && data.jira.consecutiveFailures >= 5);
 	let jiraSyncing = $state(false);
 	// Une fois JQL + PAT renseignés, la configuration se replie derrière un bouton "Éditer" — seule
@@ -1161,6 +1174,50 @@
 										<span class="err-text">Regex invalide.</span>
 									{:else}
 										→ <b>{jiraSampleResult}</b>
+									{/if}
+								</p>
+							</details>
+						</div>
+					</div>
+
+					<div class="step">
+						<div class="step-num">4</div>
+						<div class="step-body">
+							<details class="step-details" open={data.jira.linkEnabled}>
+								<summary>Lien "Ouvrir dans Jira" <span class="step-optional">optionnel</span></summary>
+								<p class="hint">
+									Affiche un lien vers le ticket Jira à côté de sa clé, dans l'écran ticket et les
+									synthèses. Si la clé locale n'est pas la clé Jira réelle (cf. réconciliation
+									ci-dessus), indiquez ici le motif à rechercher/remplacer dans l'AUTRE sens
+									(<code>BLM-123</code> ici vers <code>CARTEJEUNE_BLM-123</code> côté Jira) pour
+									reconstruire la bonne URL.
+								</p>
+								<label class="jira-sync-field">
+									<input type="checkbox" name="linkEnabled" bind:checked={jiraLinkEnabled} />
+									<span>Activer le lien "Ouvrir dans Jira"</span>
+								</label>
+								<div class="field">
+									<label for="jira-link-regex-pattern">Motif à rechercher (regex)</label>
+									<input
+										id="jira-link-regex-pattern"
+										name="linkRegexPattern"
+										bind:value={jiraLinkRegexPattern}
+										placeholder="(laisser vide si la clé locale est déjà la clé Jira réelle)"
+									/>
+								</div>
+								<div class="field">
+									<label for="jira-link-regex-replacement">Remplacement</label>
+									<input id="jira-link-regex-replacement" name="linkRegexReplacement" bind:value={jiraLinkRegexReplacement} placeholder="CARTEJEUNE_" />
+								</div>
+								<div class="field">
+									<label for="jira-link-regex-sample">Tester avec une clé exemple</label>
+									<input id="jira-link-regex-sample" bind:value={jiraLinkSampleKey} />
+								</div>
+								<p class="regex-preview">
+									{#if jiraLinkSampleResult === null}
+										<span class="err-text">Regex invalide.</span>
+									{:else}
+										→ <b>{jiraLinkSampleResult}</b>
 									{/if}
 								</p>
 							</details>
