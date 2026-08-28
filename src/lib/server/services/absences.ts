@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, isNull, lte, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, isNotNull, isNull, lte, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { db, absence, user, externalMember, category, timeEntry } from '$lib/server/db';
 import type { AbsenceType, AbsencePeriod } from '$lib/absenceTypes';
@@ -306,10 +306,21 @@ export async function createHalfDayRangeFor(
 	});
 }
 
-/** Supprime une absence — son auteur (réel), ou un admin/manager (`canManageOthers`, seul moyen pour un membre externe). */
-export async function deleteAbsence(workspaceId: string, requesterId: string, id: string, canManageOthers: boolean) {
+/** Supprime une absence — son auteur (réel), un admin (`canManageAll`, n'importe qui), ou un manager
+ *  (`canManageExternal`, mais alors seulement la sienne ou celle d'un membre externe). */
+export async function deleteAbsence(
+	workspaceId: string,
+	requesterId: string,
+	id: string,
+	canManageAll: boolean,
+	canManageExternal: boolean
+) {
 	const conditions = [eq(absence.workspaceId, workspaceId), eq(absence.id, id)];
-	if (!canManageOthers) conditions.push(eq(absence.userId, requesterId));
+	if (!canManageAll) {
+		conditions.push(
+			canManageExternal ? or(eq(absence.userId, requesterId), isNotNull(absence.externalMemberId))! : eq(absence.userId, requesterId)
+		);
+	}
 
 	// Capturée avant suppression : la ligne source disparaît, mais la trace doit rester lisible.
 	const [existing] = await db
@@ -339,7 +350,8 @@ export async function deleteAbsence(workspaceId: string, requesterId: string, id
 export async function updateAbsence(
 	workspaceId: string,
 	requesterId: string,
-	canManageOthers: boolean,
+	canManageAll: boolean,
+	canManageExternal: boolean,
 	id: string,
 	input: { startDate: string; endDate: string; type: AbsenceType; period: AbsencePeriod }
 ) {
@@ -360,9 +372,19 @@ export async function updateAbsence(
 
 	if (input.type === 'CONGE_PREVISIONNEL' && existing?.externalMemberId)
 		throw new Error("Un membre externe ne peut avoir qu'un congé validé (pas de congé prévisionnel).");
+	// Bascule vers validé (typiquement CONGE_PREVISIONNEL → CONGE_VALIDE) réservée à l'admin, sauf
+	// pour un membre externe (qui n'a que ça, cf. plus haut) — sinon ce serait un moyen détourné de
+	// se valider soi-même sans passer par l'action `validate`. Une absence déjà validée qu'on modifie
+	// (dates...) en gardant CONGE_VALIDE n'est PAS une bascule : pas concernée par ce garde-fou.
+	if (input.type === 'CONGE_VALIDE' && existing?.type !== 'CONGE_VALIDE' && !existing?.externalMemberId && !canManageAll)
+		throw new Error('Passage en congé validé réservé à un admin (ou un manager, pour un membre externe).');
 
 	const conditions = [eq(absence.workspaceId, workspaceId), eq(absence.id, id)];
-	if (!canManageOthers) conditions.push(eq(absence.userId, requesterId));
+	if (!canManageAll) {
+		conditions.push(
+			canManageExternal ? or(eq(absence.userId, requesterId), isNotNull(absence.externalMemberId))! : eq(absence.userId, requesterId)
+		);
+	}
 	// Transaction : voir createAbsenceFor — un échec du sync ne doit pas laisser la modification
 	// commitée sans ses imputations à jour.
 	await db.transaction(async (tx) => {

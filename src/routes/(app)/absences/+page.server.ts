@@ -46,13 +46,17 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	const monthGroups = groupDaysByMonth(days);
 
 	const isAdmin = locals.role === 'ADMIN';
-	const canManageOthers = isManagerOrAdmin(locals.role);
+	// Un manager gère (déclare/édite/supprime) les absences des membres externes comme un admin,
+	// mais jamais celles d'un vrai membre autre que lui-même, et ne valide jamais rien — seul un
+	// admin peut valider un congé prévisionnel ou en poser un déjà validé pour un vrai membre.
+	const canManageExternal = isManagerOrAdmin(locals.role);
+	const canManageOthers = isAdmin;
 	const [ref, myAbsences, teamAbsences, externalMembers, pendingAbsences, schoolHolidays] = await Promise.all([
 		getRefData(ws.workspaceId),
 		listAbsencesForUser(ws.workspaceId, user.id),
 		listAbsencesForRange(ws.workspaceId, range.start, range.end),
 		listExternalMembers(ws.workspaceId),
-		canManageOthers ? listPendingAbsences(ws.workspaceId) : Promise.resolve([]),
+		isAdmin ? listPendingAbsences(ws.workspaceId) : Promise.resolve([]),
 		getSchoolHolidays(range.start, range.end)
 	]);
 
@@ -86,6 +90,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		nextAnchor: addMonths(anchorISO, span),
 		todayISO: todayInParis(),
 		canManageOthers,
+		canManageExternal,
 		selfId: user.id,
 		// Arrivée depuis "Mon imputation" (clic sur une case verrouillée par une absence, cf.
 		// ?highlight= sur imputation/+page.svelte) : id à surligner dans "Mes absences".
@@ -106,17 +111,24 @@ export const actions: Actions = {
 
 		if (!startDate || !endDate || !ABSENCE_TYPES.includes(type) || !ABSENCE_PERIODS.includes(period))
 			return fail(400, { error: 'Données invalides.' });
-		// Un congé ne se déclare qu'en prévisionnel ; seul un admin/manager peut le valider (action `validate`).
-		if (type === 'CONGE_VALIDE' && !isManagerOrAdmin(locals.role)) return fail(403, { error: 'Réservé aux admins/managers.' });
 
-		// Un autre membre (interne ou externe) ne peut être ciblé que par un admin/manager — sinon on retombe sur soi-même.
-		const subject: AbsenceSubject = !isManagerOrAdmin(locals.role)
-			? { userId: locals.user.id }
-			: subjectRaw.startsWith('ext:')
+		const isAdmin = locals.role === 'ADMIN';
+		// Un vrai autre membre ne peut être ciblé que par un admin ; un manager ne peut cibler qu'un
+		// membre externe (ou lui-même, comme un membre lambda) — jamais un autre vrai membre.
+		const subject: AbsenceSubject = isAdmin
+			? subjectRaw.startsWith('ext:')
 				? { externalMemberId: subjectRaw.slice(4) }
 				: subjectRaw.startsWith('user:')
 					? { userId: subjectRaw.slice(5) }
-					: { userId: locals.user.id };
+					: { userId: locals.user.id }
+			: locals.role === 'MANAGER' && subjectRaw.startsWith('ext:')
+				? { externalMemberId: subjectRaw.slice(4) }
+				: { userId: locals.user.id };
+
+		// Un congé ne se déclare qu'en prévisionnel pour soi/un vrai membre ; le poser déjà validé est
+		// réservé à l'admin, sauf pour un membre externe où c'est la seule option possible.
+		if (type === 'CONGE_VALIDE' && !isAdmin && !('externalMemberId' in subject))
+			return fail(403, { error: 'Réservé aux admins (ou aux managers, pour un membre externe).' });
 
 		try {
 			// Demi-journée sur plusieurs jours (retour utilisateur : "faut faire 1/1" sinon) — une ligne
@@ -157,21 +169,27 @@ export const actions: Actions = {
 
 		if (!id || !startDate || !endDate || !ABSENCE_TYPES.includes(type) || !ABSENCE_PERIODS.includes(period))
 			return fail(400, { error: 'Données invalides.' });
-		if (type === 'CONGE_VALIDE' && !isManagerOrAdmin(locals.role)) return fail(403, { error: 'Réservé aux admins/managers.' });
 
 		try {
-			await updateAbsence(ws.workspaceId, locals.user.id, isManagerOrAdmin(locals.role), id, { startDate, endDate, type, period });
+			await updateAbsence(
+				ws.workspaceId,
+				locals.user.id,
+				locals.role === 'ADMIN',
+				isManagerOrAdmin(locals.role),
+				id,
+				{ startDate, endDate, type, period }
+			);
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { ok: true };
 	},
 
-	/** Valide un congé prévisionnel — réservé admin/manager. */
+	/** Valide un congé prévisionnel — réservé admin (un manager ne valide jamais rien). */
 	validate: async ({ request, locals }) => {
 		const ws = locals.workspace;
 		if (!ws || !locals.user) return fail(401, { error: 'Non authentifié.' });
-		if (!isManagerOrAdmin(locals.role)) return fail(403, { error: 'Réservé aux admins/managers.' });
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
 		const f = await request.formData();
 		const id = String(f.get('id') ?? '');
 		if (!id) return fail(400, { error: 'Données invalides.' });
@@ -193,7 +211,7 @@ export const actions: Actions = {
 		const f = await request.formData();
 		const id = String(f.get('id') ?? '');
 		if (!id) return fail(400, { error: 'Données invalides.' });
-		await deleteAbsence(ws.workspaceId, locals.user.id, id, isManagerOrAdmin(locals.role));
+		await deleteAbsence(ws.workspaceId, locals.user.id, id, locals.role === 'ADMIN', isManagerOrAdmin(locals.role));
 		return { ok: true };
 	},
 

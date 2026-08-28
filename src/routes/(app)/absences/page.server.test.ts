@@ -31,6 +31,19 @@ describe('absences +page.server load', () => {
 		expect(memberResult.pendingAbsences).toEqual([]);
 	});
 
+	it('un MANAGER a canManageOthers=false (pas de validation) mais canManageExternal=true (membres externes)', async () => {
+		const { workspaceId } = await makeWorkspace('absloadmgr');
+		const { userId: managerId } = await addMember(workspaceId, 'MANAGER', 'absloadmgr-manager');
+		const url = new URL('http://localhost/absences');
+
+		const result = await load({ locals: await fakeLocals(managerId), url } as never);
+
+		expect(result.canManageOthers).toBe(false);
+		expect(result.canManageExternal).toBe(true);
+		// Un manager ne valide rien : la file d'attente ne lui est pas chargée, comme pour un USER.
+		expect(result.pendingAbsences).toEqual([]);
+	});
+
 	it('un membre "factice" est visible pour un ADMIN mais absent de rows pour un MANAGER', async () => {
 		const { userId: adminId, workspaceId } = await makeWorkspace('absfactice');
 		const { userId: managerId } = await addMember(workspaceId, 'MANAGER', 'absfactice-manager');
@@ -116,6 +129,67 @@ describe('absences +page.server actions.create', () => {
 		expect(result).toEqual({ ok: true });
 	});
 
+	it('un MANAGER ne peut pas déclarer un CONGE_VALIDE pour lui-même (mêmes droits qu\'un USER)', async () => {
+		const { workspaceId } = await makeWorkspace('abscreatemgr');
+		const { userId: managerId } = await addMember(workspaceId, 'MANAGER', 'abscreatemgr-manager');
+		const locals = await fakeLocals(managerId);
+
+		const result = await actions.create({
+			locals,
+			request: formRequest({ startDate: '2026-06-01', endDate: '2026-06-01', type: 'CONGE_VALIDE', period: 'FULL' })
+		} as never);
+
+		expect(result?.status).toBe(403);
+	});
+
+	it('un MANAGER ne peut pas cibler un autre vrai membre : retombe sur lui-même', async () => {
+		const { workspaceId } = await makeWorkspace('abscreatemgr2');
+		const { userId: managerId } = await addMember(workspaceId, 'MANAGER', 'abscreatemgr2-manager');
+		const { userId: otherId } = await addMember(workspaceId, 'USER', 'abscreatemgr2-other');
+		const locals = await fakeLocals(managerId);
+
+		const result = await actions.create({
+			locals,
+			request: formRequest({
+				startDate: '2026-06-02',
+				endDate: '2026-06-02',
+				type: 'FORMATION',
+				period: 'FULL',
+				subject: `user:${otherId}`
+			})
+		} as never);
+
+		expect(result).toEqual({ ok: true });
+		const otherRows = await listAbsencesForUser(workspaceId, otherId);
+		expect(otherRows.filter((r) => r.startDate === '2026-06-02')).toHaveLength(0);
+		const managerRows = await listAbsencesForUser(workspaceId, managerId);
+		expect(managerRows.filter((r) => r.startDate === '2026-06-02')).toHaveLength(1);
+	});
+
+	it('un MANAGER peut déclarer un CONGE_VALIDE direct pour un membre externe', async () => {
+		const { workspaceId } = await makeWorkspace('abscreatemgr3');
+		const { userId: managerId } = await addMember(workspaceId, 'MANAGER', 'abscreatemgr3-manager');
+		const locals = await fakeLocals(managerId);
+
+		const addResult = await actions.addExternal({ locals, request: formRequest({ displayName: 'Externe Manager' }) } as never);
+		expect(addResult).toEqual({ ok: true });
+		const { externalMembers } = await load({ locals, url: new URL('http://localhost/absences') } as never);
+		const ext = externalMembers.find((m: any) => m.displayName === 'Externe Manager');
+
+		const result = await actions.create({
+			locals,
+			request: formRequest({
+				startDate: '2026-06-03',
+				endDate: '2026-06-03',
+				type: 'CONGE_VALIDE',
+				period: 'FULL',
+				subject: `ext:${ext!.id}`
+			})
+		} as never);
+
+		expect(result).toEqual({ ok: true });
+	});
+
 	it('une demi-journée sur plusieurs jours crée une ligne par jour, période conservée (retour utilisateur)', async () => {
 		const { userId, workspaceId } = await makeWorkspace('abscreate');
 		const locals = await fakeLocals(userId);
@@ -151,10 +225,18 @@ describe('absences +page.server actions.create', () => {
 });
 
 describe('absences +page.server actions.validate / addExternal / removeExternal', () => {
-	it('validate refuse un membre USER (réservé admin/manager)', async () => {
+	it('validate refuse un membre USER (réservé admin)', async () => {
 		const { workspaceId } = await makeWorkspace('absvalidate2');
 		const { userId: memberId } = await addMember(workspaceId, 'USER', 'absvalidate2-member');
 		const locals = await fakeLocals(memberId);
+		const result = await actions.validate({ locals, request: formRequest({ id: 'whatever' }) } as never);
+		expect(result?.status).toBe(403);
+	});
+
+	it('validate refuse aussi un MANAGER — un manager ne valide jamais un congé (super important)', async () => {
+		const { workspaceId } = await makeWorkspace('absvalidate3');
+		const { userId: managerId } = await addMember(workspaceId, 'MANAGER', 'absvalidate3-manager');
+		const locals = await fakeLocals(managerId);
 		const result = await actions.validate({ locals, request: formRequest({ id: 'whatever' }) } as never);
 		expect(result?.status).toBe(403);
 	});

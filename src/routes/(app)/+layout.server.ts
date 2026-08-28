@@ -37,8 +37,9 @@ export const load: LayoutServerLoad = async ({ locals }) => {
 			moodTotalVotes = (await getPeriodParticipation(locals.workspace.workspaceId, start)).voted;
 	}
 
-	const canManageOthers = locals.role === 'ADMIN' || locals.role === 'MANAGER';
-	const pendingAbsencesCount = canManageOthers ? await countPendingAbsences(locals.workspace.workspaceId) : 0;
+	// Un manager ne valide jamais un congé (cf. absences/+page.server.ts) — le badge "en attente" ne
+	// concerne donc que l'admin, seul habilité à agir dessus.
+	const pendingAbsencesCount = locals.role === 'ADMIN' ? await countPendingAbsences(locals.workspace.workspaceId) : 0;
 
 	// Nom affiché dans le lien "Support" du menu, pour voir qui est de perm sans ouvrir la page.
 	const supportDuty = locals.workspace.supportEnabled ? await getCurrentDuty(locals.workspace.workspaceId) : null;

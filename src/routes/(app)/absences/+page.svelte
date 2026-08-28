@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { page } from '$app/state';
 	import {
 		ABSENCE_TYPES,
 		ABSENCE_PERIODS,
@@ -41,6 +42,11 @@
 		document.getElementById(`abs-${data.highlightId}`)?.scrollIntoView({ block: 'center' });
 	});
 
+	// Ouverture directe de l'assistant depuis la palette de commandes (?declare=1).
+	$effect(() => {
+		if (page.url.searchParams.get('declare') === '1') openDeclareModal();
+	});
+
 	const sameDay = $derived(startDate === endDate);
 	const targetsExternal = $derived(subject.startsWith('ext:'));
 	// Un membre ne déclare qu'en prévisionnel — "Congé validé" n'est atteignable que via le bouton
@@ -65,9 +71,10 @@
 	let wizardStep = $state(0);
 
 	// Étape "Pour qui" seulement pour un admin/manager, et seulement à la création (le sujet d'une
-	// absence existante ne se réassigne jamais).
+	// absence existante ne se réassigne jamais). Un manager y voit uniquement les membres externes
+	// (cf. filtre sur data.rows plus bas) — jamais un autre vrai membre.
 	const wizardSteps = $derived(
-		!editingId && data.canManageOthers
+		!editingId && (data.canManageOthers || data.canManageExternal)
 			? [
 					{ key: 'subject', label: 'Pour qui' },
 					{ key: 'dates', label: 'Dates' },
@@ -211,14 +218,14 @@
 	{#if form?.ok}<div class="flash ok toast-tr" role="status">Mis à jour ✓</div>{/if}
 
 	<div class="declare-cta">
-		<button class="btn btn-primary" type="button" onclick={openDeclareModal}>+ Déclarer une absence</button>
+		<button class="btn btn-primary" type="button" data-tour="absences-add" onclick={openDeclareModal}>+ Déclarer une absence</button>
 	</div>
 
 	<section class="card block">
 		<div class="synth-head">
 			<h3>Synthèse équipe — {data.rangeLabel}</h3>
 			<div class="spacer"></div>
-			{#if data.canManageOthers}
+			{#if data.canManageExternal}
 				<button type="button" class="icon-btn-sq" onclick={() => (showExtModal = true)} title="Membres externes" aria-label="Membres externes">
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
 				</button>
@@ -311,7 +318,7 @@
 								<td class="name-col" class:self-row={m.id === data.selfId}>{m.displayName}{#if m.external}<span class="ext-dot"></span>{/if}</td>
 								{#each data.days as d (d)}
 									{@const cell = data.grid[m.id]?.[d]}
-									{@const editable = !!cell && (m.external ? data.canManageOthers : m.id === data.selfId || data.canManageOthers)}
+									{@const editable = !!cell && (m.external ? data.canManageExternal : m.id === data.selfId || data.canManageOthers)}
 									<!-- svelte-ignore a11y_click_events_have_key_events -->
 									<!-- svelte-ignore a11y_no_static_element_interactions -->
 									<td
@@ -445,7 +452,7 @@
 						<label for="subject">Pour qui ?</label>
 						<select id="subject" bind:value={subject}>
 							<option value="me">Moi-même</option>
-							{#each data.rows.filter((r) => r.id !== data.selfId) as m (m.id)}
+							{#each data.rows.filter((r) => r.id !== data.selfId && (data.canManageOthers || r.external)) as m (m.id)}
 								<option value={m.external ? `ext:${m.id}` : `user:${m.id}`}>{m.displayName}{m.external ? ' (externe)' : ''}</option>
 							{/each}
 						</select>

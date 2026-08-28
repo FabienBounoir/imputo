@@ -22,6 +22,13 @@ describe('admin/mood load', () => {
 		await expect(load({ locals } as never)).rejects.toMatchObject({ status: 303, location: '/imputation' });
 	});
 
+	it('un rôle MANAGER (sans canViewMoodResults) est redirigé vers /imputation — pas d\'accès par défaut', async () => {
+		const { workspaceId } = await makeWorkspace('mood7');
+		const { userId } = await addMember(workspaceId, 'MANAGER', 'mood7-manager');
+		const locals = await fakeLocals(userId);
+		await expect(load({ locals } as never)).rejects.toMatchObject({ status: 303, location: '/imputation' });
+	});
+
 	it('un USER avec canViewMoodResults charge la page en lecture (isAdmin: false)', async () => {
 		const { workspaceId } = await makeWorkspace('mood5');
 		const { userId } = await addMember(workspaceId, 'USER', 'mood5-user');

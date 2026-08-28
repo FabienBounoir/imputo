@@ -151,7 +151,7 @@ describe('sync absence → "Mon imputation"', () => {
 			{ startDate: '2026-06-22', endDate: '2026-06-22', type: 'CONGE_VALIDE', period: 'FULL' }
 		);
 
-		await updateAbsence(workspaceId, userId, false, absenceId, {
+		await updateAbsence(workspaceId, userId, false, false, absenceId, {
 			startDate: '2026-06-23',
 			endDate: '2026-06-23',
 			type: 'CONGE_VALIDE',
@@ -172,7 +172,7 @@ describe('sync absence → "Mon imputation"', () => {
 			{ startDate: '2026-06-22', endDate: '2026-06-22', type: 'CONGE_VALIDE', period: 'FULL' }
 		);
 
-		await deleteAbsence(workspaceId, userId, absenceId, false);
+		await deleteAbsence(workspaceId, userId, absenceId, false, false);
 
 		const week = await getWeek(workspaceId, userId, MONDAY);
 		expect(week.rows).toHaveLength(0);
@@ -264,7 +264,7 @@ describe('sync absence → "Mon imputation"', () => {
 	it("modifier une absence vers un id inexistant échoue sans laisser de catégorie orpheline", async () => {
 		const { workspaceId } = await makeWorkspace('sync-update-404');
 		await expect(
-			updateAbsence(workspaceId, crypto.randomUUID(), true, crypto.randomUUID(), {
+			updateAbsence(workspaceId, crypto.randomUUID(), true, false, crypto.randomUUID(), {
 				startDate: '2026-06-22',
 				endDate: '2026-06-22',
 				type: 'CONGE_VALIDE',
