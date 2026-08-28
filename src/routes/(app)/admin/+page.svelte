@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import { enhance } from '$app/forms';
+	import { toast } from 'svelte-sonner';
 	import { invalidateAll, replaceState } from '$app/navigation';
 	import { page } from '$app/state';
 	import { formatDateTime } from '$lib/utils/date';
@@ -11,6 +12,41 @@
 	import { confirmDialog } from '$lib/confirm.svelte';
 	import type { SubmitFunction } from '@sveltejs/kit';
 	let { data, form } = $props();
+
+	$effect(() => {
+		if (!form) return;
+		if (form.error) {
+			toast.error(form.error);
+			return;
+		}
+		if (form.memberOk) toast.success('Membre mis à jour ✓');
+		else if (form.ownerOk)
+			toast.success("Propriété de l'espace transmise ✓", {
+				description: 'Ce membre est désormais le créateur — vous perdez le statut de propriétaire.'
+			});
+		else if (form.refOk) toast.success('Mis à jour ✓');
+		else if (form.catOk) toast.success('Mis à jour ✓');
+		else if (form.sspOk) toast.success('Mis à jour ✓');
+		else if (form.actOk) toast.success('Mis à jour ✓');
+		else if (form.groupOk) toast.success('Mis à jour ✓');
+		else if (form.stateOk) toast.success('Mis à jour ✓');
+		else if (form.supportOk) toast.success('Réglage mis à jour ✓');
+		else if (form.jiraSaveOk) toast.success('Configuration enregistrée ✓');
+		else if (form.jiraToggleOk) toast.success('Réglage mis à jour ✓');
+		else if (form.jiraResetSinceOk || form.jiraResetCreatedSinceOk) toast.success('Réinitialisé ✓');
+		else if (form.jiraSyncOk) {
+			const n = form.jiraTicketsUpserted;
+			toast.success('Synchronisation terminée ✓', { description: `${n} ticket${n > 1 ? 's' : ''} mis à jour.` });
+		} else if (form.jiraUndoOk) {
+			const n = form.jiraUndoDeleted;
+			toast.success('Lot annulé ✓', { description: `${n} ticket${n > 1 ? 's' : ''} supprimé${n > 1 ? 's' : ''}.` });
+		} else if (form.accentOk)
+			toast.success('Couleur mise à jour ✓', { description: "Rechargez la page pour l'appliquer partout." });
+		else if (form.testPhaseOk)
+			toast.success('Réglage mis à jour ✓', { description: 'Rechargez les autres onglets pour voir le changement.' });
+		else if (form.moodOk) toast.success('Réglage mis à jour ✓');
+		else if (form.pprRatioOk || form.imputationStepOk) toast.success('Réglage mis à jour ✓');
+	});
 
 	// À utiliser sur TOUT formulaire d'édition en place (champ rempli depuis `data`).
 	// Par défaut, `enhance` appelle form.reset() après un succès, ce qui remet chaque champ à
@@ -289,7 +325,6 @@
 		<section class="card block">
 			<h3>Inviter un membre</h3>
 			<p class="hint">L'invitation génère un message à copier puis envoyer vous-même (pas d'email automatique).</p>
-			{#if form?.error}<div class="flash error">{form.error}</div>{/if}
 
 			<form method="POST" action="?/invite" use:enhance>
 				<div class="invite-row">
@@ -324,9 +359,6 @@
 					/>
 				</div>
 			</div>
-			{#if form?.memberOk}<div class="flash ok">Membre mis à jour ✓</div>{/if}
-			{#if form?.ownerOk}<div class="flash ok">Propriété de l'espace transmise ✓</div>{/if}
-
 			<p class="hint" style="margin-bottom:0;">
 				👑 Le <b>créateur de l'espace</b> a les mêmes droits qu'un admin, mais ne peut être ni rétrogradé ni
 				désactivé par personne d'autre. Il peut transmettre ce statut à un autre membre actif.
@@ -482,7 +514,6 @@
 	{#snippet refBlock(title: string, type: 'project' | 'sprint' | 'version', placeholder: string, items: { id: string; name: string; archived: boolean; usage: number }[])}
 		{@const filtered = items.filter((it) => refMatch(it.name))}
 		<h3>{title}</h3>
-		{#if form?.refOk === type}<div class="flash ok toast-tr" role="status">Mis à jour ✓</div>{/if}
 		{@render refToolbar(`Rechercher ${title.toLowerCase()}…`)}
 		{#if refAddOpen}
 			<form method="POST" action="?/refCreate" use:enhance class="ref-add">
@@ -535,10 +566,6 @@
 	{/snippet}
 
 	{#if tab === 'referentiels'}
-		<!-- Un seul bandeau pour tout l'onglet : sans lui, un refus du serveur (code SSP déjà pris,
-		     catégorie en double…) était totalement silencieux — le champ gardait la saisie, la base
-		     l'ancienne valeur, et on ne le découvrait qu'en revenant sur la page. -->
-		{#if form?.error}<div class="flash error toast-tr" role="alert">{form.error}</div>{/if}
 		<div class="ref-layout">
 			<!-- Une section à la fois plutôt que les 7 cartes empilées d'avant : la liste la plus longue
 			     ne désaligne plus ses voisines, et la recherche/l'ajout ci-dessous ciblent toujours la
@@ -563,8 +590,7 @@
 					{@const filtered = data.categories.filter((c) => refMatch(c.label))}
 					<h3>Catégories</h3>
 					<p class="hint">Cibles d'imputation hors-ticket (MCO, congés, formation…). « Non productif » est exclu de la charge projet.</p>
-					{#if form?.catOk}<div class="flash ok toast-tr" role="status">Mis à jour ✓</div>{/if}
-					{@render refToolbar('Rechercher une catégorie…')}
+						{@render refToolbar('Rechercher une catégorie…')}
 					{#if refAddOpen}
 						<form method="POST" action="?/catCreate" use:enhance class="ref-add">
 							<input class="ref-input" name="label" placeholder="Nouvelle catégorie…" required />
@@ -626,8 +652,7 @@
 						Codes budgétaires portés par les tickets. Le libellé est ce qu'on lit partout ailleurs
 						(synthèse, clôture mensuelle) — le code reste la clé côté compta. Le budget est en jours.
 					</p>
-					{#if form?.sspOk}<div class="flash ok toast-tr" role="status">Mis à jour ✓</div>{/if}
-					{@render refToolbar('Rechercher un code ou un libellé…')}
+						{@render refToolbar('Rechercher un code ou un libellé…')}
 					{#if refAddOpen}
 						<form method="POST" action="?/sspCreate" use:enhance class="ref-add ssp-add">
 							<input class="ref-input ssp-code" name="code" placeholder="8364BEB5354" required />
@@ -725,8 +750,7 @@
 					{@const filtered = activityOrder.filter((a) => refMatch(a.label))}
 					<h3>Activités</h3>
 					<p class="hint">Nature du travail (Dev, TU, DA…), optionnelle sur une imputation. Glisse-dépose ⠿ pour réordonner : c'est cet ordre qui sert dans la répartition par activité des synthèses (sauf préférence "alphabétique" d'un membre dans ses paramètres de compte). Vide la recherche pour réordonner.</p>
-					{#if form?.actOk}<div class="flash ok toast-tr" role="status">Mis à jour ✓</div>{/if}
-					{@render refToolbar('Rechercher une activité…')}
+						{@render refToolbar('Rechercher une activité…')}
 					{#if refAddOpen}
 						<form method="POST" action="?/actCreate" use:enhance class="ref-add">
 							<input class="ref-input" name="label" placeholder="Nouvelle activité…" required />
@@ -814,8 +838,7 @@
 					{@const filtered = groupOrder.filter((g) => refMatch(g.label))}
 					<h3>Groupes de tickets</h3>
 					<p class="hint">Regroupement libre et transverse, indépendant des sprints/versions. Un ticket peut appartenir à plusieurs groupes. Glisse-dépose ⠿ pour réordonner : c'est cet ordre qui sert dans les synthèses par sprint/version. Vide la recherche pour réordonner.</p>
-					{#if form?.groupOk}<div class="flash ok toast-tr" role="status">Mis à jour ✓</div>{/if}
-					{@render refToolbar('Rechercher un groupe…')}
+						{@render refToolbar('Rechercher un groupe…')}
 					{#if refAddOpen}
 						<form method="POST" action="?/groupCreate" use:enhance class="ref-add">
 							<input class="ref-input" name="label" placeholder="Nouveau groupe…" required />
@@ -880,8 +903,7 @@
 		<section class="card block">
 			<h3>États du workflow</h3>
 			<p class="hint">Statuts des tickets (et colonnes du Kanban). Réordonne avec ▲▼ ; emoji et couleur servent de pastille partout.</p>
-			{#if form?.stateOk}<div class="flash ok">Mis à jour ✓</div>{/if}
-			<div class="state-list">
+				<div class="state-list">
 				{#each data.states as s, i (s.id)}
 					<div class="state-row">
 						<div class="state-order">
@@ -938,8 +960,7 @@
 				Désigne à tour de rôle qui suit les tickets du support, selon la cadence choisie. La page est visible dans
 				« Mon espace » une fois activée.
 			</p>
-			{#if form?.supportOk}<div class="flash ok">Réglage mis à jour ✓</div>{/if}
-
+	
 			<form method="POST" action="?/supportEnabled" use:enhance>
 				<input type="hidden" name="enabled" value={String(!data.support.enabled)} />
 				<div style="display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:6px;">
@@ -1028,8 +1049,6 @@
 		<section class="card block">
 			<h3>Intégration Jira</h3>
 			<p class="hint">Pull planifié + forçage manuel des tickets Jira, propre à cet espace.</p>
-			{#if form?.error}<div class="flash error toast-tr" role="alert">{form.error}</div>{/if}
-			{#if form?.jiraSaveOk}<div class="flash ok toast-tr" role="status">Configuration enregistrée ✓</div>{/if}
 
 			{#if !jiraConfigured || jiraEditing}
 				<form
@@ -1254,7 +1273,6 @@
 					d'authentification consécutifs. Vérifie/renouvelle le token ci-dessus, puis réactive-la.
 				</div>
 			{/if}
-			{#if form?.jiraToggleOk}<div class="flash ok">Réglage mis à jour ✓</div>{/if}
 
 			<form method="POST" action="?/jiraToggleEnabled" use:enhance>
 				<input type="hidden" name="enabled" value={String(!data.jira.enabled)} />
@@ -1292,9 +1310,6 @@
 				</p>
 			</div>
 
-			{#if form?.jiraResetSinceOk}<div class="flash ok">Réinitialisé ✓</div>{/if}
-			{#if form?.jiraResetCreatedSinceOk}<div class="flash ok">Réinitialisé ✓</div>{/if}
-			{#if form?.jiraSyncOk}<div class="flash ok">Sync manuel terminé ✓ ({form.jiraTicketsUpserted} ticket{form.jiraTicketsUpserted > 1 ? 's' : ''})</div>{/if}
 			<div class="jira-force-actions">
 				{#if data.jira.updatedSince}
 					<form
@@ -1338,9 +1353,6 @@
 
 		<section class="card block">
 			<h3>Historique des synchronisations</h3>
-			{#if form?.jiraUndoOk}
-				<div class="flash ok">{form.jiraUndoDeleted} ticket{form.jiraUndoDeleted > 1 ? 's' : ''} supprimé{form.jiraUndoDeleted > 1 ? 's' : ''} ✓</div>
-			{/if}
 
 			{#if data.jiraSyncRuns.length === 0}
 				<span class="hint">Aucun run pour l'instant.</span>
@@ -1407,7 +1419,6 @@
 			<section class="card block">
 				<h3>Couleur de l'espace</h3>
 				<p class="hint">Personnalise l'accent de toute l'interface pour cet espace.</p>
-				{#if form?.accentOk}<div class="flash ok">Couleur mise à jour ✓ (rechargez pour l'appliquer partout)</div>{/if}
 				<form method="POST" action="?/accent" use:enhance>
 					<AccentPicker bind:color={accent} bind:rgbMode bind:discoMode presets={PRESETS} />
 					<input type="hidden" name="color" value={accent} />
@@ -1422,7 +1433,6 @@
 			<section class="card block">
 				<h3>Phase Test</h3>
 				<p class="hint">Quand elle est désactivée, les champs <b>Est. / RAE Test</b>, <b>Prépa</b> et les indicateurs qualité (Cypress, Doc tech., Prépa qualif) disparaissent des écrans et de l'export ; les totaux ne comptent que la Réalisation.</p>
-				{#if form?.testPhaseOk}<div class="flash ok">Réglage mis à jour ✓ (rechargez les autres onglets)</div>{/if}
 				<form method="POST" action="?/testPhase" use:enhance>
 					<input type="hidden" name="enabled" value={String(!data.testPhase)} />
 					<div style="display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:6px;">
@@ -1440,7 +1450,6 @@
 					Chaque membre vote une fois par plage (1-5, anonyme, modifiable tant que la plage est active). Les résultats
 					agrégés sont visibles uniquement par les admins, sur <a href="/admin/mood">la page dédiée</a>.
 				</p>
-				{#if form?.moodOk}<div class="flash ok">Réglage mis à jour ✓</div>{/if}
 
 				<form method="POST" action="?/moodEnabled" use:enhance>
 					<input type="hidden" name="enabled" value={String(!data.mood.enabled)} />
@@ -1486,7 +1495,6 @@
 					<b>PPR</b> = Estimation Réelle × ratio, calculé à la volée sur chaque ticket. <b>Pas d'imputation</b> = le pas
 					de saisie proposé dans la grille (0.25 = quart de jour).
 				</p>
-				{#if form?.pprRatioOk || form?.imputationStepOk}<div class="flash ok">Réglage mis à jour ✓</div>{/if}
 				<div style="display:flex;flex-direction:column;gap:14px;margin-top:6px;">
 					<form method="POST" action="?/pprRatio" use:enhance={enhanceEdit} style="display:flex;align-items:center;justify-content:space-between;gap:14px;">
 						<span>Ratio PPR</span>
@@ -2251,29 +2259,6 @@
 		outline: none;
 		border-color: var(--accent);
 		box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
-	}
-	/* Toast générique haut-droite (Jira, Référentiels) : flottant plutôt qu'en tête de carte —
-	   un flash resté dans le flux du document décale tout le reste (cf. Jira qui se replie en résumé
-	   au succès, ou les 7 sections de Référentiels dont une seule est affichée à la fois). Fixe, il
-	   reste visible quel que soit le scroll. */
-	.toast-tr {
-		position: fixed;
-		top: 20px;
-		right: 20px;
-		z-index: 50;
-		max-width: min(360px, calc(100vw - 40px));
-		box-shadow: var(--shadow-lg, 0 12px 30px rgba(0, 0, 0, 0.25));
-		animation: toast-tr-in 0.15s ease-out;
-	}
-	@keyframes toast-tr-in {
-		from {
-			opacity: 0;
-			transform: translateY(-6px);
-		}
-		to {
-			opacity: 1;
-			transform: translateY(0);
-		}
 	}
 	.jira-steps {
 		display: flex;

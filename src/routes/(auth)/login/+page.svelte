@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { toast } from 'svelte-sonner';
 	import PasswordField from '$lib/components/PasswordField.svelte';
-	import ModalErrorToast from '$lib/components/ModalErrorToast.svelte';
 	let { form } = $props();
 
 	// Décompte du blocage anti brute-force : le serveur donne le délai restant à chaque tentative
@@ -25,9 +25,23 @@
 	const countdown = $derived(
 		`${Math.floor(remainingMs / 60000)}:${String(Math.floor((remainingMs % 60000) / 1000)).padStart(2, '0')}`
 	);
+	// Titre fixe + description qui avance seule (le compte à rebours) : évite que tout le toast
+	// scintille à chaque tick, seule la description se met à jour.
 	const toastMessage = $derived(
-		dismissed ? null : locked ? `Trop de tentatives sur ce compte. Réessayez dans ${countdown}.` : (form?.error ?? null)
+		dismissed
+			? null
+			: locked
+				? { title: 'Trop de tentatives', description: `Réessayez dans ${countdown}.` }
+				: form?.error
+					? { title: form.error, description: undefined }
+					: null
 	);
+	// Même id à chaque appel : un toast déjà affiché est mis à jour en place (le compte à rebours
+	// avance dans le même toast) plutôt que d'en empiler un nouveau à chaque tick.
+	$effect(() => {
+		if (toastMessage) toast.error(toastMessage.title, { id: 'login-error', description: toastMessage.description });
+		else toast.dismiss('login-error');
+	});
 	function onEmailInput() {
 		remainingMs = 0;
 		dismissed = true;
@@ -69,5 +83,3 @@
 		<div class="auth-foot">Pas encore d'espace ? <a href="/register">Créer un espace</a></div>
 	</div>
 </div>
-
-{#if toastMessage}<ModalErrorToast message={toastMessage} />{/if}

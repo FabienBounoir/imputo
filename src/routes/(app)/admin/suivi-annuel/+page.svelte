@@ -1,11 +1,15 @@
 <script lang="ts">
 	import { enhance, deserialize } from '$app/forms';
 	import { invalidateAll } from '$app/navigation';
+	import { toast } from 'svelte-sonner';
 	import { confirmDialog } from '$lib/confirm.svelte';
 	import { formatMonthLabel, formatMonthShortLabel } from '$lib/utils/date';
 	import type { AnnualTrackingMonthCell, AnnualTrackingSspRow } from '$lib/server/services/sspAnnualTracking';
 
 	let { data, form } = $props();
+	$effect(() => {
+		if (form?.error) toast.error(form.error);
+	});
 
 	const view = $derived(data.view);
 
@@ -52,7 +56,6 @@
 	/** Copie locale des saisies : l'affichage est optimiste, pas d'aller-retour serveur par case. */
 	let prodEdits = $state<Record<string, number | null>>({});
 	let raeEdits = $state<Record<string, number | null>>({});
-	let saveError = $state('');
 	const key = (sspId: string, month: string) => `${sspId}:${month}`;
 
 	$effect(() => {
@@ -79,13 +82,12 @@
 		const res = await fetch(`?/${action}`, { method: 'POST', body });
 		const result = deserialize(await res.text());
 		if (result.type === 'failure') {
-			saveError = (result.data?.error as string) ?? 'Erreur lors de l\'enregistrement.';
+			toast.error((result.data?.error as string) ?? "Erreur lors de l'enregistrement.");
 			// Rien n'a été écrit : on refait le tour du serveur pour que la case reprenne la valeur
 			// réelle. Sans ça la saisie refusée reste affichée et se lit comme un chiffre enregistré.
 			await invalidateAll();
 			return;
 		}
-		saveError = '';
 		await invalidateAll();
 	}
 
@@ -273,9 +275,6 @@
 </div>
 
 <div class="content">
-	{#if form?.error}<div class="flash error">{form.error}</div>{/if}
-	{#if saveError}<div class="flash error">{saveError}</div>{/if}
-
 	{#if view.rows.length === 0}
 		<section class="card block empty">
 			<p>Aucun code SSP avec du budget, de la consommation ou de la production sur cette fenêtre.</p>

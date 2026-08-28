@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { page } from '$app/state';
+	import { toast } from 'svelte-sonner';
 	import {
 		ABSENCE_TYPES,
 		ABSENCE_PERIODS,
@@ -17,6 +18,10 @@
 	import { downloadSvgAsPng } from '$lib/utils/svgToPng';
 
 	let { data, form } = $props();
+	$effect(() => {
+		if (form?.error) toast.error(form.error);
+		else if (form?.ok) toast.success('Mis à jour ✓');
+	});
 
 	let startDate = $state(data.todayISO);
 	let endDate = $state(data.todayISO);
@@ -214,9 +219,6 @@
 </div>
 
 <div class="content abs">
-	{#if form?.error}<div class="flash error">{form.error}</div>{/if}
-	{#if form?.ok}<div class="flash ok toast-tr" role="status">Mis à jour ✓</div>{/if}
-
 	<div class="declare-cta">
 		<button class="btn btn-primary" type="button" data-tour="absences-add" onclick={openDeclareModal}>+ Déclarer une absence</button>
 	</div>
@@ -429,8 +431,6 @@
 				{/each}
 			</div>
 			<p class="hint wizard-progress">Étape {wizardStep + 1} sur {wizardSteps.length}</p>
-
-			{#if form?.error}<div class="flash error">{form.error}</div>{/if}
 
 			<form
 				method="POST"
@@ -1285,28 +1285,6 @@
 
 	.declare-cta {
 		margin-bottom: 18px;
-	}
-
-	/* Toast générique haut-droite (même motif que admin/+page.svelte) : flottant plutôt qu'en tête de
-	   page, pour ne pas décaler le reste au succès. Fixe, reste visible quel que soit le scroll. */
-	.toast-tr {
-		position: fixed;
-		top: 20px;
-		right: 20px;
-		z-index: 50;
-		max-width: min(360px, calc(100vw - 40px));
-		box-shadow: var(--shadow-lg, 0 12px 30px rgba(0, 0, 0, 0.25));
-		animation: toast-tr-in 0.15s ease-out;
-	}
-	@keyframes toast-tr-in {
-		from {
-			opacity: 0;
-			transform: translateY(-6px);
-		}
-		to {
-			opacity: 1;
-			transform: translateY(0);
-		}
 	}
 
 	.wizard-modal {

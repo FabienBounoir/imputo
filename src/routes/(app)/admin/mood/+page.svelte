@@ -1,9 +1,13 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { toast } from 'svelte-sonner';
 	import { Confetti } from 'svelte-confetti';
 	import { confirmDialog } from '$lib/confirm.svelte';
 
 	let { data, form } = $props();
+	$effect(() => {
+		if (form?.resetOk) toast.success('Plage en cours réinitialisée ✓');
+	});
 
 	// Unanime : tout le monde a voté le même score sur la plage (à partir de 2 votes, sinon ça n'a pas de sens).
 	function isUnanimous(p: { voteCount: number; distribution: Record<1 | 2 | 3 | 4 | 5, number> }) {
@@ -144,8 +148,6 @@
 		<Confetti x={[-2, 2]} y={[0, 0.3]} amount={120} fallDistance="100vh" duration={3000} rounded />
 	</div>
 {/if}
-
-{#if form?.resetOk}<div class="content" style="padding-bottom:0;"><div class="flash ok">Plage en cours réinitialisée ✓</div></div>{/if}
 
 <div class="page-grid">
 <div class="content">

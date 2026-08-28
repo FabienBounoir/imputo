@@ -492,6 +492,11 @@ export type TicketFilters = {
 	/** Tickets sans code SSP. URL-only comme les deux ci-dessus (param ?ssp=none) : lien depuis la
 	 *  colonne « Sans code SSP » de la clôture mensuelle, pour aller les corriger. */
 	noSsp?: boolean;
+	/** Tickets créés dans cette session de navigation (param ?created=CLE1,CLE2,…), accumulé côté
+	 *  client à chaque création réussie — permet de retrouver et traiter à la suite un lot de
+	 *  tickets qu'on vient de saisir, sans devoir les rechercher un par un. URL-only comme les
+	 *  filtres ci-dessus : n'importe quel autre changement de filtre (navigateWith) l'efface. */
+	keys?: string[];
 };
 
 export type TicketFiltersSnapshot = {
@@ -537,6 +542,7 @@ function ticketFilterConditions(workspaceId: string, filters: TicketFilters) {
 	if (filters.exactKey) conditions.push(eq(ticket.key, filters.exactKey));
 	if (filters.syncRunId) conditions.push(eq(ticket.createdBySyncRunId, filters.syncRunId));
 	if (filters.noSsp) conditions.push(isNull(ticket.sspId));
+	if (filters.keys?.length) conditions.push(inArray(ticket.key, filters.keys));
 	if (filters.query?.trim()) {
 		const q = `%${filters.query.trim()}%`;
 		conditions.push(or(ilike(ticket.key, q), ilike(ticket.title, q))!);

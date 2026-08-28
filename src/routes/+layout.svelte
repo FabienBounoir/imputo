@@ -7,6 +7,7 @@
 	import { trackKonamiKey, initKonami } from '$lib/konami.svelte';
 	import { accentSpeedState, initAccentSpeed } from '$lib/accentSpeed.svelte';
 	import { Confetti } from 'svelte-confetti';
+	import { Toaster } from 'svelte-sonner';
 
 	let { children, data } = $props();
 
@@ -171,6 +172,8 @@
 {/key}
 
 {@render children()}
+
+<Toaster position="bottom-right" closeButton richColors />
 
 <style>
 	.konami-confetti {

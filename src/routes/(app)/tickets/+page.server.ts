@@ -22,6 +22,13 @@ import {
 
 const PAGE_SIZE = 50;
 
+// Drizzle enveloppe l'erreur Postgres dans une DrizzleQueryError dont `.message` est la requête
+// SQL (pas l'erreur) — la vraie PostgresError (code, message) est dans `.cause`.
+function isUniqueViolation(e: unknown): boolean {
+	const code = (e as { code?: string })?.code ?? (e as { cause?: { code?: string } })?.cause?.code;
+	return code === '23505';
+}
+
 const createSchema = z.object({
 	key: z.string().trim().min(1, 'Clé requise').max(40),
 	title: z.string().trim().min(1, 'Titre requis').max(200),
@@ -88,7 +95,10 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		syncRunId: url.searchParams.get('jiraRun') ?? undefined,
 		// Lien depuis la clôture mensuelle (colonne « Sans code SSP ») : ces tickets ne remontent
 		// dans aucun code budgétaire, on vient les corriger.
-		noSsp: url.searchParams.get('ssp') === 'none'
+		noSsp: url.searchParams.get('ssp') === 'none',
+		// Lot de tickets tout juste créés (popover « Nouveau ticket ») : accumulé côté client à
+		// chaque création réussie (cf. +page.svelte) pour les retrouver et les traiter à la suite.
+		keys: url.searchParams.get('created')?.split(',').filter(Boolean)
 	};
 	// Lien depuis l'imputation (clic sur le sprint/version d'une ligne) : filtre sur le sprint ou la
 	// version (liste complète, pas juste ce ticket) + surbrillance du ticket d'origine dans la liste.
@@ -185,10 +195,7 @@ export const actions: Actions = {
 			});
 		} catch (e) {
 			return fail(400, {
-				error:
-					e instanceof Error && /unique|duplicate/i.test(e.message)
-						? 'Un ticket avec cette clé existe déjà.'
-						: 'Erreur lors de la création.'
+				error: isUniqueViolation(e) ? 'Un ticket avec cette clé existe déjà.' : 'Erreur lors de la création.'
 			});
 		}
 		return { ok: true };
@@ -213,12 +220,7 @@ export const actions: Actions = {
 			);
 		} catch (e) {
 			return fail(400, {
-				error:
-					e instanceof Error && /unique|duplicate/i.test(e.message)
-						? 'Un ticket avec cette clé existe déjà.'
-						: e instanceof Error
-							? e.message
-							: 'Erreur.'
+				error: isUniqueViolation(e) ? 'Un ticket avec cette clé existe déjà.' : 'Erreur lors de la mise à jour.'
 			});
 		}
 		return { ok: true };

@@ -1,10 +1,14 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { toast } from 'svelte-sonner';
 	import PasswordField from '$lib/components/PasswordField.svelte';
 	let { form } = $props();
 	let workspaceName = $state(form?.values?.workspaceName ?? '');
 	let displayName = $state(form?.values?.displayName ?? '');
 	let email = $state(form?.values?.email ?? '');
+	$effect(() => {
+		if (form?.error) toast.error(form.error);
+	});
 </script>
 
 <div class="auth-wrap">
@@ -19,8 +23,6 @@
 		</div>
 		<h2>Créez votre espace</h2>
 		<p class="sub">Un espace = une équipe. Vous en devenez l'admin.</p>
-
-		{#if form?.error}<div class="flash error">{form.error}</div>{/if}
 
 		<form method="POST" use:enhance>
 			<div class="field">

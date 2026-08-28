@@ -3,7 +3,7 @@
 	import { formatDateTime } from '$lib/utils/date';
 	import { TICKET_FIELD_LABELS } from '$lib/changeLogLabels';
 	import { confirmDialog } from '$lib/confirm.svelte';
-	import ModalErrorToast from './ModalErrorToast.svelte';
+	import { toast } from 'svelte-sonner';
 	import SspPicker from './SspPicker.svelte';
 
 	// Même modal d'édition que Tickets & chiffrage (tickets/+page.svelte), rendue utilisable depuis
@@ -90,13 +90,8 @@
 	let loading = $state(false);
 	let historyEntries = $state<HistoryEntry[]>([]);
 	let historyLoading = $state(false);
-	let savedFlash = $state(false);
-	let flashTimer: ReturnType<typeof setTimeout>;
-	let actionError = $state('');
-
 	$effect(() => {
 		const id = ticketId;
-		actionError = '';
 		if (!id) {
 			ticket = null;
 			historyEntries = [];
@@ -152,7 +147,7 @@
 		const res = await fetch('/tickets?/update', { method: 'POST', body });
 		const result = deserialize(await res.text());
 		if (result.type === 'failure') {
-			actionError = (result.data?.error as string) ?? 'Erreur lors de l’enregistrement.';
+			toast.error((result.data?.error as string) ?? 'Erreur lors de l’enregistrement.');
 		} else {
 			flash();
 		}
@@ -196,9 +191,7 @@
 		flash();
 	}
 	function flash() {
-		savedFlash = true;
-		clearTimeout(flashTimer);
-		flashTimer = setTimeout(() => (savedFlash = false), 1400);
+		toast.success('Enregistré ✓');
 		if (ticket) onSaved?.({ id: ticket.id, title: ticket.title, sprintId: ticket.sprintId, versionId: ticket.versionId });
 	}
 
@@ -208,7 +201,7 @@
 	async function confirmDelete({ cancel }: { cancel: () => void }) {
 		if (!ticket) return cancel();
 		if (ticket.imputationCount > 0) {
-			actionError = 'Des imputations sont liées à ce ticket : suppression impossible.';
+			toast.error('Des imputations sont liées à ce ticket : suppression impossible.');
 			return cancel();
 		}
 		const ok = await confirmDialog({
@@ -217,11 +210,10 @@
 			confirmLabel: 'Supprimer'
 		});
 		if (!ok) return cancel();
-		actionError = '';
 		const id = ticket.id;
 		return async ({ result }: { result: { type: string; data?: Record<string, unknown> } }) => {
 			if (result.type === 'failure') {
-				actionError = (result.data?.error as string) ?? 'Erreur lors de la suppression.';
+				toast.error((result.data?.error as string) ?? 'Erreur lors de la suppression.');
 			} else {
 				onDeleted?.(id);
 				onClose();
@@ -232,14 +224,11 @@
 
 <svelte:window onkeydown={(e) => ticketId && e.key === 'Escape' && onClose()} />
 
-{#if actionError}<ModalErrorToast message={actionError} />{/if}
-
 {#if ticketId}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<div class="tk-backdrop" onclick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
 		<div class="tk-modal">
-			{#if savedFlash}<span class="tk-saved">Enregistré ✓</span>{/if}
 			{#if !ticket}
 				<p class="hint">{loading ? 'Chargement…' : 'Ticket introuvable.'}</p>
 			{:else}
@@ -370,17 +359,6 @@
 		max-width: 600px;
 		max-height: 86vh;
 		overflow-y: auto;
-	}
-	.tk-saved {
-		position: absolute;
-		top: 18px;
-		right: 52px;
-		font-size: 12.5px;
-		font-weight: 600;
-		color: var(--accent);
-		background: var(--accent-tint-2);
-		padding: 4px 10px;
-		border-radius: 30px;
 	}
 	.hint {
 		color: var(--text-mute);

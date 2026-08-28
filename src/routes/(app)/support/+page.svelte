@@ -1,11 +1,15 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { toast } from 'svelte-sonner';
 	import { confirmDialog } from '$lib/confirm.svelte';
 	import { formatDayRange } from '$lib/utils/date';
 
 	let { data, form } = $props();
 
 	let pickerOpen = $state(false);
+	$effect(() => {
+		if (form?.error) toast.error(form.error);
+	});
 
 	// Le nombre de jours par semaine dans la grille reflète déjà le réglage "samedi inclus" (cf.
 	// listDutyCalendar côté serveur) — on en déduit l'entête plutôt que de dupliquer le réglage ici.
@@ -56,8 +60,6 @@
 
 <div class="content support-layout">
 	<section class="card header-card">
-		{#if form?.error}<div class="flash error">{form.error}</div>{/if}
-
 		{#if !data.current}
 			<p class="empty-hint">Aucun membre dans la rotation pour l'instant — à configurer dans Paramètres &amp; membres.</p>
 		{:else}

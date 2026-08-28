@@ -2,10 +2,15 @@
 	import { enhance } from '$app/forms';
 	import { goto } from '$app/navigation';
 	import { navigating } from '$app/state';
+	import { toast } from 'svelte-sonner';
 	import TargetPicker from '$lib/components/TargetPicker.svelte';
 	import { downloadSvgAsPng } from '$lib/utils/svgToPng';
 
 	let { data, form } = $props();
+	$effect(() => {
+		if (form?.error) toast.error(form.error);
+		else if (form?.objOk) toast.success('Mis à jour ✓');
+	});
 
 	// Un seul champ pour "assigner un ticket" ou "créer une tâche personnalisée" : la recherche qui
 	// ne trouve aucun ticket propose de créer une tâche avec le texte tapé (cf. TargetPicker,
@@ -94,8 +99,6 @@
 		<section class="card block">
 			<h3>Attribuer pour la semaine</h3>
 			<p class="hint">Choisis une personne, puis cherche un ticket à assigner — si la recherche ne trouve rien, tu peux créer une tâche personnalisée avec le texte tapé.</p>
-			{#if form?.error}<div class="flash error">{form.error}</div>{/if}
-			{#if form?.objOk}<div class="flash ok">Mis à jour ✓</div>{/if}
 
 			<div class="person-row">
 				<select class="member-pick" value={data.selectedUserId} disabled={isNavigating} onchange={(e) => selectUser(e.currentTarget.value)} aria-label="Personne">

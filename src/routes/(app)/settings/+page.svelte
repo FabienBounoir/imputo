@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { enhance } from '$app/forms';
+	import { toast } from 'svelte-sonner';
 	import {
 		pushSupported,
 		isSubscribed,
@@ -21,11 +22,25 @@
 	import PasswordField from '$lib/components/PasswordField.svelte';
 
 	let { data, form } = $props();
+	$effect(() => {
+		if (!form) return;
+		if (form.pwError) toast.error(form.pwError);
+		else if (form.pwOk) toast.success('Mot de passe changé ✓');
+		else if (
+			form.accentPrefOk ||
+			form.motivationBannerOk ||
+			form.rememberTicketFiltersOk ||
+			form.rememberTicketSearchOk ||
+			form.compactActivityOk ||
+			form.sortActivitiesAlphaOk
+		) {
+			toast.success('Enregistré ✓');
+		}
+	});
 
 	let supported = $state(true);
 	let subscribed = $state(false);
 	let busy = $state(false);
-	let flash = $state('');
 	let prefs = $state<NotifPrefs>({ ...data.prefs });
 	let themePref = $state<ThemePref>('system');
 
@@ -86,11 +101,6 @@
 		themePref = storedTheme() ?? 'system';
 	});
 
-	function note(msg: string) {
-		flash = msg;
-		setTimeout(() => (flash = ''), 2500);
-	}
-
 	async function enable() {
 		busy = true;
 		const ok = await subscribePush(data.vapidPublicKey);
@@ -99,9 +109,9 @@
 		if (ok) {
 			prefs.enabled = true;
 			await saveNotifPrefs(prefs);
-			note('Notifications activées ✓');
+			toast.success('Notifications activées ✓');
 		} else {
-			note('Permission refusée ou non disponible.');
+			toast.error('Permission refusée ou non disponible.');
 		}
 	}
 	async function disable() {
@@ -109,11 +119,11 @@
 		await unsubscribePush();
 		busy = false;
 		subscribed = false;
-		note('Notifications désactivées sur cet appareil.');
+		toast.message('Notifications désactivées sur cet appareil.');
 	}
 	async function savePref() {
 		await saveNotifPrefs(prefs);
-		note('Préférences enregistrées ✓');
+		toast.success('Préférences enregistrées ✓');
 	}
 	/** Cocher/décocher le rappel bascule ses trois créneaux d'un bloc. */
 	async function toggleKind(item: PrefItem) {
@@ -127,7 +137,8 @@
 	}
 	async function test() {
 		const sent = await sendTestNotification();
-		note(sent > 0 ? 'Notification de test envoyée.' : 'Aucun appareil abonné — active les notifications ci-dessus.');
+		if (sent > 0) toast.success('Notification de test envoyée.');
+		else toast.error('Aucun appareil abonné', { description: 'Active les notifications ci-dessus pour en recevoir.' });
 	}
 	function pickTheme(p: ThemePref) {
 		themePref = p;
@@ -159,7 +170,6 @@
 <div class="topbar">
 	<h1>Réglages<small>Préférences personnelles</small></h1>
 	<div class="spacer"></div>
-	{#if flash}<span class="saved">{flash}</span>{/if}
 </div>
 
 <div class="content settings">
@@ -242,8 +252,6 @@
 		<section class="card block">
 			<h3>Mot de passe</h3>
 			<p class="hint">Change ton mot de passe de connexion.</p>
-			{#if form?.pwOk}<div class="flash ok">Mot de passe changé ✓</div>{/if}
-			{#if form?.pwError}<div class="flash error">{form.pwError}</div>{/if}
 			<form method="POST" action="?/changePassword" use:enhance>
 				<PasswordField id="cpw" name="currentPassword" label="Mot de passe actuel" autocomplete="current-password" required />
 				<PasswordField id="npw" name="password" label="Nouveau mot de passe" placeholder="8 caractères minimum" autocomplete="new-password" required />
@@ -269,7 +277,7 @@
 
 			<div class="opt">
 				<div class="opt-t">
-					<b>Couleur d’accent{#if form?.accentPrefOk}<span class="ok-tag">enregistré ✓</span>{/if}</b>
+					<b>Couleur d’accent</b>
 					<span class="hint">Par défaut, suit la couleur choisie par l’admin de l’espace. Personnalise pour imposer la tienne sur tous les espaces.</span>
 				</div>
 				<div class="seg">
@@ -298,7 +306,7 @@
 
 			<div class="opt">
 				<div class="opt-t">
-					<b>Bandeau motivation{#if form?.motivationBannerOk}<span class="ok-tag">enregistré ✓</span>{/if}</b>
+					<b>Bandeau motivation</b>
 					<span class="hint">Une citation en haut de chaque page, renouvelée toutes les 30 s (en pause au survol).</span>
 				</div>
 				<form method="POST" action="?/motivationBannerPref" use:enhance>
@@ -344,7 +352,7 @@
 
 			<div class="opt">
 				<div class="opt-t">
-					<b>Filtres{#if form?.rememberTicketFiltersOk}<span class="ok-tag">enregistré ✓</span>{/if}</b>
+					<b>Filtres</b>
 					<span class="hint">Retrouver tes derniers filtres (état, projet, sprint, version) à chaque retour sur la page, sur tous tes espaces.</span>
 				</div>
 				<form method="POST" action="?/rememberTicketFiltersPref" use:enhance>
@@ -358,7 +366,7 @@
 			{#if rememberTicketFilters}
 				<div class="opt opt-sub">
 					<div class="opt-t">
-						<b>Texte de recherche{#if form?.rememberTicketSearchOk}<span class="ok-tag">enregistré ✓</span>{/if}</b>
+						<b>Texte de recherche</b>
 						<span class="hint">Garder aussi ce qui est tapé dans la recherche, ou seulement les filtres.</span>
 					</div>
 					<form method="POST" action="?/rememberTicketSearchPref" use:enhance>
@@ -372,7 +380,7 @@
 
 			<div class="opt">
 				<div class="opt-t">
-					<b>Détail par activité{#if form?.compactActivityOk}<span class="ok-tag">enregistré ✓</span>{/if}</b>
+					<b>Détail par activité</b>
 					<span class="hint">État par défaut du détail sous chaque ticket — il reste dépliable ticket par ticket le temps de la session.</span>
 				</div>
 				<form method="POST" action="?/compactActivityPref" use:enhance>
@@ -389,7 +397,7 @@
 
 			<div class="opt">
 				<div class="opt-t">
-					<b>Répartition par activité{#if form?.sortActivitiesAlphaOk}<span class="ok-tag">enregistré ✓</span>{/if}</b>
+					<b>Répartition par activité</b>
 					<span class="hint">Ordre des activités dans la synthèse par sprint/version.</span>
 				</div>
 				<form method="POST" action="?/sortActivitiesAlphaPref" use:enhance>
@@ -493,16 +501,6 @@
 		align-items: flex-start;
 		gap: 14px;
 	}
-	.ok-tag {
-		margin-left: 8px;
-		font-size: 11px;
-		font-weight: 600;
-		color: var(--accent);
-		background: var(--accent-tint-2);
-		padding: 2px 8px;
-		border-radius: 20px;
-		white-space: nowrap;
-	}
 	/* Sous ~560px, libellé et contrôle ne cohabitent plus sur une ligne sans écraser le segmented. */
 	@media (max-width: 560px) {
 		.opt {
@@ -515,14 +513,6 @@
 		color: var(--text-mute);
 		font-size: 13px;
 		margin-bottom: 16px;
-	}
-	.saved {
-		font-size: 12.5px;
-		font-weight: 600;
-		color: var(--accent);
-		background: var(--accent-tint-2);
-		padding: 6px 12px;
-		border-radius: 30px;
 	}
 	.row {
 		display: flex;

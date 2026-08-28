@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import { setTheme } from '$lib/theme';
 	import { todayInParis, monthBounds } from '$lib/utils/date';
 	import { requestTourReplay } from '$lib/tour/tourState.svelte';
@@ -221,12 +222,37 @@
 		if (!item.keepOpen) closePalette();
 	}
 
+	/** Le raccourci Shift+N ne doit jamais voler la frappe d'un champ texte en cours d'édition
+	 *  (recherche, formulaire…) — une majuscule N y est une frappe normale. */
+	function isTypingTarget(el: EventTarget | null) {
+		if (!(el instanceof HTMLElement)) return false;
+		return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable;
+	}
+
 	function onGlobalKeydown(e: KeyboardEvent) {
 		if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
 			e.preventDefault();
 			open ? closePalette() : openPalette();
 		} else if (e.key === 'Escape' && open) {
 			closePalette();
+		} else if (
+			// Nouveau ticket depuis n'importe quelle page. Note : Shift+N, pas Ctrl/Cmd+N — les
+			// navigateurs réservent ce dernier pour "nouvelle fenêtre" et ne le laissent jamais
+			// atteindre la page. e.key.toLowerCase() : certains claviers/navigateurs rapportent "n"
+			// avec shiftKey=true plutôt que "N". Sur /tickets, on laisse la page gérer elle-même le
+			// raccourci (elle ouvre le popover directement, sans navigation, et connaît son propre
+			// état de modale en cours).
+			e.key.toLowerCase() === 'n' &&
+			e.shiftKey &&
+			!e.metaKey &&
+			!e.ctrlKey &&
+			!e.altKey &&
+			!open &&
+			page.url.pathname !== '/tickets' &&
+			!isTypingTarget(e.target)
+		) {
+			e.preventDefault();
+			goto('/tickets?new=1');
 		}
 	}
 

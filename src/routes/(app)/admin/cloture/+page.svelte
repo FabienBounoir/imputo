@@ -1,10 +1,14 @@
 <script lang="ts">
 	import { enhance, deserialize } from '$app/forms';
 	import { goto } from '$app/navigation';
+	import { toast } from 'svelte-sonner';
 	import { confirmDialog } from '$lib/confirm.svelte';
 	import { formatDateTime, formatDayList } from '$lib/utils/date';
 
 	let { data, form } = $props();
+	$effect(() => {
+		if (form?.error) toast.error(form.error);
+	});
 
 	const view = $derived(data.view);
 	const closing = $derived(view.closing);
@@ -80,7 +84,6 @@
 	/** Copie locale des saisies : l'affichage est optimiste, le serveur n'est pas rechargé à chaque case. */
 	let complements = $state<Record<string, number>>({});
 	let plannedEdits = $state<Record<string, number | null>>({});
-	let saveError = $state('');
 
 	// Repart de la donnée serveur à chaque changement de mois / de passe.
 	$effect(() => {
@@ -159,7 +162,7 @@
 		// L'affichage est optimiste : sans remonter l'échec, la case resterait à sa nouvelle valeur
 		// alors que rien n'a été enregistré (cf. le même pattern dans tickets/+page.svelte).
 		const result = deserialize(await res.text());
-		saveError = result.type === 'failure' ? ((result.data?.error as string) ?? 'Erreur lors de l\'enregistrement.') : '';
+		if (result.type === 'failure') toast.error((result.data?.error as string) ?? "Erreur lors de l'enregistrement.");
 	}
 
 	function onComplement(userId: string, sspId: string, raw: string) {
@@ -265,9 +268,6 @@
 </div>
 
 <div class="content">
-	{#if form?.error}<div class="flash error">{form.error}</div>{/if}
-	{#if saveError}<div class="flash error">{saveError}</div>{/if}
-
 	{#if !closing}
 		<section class="card block empty">
 			<p>Aucune passe de clôture ouverte sur ce mois.</p>

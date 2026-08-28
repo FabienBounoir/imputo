@@ -1,9 +1,14 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { toast } from 'svelte-sonner';
 	import { scale } from 'svelte/transition';
 	import type { SubmitFunction } from '@sveltejs/kit';
 
 	let { data, form } = $props();
+	$effect(() => {
+		if (form?.error) toast.error(form.error);
+		else if (form?.ok) toast.success('Vote enregistré ✓');
+	});
 
 	const EMOJIS = [
 		{ score: 1, emoji: '😞', label: 'Pas content' },
@@ -63,9 +68,6 @@
 			Votre vote est <b>anonyme</b>, y compris pour les admins : seuls les résultats agrégés de la plage sont
 			visibles. Vous pouvez modifier votre vote tant que la plage est active.
 		</p>
-
-		{#if form?.error}<div class="flash error">{form.error}</div>{/if}
-		{#if form?.ok}<div class="flash ok">Vote enregistré ✓</div>{/if}
 
 		<div class="reveal-wrap">
 			<form method="POST" use:enhance={handleVote} class:blurred={!revealed} inert={!revealed}>
@@ -230,10 +232,6 @@
 		line-height: 1.5;
 		margin-bottom: 20px;
 	}
-	.flash {
-		margin-bottom: 16px;
-	}
-
 	/* Padding dédié (sans marge négative — ça déclenchait un bug de rendu Chromium où le halo de
 	   flou "fuyait" hors de la card) : le flou dispose de sa propre marge de respiration avant
 	   d'atteindre le bord de la zone, plutôt que de couper des éléments en bordure (bouton…). */

@@ -1,7 +1,11 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { toast } from 'svelte-sonner';
 	import PasswordField from '$lib/components/PasswordField.svelte';
 	let { data, form } = $props();
+	$effect(() => {
+		if (form?.error) toast.error(form.error);
+	});
 </script>
 
 <div class="auth-wrap">
@@ -14,8 +18,6 @@
 		{:else}
 			<h2>Bienvenue 🎉</h2>
 			<p class="sub">Définissez votre mot de passe pour activer le compte <b>{data.email}</b>.</p>
-
-			{#if form?.error}<div class="flash error">{form.error}</div>{/if}
 
 			<form method="POST" use:enhance>
 				<PasswordField

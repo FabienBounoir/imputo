@@ -5,11 +5,14 @@
 	import { formatDateTime } from '$lib/utils/date';
 	import { TICKET_FIELD_LABELS } from '$lib/changeLogLabels';
 	import { confirmDialog } from '$lib/confirm.svelte';
-	import ModalErrorToast from '$lib/components/ModalErrorToast.svelte';
+	import { toast } from 'svelte-sonner';
 	import SspPicker from '$lib/components/SspPicker.svelte';
 	import { jiraTicketUrl } from '$lib/jiraLink';
 	import { slide } from 'svelte/transition';
 	let { data, form } = $props();
+	$effect(() => {
+		if (form?.error) toast.error(form.error);
+	});
 
 	const jiraCfg = $derived({
 		jiraBaseUrl: data.jiraBaseUrl,
@@ -19,8 +22,6 @@
 	});
 
 	let showCreate = $state(false);
-	let savedFlash = $state(false);
-	let flashTimer: ReturnType<typeof setTimeout>;
 
 	// Ouverture directe du formulaire depuis la palette de commandes (?new=1).
 	$effect(() => {
@@ -84,11 +85,19 @@
 	// historique de sync Jira ?jiraRun=…, clôture mensuelle ?ssp=none) — sans ça le bouton
 	// Réinitialiser reste invisible et on ne peut plus revenir à la liste complète. Aucun de ces
 	// trois n'est reconstruit par navigateWith, donc n'importe quelle navigation les efface.
-	const hasFilters = $derived(!!(data.filters.query || data.filters.stateId || data.filters.projectId || data.filters.sprintId || data.filters.versionId || data.filters.exactKey || data.filters.syncRunId || data.filters.noSsp));
+	const hasFilters = $derived(!!(data.filters.query || data.filters.stateId || data.filters.projectId || data.filters.sprintId || data.filters.versionId || data.filters.exactKey || data.filters.syncRunId || data.filters.noSsp || data.filters.keys?.length));
 	// Filtres/vue/pagination naviguent tous via goto() (rechargement serveur) : un fieldset désactive
 	// la barre d'un coup pendant le trajet, pour qu'on ne confonde jamais l'ancienne liste avec la nouvelle.
 	const isNavigating = $derived(!!navigating.to);
 	function resetFilters() {
+		if (data.filters.keys?.length) {
+			// Vue temporaire post-création (cf. plus haut) : pas navigateWith ici, sinon son POST
+			// ?/rememberFilters sauvegarderait "aucun filtre" comme préférence du compte. Une arrivée
+			// à blanc relance le mécanisme existant (§ load ci-dessus) : réapplique les filtres
+			// mémorisés s'il y en a, sinon liste complète — exactement ce qu'on veut ici.
+			goto('/tickets');
+			return;
+		}
 		navigateWith({ q: '', state: '', project: '', sprint: '', version: '' });
 	}
 
@@ -360,21 +369,20 @@
 	// Modal d'édition (ouverte au clic sur une carte Kanban).
 	let editId = $state<string | null>(null);
 	const editRow = $derived(rows.find((r) => r.id === editId) ?? null);
-	let actionError = $state('');
-	$effect(() => {
-		editId;
-		actionError = '';
-	});
 
 	// Suppression réservée au créateur de l'espace (super admin) ou ADMIN (cf. data.isOwner). `rows` n'a pas le
 	// nombre d'imputations liées (pas ajouté à listTicketsPage pour ne pas alourdir le chargement de
 	// toute la liste) — on le vérifie à la demande, seulement au moment de supprimer.
 	async function confirmDeleteTicket(row: Row, { cancel }: { cancel: () => void }) {
-		actionError = '';
 		const res = await fetch(`/api/tickets/${row.id}`);
 		const t = res.ok ? await res.json() : null;
 		if (!t || t.imputationCount > 0) {
-			actionError = t ? 'Des imputations sont liées à ce ticket : suppression impossible.' : 'Erreur lors de la vérification.';
+			if (t) {
+				const n = t.imputationCount;
+				toast.error('Suppression impossible', { description: `${n} imputation${n > 1 ? 's sont liées' : ' est liée'} à ce ticket.` });
+			} else {
+				toast.error('Erreur lors de la vérification.');
+			}
 			return cancel();
 		}
 		const ok = await confirmDialog({
@@ -385,7 +393,7 @@
 		if (!ok) return cancel();
 		return async ({ result }: { result: { type: string; data?: Record<string, unknown> } }) => {
 			if (result.type === 'failure') {
-				actionError = (result.data?.error as string) ?? 'Erreur lors de la suppression.';
+				toast.error((result.data?.error as string) ?? 'Erreur lors de la suppression.');
 			} else {
 				rows = rows.filter((r) => r.id !== row.id);
 				editId = null;
@@ -474,7 +482,7 @@
 		const res = await fetch('?/update', { method: 'POST', body });
 		const result = deserialize(await res.text());
 		if (result.type === 'failure') {
-			actionError = (result.data?.error as string) ?? 'Erreur lors de l’enregistrement.';
+			toast.error((result.data?.error as string) ?? 'Erreur lors de l’enregistrement.');
 		} else {
 			flash();
 		}
@@ -482,13 +490,15 @@
 	// Slider de priorité maison (0-5, 6 crans) — pas de <input type="range"> : le thumb natif ne se
 	// stylise pas de façon cohérente entre navigateurs, alors qu'ici on veut le même rendu "pilule +
 	// dégradé accent" que la barre d'avancement (cf. .prog .bar ci-dessous). setPriority no-op déjà
-	// si la valeur ne change pas : un drag déclenche donc `save` seulement en franchissant un cran,
-	// jamais à chaque pixel — pas besoin de debounce séparé.
+	// si la valeur ne change pas : un drag ne déclenche donc rien en franchissant pas un cran. Mais
+	// un drag rapide traverse plusieurs crans en quelques pointermove — le rendu (row.priority) suit
+	// chaque cran immédiatement, l'appel réseau lui passe par debouncedSave (§ anti-rafale plus haut)
+	// pour n'en envoyer qu'un seul, une fois le drag stabilisé.
 	function setPriority(row: Row, value: number) {
 		const v = Math.max(0, Math.min(4, Math.round(value)));
 		if (v === row.priority) return;
 		row.priority = v;
-		save(row, 'priority', v);
+		debouncedSave(`priority-${row.id}`, () => save(row, 'priority', row.priority));
 	}
 	// Piste inversée (0/Urgent à droite, 4/Backlog à gauche — voir priorityPos) : un ratio proche
 	// de 0 (curseur à gauche) doit donc renvoyer une valeur proche de 4, pas de 0.
@@ -562,73 +572,105 @@
 		flash();
 	}
 	function flash() {
-		savedFlash = true;
-		clearTimeout(flashTimer);
-		flashTimer = setTimeout(() => (savedFlash = false), 1400);
+		toast.success('Enregistré ✓');
+	}
+
+	/** Un raccourci lettre nue ("n") ne doit jamais voler la frappe d'un champ texte en cours
+	 *  d'édition ailleurs sur la page (titre du ticket en cours d'édition, recherche…). */
+	function isTypingTarget(el: EventTarget | null) {
+		if (!(el instanceof HTMLElement)) return false;
+		return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable;
+	}
+	function onGlobalKeydown(e: KeyboardEvent) {
+		if (e.key === 'Escape') {
+			editId = null;
+			showCreate = false;
+			return;
+		}
+		// Shift+N nouveau ticket — seulement si on ne tape pas déjà ailleurs et qu'aucun autre modal
+		// n'est ouvert (sinon la frappe atterrirait dans le champ Titre du modal d'édition en cours).
+		// e.key.toLowerCase() plutôt que === 'N' : certains claviers/navigateurs rapportent "n" avec
+		// shiftKey=true plutôt que "N" (cf. tests). Pas Ctrl/Cmd+N : réservé par le navigateur
+		// ("nouvelle fenêtre"), jamais délivré à la page (cf. CommandPalette).
+		if (e.key.toLowerCase() === 'n' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && !editRow && !isTypingTarget(e.target)) {
+			e.preventDefault();
+			showCreate = true;
+		}
 	}
 </script>
 
 <div class="topbar">
 	<h1>Tickets &amp; chiffrage<small>{ticketsLoading ? 'Chargement…' : `${total} ticket${total > 1 ? 's' : ''}${data.view === 'table' && rows.length < total ? ` · ${rows.length} chargés` : ''}`}</small></h1>
 	<div class="spacer"></div>
-	{#if savedFlash}<span class="saved">Enregistré ✓</span>{/if}
 	<a class="btn btn-ghost" href="/export" data-sveltekit-reload>
 		<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="3" width="12" height="8" rx="1.5"/><path d="M12 17v-6M9 14l3 3 3-3"/><path d="M3 15v4a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4"/></svg>
 		Exporter Excel
 	</a>
-	<button class="btn btn-primary" data-tour="tickets-new" onclick={() => (showCreate = !showCreate)}>
-		<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg>
-		Nouveau ticket
-	</button>
+	<div class="new-ticket-wrap">
+		<button class="btn btn-primary" data-tour="tickets-new" title="Nouveau ticket (Shift+N)" onclick={() => (showCreate = !showCreate)}>
+			<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg>
+			Nouveau ticket
+			<kbd class="shortcut-kbd"><span class="shortcut-shift">⇧</span>N</kbd>
+		</button>
+		{#if showCreate}
+			<!-- svelte-ignore a11y_click_events_have_key_events -->
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<div class="qc-catch" onclick={() => (showCreate = false)}></div>
+			<div class="qc-popover">
+				<form
+					method="POST"
+					action="?/create"
+					use:enhance={({ formData }) => {
+						const newKey = String(formData.get('key') ?? '').trim();
+						return async ({ result, update }) => {
+							if (result.type !== 'success' || !newKey) {
+								await update();
+								return;
+							}
+							showCreate = false;
+							// Accumule dans ?created= : retrouver et traiter à la suite les tickets qu'on
+							// vient de saisir, sans repasser par update() (qui rechargerait la même URL —
+							// le goto ci-dessous s'en charge en un seul aller, avec le nouveau filtre).
+							const already = page.url.searchParams.get('created')?.split(',').filter(Boolean) ?? [];
+							const keys = already.includes(newKey) ? already : [...already, newKey];
+							const url = new URL(page.url);
+							// On repart d'une URL vierge plutôt que de garder les filtres actifs : sinon un
+							// état/projet/sprint/version déjà filtré masquerait silencieusement le ticket
+							// qu'on vient de créer. Et surtout, pas navigateWith() ici — son POST
+							// ?/rememberFilters écraserait les filtres mémorisés du compte (§ réglages) avec
+							// cette vue vidée, alors qu'elle n'est que temporaire.
+							url.search = '';
+							url.searchParams.set('created', keys.join(','));
+							await goto(url, { keepFocus: true, noScroll: true, invalidateAll: true });
+						};
+					}}
+				>
+					<div class="qc-row">
+						<div class="field qc-key"><label for="qc-key">Clé</label><input id="qc-key" name="key" placeholder="BLM-1234" use:autofocus required /></div>
+						<div class="field qc-title-f"><label for="qc-title">Titre</label><input id="qc-title" name="title" placeholder="Intitulé du ticket" required /></div>
+					</div>
+					<div class="qc-row3">
+						<div class="field"><label for="qc-project">Projet</label>
+							<select id="qc-project" name="projectId"><option value="">—</option>{#each data.ref.projects as p (p.id)}<option value={p.id}>{p.name}</option>{/each}</select>
+						</div>
+						<div class="field"><label for="qc-sprint">Sprint</label>
+							<select id="qc-sprint" name="sprintId"><option value="">—</option>{#each data.ref.sprints as s (s.id)}<option value={s.id}>{s.name}</option>{/each}</select>
+						</div>
+						<div class="field"><label for="qc-version">Version</label>
+							<select id="qc-version" name="versionId"><option value="">—</option>{#each data.ref.versions as v (v.id)}<option value={v.id}>{v.name}</option>{/each}</select>
+						</div>
+					</div>
+					<div class="actions-row">
+						<button type="button" class="btn btn-ghost" onclick={() => (showCreate = false)}>Annuler</button>
+						<button type="submit" class="btn btn-primary">Créer</button>
+					</div>
+				</form>
+			</div>
+		{/if}
+	</div>
 </div>
 
 <div class="content">
-	{#if form?.error}<div class="flash error">{form.error}</div>{/if}
-
-	{#if showCreate}
-		<div class="card create">
-			<form method="POST" action="?/create" use:enhance={() => async ({ update }) => { await update(); showCreate = false; }}>
-				<div class="grid2">
-					<div class="field"><label for="key">Clé</label><input id="key" name="key" placeholder="BLM-1234" use:autofocus required /></div>
-					<div class="field"><label for="title">Titre</label><input id="title" name="title" placeholder="Intitulé du ticket" required /></div>
-				</div>
-				<div class="grid4">
-					<div class="field"><label for="project">Projet</label>
-						<select id="project" name="projectId"><option value="">—</option>{#each data.ref.projects as p (p.id)}<option value={p.id}>{p.name}</option>{/each}</select>
-					</div>
-					<div class="field"><label for="sprint">Sprint</label>
-						<select id="sprint" name="sprintId"><option value="">—</option>{#each data.ref.sprints as s (s.id)}<option value={s.id}>{s.name}</option>{/each}</select>
-					</div>
-					<div class="field"><label for="version">Version</label>
-						<select id="version" name="versionId"><option value="">—</option>{#each data.ref.versions as v (v.id)}<option value={v.id}>{v.name}</option>{/each}</select>
-					</div>
-					<div class="field"><label for="state">État</label>
-						<select id="state" name="stateId"><option value="">—</option>{#each data.ref.states as s (s.id)}<option value={s.id}>{s.emoji} {s.label}</option>{/each}</select>
-					</div>
-				</div>
-				{#if data.canEditEstimation}
-					<div class="grid2">
-						<div class="field"><label for="er">Estimé</label><input id="er" name="estimationReal" type="number" step="0.25" min="0" /></div>
-						{#if data.testPhase}<div class="field"><label for="et">Est. Test</label><input id="et" name="estimationTest" type="number" step="0.25" min="0" /></div>{/if}
-					</div>
-				{/if}
-				<div class="grid2">
-					<div class="field"><span class="lbl">Code SSP</span><SspPicker ssps={data.ref.ssps} name="sspId" /></div>
-					{#if data.isAdmin}<div class="field"><label for="eprev">Estimation prévisionnel</label><input id="eprev" name="estimationPrev" type="number" step="0.25" min="0" /></div>{/if}
-				</div>
-				{#if data.isAdmin}
-					<div class="grid2">
-						<div class="field"><label for="env">Enveloppe totale</label><input id="env" name="enveloppeTotale" type="number" step="0.25" min="0" /></div>
-					</div>
-				{/if}
-				<div class="actions-row">
-					<button type="button" class="btn btn-ghost" onclick={() => (showCreate = false)}>Annuler</button>
-					<button type="submit" class="btn btn-primary">Créer</button>
-				</div>
-			</form>
-		</div>
-	{/if}
-
 	<div class="filters">
 		<!-- Recherche exclue du fieldset : elle reste tapable pendant qu'une frappe précédente
 		     est encore en vol (le goto suivant, debouncé, remplace l'ancien de toute façon). -->
@@ -703,7 +745,9 @@
 				<option value="priority">Trier : priorité</option>
 			</select>
 			{#if hasFilters}
-				<button class="reset-btn" onclick={resetFilters}>✕ Réinitialiser</button>
+				<button class="reset-btn" onclick={resetFilters}>
+					{data.filters.keys?.length ? '✕ Quitter « créés »' : '✕ Réinitialiser'}
+				</button>
 			{/if}
 		</fieldset>
 		{#if hasFilters && !ticketsLoading}<span class="count">{total} résultat{total > 1 ? 's' : ''}</span>{/if}
@@ -793,7 +837,7 @@
 										{:else}
 											<div class="key tabnum">{r.key}</div>
 										{/if}
-										<span class="priority-badge" class:high={r.priority <= 1} class:low={r.priority >= 3} title="Priorité P{r.priority}">P{r.priority}</span>
+										<span class="priority-badge" style="--pcolor:var(--priority-{r.priority})" title="Priorité P{r.priority}">P{r.priority}</span>
 										<select
 											class="cell-select state-select"
 											style={st?.color ? `color:${st.color};font-weight:600;` : ''}
@@ -1056,9 +1100,7 @@
 	{/if}
 </div>
 
-<svelte:window onkeydown={(e) => e.key === 'Escape' && (editId = null)} />
-
-{#if actionError}<ModalErrorToast message={actionError} />{/if}
+<svelte:window onkeydown={onGlobalKeydown} />
 
 {#if editRow}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1121,11 +1163,13 @@
 						onkeydown={(e) => onPriorityKey(e, editRow!)}
 					>
 						<div class="priority-track">
+							<div class="priority-scale"></div>
+							<div class="priority-mask" style="width:{100 - priorityPos(editRow.priority)}%"></div>
 							{#each [0, 1, 2, 3, 4] as n (n)}
 								<span class="priority-tick" style="left:{priorityPos(n)}%"></span>
 							{/each}
 						</div>
-						<div class="priority-thumb tabnum" style="left:{priorityPos(editRow.priority)}%">{editRow.priority}</div>
+						<div class="priority-thumb tabnum" style="left:{priorityPos(editRow.priority)}%; --pcolor:var(--priority-{editRow.priority})">{editRow.priority}</div>
 					</div>
 					<div class="priority-ends">
 						<span>← Backlog</span>
@@ -1207,32 +1251,115 @@
 {/if}
 
 <style>
-	.saved {
-		font-size: 12.5px;
-		font-weight: 600;
-		color: var(--accent);
-		background: var(--accent-tint-2);
-		padding: 6px 12px;
-		border-radius: 30px;
+	.new-ticket-wrap {
+		position: relative;
 	}
-	.create {
-		padding: 18px;
-		margin-bottom: 18px;
+	.shortcut-kbd {
+		display: inline-flex;
+		align-items: center;
+		font-family: ui-monospace, monospace;
+		font-size: 10.5px;
+		line-height: 1;
+		background: rgba(255, 255, 255, 0.22);
+		border: 1px solid rgba(255, 255, 255, 0.3);
+		border-radius: 4px;
+		padding: 2px 5px;
+		margin-left: 2px;
 	}
-	.grid2 {
+	/* Le glyphe ⇧ n'existe pas dans les polices monospace (cf. .shortcut-kbd) : le navigateur
+	   retombe sur une police système/emoji, plus fine et mal alignée à côté du "N". On le sort du
+	   monospace et on le regrossit pour qu'il porte le même poids visuel que la lettre. */
+	.shortcut-shift {
+		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+		font-size: 1.3em;
+		line-height: 1;
+		margin-right: 1px;
+	}
+	.qc-catch {
+		position: fixed;
+		inset: 0;
+		z-index: 40;
+	}
+	.qc-popover {
+		position: absolute;
+		top: calc(100% + 10px);
+		right: 0;
+		z-index: 41;
+		width: 560px;
+		max-width: calc(100vw - 32px);
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: var(--r-md);
+		box-shadow: var(--shadow-lg);
+		padding: 16px;
+	}
+	.qc-popover::before {
+		content: '';
+		position: absolute;
+		top: -7px;
+		right: 24px;
+		width: 12px;
+		height: 12px;
+		background: var(--surface);
+		border-left: 1px solid var(--border);
+		border-top: 1px solid var(--border);
+		transform: rotate(45deg);
+	}
+	.qc-popover .field {
+		margin-bottom: 12px;
+	}
+	.qc-row {
+		display: flex;
+		gap: 10px;
+	}
+	.qc-key {
+		width: 108px;
+		flex-shrink: 0;
+	}
+	.qc-title-f {
+		flex: 1;
+		min-width: 0;
+	}
+	.qc-row3 {
 		display: grid;
-		grid-template-columns: 180px 1fr;
-		gap: 14px;
-	}
-	.grid4 {
-		display: grid;
-		grid-template-columns: repeat(4, 1fr);
-		gap: 14px;
+		grid-template-columns: 1fr 1fr 1fr;
+		gap: 10px;
 	}
 	@media (max-width: 640px) {
-		.grid2,
-		.grid4 {
+		/* Pas de clavier physique fiable sur mobile — le badge n'a plus lieu d'être. */
+		.shortcut-kbd {
+			display: none;
+		}
+		.qc-row3 {
 			grid-template-columns: 1fr;
+		}
+		.qc-row {
+			flex-direction: column;
+		}
+		.qc-key {
+			width: 100%;
+		}
+		/* En dessous de 640px, la piste "ancrée sous le bouton" (position: absolute relative à
+		   .new-ticket-wrap) déborde trop souvent de l'écran une fois la topbar repliée sur
+		   plusieurs lignes — repli sur une présentation centrée façon modal (même idée que
+		   .tk-backdrop/.tk-modal), position: fixed donc indépendante de la position réelle du
+		   bouton. */
+		.qc-catch {
+			background: rgba(0, 0, 0, 0.45);
+		}
+		.qc-popover {
+			position: fixed;
+			top: 50%;
+			left: 50%;
+			right: auto;
+			transform: translate(-50%, -50%);
+			width: calc(100vw - 32px);
+			max-width: 420px;
+			max-height: calc(100vh - 32px);
+			overflow-y: auto;
+		}
+		.qc-popover::before {
+			display: none;
 		}
 	}
 	.actions-row {
@@ -1657,11 +1784,35 @@
 		height: 7px;
 		transform: translateY(-50%);
 		border-radius: 20px;
-		/* Échelle "température" fixe (froid = pas urgent, chaud = urgent), volontairement
-		   indépendante de la couleur d'accent de l'espace — un rouge doit rester lisible comme
-		   "urgent" même sur un espace dont l'accent est justement rouge/orange. */
-		background: linear-gradient(90deg, #3b82f6, #ef4444);
+		background: var(--surface-sunk);
 		border: 1px solid var(--border);
+		overflow: hidden;
+	}
+	.priority-scale {
+		position: absolute;
+		inset: 0;
+		/* 5 teintes fixes, une par palier (P4 Backlog -> P0 Urgent), volontairement indépendantes
+		   de la couleur d'accent de l'espace — voir --priority-0..4 dans app.css. Arrêts posés
+		   exactement aux positions des ticks/du thumb (priorityPos : 0/25/50/75/100 %) : un dégradé
+		   lissé entre eux plutôt que des bandes franches, sinon les coupures ne tombent jamais
+		   pile sur les points (un partage en tranches égales de 20 % ne les centre pas dessus).
+		   Le badge liste (P{n}) reste lui en aplat, sur cette même couleur exacte à son cran. */
+		background: linear-gradient(
+			90deg,
+			var(--priority-4) 0%,
+			var(--priority-3) 25%,
+			var(--priority-2) 50%,
+			var(--priority-1) 75%,
+			var(--priority-0) 100%
+		);
+	}
+	.priority-mask {
+		/* Cache la portion pas encore "atteinte" (côté urgent) — l'échelle ne se révèle donc
+		   qu'au fil du curseur, plutôt que d'être toujours affichée en entier. */
+		position: absolute;
+		inset: 0 0 0 auto;
+		background: var(--surface-sunk);
+		transition: width 0.15s ease;
 	}
 	.priority-tick {
 		position: absolute;
@@ -1681,8 +1832,10 @@
 		margin-left: -10px;
 		border-radius: 50%;
 		background: var(--surface);
-		border: 2px solid var(--text);
-		color: var(--text);
+		/* --pcolor posé inline (couleur du palier courant, cf. --priority-0..4 dans app.css) —
+		   même logique que .priority-badge, pour que le thumb annonce sa propre couleur. */
+		border: 2px solid var(--pcolor);
+		color: var(--pcolor);
 		font-size: 10.5px;
 		font-weight: 700;
 		display: flex;
@@ -1695,7 +1848,7 @@
 	}
 	.priority-slider:focus-visible .priority-thumb {
 		box-shadow:
-			0 0 0 3px color-mix(in srgb, var(--text) 35%, transparent),
+			0 0 0 3px color-mix(in srgb, var(--pcolor) 35%, transparent),
 			var(--shadow-sm);
 	}
 	.priority-badge {
@@ -1703,16 +1856,11 @@
 		font-weight: 700;
 		padding: 1px 5px;
 		border-radius: 4px;
-		color: var(--text-mute);
-		background: var(--surface-2);
+		/* --pcolor posé inline par priorité (voir --priority-0..4, app.css) — même couleur que la
+		   bande correspondante du slider. */
+		color: var(--pcolor);
+		background: color-mix(in srgb, var(--pcolor) 18%, var(--surface-2));
 		flex-shrink: 0;
-	}
-	.priority-badge.high {
-		color: var(--warn);
-		background: var(--warn-tint);
-	}
-	.priority-badge.low {
-		opacity: 0.6;
 	}
 	.consumed {
 		font-weight: 700;

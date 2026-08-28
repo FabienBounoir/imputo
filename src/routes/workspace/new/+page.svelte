@@ -1,6 +1,10 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { toast } from 'svelte-sonner';
 	let { form } = $props();
+	$effect(() => {
+		if (form?.error) toast.error(form.error);
+	});
 </script>
 
 <div class="auth-wrap">
@@ -15,8 +19,6 @@
 		</div>
 		<h2>Nouvel espace</h2>
 		<p class="sub">Crée un espace de travail isolé dont tu seras administrateur.</p>
-
-		{#if form?.error}<div class="flash error">{form.error}</div>{/if}
 
 		<form method="POST" use:enhance>
 			<div class="field">
