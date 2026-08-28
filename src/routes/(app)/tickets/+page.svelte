@@ -793,9 +793,7 @@
 										{:else}
 											<div class="key tabnum">{r.key}</div>
 										{/if}
-										{#if r.priority !== 2}
-											<span class="priority-badge" class:high={r.priority <= 1} class:low={r.priority >= 3} title="Priorité P{r.priority}">P{r.priority}</span>
-										{/if}
+										<span class="priority-badge" class:high={r.priority <= 1} class:low={r.priority >= 3} title="Priorité P{r.priority}">P{r.priority}</span>
 										<select
 											class="cell-select state-select"
 											style={st?.color ? `color:${st.color};font-weight:600;` : ''}
@@ -1123,9 +1121,8 @@
 						onkeydown={(e) => onPriorityKey(e, editRow!)}
 					>
 						<div class="priority-track">
-							<div class="priority-fill" style="width:{priorityPos(editRow.priority)}%"></div>
 							{#each [0, 1, 2, 3, 4] as n (n)}
-								<span class="priority-tick" class:filled={n >= editRow.priority} style="left:{priorityPos(n)}%"></span>
+								<span class="priority-tick" style="left:{priorityPos(n)}%"></span>
 							{/each}
 						</div>
 						<div class="priority-thumb tabnum" style="left:{priorityPos(editRow.priority)}%">{editRow.priority}</div>
@@ -1654,25 +1651,17 @@
 		   la transition ne sert qu'aux sauts par clic/clavier. */
 		transition: none;
 	}
-	.priority-slider:active .priority-fill {
-		transition: none;
-	}
 	.priority-track {
 		position: absolute;
 		inset: 50% 0 auto 0;
 		height: 7px;
 		transform: translateY(-50%);
 		border-radius: 20px;
-		background: var(--surface-sunk);
+		/* Échelle "température" fixe (froid = pas urgent, chaud = urgent), volontairement
+		   indépendante de la couleur d'accent de l'espace — un rouge doit rester lisible comme
+		   "urgent" même sur un espace dont l'accent est justement rouge/orange. */
+		background: linear-gradient(90deg, #3b82f6, #ef4444);
 		border: 1px solid var(--border);
-	}
-	.priority-fill {
-		position: absolute;
-		inset: 0 auto 0 0;
-		height: 100%;
-		border-radius: 20px;
-		background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 70%, #000), var(--accent));
-		transition: width 0.15s ease;
 	}
 	.priority-tick {
 		position: absolute;
@@ -1680,16 +1669,9 @@
 		width: 5px;
 		height: 5px;
 		border-radius: 50%;
-		background: var(--surface);
-		border: 1px solid var(--border-strong);
+		background: rgba(255, 255, 255, 0.85);
+		border: 1px solid rgba(0, 0, 0, 0.2);
 		transform: translate(-50%, -50%);
-		transition:
-			background 0.15s ease,
-			border-color 0.15s ease;
-	}
-	.priority-tick.filled {
-		background: var(--accent-ink);
-		border-color: transparent;
 	}
 	.priority-thumb {
 		position: absolute;
@@ -1699,8 +1681,8 @@
 		margin-left: -10px;
 		border-radius: 50%;
 		background: var(--surface);
-		border: 2px solid var(--accent);
-		color: var(--accent-ink);
+		border: 2px solid var(--text);
+		color: var(--text);
 		font-size: 10.5px;
 		font-weight: 700;
 		display: flex;
@@ -1713,7 +1695,7 @@
 	}
 	.priority-slider:focus-visible .priority-thumb {
 		box-shadow:
-			0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent),
+			0 0 0 3px color-mix(in srgb, var(--text) 35%, transparent),
 			var(--shadow-sm);
 	}
 	.priority-badge {
