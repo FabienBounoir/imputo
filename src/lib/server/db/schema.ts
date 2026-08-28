@@ -185,6 +185,9 @@ export const user = pgTable('user', {
 	compactTicketActivity: boolean('compact_ticket_activity').notNull().default(true),
 	// Bandeau de citations motivantes en haut des pages (rotation toutes les 30 s).
 	motivationBanner: boolean('motivation_banner').notNull().default(true),
+	// Null = jamais vu le tutoriel de prise en main (déclenche le lancement auto au prochain
+	// chargement). Rejouable depuis Réglages sans repasser par null (juste relancé côté client).
+	tutorialSeenAt: timestamp('tutorial_seen_at'),
 	active: boolean('active').notNull().default(true),
 	createdAt: createdAt()
 });

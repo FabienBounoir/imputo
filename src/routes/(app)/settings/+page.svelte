@@ -16,6 +16,7 @@
 	import { setTheme, storedTheme, type ThemePref } from '$lib/theme';
 	import { seasonalState, setSeasonalEnabled, setForcedEffect, activeSeasonalEffects, SEASONAL_EFFECTS } from '$lib/seasonal.svelte';
 	import { konamiState } from '$lib/konami.svelte';
+	import { requestTourReplay } from '$lib/tour/tourState.svelte';
 	import AccentPicker from '$lib/components/AccentPicker.svelte';
 	import PasswordField from '$lib/components/PasswordField.svelte';
 
@@ -162,6 +163,16 @@
 </div>
 
 <div class="content settings">
+	<section class="card block">
+		<div class="opt">
+			<div class="opt-t">
+				<b>Tutoriel de prise en main</b>
+				<span class="hint">Revoir la visite guidée de l'appli, adaptée à ton rôle actuel.</span>
+			</div>
+			<button type="button" class="btn btn-ghost" onclick={requestTourReplay}>Revoir le tutoriel</button>
+		</div>
+	</section>
+
 	<div class="tabs">
 		{#each TABS as t (t.key)}
 			<button type="button" class:on={tab === t.key} onclick={() => (tab = t.key)}>{t.label}</button>

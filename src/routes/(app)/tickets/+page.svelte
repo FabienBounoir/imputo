@@ -566,7 +566,7 @@
 		<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="3" width="12" height="8" rx="1.5"/><path d="M12 17v-6M9 14l3 3 3-3"/><path d="M3 15v4a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4"/></svg>
 		Exporter Excel
 	</a>
-	<button class="btn btn-primary" onclick={() => (showCreate = !showCreate)}>
+	<button class="btn btn-primary" data-tour="tickets-new" onclick={() => (showCreate = !showCreate)}>
 		<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg>
 		Nouveau ticket
 	</button>

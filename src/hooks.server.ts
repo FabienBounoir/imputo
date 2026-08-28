@@ -30,7 +30,8 @@ export const handle: Handle = async ({ event, resolve }) => {
 				accentMode: user.accentMode,
 				accentColor: user.accentColor,
 				sortActivitiesAlpha: user.sortActivitiesAlpha,
-				motivationBanner: user.motivationBanner
+				motivationBanner: user.motivationBanner,
+				tutorialSeenAt: user.tutorialSeenAt
 			};
 
 			const memberships = await listMembershipsForUser(user.id);

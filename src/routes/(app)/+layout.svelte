@@ -5,6 +5,7 @@
 	import { invalidateAll, goto } from '$app/navigation';
 	import { beep } from '$lib/sound';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+	import TourHost from '$lib/components/TourHost.svelte';
 	import NotificationPromptModal from '$lib/components/NotificationPromptModal.svelte';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
 	import Snow from '$lib/components/Snow.svelte';
@@ -226,7 +227,7 @@
 		<a class="nav-item" class:active={isActive('/absences')} href="/absences">
 			<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="18" rx="3"/><path d="M3 10h18M8 2v4M16 2v4"/><path d="m8.5 15 2 2 4-4"/></svg>
 			Absences
-			{#if (data.role === 'ADMIN' || data.role === 'MANAGER') && data.pendingAbsencesCount > 0}
+			{#if data.role === 'ADMIN' && data.pendingAbsencesCount > 0}
 				<span class="badge" title="Congés en attente de validation">{data.pendingAbsencesCount}</span>
 			{/if}
 		</a>
@@ -328,7 +329,7 @@
 
 		<div class="side-foot">
 			<div class="user-card">
-				<a class="user-main" href="/settings" title="Réglages">
+				<a class="user-main" href="/settings" title="Réglages" data-tour="user-menu">
 					<UserAvatar userId={data.user?.id} name={data.user?.displayName ?? '?'} />
 					<div class="um">
 					<b>{data.user?.displayName}</b>
@@ -361,6 +362,12 @@
 </div>
 
 <ConfirmDialog />
+<TourHost
+	role={data.role}
+	moodEnabled={data.workspace?.moodEnabled ?? false}
+	wrappedAvailable={data.wrappedAvailable}
+	tutorialSeenAt={data.user?.tutorialSeenAt ?? null}
+/>
 <NotificationPromptModal vapidPublicKey={data.vapidPublicKey} />
 <CommandPalette bind:this={commandPalette} {data} />
 {#if seasonalVisible && seasonalIds.has('christmas')}<Snow />{/if}
