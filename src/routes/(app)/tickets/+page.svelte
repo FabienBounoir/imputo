@@ -490,10 +490,18 @@
 		row.priority = v;
 		save(row, 'priority', v);
 	}
+	// Piste inversée (0/Urgent à droite, 4/Backlog à gauche — voir priorityPos) : un ratio proche
+	// de 0 (curseur à gauche) doit donc renvoyer une valeur proche de 4, pas de 0.
 	function priorityValueAt(e: PointerEvent, el: HTMLElement) {
 		const rect = el.getBoundingClientRect();
 		const ratio = (e.clientX - rect.left) / rect.width;
-		return Math.min(1, Math.max(0, ratio)) * 4;
+		return 4 - Math.min(1, Math.max(0, ratio)) * 4;
+	}
+	// Position sur la piste (gauche en %) pour une valeur donnée — inversée par rapport au chiffre :
+	// 0 (Urgent) est l'extrémité droite (100%), 4 (Backlog) l'extrémité gauche (0%). Utilisée à la
+	// fois pour le thumb, le remplissage et les ticks, qui doivent donc tous rester synchronisés.
+	function priorityPos(v: number): number {
+		return (4 - v) * 25;
 	}
 	// setPointerCapture route tous les pointermove/pointerup suivants vers CET élément même si le
 	// curseur sort du petit rectangle du slider pendant le drag — sans ça, un mouvement un peu trop
@@ -507,13 +515,15 @@
 		if (e.buttons !== 1) return; // pas de bouton enfoncé : pas un drag en cours
 		setPriority(row, priorityValueAt(e, e.currentTarget as HTMLElement));
 	}
+	// Piste inversée (cf. priorityPos) : la flèche droite doit rapprocher le thumb de l'extrémité
+	// droite (0/Urgent), donc décrémenter — pas incrémenter comme sur une piste "normale".
 	function onPriorityKey(e: KeyboardEvent, row: Row) {
 		if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
 			e.preventDefault();
-			setPriority(row, row.priority + 1);
+			setPriority(row, row.priority - 1);
 		} else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
 			e.preventDefault();
-			setPriority(row, row.priority - 1);
+			setPriority(row, row.priority + 1);
 		}
 	}
 	// Saisie d'une estimation : pré-remplit le RAE correspondant s'il est encore vide
@@ -1104,7 +1114,7 @@
 						class="priority-slider"
 						role="slider"
 						tabindex="0"
-						aria-label="Priorité (0 à 4)"
+						aria-label="Priorité, de 4 (Backlog, le moins urgent) à 0 (Urgent, le plus urgent)"
 						aria-valuemin="0"
 						aria-valuemax="4"
 						aria-valuenow={editRow.priority}
@@ -1113,12 +1123,16 @@
 						onkeydown={(e) => onPriorityKey(e, editRow!)}
 					>
 						<div class="priority-track">
-							<div class="priority-fill" style="width:{editRow.priority * 25}%"></div>
+							<div class="priority-fill" style="width:{priorityPos(editRow.priority)}%"></div>
 							{#each [0, 1, 2, 3, 4] as n (n)}
-								<span class="priority-tick" class:filled={n <= editRow.priority} style="left:{n * 25}%"></span>
+								<span class="priority-tick" class:filled={n >= editRow.priority} style="left:{priorityPos(n)}%"></span>
 							{/each}
 						</div>
-						<div class="priority-thumb tabnum" style="left:{editRow.priority * 25}%">{editRow.priority}</div>
+						<div class="priority-thumb tabnum" style="left:{priorityPos(editRow.priority)}%">{editRow.priority}</div>
+					</div>
+					<div class="priority-ends">
+						<span>← Backlog</span>
+						<span>Urgent →</span>
 					</div>
 				</div>
 				<label class="dfield"><span>Estimé</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationReal} disabled={!data.canEditEstimation || editRow.hasActivityEstimation} title={editRow.hasActivityEstimation ? "Estimé = compilation des Estimés par activité ci-dessous (non éditable ici)" : estTitle} onchange={() => debouncedSave(`est-${editRow!.id}-real`, () => saveEst(editRow!, 'real'))} /></label>
@@ -1616,6 +1630,20 @@
 		/* Le navigateur ne doit pas interpréter un drag vertical comme un scroll de page pendant
 		   qu'on tient le thumb (tactile) — cf. onPriorityPointerMove. */
 		touch-action: none;
+		/* Sans ça, un drag un peu lent sélectionne le chiffre affiché dans le thumb comme du texte
+		   (surbrillance bleue disgracieuse) au lieu de juste déplacer le curseur. */
+		user-select: none;
+		-webkit-user-select: none;
+	}
+	.priority-ends {
+		display: flex;
+		justify-content: space-between;
+		margin-top: 2px;
+		font-size: 9.5px;
+		font-weight: 600;
+		color: var(--text-mute);
+		text-transform: uppercase;
+		letter-spacing: 0.02em;
 	}
 	.priority-slider:active {
 		cursor: grabbing;
