@@ -2,10 +2,11 @@
 	import { goto } from '$app/navigation';
 	import { setTheme } from '$lib/theme';
 	import { todayInParis, monthBounds } from '$lib/utils/date';
+	import { requestTourReplay } from '$lib/tour/tourState.svelte';
 
 	type LayoutData = {
 		role: 'ADMIN' | 'MANAGER' | 'USER' | null;
-		workspace: { workspaceId: string; moodEnabled: boolean } | null;
+		workspace: { workspaceId: string; moodEnabled: boolean; supportEnabled: boolean } | null;
 		memberships: { workspaceId: string; workspaceName: string }[];
 	};
 	let { data }: { data: LayoutData } = $props();
@@ -52,6 +53,7 @@
 		nav('Mon imputation', '/imputation', '🗓️');
 		nav('Tickets & chiffrage', '/tickets', '🎫');
 		nav('Absences', '/absences', '🌴');
+		if (data.workspace?.supportEnabled) nav('Support', '/support', '🛟');
 		if (data.workspace?.moodEnabled) nav('Team mood', '/mood', '🙂');
 		nav('Synthèse', '/dashboard', '📊');
 		nav('Synthèse par version', '/dashboard/version', '📦');
@@ -60,6 +62,8 @@
 		if (data.role === 'ADMIN' && data.workspace?.moodEnabled) nav('Résultats Team mood', '/admin/mood', '🙂');
 		if (data.role === 'ADMIN') {
 			nav('Paramètres & membres', '/admin', '⚙️');
+			nav('Clôture mensuelle', '/admin/cloture', '📁');
+			nav('Suivi annuel', '/admin/suivi-annuel', '📈');
 			nav('Historique', '/admin/history', '🕘');
 		}
 		nav('Réglages', '/settings', '👤');
@@ -68,6 +72,8 @@
 		cmds.push({ id: 'theme-dark', label: 'Thème sombre', icon: '🌙', group: 'Actions', run: () => setTheme('dark') });
 		cmds.push({ id: 'theme-system', label: 'Thème système', icon: '💻', group: 'Actions', run: () => setTheme('system') });
 		cmds.push({ id: 'new-ticket', label: 'Nouveau ticket', icon: '➕', group: 'Actions', run: () => goto('/tickets?new=1') });
+		cmds.push({ id: 'new-absence', label: 'Déclarer une absence', icon: '🌴', group: 'Actions', run: () => goto('/absences?declare=1') });
+		cmds.push({ id: 'replay-tour', label: 'Revoir le tutoriel', icon: '🧭', group: 'Actions', run: requestTourReplay });
 		cmds.push({
 			id: 'export-month',
 			label: 'Exporter Excel (mois en cours)',
