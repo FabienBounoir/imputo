@@ -108,6 +108,9 @@ export type JiraIssue = {
 	/** Dernière entrée du customfield Sprint (Jira ajoute en fin de tableau à chaque déplacement de
 	 *  sprint, donc la dernière est la plus récente) — voir parseSprintName ci-dessous. */
 	sprintName: string | null;
+	/** fields.priority.name brut (ex. "Urgent", "Haute"…) — mappé vers l'échelle locale 0-4 par
+	 *  resolveJiraPriority (jiraSync.ts), pas ici : ce module ne fait que du parsing brut. */
+	priorityName: string | null;
 };
 
 // Sprint = champ custom du plugin Jira Software (Greenhopper), spécifique à cette instance —
@@ -126,6 +129,7 @@ type JiraSearchResponse = {
 			parent?: { key: string };
 			project?: { name: string };
 			fixVersions?: Array<{ name: string }>;
+			priority?: { name: string };
 			// Champ custom, clé dynamique (SPRINT_CUSTOM_FIELD_ID) — voir parseSprintName.
 			[customFieldId: string]: unknown;
 		};
@@ -181,7 +185,7 @@ export async function searchJiraIssues(
 		url.searchParams.set('jql', jql);
 		url.searchParams.set('startAt', String(startAt));
 		url.searchParams.set('maxResults', String(PAGE_SIZE));
-		url.searchParams.set('fields', `summary,issuetype,parent,project,fixVersions,${SPRINT_CUSTOM_FIELD_ID}`);
+		url.searchParams.set('fields', `summary,issuetype,parent,project,fixVersions,priority,${SPRINT_CUSTOM_FIELD_ID}`);
 
 		const { status, body, text } = await fetchJson<JiraSearchResponse>(fetchImpl, url.toString(), {
 			headers: { JTOKEN: `Bearer ${pat}`, Authorization: `Bearer ${azureToken}` }
@@ -204,7 +208,8 @@ export async function searchJiraIssues(
 				parentKey: issue.fields.parent?.key ?? null,
 				projectName: issue.fields.project?.name ?? '',
 				versionName: issue.fields.fixVersions?.at(-1)?.name ?? null,
-				sprintName: sprintEntries.length > 0 ? parseSprintName(sprintEntries[sprintEntries.length - 1]) : null
+				sprintName: sprintEntries.length > 0 ? parseSprintName(sprintEntries[sprintEntries.length - 1]) : null,
+				priorityName: issue.fields.priority?.name ?? null
 			});
 		}
 

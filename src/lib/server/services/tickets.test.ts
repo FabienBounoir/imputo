@@ -104,24 +104,24 @@ describe('updateTicketField — permissions par rôle', () => {
 		);
 	});
 
-	it('priority : vaut 2 par défaut à la création, éditable par un USER, rejette hors 0-5', async () => {
+	it('priority : vaut 2 (Normal) par défaut à la création, éditable par un USER, rejette hors 0-4', async () => {
 		const { workspaceId, userId } = await makeWorkspace();
 		const t = await createTicket(workspaceId, { key: 'T-PRIO', title: 'x' });
 		const [created] = await listTickets(workspaceId).then((rows) => rows.filter((r) => r.id === t.id));
 		expect(created.priority).toBe(2);
 
-		await updateTicketField(workspaceId, t.id, 'priority', '5', 'USER', userId);
+		await updateTicketField(workspaceId, t.id, 'priority', '0', 'USER', userId);
 		const [updated] = await listTickets(workspaceId).then((rows) => rows.filter((r) => r.id === t.id));
-		expect(updated.priority).toBe(5);
+		expect(updated.priority).toBe(0);
 
-		await expect(updateTicketField(workspaceId, t.id, 'priority', '6', 'USER', userId)).rejects.toThrow(
-			'Priorité invalide (0 à 5).'
+		await expect(updateTicketField(workspaceId, t.id, 'priority', '5', 'USER', userId)).rejects.toThrow(
+			'Priorité invalide (0 à 4).'
 		);
 		await expect(updateTicketField(workspaceId, t.id, 'priority', '-1', 'USER', userId)).rejects.toThrow(
-			'Priorité invalide (0 à 5).'
+			'Priorité invalide (0 à 4).'
 		);
 		await expect(updateTicketField(workspaceId, t.id, 'priority', '2.5', 'USER', userId)).rejects.toThrow(
-			'Priorité invalide (0 à 5).'
+			'Priorité invalide (0 à 4).'
 		);
 	});
 
@@ -336,12 +336,12 @@ describe('deleteUntouchedSyncedTickets', () => {
 		expect((await listTicketsPage(workspaceId, true, true, {})).total).toBe(3);
 	});
 
-	it('listTicketsPage: sort=priority ordonne par priorité décroissante', async () => {
+	it('listTicketsPage: sort=priority ordonne du plus urgent (P0) au moins urgent', async () => {
 		const { workspaceId } = await makeWorkspace();
 		await db.insert(ticket).values([
-			{ workspaceId, key: 'PRIO-LOW', title: 'Basse', priority: 0 },
-			{ workspaceId, key: 'PRIO-HIGH', title: 'Haute', priority: 5 },
-			{ workspaceId, key: 'PRIO-MID', title: 'Défaut' } // priority: default 2
+			{ workspaceId, key: 'PRIO-LOW', title: 'Backlog', priority: 4 },
+			{ workspaceId, key: 'PRIO-HIGH', title: 'Urgent', priority: 0 },
+			{ workspaceId, key: 'PRIO-MID', title: 'Défaut' } // priority: default 2 (Normal)
 		]);
 
 		const byPriority = await listTicketsPage(workspaceId, true, true, {}, undefined, true, 'priority');

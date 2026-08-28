@@ -37,6 +37,25 @@ const MAX_CONSECUTIVE_AUTH_FAILURES = 5;
 // comportement réel de l'instance confirmé (voir formatJqlDateTime).
 export const WATERMARK_SAFETY_MARGIN_MS = 3 * 60 * 60 * 1000;
 
+// Mapping fixe nom Jira -> échelle locale (0 = P0/Urgent … 4 = P4/Backlog), pas de découverte
+// dynamique — même choix que SPRINT_CUSTOM_FIELD_ID (jiraClient.ts), YAGNI tant qu'une seule
+// instance Jira est visée. Comparaison insensible à la casse/espaces (noms saisis à la main côté
+// Jira, mieux vaut tolérer une variante que perdre silencieusement le mapping).
+const JIRA_PRIORITY_MAP: Record<string, number> = {
+	urgent: 0,
+	haute: 1,
+	normal: 2,
+	faible: 3,
+	backlog: 4
+};
+
+/** undefined = nom absent ou non reconnu : le champ n'est alors simplement pas touché par le sync
+ *  (comme project/sprint/version quand la résolution échoue), jamais une valeur devinée. */
+function resolveJiraPriority(name: string | null): number | undefined {
+	if (!name) return undefined;
+	return JIRA_PRIORITY_MAP[name.trim().toLowerCase()];
+}
+
 function errorMessage(err: unknown): string {
 	return err instanceof Error ? err.message : String(err);
 }
@@ -225,16 +244,20 @@ export async function syncWorkspace(
 				const versionId = ws.jiraSyncVersion && issue.versionName ? await findOrCreateSprintRow('VERSION', issue.versionName) : null;
 				const sprintId = ws.jiraSyncSprint && issue.sprintName ? await findOrCreateSprintRow('SPRINT', issue.sprintName) : null;
 
+				const priority = ws.jiraSyncPriority ? resolveJiraPriority(issue.priorityName) : undefined;
+
 				const insertValues: typeof ticket.$inferInsert = { workspaceId, key, title: issue.summary };
 				if (ws.jiraSyncProject) insertValues.projectId = projectId;
 				if (ws.jiraSyncSprint) insertValues.sprintId = sprintId;
 				if (ws.jiraSyncVersion) insertValues.versionId = versionId;
+				if (priority !== undefined) insertValues.priority = priority;
 
 				const updateSet: Partial<typeof ticket.$inferInsert> = { updatedAt: new Date() };
 				if (ws.jiraSyncTitle) updateSet.title = issue.summary;
 				if (ws.jiraSyncProject) updateSet.projectId = projectId;
 				if (ws.jiraSyncSprint) updateSet.sprintId = sprintId;
 				if (ws.jiraSyncVersion) updateSet.versionId = versionId;
+				if (priority !== undefined) updateSet.priority = priority;
 
 				const [r] = await tx
 					.insert(ticket)
@@ -267,10 +290,12 @@ export async function syncWorkspace(
 					const projectId = ws.jiraSyncProject && issue.projectName ? await findOrCreateProjectByName(issue.projectName) : null;
 					const versionId = ws.jiraSyncVersion && issue.versionName ? await findOrCreateSprintRow('VERSION', issue.versionName) : null;
 					const sprintId = ws.jiraSyncSprint && issue.sprintName ? await findOrCreateSprintRow('SPRINT', issue.sprintName) : null;
+					const priority = ws.jiraSyncPriority ? resolveJiraPriority(issue.priorityName) : undefined;
 					const extra: Partial<typeof ticket.$inferInsert> = {};
 					if (ws.jiraSyncProject) extra.projectId = projectId;
 					if (ws.jiraSyncSprint) extra.sprintId = sprintId;
 					if (ws.jiraSyncVersion) extra.versionId = versionId;
+					if (priority !== undefined) extra.priority = priority;
 					if (Object.keys(extra).length > 0) await tx.update(ticket).set(extra).where(eq(ticket.id, inserted.id));
 					row = inserted;
 				} else {

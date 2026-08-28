@@ -22,6 +22,7 @@ type RawIssue = {
 		parent?: { key: string };
 		project?: { name: string };
 		fixVersions?: Array<{ name: string }>;
+		priority?: { name: string };
 		customfield_10105?: string[];
 	};
 };
@@ -29,7 +30,7 @@ type RawIssue = {
 function rawIssue(
 	key: string,
 	summary: string,
-	opts?: { parentKey?: string; projectName?: string; versionName?: string; sprintName?: string }
+	opts?: { parentKey?: string; projectName?: string; versionName?: string; sprintName?: string; priorityName?: string }
 ): RawIssue {
 	return {
 		key,
@@ -39,6 +40,7 @@ function rawIssue(
 			...(opts?.parentKey ? { parent: { key: opts.parentKey } } : {}),
 			project: { name: opts?.projectName ?? 'Projet Test' },
 			...(opts?.versionName ? { fixVersions: [{ name: opts.versionName }] } : {}),
+			...(opts?.priorityName ? { priority: { name: opts.priorityName } } : {}),
 			...(opts?.sprintName
 				? { customfield_10105: [`com.atlassian.greenhopper.service.sprint.Sprint@x[name=${opts.sprintName},state=ACTIVE]`] }
 				: {})
@@ -82,6 +84,7 @@ async function makeJiraWorkspace(opts?: {
 	syncParent?: boolean;
 	syncSprint?: boolean;
 	syncVersion?: boolean;
+	syncPriority?: boolean;
 }) {
 	const ws = await makeWorkspace('jira');
 	await db
@@ -97,7 +100,8 @@ async function makeJiraWorkspace(opts?: {
 			...(opts?.syncProject !== undefined ? { jiraSyncProject: opts.syncProject } : {}),
 			...(opts?.syncParent !== undefined ? { jiraSyncParent: opts.syncParent } : {}),
 			...(opts?.syncSprint !== undefined ? { jiraSyncSprint: opts.syncSprint } : {}),
-			...(opts?.syncVersion !== undefined ? { jiraSyncVersion: opts.syncVersion } : {})
+			...(opts?.syncVersion !== undefined ? { jiraSyncVersion: opts.syncVersion } : {}),
+			...(opts?.syncPriority !== undefined ? { jiraSyncPriority: opts.syncPriority } : {})
 		})
 		.where(eq(workspace.id, ws.workspaceId));
 	return ws;
@@ -363,6 +367,58 @@ describe('jiraSync / syncWorkspace', () => {
 			expect(row.sprintId).toBeNull();
 			expect(row.versionId).toBeNull();
 			expect(await db.select().from(sprint).where(eq(sprint.workspaceId, ws.workspaceId))).toHaveLength(0); // pas créés pour rien
+		});
+
+		it('mapping priorité Jira -> échelle locale, insensible à la casse/espaces', async () => {
+			const ws = await makeJiraWorkspace();
+			await syncWorkspace(db, cfg, ws.workspaceId, {
+				fetchImpl: fakeFetch({
+					issues: [
+						rawIssue('T-1', 'A', { priorityName: 'Urgent' }),
+						rawIssue('T-2', 'B', { priorityName: ' backlog ' })
+					]
+				})
+			});
+
+			const rows = await ticketsOf(ws.workspaceId);
+			expect(rows.find((r) => r.key === 'T-1')?.priority).toBe(0);
+			expect(rows.find((r) => r.key === 'T-2')?.priority).toBe(4);
+		});
+
+		it('nom de priorité Jira non reconnu (ou absent) : le ticket garde la priorité par défaut', async () => {
+			const ws = await makeJiraWorkspace();
+			await syncWorkspace(db, cfg, ws.workspaceId, {
+				fetchImpl: fakeFetch({ issues: [rawIssue('T-1', 'A', { priorityName: 'Critical' }), rawIssue('T-2', 'B')] })
+			});
+
+			const rows = await ticketsOf(ws.workspaceId);
+			expect(rows.find((r) => r.key === 'T-1')?.priority).toBe(2);
+			expect(rows.find((r) => r.key === 'T-2')?.priority).toBe(2);
+		});
+
+		it('jiraSyncPriority=false : la priorité Jira est ignorée même à la création', async () => {
+			const ws = await makeJiraWorkspace({ syncPriority: false });
+			await syncWorkspace(db, cfg, ws.workspaceId, {
+				fetchImpl: fakeFetch({ issues: [rawIssue('T-1', 'A', { priorityName: 'Urgent' })] })
+			});
+
+			const [row] = await ticketsOf(ws.workspaceId);
+			expect(row.priority).toBe(2);
+		});
+
+		it('JIRA_WINS : un changement de priorité côté Jira écrase la valeur locale', async () => {
+			const ws = await makeJiraWorkspace({ conflictStrategy: 'JIRA_WINS' });
+			await syncWorkspace(db, cfg, ws.workspaceId, {
+				fetchImpl: fakeFetch({ issues: [rawIssue('T-1', 'A', { priorityName: 'Faible' })] })
+			});
+			const [before] = await ticketsOf(ws.workspaceId);
+			expect(before.priority).toBe(3);
+
+			await syncWorkspace(db, cfg, ws.workspaceId, {
+				fetchImpl: fakeFetch({ issues: [rawIssue('T-1', 'A', { priorityName: 'Urgent' })] })
+			});
+			const [after] = await ticketsOf(ws.workspaceId);
+			expect(after.priority).toBe(0);
 		});
 
 		it('jiraSyncParent=false : le lien parent n’est jamais résolu, même présent sur l’issue', async () => {

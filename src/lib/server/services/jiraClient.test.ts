@@ -133,7 +133,8 @@ describe('jiraClient / searchJiraIssues', () => {
 			parentKey: 'BLM-1',
 			projectName: 'Application Mobile',
 			versionName: null,
-			sprintName: null
+			sprintName: null,
+			priorityName: null
 		});
 	});
 

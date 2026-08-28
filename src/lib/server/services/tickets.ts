@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, notExists, or, ilike, sql, count, desc } from 'drizzle-orm';
+import { and, eq, inArray, isNull, notExists, or, ilike, sql, count } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import {
 	db,
@@ -560,8 +560,9 @@ export async function listTicketsPage(
 	/** Le kanban et la recherche de la palette de commandes n'affichent jamais le détail par
 	 *  activité (cf. commentaire sur enrichTickets) — passer `false` pour l'appelant l'économiser. */
 	includeBreakdown = true,
-	/** 'created' (défaut) = ordre historique par date de création. 'priority' = priorité décroissante
-	 *  d'abord, mêmes tie-breakers ensuite (le groupement parent/enfant n'est donc plus garanti). */
+	/** 'created' (défaut) = ordre historique par date de création. 'priority' = plus urgent d'abord
+	 *  (P0 en tête, l'entier croît avec l'échelle — voir schema.ts), mêmes tie-breakers ensuite (le
+	 *  groupement parent/enfant n'est donc plus garanti). */
 	sort: 'created' | 'priority' = 'created'
 ): Promise<{ rows: (TicketRow & { isChild: boolean })[]; total: number }> {
 	const where = ticketFilterConditions(workspaceId, filters);
@@ -575,7 +576,7 @@ export async function listTicketsPage(
 			.leftJoin(parentTicket, eq(ticket.parentId, parentTicket.id))
 			.where(where)
 			.orderBy(
-				...(sort === 'priority' ? [desc(ticket.priority)] : []),
+				...(sort === 'priority' ? [ticket.priority] : []),
 				sql`coalesce(${parentTicket.createdAt}, ${ticket.createdAt})`,
 				sql`(${ticket.parentId} is not null)`,
 				ticket.createdAt,
@@ -731,7 +732,7 @@ export async function updateTicketField(
 	}
 	if (field === 'priority') {
 		const n = Number(value);
-		if (!Number.isInteger(n) || n < 0 || n > 5) throw new Error('Priorité invalide (0 à 5).');
+		if (!Number.isInteger(n) || n < 0 || n > 4) throw new Error('Priorité invalide (0 à 4).');
 		value = String(n);
 	}
 	if (field === 'key') {

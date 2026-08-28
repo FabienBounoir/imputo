@@ -113,6 +113,7 @@ const jiraConfigSchema = z.object({
 	syncParent: jiraCheckbox,
 	syncSprint: jiraCheckbox,
 	syncVersion: jiraCheckbox,
+	syncPriority: jiraCheckbox,
 	regexPattern: z.string().trim().max(200).optional().default(''),
 	regexReplacement: z.string().trim().max(200).optional().default(''),
 	linkEnabled: jiraCheckbox,

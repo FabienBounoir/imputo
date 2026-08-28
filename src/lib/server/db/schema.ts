@@ -147,6 +147,7 @@ export const workspace = pgTable('workspace', {
 	jiraSyncParent: boolean('jira_sync_parent').notNull().default(true),
 	jiraSyncSprint: boolean('jira_sync_sprint').notNull().default(true),
 	jiraSyncVersion: boolean('jira_sync_version').notNull().default(true),
+	jiraSyncPriority: boolean('jira_sync_priority').notNull().default(true),
 	// Statut du dernier run (planifié ou forcé) — visibilité opérationnelle pour l'admin.
 	jiraLastSyncAt: timestamp('jira_last_sync_at', { withTimezone: true }),
 	jiraLastSyncStatus: jiraSyncStatusEnum('jira_last_sync_status'),
@@ -475,8 +476,9 @@ export const ticket = pgTable(
 		// Admin only, invisible pour un USER standard.
 		enveloppeTotale: numeric('enveloppe_totale', { precision: 7, scale: 2 }),
 		sspId: uuid('ssp_id').references(() => ssp.id, { onDelete: 'set null' }),
-		// 0 (plus bas) à 5 (plus haut) — slider dans la modale d'édition. Défaut 2 : couvre aussi bien
-		// la création (nouveau ticket) que le rattrapage (tickets déjà existants avant cette colonne,
+		// 0 (P0, le plus urgent) à 4 (P4/backlog, le moins urgent) — slider dans la modale d'édition,
+		// même sens que le mapping Jira (cf. jiraSync.ts). Défaut 2 (Normal) : couvre aussi bien la
+		// création (nouveau ticket) que le rattrapage (tickets déjà existants avant cette colonne,
 		// remplis par Postgres à l'ajout de la colonne).
 		priority: integer('priority').notNull().default(2),
 		comment: text('comment'),

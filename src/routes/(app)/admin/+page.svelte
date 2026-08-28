@@ -1138,10 +1138,16 @@
 										<input type="checkbox" name="syncVersion" checked={data.jira.syncVersion} />
 										<span>Version</span>
 									</label>
+									<label class="jira-sync-field">
+										<input type="checkbox" name="syncPriority" checked={data.jira.syncPriority} />
+										<span>Priorité</span>
+									</label>
 								</div>
 								<p class="hint" style="margin:6px 0 0;">
 									Un champ décoché n'est plus jamais mis à jour par le sync — sauf le titre, toujours posé
-									à la création d'un nouveau ticket (impossible d'en créer un sans titre).
+									à la création d'un nouveau ticket (impossible d'en créer un sans titre). Priorité :
+									correspondance fixe Urgent→P0, Haute→P1, Normal→P2, Faible→P3, BACKLOG→P4 (nom Jira non
+									reconnu = priorité non touchée).
 								</p>
 							</div>
 						</div>

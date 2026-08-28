@@ -485,7 +485,7 @@
 	// si la valeur ne change pas : un drag déclenche donc `save` seulement en franchissant un cran,
 	// jamais à chaque pixel — pas besoin de debounce séparé.
 	function setPriority(row: Row, value: number) {
-		const v = Math.max(0, Math.min(5, Math.round(value)));
+		const v = Math.max(0, Math.min(4, Math.round(value)));
 		if (v === row.priority) return;
 		row.priority = v;
 		save(row, 'priority', v);
@@ -493,7 +493,7 @@
 	function priorityValueAt(e: PointerEvent, el: HTMLElement) {
 		const rect = el.getBoundingClientRect();
 		const ratio = (e.clientX - rect.left) / rect.width;
-		return Math.min(1, Math.max(0, ratio)) * 5;
+		return Math.min(1, Math.max(0, ratio)) * 4;
 	}
 	// setPointerCapture route tous les pointermove/pointerup suivants vers CET élément même si le
 	// curseur sort du petit rectangle du slider pendant le drag — sans ça, un mouvement un peu trop
@@ -784,7 +784,7 @@
 											<div class="key tabnum">{r.key}</div>
 										{/if}
 										{#if r.priority !== 2}
-											<span class="priority-badge" class:high={r.priority >= 4} class:low={r.priority <= 1} title="Priorité {r.priority}/5">P{r.priority}</span>
+											<span class="priority-badge" class:high={r.priority <= 1} class:low={r.priority >= 3} title="Priorité P{r.priority}">P{r.priority}</span>
 										{/if}
 										<select
 											class="cell-select state-select"
@@ -1104,21 +1104,21 @@
 						class="priority-slider"
 						role="slider"
 						tabindex="0"
-						aria-label="Priorité (0 à 5)"
+						aria-label="Priorité (0 à 4)"
 						aria-valuemin="0"
-						aria-valuemax="5"
+						aria-valuemax="4"
 						aria-valuenow={editRow.priority}
 						onpointerdown={(e) => onPriorityPointerDown(e, editRow!)}
 						onpointermove={(e) => onPriorityPointerMove(e, editRow!)}
 						onkeydown={(e) => onPriorityKey(e, editRow!)}
 					>
 						<div class="priority-track">
-							<div class="priority-fill" style="width:{editRow.priority * 20}%"></div>
-							{#each [0, 1, 2, 3, 4, 5] as n (n)}
-								<span class="priority-tick" class:filled={n <= editRow.priority} style="left:{n * 20}%"></span>
+							<div class="priority-fill" style="width:{editRow.priority * 25}%"></div>
+							{#each [0, 1, 2, 3, 4] as n (n)}
+								<span class="priority-tick" class:filled={n <= editRow.priority} style="left:{n * 25}%"></span>
 							{/each}
 						</div>
-						<div class="priority-thumb tabnum" style="left:{editRow.priority * 20}%">{editRow.priority}</div>
+						<div class="priority-thumb tabnum" style="left:{editRow.priority * 25}%">{editRow.priority}</div>
 					</div>
 				</div>
 				<label class="dfield"><span>Estimé</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationReal} disabled={!data.canEditEstimation || editRow.hasActivityEstimation} title={editRow.hasActivityEstimation ? "Estimé = compilation des Estimés par activité ci-dessous (non éditable ici)" : estTitle} onchange={() => debouncedSave(`est-${editRow!.id}-real`, () => saveEst(editRow!, 'real'))} /></label>

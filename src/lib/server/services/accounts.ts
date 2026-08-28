@@ -410,6 +410,7 @@ export async function getJiraConfig(workspaceId: string) {
 		syncParent: row.jiraSyncParent,
 		syncSprint: row.jiraSyncSprint,
 		syncVersion: row.jiraSyncVersion,
+		syncPriority: row.jiraSyncPriority,
 		regexPattern: row.jiraKeyRegexPattern ?? '',
 		regexReplacement: row.jiraKeyRegexReplacement ?? '',
 		linkEnabled: row.jiraLinkEnabled,
@@ -492,6 +493,7 @@ export async function saveJiraConfig(
 		syncParent: boolean;
 		syncSprint: boolean;
 		syncVersion: boolean;
+		syncPriority: boolean;
 		regexPattern: string;
 		regexReplacement: string;
 		linkEnabled: boolean;
@@ -533,6 +535,7 @@ export async function saveJiraConfig(
 		jiraSyncParent: input.syncParent,
 		jiraSyncSprint: input.syncSprint,
 		jiraSyncVersion: input.syncVersion,
+		jiraSyncPriority: input.syncPriority,
 		jiraKeyRegexPattern: input.regexPattern || null,
 		jiraKeyRegexReplacement: input.regexReplacement || null,
 		jiraLinkEnabled: input.linkEnabled,
