@@ -172,8 +172,9 @@ export const actions: Actions = {
 		if (!parsed.success) return fail(400, { error: parsed.error.issues[0].message });
 		const d = parsed.data;
 		const empty = (v?: string) => (v && v !== '' ? v : null);
+		let created: { id: string };
 		try {
-			await createTicket(ws.workspaceId, {
+			created = await createTicket(ws.workspaceId, {
 				key: d.key,
 				title: d.title,
 				parentId: empty(d.parentId),
@@ -198,7 +199,7 @@ export const actions: Actions = {
 				error: isUniqueViolation(e) ? 'Un ticket avec cette clé existe déjà.' : 'Erreur lors de la création.'
 			});
 		}
-		return { ok: true };
+		return { ok: true, id: created.id };
 	},
 
 	update: async ({ request, locals }) => {

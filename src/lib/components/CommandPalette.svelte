@@ -253,6 +253,21 @@
 		) {
 			e.preventDefault();
 			goto('/tickets?new=1');
+		} else if (
+			// Ajout rapide d'imputation depuis n'importe quelle page — même mécanique que Shift+N
+			// ci-dessus. Sur /imputation, on laisse la page gérer elle-même le raccourci (cf.
+			// QuickAddPalette.svelte), qui connaît son propre état de palette en cours.
+			e.key.toLowerCase() === 'a' &&
+			e.shiftKey &&
+			!e.metaKey &&
+			!e.ctrlKey &&
+			!e.altKey &&
+			!open &&
+			page.url.pathname !== '/imputation' &&
+			!isTypingTarget(e.target)
+		) {
+			e.preventDefault();
+			goto('/imputation?quickadd=1');
 		}
 	}
 

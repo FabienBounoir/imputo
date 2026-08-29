@@ -12,12 +12,12 @@
 		type PeriodMode
 	} from '$lib/utils/date';
 	import { tick } from 'svelte';
-	import { goto, afterNavigate, invalidateAll } from '$app/navigation';
+	import { goto, afterNavigate, invalidateAll, replaceState } from '$app/navigation';
 	import { beep } from '$lib/sound';
 	import { Confetti } from 'svelte-confetti';
-	import { navigating } from '$app/state';
+	import { navigating, page } from '$app/state';
 	import ExportModal from '$lib/components/ExportModal.svelte';
-	import TargetPicker from '$lib/components/TargetPicker.svelte';
+	import QuickAddPalette from '$lib/components/QuickAddPalette.svelte';
 	import TicketEditModal from '$lib/components/TicketEditModal.svelte';
 	import ImputationMobile from '$lib/components/ImputationMobile.svelte';
 	import { ABSENCE_TYPE_COLORS, ABSENCE_TYPE_LABELS, ABSENCE_PERIOD_LABELS } from '$lib/absenceTypes';
@@ -432,6 +432,34 @@
 	// --- Ajout de ligne ---
 	let pickTarget = $state('');
 	let pickActivity = $state('');
+	// Ouverture directe depuis n'importe quelle page (Shift+A, cf. CommandPalette.svelte qui navigue
+	// ici avec ?quickadd=1 puis nous laisse gérer notre propre état de palette).
+	// - afterNavigate, pas $effect : un $effect qui lit page.url peut se redéclencher sur cette page
+	//   très réactive (période, cellules…) — à chaque redéclenchement il rouvrait la palette juste
+	//   après une fermeture (clic à côté/Échap semblaient ne jamais prendre). afterNavigate ne tourne
+	//   qu'après une navigation effective, jamais sur une réactivité interne à la page.
+	// - un drapeau non réactif (pas $state) plutôt que de compter sur le seul retrait de ?quickadd de
+	//   l'URL : sur un chargement direct (URL tapée/rechargée), replaceState() peut être appelé avant
+	//   que le routeur client soit prêt et lever une erreur avant d'avoir pu retirer le paramètre —
+	//   sans ce drapeau, l'effet suivant relirait ?quickadd=1 encore présent et rouvrirait en boucle.
+	let quickAddPalette: QuickAddPalette | undefined = $state();
+	let quickAddConsumed = false;
+	afterNavigate(() => {
+		if (quickAddConsumed || page.url.searchParams.get('quickadd') !== '1') return;
+		quickAddConsumed = true;
+		// ticketId : retour depuis la création d'un ticket lancée faute de résultat dans la
+		// recherche (cf. QuickAddPalette.svelte) — la palette rouvre direct sur l'activité.
+		quickAddPalette?.show(page.url.searchParams.get('ticketId') ?? undefined);
+		try {
+			const url = new URL(page.url);
+			url.searchParams.delete('quickadd');
+			url.searchParams.delete('ticketId');
+			replaceState(url, {});
+		} catch {
+			/* routeur pas encore prêt (chargement direct) : le drapeau ci-dessus empêche déjà toute
+			   réouverture, le paramètre restera juste visible dans l'URL cette fois-ci. */
+		}
+	});
 	let confirmDelete = $state<Row | null>(null);
 	// Édition d'un ticket depuis sa ligne d'imputation — même modal que Tickets & chiffrage. Patch
 	// direct de la ligne à chaque sauvegarde (titre/sprint/version) plutôt qu'un invalidateAll : plus
@@ -1175,20 +1203,20 @@
 
 		{#if !data.readOnly}
 		<div class="addrow" data-tour="imputation-add">
-			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-			<TargetPicker
-				bind:value={pickTarget}
+			<QuickAddPalette
+				bind:this={quickAddPalette}
 				tickets={data.tickets}
 				categories={data.categories.filter((c) => !c.linkedAbsenceType)}
 				recentTicketIds={data.recentTicketIds}
 				versions={data.versions}
 				objectives={data.weeklyObjectives.filter((o) => o.kind === 'TICKET')}
+				activities={data.activities}
+				onadd={(target, activityId) => {
+					pickTarget = target;
+					pickActivity = activityId ?? '';
+					addRow();
+				}}
 			/>
-			<select bind:value={pickActivity} aria-label="Activité (optionnel)">
-				<option value="">Activité (option)</option>
-				{#each data.activities as a (a.id)}<option value={a.id}>{a.label}</option>{/each}
-			</select>
-			<button class="btn btn-ghost" onclick={addRow}>Ajouter</button>
 		</div>
 		{/if}
 	</div>
@@ -2007,36 +2035,9 @@
 	}
 
 	.addrow {
-		display: flex;
-		align-items: center;
-		gap: 9px;
 		padding: 13px 18px;
 		border-top: 1px dashed var(--border-strong);
 		color: var(--text-mute);
-	}
-	.addrow select {
-		padding: 8px 11px;
-		border-radius: var(--r-sm);
-		border: 1px solid var(--border);
-		background: var(--surface-2);
-		color: var(--text);
-		font-size: 13px;
-	}
-	.addrow select:first-of-type {
-		flex: 1;
-	}
-	/* < 640px : icône + recherche de ticket + select d'activité + bouton ne rentrent plus sur une
-	   ligne sans wrap -> ça débordait (même souci que .add-ticket dans admin/objectifs). */
-	@media (max-width: 640px) {
-		.addrow {
-			flex-wrap: wrap;
-		}
-		.addrow svg {
-			display: none;
-		}
-		.addrow :global(.tp-root) {
-			flex-basis: 100%;
-		}
 	}
 
 	.legend {

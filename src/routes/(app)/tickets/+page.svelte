@@ -22,10 +22,16 @@
 	});
 
 	let showCreate = $state(false);
+	let prefillTitle = $state('');
 
-	// Ouverture directe du formulaire depuis la palette de commandes (?new=1).
+	// Ouverture directe du formulaire depuis la palette de commandes (?new=1) ou depuis l'ajout
+	// rapide de Mon imputation quand aucun ticket ne correspond à la recherche (?new=1&title=…,
+	// cf. QuickAddPalette.svelte) — le titre tapé là-bas est repris ici, pas la clé (jamais devinée).
 	$effect(() => {
-		if (page.url.searchParams.get('new') === '1') showCreate = true;
+		if (page.url.searchParams.get('new') === '1') {
+			showCreate = true;
+			prefillTitle = page.url.searchParams.get('title') ?? '';
+		}
 	});
 	function autofocus(node: HTMLInputElement) {
 		node.focus();
@@ -628,6 +634,15 @@
 								return;
 							}
 							showCreate = false;
+							// Venu de l'ajout rapide de Mon imputation (aucun ticket ne correspondait à la
+							// recherche, cf. QuickAddPalette.svelte) : on y retourne directement avec le
+							// nouveau ticket déjà choisi, plus qu'à lui donner une activité — pas la peine de
+							// repasser par la liste des tickets pour ça.
+							if (page.url.searchParams.get('returnTo') === 'imputation') {
+								const newId = (result.data as { id?: string } | undefined)?.id;
+								await goto(`/imputation?quickadd=1${newId ? `&ticketId=${newId}` : ''}`);
+								return;
+							}
 							// Accumule dans ?created= : retrouver et traiter à la suite les tickets qu'on
 							// vient de saisir, sans repasser par update() (qui rechargerait la même URL —
 							// le goto ci-dessous s'en charge en un seul aller, avec le nouveau filtre).
@@ -647,7 +662,7 @@
 				>
 					<div class="qc-row">
 						<div class="field qc-key"><label for="qc-key">Clé</label><input id="qc-key" name="key" placeholder="BLM-1234" use:autofocus required /></div>
-						<div class="field qc-title-f"><label for="qc-title">Titre</label><input id="qc-title" name="title" placeholder="Intitulé du ticket" required /></div>
+						<div class="field qc-title-f"><label for="qc-title">Titre</label><input id="qc-title" name="title" placeholder="Intitulé du ticket" value={prefillTitle} required /></div>
 					</div>
 					<div class="qc-row3">
 						<div class="field"><label for="qc-project">Projet</label>
