@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import { db, ssp, ticket, timeEntry, workspace, sspAnnualProd } from '$lib/server/db';
 import { makeWorkspace } from './test-helpers';
 import { computeRaeChain, getAnnualTrackingView, setProd, setRaeOverride, advanceCursor } from './sspAnnualTracking';
+import { openClosing, integrate } from './monthlyClosing';
 
 describe('computeRaeChain (pur)', () => {
 	const months = ['2024-01-01', '2024-02-01', '2024-03-01'];
@@ -91,6 +92,50 @@ describe('sspAnnualTracking (intégration DB)', () => {
 		view = await getAnnualTrackingView(ws.workspaceId);
 		expect(juneCell().prod).toBe(4);
 		expect(juneCell().tnf).toBe(1); // 5 - 4
+	});
+
+	it("la conso figée à la dernière intégration ne bouge plus au fil des imputations tardives, tant qu'il n'y a pas d'intégration c'est le réel", async () => {
+		const [s] = await db
+			.insert(ssp)
+			.values({ workspaceId: ws.workspaceId, code: 'AN-2', label: 'Suivi annuel test intégration', budgetDays: '30' })
+			.returning();
+		const [t] = await db
+			.insert(ticket)
+			.values({ workspaceId: ws.workspaceId, key: 'ANN-2', title: 'Ticket suivi annuel intégration', sspId: s.id })
+			.returning({ id: ticket.id });
+		await db.insert(timeEntry).values({
+			workspaceId: ws.workspaceId,
+			userId: ws.userId,
+			targetType: 'TICKET',
+			ticketId: t.id,
+			day: '2024-06-08',
+			amount: '5'
+		});
+
+		let view = await getAnnualTrackingView(ws.workspaceId);
+		let cell = view.rows.find((r) => r.sspId === s.id)!.cells.find((c) => c.month === '2024-06-01')!;
+		expect(cell.conso).toBe(5);
+		expect(cell.consoIntegrated).toBe(false); // mois pas encore clôturé dans GPS : réel vivant
+
+		const closingId = await openClosing(ws.workspaceId, '2024-06');
+		await integrate(ws.workspaceId, closingId, ws.userId);
+
+		// Imputation tardive après l'intégration : ne doit pas bouger la conso figée.
+		await db.insert(timeEntry).values({
+			workspaceId: ws.workspaceId,
+			userId: ws.userId,
+			targetType: 'TICKET',
+			ticketId: t.id,
+			day: '2024-06-25',
+			amount: '3'
+		});
+
+		view = await getAnnualTrackingView(ws.workspaceId);
+		cell = view.rows.find((r) => r.sspId === s.id)!.cells.find((c) => c.month === '2024-06-01')!;
+		expect(cell.conso).toBe(5); // figé à l'intégration, pas 8
+		expect(cell.consoIntegrated).toBe(true);
+		expect(cell.consoIntegratedAt).toBeInstanceOf(Date);
+		expect(cell.consoIntegratedBy).toBe('annual owner');
 	});
 
 	it('setProd rejette un mois hors curseur', async () => {

@@ -3,7 +3,7 @@
 	import { invalidateAll } from '$app/navigation';
 	import { toast } from 'svelte-sonner';
 	import { confirmDialog } from '$lib/confirm.svelte';
-	import { formatMonthLabel, formatMonthShortLabel } from '$lib/utils/date';
+	import { formatMonthLabel, formatMonthShortLabel, formatDateTime } from '$lib/utils/date';
 	import type { AnnualTrackingMonthCell, AnnualTrackingSspRow } from '$lib/server/services/sspAnnualTracking';
 
 	let { data, form } = $props();
@@ -209,7 +209,14 @@
 {/snippet}
 
 {#snippet consoCell(c: AnnualTrackingMonthCell)}
-	<td class="num tabnum computed" class:current-month={c.month === view.cursorMonth}>{c.conso}</td>
+	<td
+		class="num tabnum computed"
+		class:current-month={c.month === view.cursorMonth}
+		class:conso-live={!c.consoIntegrated}
+		title={c.consoIntegrated
+			? `Conso figée à l'intégration du ${formatDateTime(c.consoIntegratedAt!)}${c.consoIntegratedBy ? ` par ${c.consoIntegratedBy}` : ''}`
+			: "Conso réelle — ce mois n'a pas encore été intégré dans GPS"}>{c.conso}</td
+	>
 {/snippet}
 
 {#snippet prodCell(row: AnnualTrackingSspRow, c: AnnualTrackingMonthCell)}
@@ -550,6 +557,12 @@
 	.warn {
 		color: var(--warn);
 		font-weight: 600;
+	}
+	/* Conso pas encore intégrée dans GPS : le réel vivant, pas une photo — même token --warn que le
+	   reste de la page (tag archivé, TNF en dérapage), pas une couleur inventée pour l'occasion.
+	   Le title de la cellule porte la même info en texte, pas seulement la couleur. */
+	.conso-live {
+		color: var(--warn);
 	}
 	.ok-cell {
 		color: var(--success);
