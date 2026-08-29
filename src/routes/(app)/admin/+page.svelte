@@ -11,6 +11,7 @@
 	import UserAvatar from '$lib/components/UserAvatar.svelte';
 	import { confirmDialog } from '$lib/confirm.svelte';
 	import type { SubmitFunction } from '@sveltejs/kit';
+	import type { Snippet } from 'svelte';
 	let { data, form } = $props();
 
 	$effect(() => {
@@ -57,6 +58,12 @@
 	// derrière), mais dès qu'un form porte deux champs, éditer l'un ressuscite l'autre.
 	// Les formulaires de création gardent le reset par défaut, eux en ont besoin.
 	const enhanceEdit: SubmitFunction = () => async ({ update }) => update({ reset: false });
+	// Formulaires de création (référentiels) : la modale se ferme une fois la création acceptée,
+	// pas sur un échec de validation (le message d'erreur doit rester visible avec le formulaire).
+	const enhanceCreate: SubmitFunction = () => async ({ result, update }) => {
+		await update();
+		if (result.type === 'success') refAddOpen = false;
+	};
 
 	// Les flèches d'un <input type="number"> émettent un `change` à chaque clic : soumettre
 	// directement, c'est un POST + un invalidateAll (tout le load de la page admin) par incrément,
@@ -308,7 +315,10 @@
 	let jiraPatEditing = $state(false);
 </script>
 
-<svelte:window onclick={onWindowClickCloseMemberMenu} />
+<svelte:window
+	onclick={onWindowClickCloseMemberMenu}
+	onkeydown={(e) => { if (e.key === 'Escape' && refAddOpen) refAddOpen = false; }}
+/>
 
 <div class="topbar">
 	<h1>Paramètres &amp; membres</h1>
@@ -496,18 +506,29 @@
 		</section>
 	{/if}
 
-	<!-- Recherche + bascule d'ajout partagées par les 7 sections : sur une seule ligne plutôt que deux
-	     champs empilés qui se distinguaient mal, le formulaire de création replié par défaut. -->
+	<!-- Recherche + ajout partagés par les 7 sections : une pilule de recherche compacte (pas de barre
+	     posée en permanence) et un bouton « + » qui ouvre une modale plutôt que de déplier une
+	     deuxième barre sous la première. -->
 	{#snippet refToolbar(searchPlaceholder: string)}
 		<div class="ref-toolbar">
-			<input class="ref-search-input" type="search" placeholder={searchPlaceholder} bind:value={refSearch} bind:this={refSearchInput} />
-			<button type="button" class="btn btn-ghost ref-add-toggle" aria-expanded={refAddOpen} onclick={() => (refAddOpen = !refAddOpen)}>
-				{#if refAddOpen}
-					Fermer <span class="ref-add-caret open">▾</span>
-				{:else}
-					+ Ajouter <span class="ref-add-caret">▾</span>
-				{/if}
-			</button>
+			<label class="ref-search-pill">
+				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+					><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg
+				>
+				<input type="search" placeholder={searchPlaceholder} bind:value={refSearch} bind:this={refSearchInput} />
+			</label>
+			<button type="button" class="ref-add-icon-btn" aria-label="Ajouter" aria-expanded={refAddOpen} onclick={() => (refAddOpen = !refAddOpen)}>+</button>
+		</div>
+	{/snippet}
+
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	{#snippet refAddModal(title: string, body: Snippet)}
+		<div class="modal-backdrop" onclick={() => (refAddOpen = false)}>
+			<div class="modal" onclick={(e) => e.stopPropagation()}>
+				<h3>{title}</h3>
+				{@render body()}
+			</div>
 		</div>
 	{/snippet}
 
@@ -516,11 +537,17 @@
 		<h3>{title}</h3>
 		{@render refToolbar(`Rechercher ${title.toLowerCase()}…`)}
 		{#if refAddOpen}
-			<form method="POST" action="?/refCreate" use:enhance class="ref-add">
-				<input type="hidden" name="type" value={type} />
-				<input class="ref-input" name="name" placeholder={placeholder} required />
-				<button class="btn btn-ghost" type="submit">+ Ajouter</button>
-			</form>
+			{#snippet refAddModalBody()}
+				<form method="POST" action="?/refCreate" use:enhance={enhanceCreate} class="modal-form">
+					<input type="hidden" name="type" value={type} />
+					<input class="ref-input" name="name" {placeholder} required />
+					<div class="modal-actions">
+						<button type="button" class="btn btn-ghost" onclick={() => (refAddOpen = false)}>Annuler</button>
+						<button class="btn btn-primary" type="submit">+ Ajouter</button>
+					</div>
+				</form>
+			{/snippet}
+			{@render refAddModal(placeholder.replace(/…$/, ''), refAddModalBody)}
 		{/if}
 		<div class="ref-list">
 			{#each filtered as it (it.id)}
@@ -592,14 +619,22 @@
 					<p class="hint">Cibles d'imputation hors-ticket (MCO, congés, formation…). « Non productif » est exclu de la charge projet.</p>
 						{@render refToolbar('Rechercher une catégorie…')}
 					{#if refAddOpen}
-						<form method="POST" action="?/catCreate" use:enhance class="ref-add">
-							<input class="ref-input" name="label" placeholder="Nouvelle catégorie…" required />
-							<select class="param-kind" name="kind">
-								<option value="PRODUCTIVE">Productif</option>
-								<option value="NON_PRODUCTIVE">Non productif</option>
-							</select>
-							<button class="btn btn-ghost" type="submit">+ Ajouter</button>
-						</form>
+						{#snippet catAddBody()}
+							<form method="POST" action="?/catCreate" use:enhance={enhanceCreate} class="modal-form">
+								<div class="modal-form-row">
+									<input class="ref-input" name="label" placeholder="Nouvelle catégorie…" required />
+									<select class="param-kind" name="kind">
+										<option value="PRODUCTIVE">Productif</option>
+										<option value="NON_PRODUCTIVE">Non productif</option>
+									</select>
+								</div>
+								<div class="modal-actions">
+									<button type="button" class="btn btn-ghost" onclick={() => (refAddOpen = false)}>Annuler</button>
+									<button class="btn btn-primary" type="submit">+ Ajouter</button>
+								</div>
+							</form>
+						{/snippet}
+						{@render refAddModal('Nouvelle catégorie', catAddBody)}
 					{/if}
 					<div class="ref-list">
 						{#each filtered as c (c.id)}
@@ -654,12 +689,20 @@
 					</p>
 						{@render refToolbar('Rechercher un code ou un libellé…')}
 					{#if refAddOpen}
-						<form method="POST" action="?/sspCreate" use:enhance class="ref-add ssp-add">
-							<input class="ref-input ssp-code" name="code" placeholder="8364BEB5354" required />
-							<input class="ref-input" name="label" placeholder="Site Internet" />
-							<input class="ref-input ssp-budget" name="budgetDays" type="number" step="0.01" min="0" placeholder="budget (j)" />
-							<button class="btn btn-ghost" type="submit">+ Ajouter</button>
-						</form>
+						{#snippet sspAddBody()}
+							<form method="POST" action="?/sspCreate" use:enhance={enhanceCreate} class="modal-form">
+								<div class="modal-form-row">
+									<input class="ref-input ssp-code" name="code" placeholder="8364BEB5354" required />
+									<input class="ref-input" name="label" placeholder="Site Internet" />
+									<input class="ref-input ssp-budget" name="budgetDays" type="number" step="0.01" min="0" placeholder="budget (j)" />
+								</div>
+								<div class="modal-actions">
+									<button type="button" class="btn btn-ghost" onclick={() => (refAddOpen = false)}>Annuler</button>
+									<button class="btn btn-primary" type="submit">+ Ajouter</button>
+								</div>
+							</form>
+						{/snippet}
+						{@render refAddModal('Nouveau code SSP', sspAddBody)}
 					{/if}
 					<div class="ref-list">
 						{#each filtered as s (s.id)}
@@ -752,10 +795,16 @@
 					<p class="hint">Nature du travail (Dev, TU, DA…), optionnelle sur une imputation. Glisse-dépose ⠿ pour réordonner : c'est cet ordre qui sert dans la répartition par activité des synthèses (sauf préférence "alphabétique" d'un membre dans ses paramètres de compte). Vide la recherche pour réordonner.</p>
 						{@render refToolbar('Rechercher une activité…')}
 					{#if refAddOpen}
-						<form method="POST" action="?/actCreate" use:enhance class="ref-add">
-							<input class="ref-input" name="label" placeholder="Nouvelle activité…" required />
-							<button class="btn btn-ghost" type="submit">+ Ajouter</button>
-						</form>
+						{#snippet actAddBody()}
+							<form method="POST" action="?/actCreate" use:enhance={enhanceCreate} class="modal-form">
+								<input class="ref-input" name="label" placeholder="Nouvelle activité…" required />
+								<div class="modal-actions">
+									<button type="button" class="btn btn-ghost" onclick={() => (refAddOpen = false)}>Annuler</button>
+									<button class="btn btn-primary" type="submit">+ Ajouter</button>
+								</div>
+							</form>
+						{/snippet}
+						{@render refAddModal('Nouvelle activité', actAddBody)}
 					{/if}
 					<div class="ref-list">
 						{#each filtered as a (a.id)}
@@ -840,10 +889,16 @@
 					<p class="hint">Regroupement libre et transverse, indépendant des sprints/versions. Un ticket peut appartenir à plusieurs groupes. Glisse-dépose ⠿ pour réordonner : c'est cet ordre qui sert dans les synthèses par sprint/version. Vide la recherche pour réordonner.</p>
 						{@render refToolbar('Rechercher un groupe…')}
 					{#if refAddOpen}
-						<form method="POST" action="?/groupCreate" use:enhance class="ref-add">
-							<input class="ref-input" name="label" placeholder="Nouveau groupe…" required />
-							<button class="btn btn-ghost" type="submit">+ Ajouter</button>
-						</form>
+						{#snippet groupAddBody()}
+							<form method="POST" action="?/groupCreate" use:enhance={enhanceCreate} class="modal-form">
+								<input class="ref-input" name="label" placeholder="Nouveau groupe…" required />
+								<div class="modal-actions">
+									<button type="button" class="btn btn-ghost" onclick={() => (refAddOpen = false)}>Annuler</button>
+									<button class="btn btn-primary" type="submit">+ Ajouter</button>
+								</div>
+							</form>
+						{/snippet}
+						{@render refAddModal('Nouveau groupe', groupAddBody)}
 					{/if}
 					<div class="ref-list">
 						{#each filtered as g (g.id)}
@@ -2014,30 +2069,110 @@
 		border-color: var(--accent);
 		box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
 	}
-	/* Recherche + bascule d'ajout sur une même ligne (cf. refToolbar) : deux intentions différentes
-	   (filtrer / créer), visuellement séparées au lieu de deux champs empilés et collés. */
+	/* Recherche + ajout sur une même ligne (cf. refToolbar) : une pilule de recherche qui ne prend
+	   que la place d'un champ, et un bouton « + » qui ouvre une modale (cf. .modal-backdrop plus
+	   bas) au lieu de déplier une deuxième barre sous la première. */
 	.ref-toolbar {
 		display: flex;
 		align-items: center;
 		gap: 8px;
 		margin-bottom: 12px;
 	}
-	.ref-toolbar .ref-search-input {
+	.ref-search-pill {
+		display: flex;
+		align-items: center;
+		gap: 7px;
+		padding: 7px 12px;
+		border-radius: 999px;
+		border: 1px solid var(--border);
+		background: var(--surface-2);
 		flex: 1;
 		min-width: 0;
-		width: auto;
+		transition: border-color 0.15s, box-shadow 0.15s;
 	}
-	.ref-add-toggle {
+	.ref-search-pill svg {
+		flex-shrink: 0;
+		color: var(--text-mute);
+	}
+	.ref-search-pill input {
+		border: none;
+		background: none;
+		outline: none;
+		font: inherit;
+		font-size: 13.5px;
+		color: var(--text);
+		flex: 1;
+		min-width: 0;
+	}
+	.ref-search-pill:focus-within {
+		border-color: var(--accent);
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+	}
+	.ref-add-icon-btn {
 		flex: 0 0 auto;
-		white-space: nowrap;
+		width: 34px;
+		height: 34px;
+		border-radius: 9px;
+		border: 1px solid var(--border);
+		background: var(--surface);
+		color: var(--text-soft);
+		font-size: 17px;
+		font-weight: 600;
+		line-height: 1;
+		display: grid;
+		place-items: center;
+		transition: border-color 0.15s, color 0.15s, background 0.15s, transform 0.15s;
 	}
-	.ref-add-caret {
-		display: inline-block;
-		font-size: 9px;
-		transition: transform 0.15s;
+	.ref-add-icon-btn:hover {
+		border-color: var(--border-strong);
+		color: var(--text);
 	}
-	.ref-add-caret.open {
-		transform: rotate(180deg);
+	.ref-add-icon-btn[aria-expanded='true'] {
+		background: var(--accent);
+		border-color: var(--accent);
+		color: #fff;
+		transform: rotate(45deg);
+	}
+	/* Modale d'ajout (référentiels) : même gabarit que MemberAccessModal.svelte, pour rester le même
+	   composant visuel partout dans l'appli plutôt qu'un style de fenêtre réinventé ici. */
+	.modal-backdrop {
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.45);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 20px;
+		z-index: 50;
+	}
+	.modal {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: var(--r-lg, 16px);
+		box-shadow: var(--shadow-lg, 0 20px 50px rgba(0, 0, 0, 0.3));
+		padding: 22px;
+		width: 100%;
+		max-width: 460px;
+	}
+	.modal h3 {
+		font-family: var(--font-display);
+		font-size: 18px;
+		font-weight: 600;
+		margin-bottom: 16px;
+	}
+	.modal-form {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+	.modal-form-row {
+		display: flex;
+		gap: 8px;
+	}
+	.modal-actions {
+		display: flex;
+		justify-content: flex-end;
+		gap: 8px;
 	}
 	@media (max-width: 720px) {
 		.ref-layout {
@@ -2213,17 +2348,6 @@
 		border-color: #c0392b;
 		color: #c0392b;
 	}
-	/* Replié par défaut (cf. refAddOpen) : encadré une fois déplié pour bien le distinguer de la
-	   barre de recherche juste au-dessus et de la liste juste en dessous. */
-	.ref-add {
-		display: flex;
-		gap: 8px;
-		padding: 10px;
-		margin-bottom: 12px;
-		border: 1px solid var(--border);
-		border-radius: 10px;
-		background: var(--surface-2);
-	}
 	/* Un SSP a 3 champs là où les autres référentiels n'en ont qu'un : le code et le budget sont
 	   de largeur fixe, seul le libellé absorbe la place restante. */
 	.ssp-form {
@@ -2240,10 +2364,6 @@
 	.ssp-budget {
 		flex: 0 0 15ch;
 		text-align: right;
-	}
-	.ref-add .btn {
-		white-space: nowrap;
-		flex-shrink: 0;
 	}
 	.ref-input {
 		flex: 1;

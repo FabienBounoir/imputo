@@ -2,7 +2,8 @@ import { describe, it, expect, vi, afterAll, afterEach } from 'vitest';
 import { eq, and } from 'drizzle-orm';
 import { db, workspace, category, timeEntry, moodVote, user, membership } from '$lib/server/db';
 import { createWorkspaceWithOwner } from './workspaces';
-import { setSupportEnabled, setSupportCadence, addRotationMember } from './support';
+import { setSupportEnabled, setSupportCadence, addRotationMember, setOverride, getCurrentDuty } from './support';
+import { addMember } from './test-helpers';
 import { todayInParis, parseISODate, toISODate, addDays } from '$lib/utils/date';
 
 const sendCalls: { userId: string; tag?: string }[] = [];
@@ -34,7 +35,8 @@ vi.mock('$lib/utils/date', async (importOriginal) => {
 	return { ...actual, isWorkday: () => true, lastWorkdayOnOrBefore: (d: string) => d, todayInParis: () => mockedToday };
 });
 
-const { runNotifications, notifyAbsencePending, notifyAbsenceValidated, parseNotifPrefs } = await import('./notifications');
+const { runNotifications, notifyAbsencePending, notifyAbsenceValidated, notifySupportDutyChanged, parseNotifPrefs } =
+	await import('./notifications');
 
 const rnd = Math.random().toString(36).slice(2, 8);
 const wsIds: string[] = [];
@@ -175,6 +177,28 @@ describe('support', () => {
 		sendCalls.length = 0;
 		await runNotifications('morning', '0900');
 		expect(sentTo(userId, 'SUPPORT_DUTY')).toBe(false);
+	});
+
+	it('notifie la personne effective après un override manuel, avec un kind distinct du cron', async () => {
+		const { userId, workspaceId } = await createWorkspaceWithOwner({
+			displayName: 'Support Override',
+			email: `support-ov-${rnd}@acme.test`,
+			password: 'password123',
+			workspaceName: 'Espace Support Override'
+		});
+		wsIds.push(workspaceId);
+		await setSupportEnabled(workspaceId, true);
+		await setSupportCadence(workspaceId, 'DAY');
+		await addRotationMember(workspaceId, userId);
+		const other = await addMember(workspaceId, 'USER', `support-ov2-${rnd}`);
+		await addRotationMember(workspaceId, other.userId);
+
+		const current = await getCurrentDuty(workspaceId);
+		await setOverride(workspaceId, current!.periodStart, other.userId);
+
+		sendCalls.length = 0;
+		await notifySupportDutyChanged(workspaceId, 'Espace Support Override', current!.periodStart);
+		expect(sentTo(other.userId, 'SUPPORT_DUTY_CHANGED')).toBe(true);
 	});
 });
 

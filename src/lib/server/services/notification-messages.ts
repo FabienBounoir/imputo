@@ -9,7 +9,8 @@ export type NotifKind =
 	| 'MOOD_RECAP'
 	| 'ABSENCE_PENDING'
 	| 'ABSENCE_VALIDATED'
-	| 'SUPPORT_DUTY';
+	| 'SUPPORT_DUTY'
+	| 'SUPPORT_DUTY_CHANGED';
 
 /** Contexte attendu par les variantes de chaque type de notif. */
 export type NotifCtx = {
@@ -22,6 +23,9 @@ export type NotifCtx = {
 	ABSENCE_PENDING: { name: string; range: string };
 	ABSENCE_VALIDATED: { range: string };
 	SUPPORT_DUTY: { single: boolean; until: string };
+	// Même forme que SUPPORT_DUTY : seul le texte change, pour dire que ça vient d'un changement
+	// (override/skip) plutôt que du démarrage normal de la période.
+	SUPPORT_DUTY_CHANGED: { single: boolean; until: string };
 };
 
 /** « 0,5 j » — les capacités sont en décimales de journée, jamais en heures. */
@@ -163,6 +167,14 @@ const VARIANTS: { [K in NotifKind]: Variant<K>[] } = {
 		(c) => ({ title: '👍 C\'est validé', body: `Ton congé du ${c.range} a été accepté.` }),
 		(c) => ({ title: '🎉 Bonne nouvelle', body: `Ton congé du ${c.range} est confirmé.` }),
 		(c) => ({ title: '🌴 Congé accepté', body: `${c.range} : c'est bon, tu peux poser.` })
+	],
+	// Déclenchée par un override/skip manuel sur /support, pas par le cron du matin : le texte le dit
+	// explicitement, sinon on croirait à un double envoi du même rappel routinier.
+	SUPPORT_DUTY_CHANGED: [
+		(c) => ({ title: '🔄 Support : ça change', body: `Suite à un changement, tu prends le support ${duree(c)}.` }),
+		(c) => ({ title: '🔁 Nouveau sur le support', body: `La rotation a changé : c'est toi ${duree(c)}.` }),
+		(c) => ({ title: '📣 Support réassigné', body: `Le support vient de passer sur toi, ${duree(c)}.` }),
+		(c) => ({ title: '🔀 Changement de perm', body: `Tu prends le relais du support ${duree(c)}.` })
 	]
 };
 
@@ -176,7 +188,8 @@ export const NOTIF_URL: Record<NotifKind, string> = {
 	MOOD_RECAP: '/admin/mood',
 	ABSENCE_PENDING: '/absences',
 	ABSENCE_VALIDATED: '/absences',
-	SUPPORT_DUTY: '/support'
+	SUPPORT_DUTY: '/support',
+	SUPPORT_DUTY_CHANGED: '/support'
 };
 
 // ponytail: hash FNV-ish sur la graine plutôt qu'un Math.random() — deux membres (ou deux jours)

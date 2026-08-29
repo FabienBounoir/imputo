@@ -81,7 +81,10 @@ const PREF_KEY: Record<NotifKind, keyof Prefs> = {
 	MOOD_RECAP: 'moodRecap',
 	ABSENCE_PENDING: 'absencePending',
 	ABSENCE_VALIDATED: 'absenceValidated',
-	SUPPORT_DUTY: 'supportDuty'
+	SUPPORT_DUTY: 'supportDuty',
+	// Même pref que SUPPORT_DUTY : c'est la même notion pour l'utilisateur (« notifs de support »),
+	// pas un réglage séparé pour la variante "changement manuel".
+	SUPPORT_DUTY_CHANGED: 'supportDuty'
 };
 /** Seuls ces deux types sont relancés plusieurs fois par jour, donc réglables créneau par créneau. */
 const SLOT_PREF: Partial<Record<NotifKind, SlotKey>> = {
@@ -493,6 +496,31 @@ export async function notifyAbsenceValidated(
 		todayInParis(),
 		{ range: formatDayRange(startDate, endDate) },
 		absenceId
+	);
+}
+
+/**
+ * Notifie la personne effective de perm juste après un override/skip/clearOverride manuel sur
+ * /support — le cron `supportDuty` ne couvre que le jour où une période démarre naturellement, pas
+ * un changement décidé en cours de route (cf. support.ts:setOverride/skipCurrentTurn/clearOverride).
+ * `getCurrentDuty` porte déjà l'override/l'offset à jour, donc appelé après coup il donne la bonne
+ * personne. `kind` différent de SUPPORT_DUTY : même si le cron du matin a déjà notifié quelqu'un
+ * d'autre pour cette période, le dédup (userId, kind, refDate) ne les confond pas.
+ */
+export async function notifySupportDutyChanged(
+	workspaceId: string,
+	workspaceName: string,
+	periodStart: string
+): Promise<number> {
+	const duty = await getCurrentDuty(workspaceId);
+	if (!duty || duty.periodStart !== periodStart) return 0; // période déjà passée entretemps
+	const member = await memberOf(workspaceId, duty.userId);
+	if (!member) return 0;
+	return maybeNotify(
+		{ workspaceId, workspaceName, userId: duty.userId, capacity: 0, prefsRaw: member.prefsRaw },
+		'SUPPORT_DUTY_CHANGED',
+		duty.periodStart,
+		{ single: duty.periodStart === duty.periodEnd, until: formatDay(duty.periodEnd) }
 	);
 }
 

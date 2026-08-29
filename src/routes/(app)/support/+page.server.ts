@@ -8,6 +8,7 @@ import {
 	clearOverride,
 	skipCurrentTurn
 } from '$lib/server/services/support';
+import { notifySupportDutyChanged } from '$lib/server/services/notifications';
 import { todayInParis } from '$lib/utils/date';
 
 const CALENDAR_WEEKS = 6;
@@ -38,6 +39,7 @@ export const actions: Actions = {
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
+		await notifySupportDutyChanged(ws.workspaceId, ws.workspaceName, periodStart);
 		return { ok: true };
 	},
 
@@ -46,6 +48,7 @@ export const actions: Actions = {
 		if (locals.role !== 'ADMIN' && locals.role !== 'MANAGER') return fail(403, { error: 'Réservé aux admins/managers.' });
 		const periodStart = String((await request.formData()).get('periodStart') ?? '');
 		await clearOverride(ws.workspaceId, periodStart);
+		await notifySupportDutyChanged(ws.workspaceId, ws.workspaceName, periodStart);
 		return { ok: true };
 	},
 
@@ -54,6 +57,7 @@ export const actions: Actions = {
 		if (locals.role !== 'ADMIN' && locals.role !== 'MANAGER') return fail(403, { error: 'Réservé aux admins/managers.' });
 		const periodStart = String((await request.formData()).get('periodStart') ?? '');
 		await skipCurrentTurn(ws.workspaceId, periodStart);
+		await notifySupportDutyChanged(ws.workspaceId, ws.workspaceName, periodStart);
 		return { ok: true };
 	}
 };

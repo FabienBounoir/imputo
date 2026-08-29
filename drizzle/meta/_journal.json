@@ -435,6 +435,13 @@
       "when": 1787929465735,
       "tag": "0061_cloudy_black_queen",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1788030096370,
+      "tag": "0062_sticky_scarecrow",
+      "breakpoints": true
     }
   ]
 }

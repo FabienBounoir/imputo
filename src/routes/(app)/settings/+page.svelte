@@ -82,7 +82,7 @@
 		},
 		{
 			label: 'Support',
-			items: [{ key: 'supportDuty', label: 'Mon tour de support commence', when: '9h00' }]
+			items: [{ key: 'supportDuty', label: 'Mon tour de support commence ou change', when: '9h00 ou immédiat' }]
 		},
 		{
 			label: 'Team mood',
@@ -170,19 +170,10 @@
 <div class="topbar">
 	<h1>Réglages<small>Préférences personnelles</small></h1>
 	<div class="spacer"></div>
+	<button type="button" class="btn btn-ghost" onclick={requestTourReplay}>Revoir le tutoriel</button>
 </div>
 
 <div class="content settings">
-	<section class="card block">
-		<div class="opt">
-			<div class="opt-t">
-				<b>Tutoriel de prise en main</b>
-				<span class="hint">Revoir la visite guidée de l'appli, adaptée à ton rôle actuel.</span>
-			</div>
-			<button type="button" class="btn btn-ghost" onclick={requestTourReplay}>Revoir le tutoriel</button>
-		</div>
-	</section>
-
 	<div class="tabs">
 		{#each TABS as t (t.key)}
 			<button type="button" class:on={tab === t.key} onclick={() => (tab = t.key)}>{t.label}</button>
