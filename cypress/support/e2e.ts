@@ -38,8 +38,22 @@ Cypress.Commands.add('gotoRefSection', (label: string, searchPlaceholder: string
 	);
 });
 Cypress.Commands.add('openRefAddForm', (expectSelector: string) => {
-	cy.get('button.ref-add-toggle').click();
+	cy.get('button.ref-add-icon-btn').click();
 	cy.get(expectSelector).should('exist');
+});
+
+// Premier login (register OU activation d'une invitation) : le tour d'onboarding (driver.js,
+// TourHost.svelte) s'auto-lance sur /imputation et pose un pointer-events:none sur le reste de la
+// page tant qu'il n'est pas fermé — sans ça, tout clic suivant dans les specs échoue. On laisse le
+// temps à l'effet onMount de le monter, puis on le ferme s'il est là (le close POST /tour, donc il
+// ne réapparaît pas sur les pages suivantes).
+Cypress.Commands.add('dismissOnboardingTour', () => {
+	cy.wait(1500);
+	cy.get('body').then(($body) => {
+		if ($body.find('.driver-popover-close-btn').length) {
+			cy.get('.driver-popover-close-btn').click();
+		}
+	});
 });
 
 Cypress.Commands.add('registerAndLogin', (overrides = {}) => {
@@ -59,6 +73,7 @@ Cypress.Commands.add('registerAndLogin', (overrides = {}) => {
 	cy.get('#pw').type(account.password).should('have.value', account.password);
 	cy.get('button[type=submit]').click();
 	cy.location('pathname').should('eq', '/imputation');
+	cy.dismissOnboardingTour();
 
 	return cy.wrap(account, { log: false });
 });
@@ -78,6 +93,7 @@ declare global {
 			clickReliably(find: () => Chainable, expectSelector: string): Chainable<void>;
 			gotoRefSection(label: string, searchPlaceholder: string): Chainable<void>;
 			openRefAddForm(expectSelector: string): Chainable<void>;
+			dismissOnboardingTour(): Chainable<void>;
 			registerAndLogin(overrides?: Partial<RegisteredAccount>): Chainable<RegisteredAccount>;
 		}
 	}

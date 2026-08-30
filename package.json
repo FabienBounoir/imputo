@@ -20,8 +20,8 @@
 		"db:pull:prod": "./scripts/db-pull.sh prod",
 		"db:pull:preprod": "./scripts/db-pull.sh preprod",
 		"jira:sync": "tsx scripts/jira-sync.ts",
-		"test": "vitest run",
-		"test:watch": "vitest",
+		"test": "WRAPPED_FORCE_OPEN= vitest run",
+		"test:watch": "WRAPPED_FORCE_OPEN= vitest",
 		"test:e2e": "cypress run",
 		"test:e2e:open": "cypress open"
 	},

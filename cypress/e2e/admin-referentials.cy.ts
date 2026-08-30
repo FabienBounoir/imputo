@@ -34,19 +34,21 @@ describe('admin : gestion des référentiels', () => {
 		cy.registerAndLogin().then(() => {
 			cy.visit('/admin');
 			gotoSsp();
-			cy.openRefAddForm('form.ssp-add input[name=code]');
+			// La modale d'ajout se ferme après chaque création acceptée (enhanceCreate) : on la
+			// rouvre à chaque itération plutôt que de réutiliser un formulaire resté ouvert.
 			[
 				['AAA-1', 'Alpha'],
 				['MMM-2', 'Mike']
 			].forEach(([c, l]) => {
-				cy.get('form.ssp-add input[name=code]').clear().type(c);
-				cy.get('form.ssp-add input[name=label]').clear().type(l);
-				cy.get('form.ssp-add button[type=submit]').click();
+				cy.openRefAddForm('form.modal-form input[name=code]');
+				cy.get('form.modal-form input[name=code]').clear().type(c);
+				cy.get('form.modal-form input[name=label]').clear().type(l);
+				cy.get('form.modal-form button[type=submit]').click();
 			});
-			// Code déjà pris : le service refuse. Sans bandeau ni remise à zéro du champ, l'écran
+			// Code déjà pris : le service refuse. Sans toast ni remise à zéro du champ, l'écran
 			// affichait une valeur qui n'existait pas en base jusqu'au prochain changement de page.
 			cy.get('form.ssp-form input[name=code]').eq(1).clear().type('AAA-1').blur();
-			cy.get('.flash.error').should('contain.text', 'déjà');
+			cy.contains('[data-sonner-toast]', 'déjà').should('exist');
 			cy.get('form.ssp-form input[name=code]').eq(1).should('have.value', 'MMM-2');
 		});
 	});
@@ -55,10 +57,10 @@ describe('admin : gestion des référentiels', () => {
 		cy.registerAndLogin().then(() => {
 			cy.visit('/admin');
 			gotoSsp();
-			cy.openRefAddForm('form.ssp-add input[name=code]');
-			cy.get('form.ssp-add input[name=code]').type('BUD-1');
-			cy.get('form.ssp-add input[name=label]').type('Budget');
-			cy.get('form.ssp-add button[type=submit]').click();
+			cy.openRefAddForm('form.modal-form input[name=code]');
+			cy.get('form.modal-form input[name=code]').type('BUD-1');
+			cy.get('form.modal-form input[name=label]').type('Budget');
+			cy.get('form.modal-form button[type=submit]').click();
 			// step="0.25" rendait le champ invalide : le navigateur bloquait requestSubmit() et rien
 			// n'était enregistré, sans le moindre signal.
 			cy.get('form.ssp-form input[name=budgetDays]').clear().type('213.81').blur();
@@ -73,11 +75,11 @@ describe('admin : gestion des référentiels', () => {
 		cy.registerAndLogin().then(() => {
 			cy.visit('/admin');
 			gotoSsp();
-			cy.openRefAddForm('form.ssp-add input[name=code]');
-			cy.get('form.ssp-add input[name=code]').type('REG-1');
-			cy.get('form.ssp-add input[name=label]').type('Avant');
-			cy.get('form.ssp-add input[name=budgetDays]').type('10');
-			cy.get('form.ssp-add button[type=submit]').click();
+			cy.openRefAddForm('form.modal-form input[name=code]');
+			cy.get('form.modal-form input[name=code]').type('REG-1');
+			cy.get('form.modal-form input[name=label]').type('Avant');
+			cy.get('form.modal-form input[name=budgetDays]').type('10');
+			cy.get('form.modal-form button[type=submit]').click();
 
 			cy.get('form.ssp-form input[name=code]').clear().type('REG-2').blur();
 			cy.get('form.ssp-form input[name=code]').should('have.value', 'REG-2');

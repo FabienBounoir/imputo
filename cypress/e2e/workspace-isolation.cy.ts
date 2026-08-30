@@ -4,10 +4,10 @@ describe('isolation multi-espace (UI)', () => {
 
 		cy.registerAndLogin({ workspaceName: 'Espace Isolation A' }).then(() => {
 			cy.visit('/tickets');
-			cy.clickReliably(() => cy.contains('button', 'Nouveau ticket'), '#key');
-			cy.get('#key').type(key);
-			cy.get('#title').type('Ticket privé espace A');
-			cy.contains('.card.create button[type=submit]', 'Créer').click();
+			cy.clickReliably(() => cy.contains('button', 'Nouveau ticket'), '#qc-key');
+			cy.get('#qc-key').type(key);
+			cy.get('#qc-title').type('Ticket privé espace A');
+			cy.contains('.qc-popover button[type=submit]', 'Créer').click();
 			cy.contains(key).should('exist');
 
 			cy.get('form[action="/logout"] button').click();

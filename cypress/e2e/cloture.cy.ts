@@ -11,11 +11,11 @@ describe('clôture mensuelle', () => {
 			// Toujours passer par le clic d'onglet : `?tab=referentiels` + submit immédiat perd
 			// l'onglet (repli natif avant hydratation), cf. admin-referentials.cy.ts.
 			cy.gotoRefSection('Codes SSP', 'Rechercher un code ou un libellé…');
-			cy.openRefAddForm('form.ssp-add input[name=code]');
+			cy.openRefAddForm('form.modal-form input[name=code]');
 
-			cy.get('form.ssp-add input[name=code]').type(code);
-			cy.get('form.ssp-add input[name=label]').type('Libellé E2E');
-			cy.get('form.ssp-add button[type=submit]').click();
+			cy.get('form.modal-form input[name=code]').type(code);
+			cy.get('form.modal-form input[name=label]').type('Libellé E2E');
+			cy.get('form.modal-form button[type=submit]').click();
 
 			// Le code vit dans la propriété `value` d'un <input> (édition inline) : ni cy.contains ni
 			// [value=...] ne le trouvent. Le filtrage se fait DANS le should et pas via .filter() :

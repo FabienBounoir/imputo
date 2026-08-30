@@ -4,20 +4,20 @@ describe('cycle de vie ticket -> imputation', () => {
 
 		cy.registerAndLogin().then(() => {
 			cy.visit('/tickets');
-			cy.clickReliably(() => cy.contains('button', 'Nouveau ticket'), '#key');
-			cy.get('#key').type(key);
-			cy.get('#title').type('Ticket créé par le test E2E');
-			cy.contains('.card.create button[type=submit]', 'Créer').click();
+			cy.clickReliably(() => cy.contains('button', 'Nouveau ticket'), '#qc-key');
+			cy.get('#qc-key').type(key);
+			cy.get('#qc-title').type('Ticket créé par le test E2E');
+			cy.contains('.qc-popover button[type=submit]', 'Créer').click();
 
 			// Le formulaire se ferme (use:enhance) et le ticket apparaît dans la liste.
-			cy.contains('.card.create', 'Créer').should('not.exist');
+			cy.get('.qc-popover').should('not.exist');
 			cy.contains(key).should('exist');
 
 			cy.visit('/imputation');
-			cy.clickReliably(() => cy.get('.tp-trigger'), '.tp-search');
-			cy.get('.tp-search').type(key);
-			cy.contains('.tp-item', key).click();
-			cy.contains('.addrow button', 'Ajouter').click();
+			cy.clickReliably(() => cy.get('.qa-launcher'), '.qa-input');
+			cy.get('.qa-input').type(key);
+			cy.contains('.qa-item', key).click();
+			cy.contains('.activity-option', 'Aucune activité').click();
 
 			// N'importe quel jour ouvré affiché (pas forcément "aujourd'hui" : un week-end n'a pas de
 			// colonne dans la grille, qui n'affiche que les jours ouvrés de la période).

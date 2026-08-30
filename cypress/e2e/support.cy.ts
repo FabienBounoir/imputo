@@ -89,6 +89,7 @@ describe('support : rotation à deux, remplacement ponctuel, passer son tour, vu
 					cy.contains('button', 'Activer mon compte').click();
 					// L'activation connecte directement le nouveau membre : il faut redevenir admin.
 					cy.location('pathname').should('eq', '/imputation');
+					cy.dismissOnboardingTour();
 
 					cy.get('form[action="/logout"] button').click();
 					cy.location('pathname').should('eq', '/login');

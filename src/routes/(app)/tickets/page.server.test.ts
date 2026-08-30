@@ -166,7 +166,7 @@ describe('tickets +page.server actions.create', () => {
 			})
 		} as never);
 
-		expect(result).toEqual({ ok: true });
+		expect(result).toEqual({ ok: true, id: expect.any(String) });
 
 		const table = await load({ locals: await fakeLocals(userId), url: new URL('http://localhost/tickets') } as never);
 		const { tickets } = await table.ticketsPage;
@@ -188,7 +188,7 @@ describe('tickets +page.server actions.create', () => {
 			})
 		} as never);
 
-		expect(result).toEqual({ ok: true });
+		expect(result).toEqual({ ok: true, id: expect.any(String) });
 	});
 
 	it('refuse une clé dupliquée', async () => {
