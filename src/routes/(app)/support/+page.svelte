@@ -5,12 +5,19 @@
 	import { formatDayRange } from '$lib/utils/date';
 	import UserAvatar from '$lib/components/UserAvatar.svelte';
 	import { buildDeck, evaluatePick, clearOpen, isWon } from '$lib/utils/memoryGame';
+	import { formatDuration } from '$lib/supportDuration';
 
 	let { data, form } = $props();
 
 	let pickerOpen = $state(false);
+	let editEntry = $state<(typeof data.ownTimeEntries)[number] | null>(null);
 	$effect(() => {
 		if (form?.error) toast.error(form.error);
+		if (form?.timeError) toast.error(form.timeError);
+		if (form?.timeOk) {
+			toast.success('Temps mis à jour ✓');
+			editEntry = null;
+		}
 	});
 
 	// Jeu des paires caché dans la grille du planning : les cases existantes deviennent des cartes
@@ -112,6 +119,10 @@
 
 <div class="topbar">
 	<h1>Support<small>Qui regarde les tickets</small></h1>
+	<div class="spacer"></div>
+	{#if data.canViewHistory}
+		<a class="btn btn-ghost" href="/support/historique">Historique complet →</a>
+	{/if}
 </div>
 
 <div class="content support-layout">
@@ -189,9 +200,42 @@
 			</div>
 		</section>
 	{/if}
+
+	{#if data.timeTrackingEnabled}
+		<section class="card time-block">
+			<h3>Mon temps sur le support</h3>
+			{#if data.ownTimeEntries.length === 0}
+				<p class="empty-hint">Aucune saisie pour l'instant — <kbd>Shift</kbd>+<kbd>T</kbd> depuis n'importe quelle page pour en ajouter une.</p>
+			{:else}
+				<div class="time-table-wrap">
+					<table class="time-table">
+						<thead><tr><th>Jour</th><th>Ticket</th><th class="num">Durée</th><th></th></tr></thead>
+						<tbody>
+							{#each data.ownTimeEntries as entry (entry.id)}
+								<tr>
+									<td>{fmtFull(entry.day)}</td>
+									<td>{entry.ticketRef}</td>
+									<td class="num tabnum">{formatDuration(entry.minutes)}</td>
+									<td class="time-row-actions">
+										<button type="button" class="link-btn" onclick={() => (editEntry = entry)}>Modifier</button>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			{/if}
+		</section>
+	{/if}
 </div>
 
-<svelte:window onkeydown={(e) => pickerOpen && e.key === 'Escape' && (pickerOpen = false)} />
+<svelte:window
+	onkeydown={(e) => {
+		if (e.key !== 'Escape') return;
+		if (editEntry) editEntry = null;
+		else if (pickerOpen) pickerOpen = false;
+	}}
+/>
 
 {#if pickerOpen && data.current}
 	{@const current = data.current}
@@ -242,6 +286,37 @@
 			<div class="modal-actions">
 				<button class="btn btn-ghost" type="button" onclick={() => (pickerOpen = false)}>Fermer</button>
 			</div>
+		</div>
+	</div>
+{/if}
+
+{#if editEntry}
+	{@const entry = editEntry}
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="modal-backdrop" onclick={() => (editEntry = null)}>
+		<div class="modal" onclick={(e) => e.stopPropagation()}>
+			<h3>Modifier cette saisie</h3>
+			<p class="hint">Seules tes propres saisies sont modifiables.</p>
+			<form method="POST" action="?/editTimeEntry" use:enhance>
+				<input type="hidden" name="id" value={entry.id} />
+				<div class="field">
+					<label for="et-ticket">Ticket</label>
+					<input id="et-ticket" name="ticketRef" value={entry.ticketRef} required />
+				</div>
+				<div class="field">
+					<label for="et-duration">Durée</label>
+					<input id="et-duration" name="duration" value={formatDuration(entry.minutes)} required />
+				</div>
+				<div class="field">
+					<label for="et-day">Jour</label>
+					<input id="et-day" name="day" type="date" value={entry.day} required />
+				</div>
+				<div class="modal-actions">
+					<button class="btn btn-ghost" type="button" onclick={() => (editEntry = null)}>Annuler</button>
+					<button class="btn btn-primary" type="submit">Enregistrer</button>
+				</div>
+			</form>
 		</div>
 	</div>
 {/if}
@@ -631,5 +706,45 @@
 		display: flex;
 		justify-content: flex-end;
 		margin-top: 18px;
+	}
+
+	/* ---------- Temps sur le support ---------- */
+	.time-block {
+		padding: 24px 28px 28px;
+	}
+	.time-block h3 {
+		font-family: var(--font-display);
+		font-size: 17px;
+		font-weight: 600;
+		margin-bottom: 16px;
+	}
+	.time-table-wrap {
+		overflow-x: auto;
+	}
+	.time-table {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: 13.5px;
+	}
+	.time-table th {
+		text-align: left;
+		font-size: 11px;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		color: var(--text-mute);
+		padding: 0 10px 8px;
+		white-space: nowrap;
+	}
+	.time-table td {
+		padding: 9px 10px;
+		border-top: 1px solid var(--border);
+		white-space: nowrap;
+	}
+	.time-table .num {
+		text-align: right;
+	}
+	.time-row-actions {
+		text-align: right;
 	}
 </style>

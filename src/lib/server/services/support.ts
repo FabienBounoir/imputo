@@ -33,6 +33,10 @@ export async function setSupportIncludeSaturday(workspaceId: string, includeSatu
 	await db.update(workspace).set({ supportIncludeSaturday: includeSaturday }).where(eq(workspace.id, workspaceId));
 }
 
+export async function setSupportTimeTrackingEnabled(workspaceId: string, enabled: boolean) {
+	await db.update(workspace).set({ supportTimeTrackingEnabled: enabled }).where(eq(workspace.id, workspaceId));
+}
+
 export type RotationMemberItem = { id: string; userId: string; displayName: string; sortOrder: number };
 
 export async function listRotationMembers(workspaceId: string): Promise<RotationMemberItem[]> {

@@ -1057,6 +1057,24 @@
 		</section>
 
 		<section class="card block">
+			<h3>Temps sur les tickets de support</h3>
+			<p class="hint">
+				Trace le temps que chacun passe sur un ticket de support (identifiant libre, pas un ticket Imputo) — donnée
+				que l'entreprise ne suit nulle part ailleurs aujourd'hui. Raccourci <kbd>Shift</kbd>+<kbd>T</kbd> depuis
+				n'importe quelle page une fois activé ; historique et export sur la page Support.
+			</p>
+			<form method="POST" action="?/supportTimeTrackingEnabled" use:enhance>
+				<input type="hidden" name="enabled" value={String(!data.supportTimeTrackingEnabled)} />
+				<div style="display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:6px;">
+					<span>Suivi du temps actuellement <b>{data.supportTimeTrackingEnabled ? 'activé' : 'désactivé'}</b></span>
+					<button class="btn {data.supportTimeTrackingEnabled ? 'btn-ghost' : 'btn-primary'}" type="submit">
+						{data.supportTimeTrackingEnabled ? 'Désactiver' : 'Activer'}
+					</button>
+				</div>
+			</form>
+		</section>
+
+		<section class="card block">
 			<h3>Ordre de rotation</h3>
 			<p class="hint">Réordonne avec ▲▼. La personne du jour/de la semaine/du mois tourne automatiquement dans cet ordre.</p>
 			<div class="state-list">

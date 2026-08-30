@@ -93,6 +93,9 @@ export const workspace = pgTable('workspace', {
 	supportRotationOffset: integer('support_rotation_offset').notNull().default(0),
 	// Le samedi compte-t-il comme un jour de perm (cadence DAY) ? Dimanche jamais inclus.
 	supportIncludeSaturday: boolean('support_include_saturday').notNull().default(false),
+	// Suivi du temps passé sur les tickets de support (cf. supportTimeEntry) : désactivé par défaut,
+	// activable par l'admin — donnée que l'entreprise ne trace nulle part ailleurs aujourd'hui.
+	supportTimeTrackingEnabled: boolean('support_time_tracking_enabled').notNull().default(false),
 
 	// Curseur du "mois en cours" du Suivi annuel — indépendant du calendrier et de monthlyClosing,
 	// avancé uniquement via le bouton "Mois suivant". NULL = pas encore initialisé, bootstrap sur le
@@ -856,6 +859,32 @@ export const supportDutyLog = pgTable(
 		createdAt: createdAt()
 	},
 	(t) => [uniqueIndex('support_duty_log_ws_period_uq').on(t.workspaceId, t.periodStart)]
+);
+
+// Temps passé sur un ticket de support (cf. workspace.supportTimeTrackingEnabled) : ticketRef est un
+// identifiant libre, jamais une FK vers `ticket` — ces demandes de support vivent hors Imputo,
+// aucune table locale ne les référence. minutes plutôt qu'un texte façon Jira : une seule unité de
+// stockage, le format "1h 30m" n'est qu'un habillage de saisie/affichage (cf. $lib/supportDuration).
+export const supportTimeEntry = pgTable(
+	'support_time_entry',
+	{
+		id: id(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspace.id, { onDelete: 'cascade' }),
+		userId: uuid('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		ticketRef: text('ticket_ref').notNull(),
+		minutes: integer('minutes').notNull(),
+		day: date('day').notNull(),
+		createdAt: createdAt(),
+		updatedAt: updatedAt()
+	},
+	(t) => [
+		index('support_time_entry_ws_idx').on(t.workspaceId),
+		index('support_time_entry_ws_user_idx').on(t.workspaceId, t.userId)
+	]
 );
 
 // ---------- Notifications (Web Push) ----------

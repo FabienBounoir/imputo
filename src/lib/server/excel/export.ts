@@ -55,17 +55,17 @@ export function pickInk(bgHex: string): string {
 	return yiq >= 140 ? 'FF1F2937' : 'FFFFFFFF';
 }
 /** Éclaircit vers le blanc (amount 0→1). Pour les fonds légers. */
-function tintArgb(hex: string, amount: number): string {
+export function tintArgb(hex: string, amount: number): string {
 	const [r, g, b] = parseHex(hex);
 	return toArgb(r + (255 - r) * amount, g + (255 - g) * amount, b + (255 - b) * amount);
 }
 /** Assombrit vers le noir (amount 0→1). Pour les bandeaux foncés. */
-function shadeArgb(hex: string, amount: number): string {
+export function shadeArgb(hex: string, amount: number): string {
 	const [r, g, b] = parseHex(hex);
 	return toArgb(r * (1 - amount), g * (1 - amount), b * (1 - amount));
 }
 
-type Theme = {
+export type Theme = {
 	header: string; // fond d'en-tête (= accent)
 	ink: string; // texte sur en-tête
 	memberHeader: string; // bandeau foncé (colonnes/lignes par-personne)
@@ -74,7 +74,7 @@ type Theme = {
 	totals: string; // ligne TOTAL
 	section: string; // bandes de section (page de garde)
 };
-function buildTheme(accentHex: string): Theme {
+export function buildTheme(accentHex: string): Theme {
 	const memberHeader = shadeArgb(accentHex, 0.28);
 	return {
 		header: hexToArgb(accentHex),
@@ -87,7 +87,7 @@ function buildTheme(accentHex: string): Theme {
 	};
 }
 
-function styleHeader(row: ExcelJS.Row, theme: Theme) {
+export function styleHeader(row: ExcelJS.Row, theme: Theme) {
 	row.font = { bold: true, color: { argb: theme.ink } };
 	row.eachCell((c) => {
 		c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: theme.header } };
@@ -97,7 +97,7 @@ function styleHeader(row: ExcelJS.Row, theme: Theme) {
 }
 
 /** En-tête accent + figé + autofiltre + zébrage des lignes de données. */
-function finishDataSheet(
+export function finishDataSheet(
 	sheet: ExcelJS.Worksheet,
 	theme: Theme,
 	opts: { xSplit?: number; stripe?: boolean } = {}
@@ -117,7 +117,7 @@ function finishDataSheet(
 }
 
 /** Ajoute une ligne de totaux (gras + fond teinté + bordure haute). Après finishDataSheet. */
-function addTotalsRow(
+export function addTotalsRow(
 	sheet: ExcelJS.Worksheet,
 	values: Record<string, string | number>,
 	theme: Theme
@@ -132,7 +132,7 @@ function addTotalsRow(
 }
 
 /** Mise en forme conditionnelle : barre de données sur une colonne (plage de lignes de données). */
-function addDataBar(sheet: ExcelJS.Worksheet, colKey: string, firstRow: number, lastRow: number, argb: string) {
+export function addDataBar(sheet: ExcelJS.Worksheet, colKey: string, firstRow: number, lastRow: number, argb: string) {
 	if (lastRow < firstRow) return;
 	const col = sheet.getColumn(colKey).letter;
 	sheet.addConditionalFormatting({
@@ -141,7 +141,7 @@ function addDataBar(sheet: ExcelJS.Worksheet, colKey: string, firstRow: number, 
 	});
 }
 /** Échelle 3 couleurs (min→mid→max) sur une colonne. */
-function addColorScale(
+export function addColorScale(
 	sheet: ExcelJS.Worksheet,
 	colKey: string,
 	firstRow: number,

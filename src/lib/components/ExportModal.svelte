@@ -1,17 +1,8 @@
 <script lang="ts">
 	// Export Excel : bouton + modale (préréglages de période + choix des feuilles).
-	// Partagé entre la page admin et la page imputation. L'endpoint /export est global
-	// (scopé au workspace), pas de rôle requis.
-	let { label = "Télécharger l'Excel", buttonClass = 'btn btn-primary' }: {
-		label?: string;
-		buttonClass?: string;
-	} = $props();
-
-	// Date locale en YYYY-MM-DD (PAS toISOString : convertit en UTC et décale d'un jour
-	// aux fuseaux à l'est de Greenwich — ex. minuit à Paris = la veille en UTC).
-	const iso = (d: Date) =>
-		`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-	const SHEETS = [
+	// Générique : chaque appelant (page admin, imputation, historique support…) fournit son
+	// endpoint et sa propre liste de feuilles — la modale/logique de période reste commune.
+	const DEFAULT_SHEETS = [
 		{ key: 'synthese', label: 'Synthèse (page de garde)' },
 		{ key: 'us', label: 'Synthèse US' },
 		{ key: 'projsprint', label: 'Par projet & sprint' },
@@ -22,11 +13,45 @@
 		{ key: 'hebdo', label: 'Synthèse hebdo (% capacité)' },
 		{ key: 'absences', label: 'Hors-projet & absences' }
 	];
+	const PRESET_LABELS: Record<string, string> = {
+		week: 'Semaine en cours',
+		month: 'Mois en cours',
+		lastmonth: 'Mois dernier',
+		year: 'Année en cours',
+		all: 'Tout',
+		custom: 'Personnalisé'
+	};
+	let {
+		label = "Télécharger l'Excel",
+		buttonClass = 'btn btn-primary',
+		endpoint = '/export',
+		sheets = DEFAULT_SHEETS,
+		title = 'Exporter en Excel',
+		hint = "Le <b>consommé</b> est borné sur la période ; le chiffrage reste l'état courant.",
+		presets = ['week', 'month', 'lastmonth'],
+		defaultPreset = 'month',
+		extraParams = {}
+	}: {
+		label?: string;
+		buttonClass?: string;
+		endpoint?: string;
+		sheets?: { key: string; label: string }[];
+		title?: string;
+		hint?: string;
+		presets?: string[];
+		defaultPreset?: string;
+		extraParams?: Record<string, string>;
+	} = $props();
+
+	// Date locale en YYYY-MM-DD (PAS toISOString : convertit en UTC et décale d'un jour
+	// aux fuseaux à l'est de Greenwich — ex. minuit à Paris = la veille en UTC).
+	const iso = (d: Date) =>
+		`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 	let show = $state(false);
 	let exFrom = $state('');
 	let exTo = $state('');
-	let exPreset = $state('month');
-	let exSheets = $state(new Set(SHEETS.map((s) => s.key)));
+	let exPreset = $state('');
+	let exSheets = $state(new Set(sheets.map((s) => s.key)));
 
 	function applyPreset(p: string) {
 		exPreset = p;
@@ -42,10 +67,16 @@
 		} else if (p === 'lastmonth') {
 			exFrom = iso(new Date(now.getFullYear(), now.getMonth() - 1, 1));
 			exTo = iso(new Date(now.getFullYear(), now.getMonth(), 0));
+		} else if (p === 'year') {
+			exFrom = iso(new Date(now.getFullYear(), 0, 1));
+			exTo = iso(now);
+		} else if (p === 'all') {
+			exFrom = '';
+			exTo = '';
 		}
 	}
 	function openExport() {
-		if (!exFrom || !exTo) applyPreset('month');
+		if (!exPreset) applyPreset(defaultPreset);
 		show = true;
 	}
 	function toggleSheet(key: string) {
@@ -54,9 +85,11 @@
 		exSheets = new Set(exSheets);
 	}
 	function downloadExport() {
-		const params = new URLSearchParams({ from: exFrom, to: exTo });
-		if (exSheets.size < SHEETS.length) params.set('sheets', [...exSheets].join(','));
-		window.location.href = `/export?${params.toString()}`;
+		const params = new URLSearchParams(extraParams);
+		if (exFrom) params.set('from', exFrom);
+		if (exTo) params.set('to', exTo);
+		if (exSheets.size < sheets.length) params.set('sheets', [...exSheets].join(','));
+		window.location.href = `${endpoint}?${params.toString()}`;
 		show = false;
 	}
 </script>
@@ -73,13 +106,14 @@
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div class="modal-backdrop" onclick={() => (show = false)}>
 		<div class="modal" onclick={(e) => e.stopPropagation()}>
-			<h3>Exporter en Excel</h3>
-			<p class="hint">Le <b>consommé</b> est borné sur la période ; le chiffrage reste l'état courant.</p>
+			<h3>{title}</h3>
+			<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+			<p class="hint">{@html hint}</p>
 
 			<div class="seg">
-				<button type="button" class:on={exPreset === 'week'} onclick={() => applyPreset('week')}>Semaine en cours</button>
-				<button type="button" class:on={exPreset === 'month'} onclick={() => applyPreset('month')}>Mois en cours</button>
-				<button type="button" class:on={exPreset === 'lastmonth'} onclick={() => applyPreset('lastmonth')}>Mois dernier</button>
+				{#each presets as p (p)}
+					<button type="button" class:on={exPreset === p} onclick={() => applyPreset(p)}>{PRESET_LABELS[p] ?? p}</button>
+				{/each}
 				<button type="button" class:on={exPreset === 'custom'} onclick={() => (exPreset = 'custom')}>Personnalisé</button>
 			</div>
 
@@ -91,18 +125,18 @@
 			<div class="sheets">
 				<div class="sheets-h">
 					Feuilles à inclure
-					<button type="button" class="link-btn" onclick={() => (exSheets = new Set(exSheets.size === SHEETS.length ? [] : SHEETS.map((s) => s.key)))}>
-						{exSheets.size === SHEETS.length ? 'Tout décocher' : 'Tout cocher'}
+					<button type="button" class="link-btn" onclick={() => (exSheets = new Set(exSheets.size === sheets.length ? [] : sheets.map((s) => s.key)))}>
+						{exSheets.size === sheets.length ? 'Tout décocher' : 'Tout cocher'}
 					</button>
 				</div>
-				{#each SHEETS as s (s.key)}
+				{#each sheets as s (s.key)}
 					<label class="sheet-row"><input type="checkbox" checked={exSheets.has(s.key)} onchange={() => toggleSheet(s.key)} /> {s.label}</label>
 				{/each}
 			</div>
 
 			<div class="modal-actions">
 				<button class="btn btn-ghost" onclick={() => (show = false)}>Annuler</button>
-				<button class="btn btn-primary" disabled={exSheets.size === 0 || !exFrom || !exTo} onclick={downloadExport}>
+				<button class="btn btn-primary" disabled={exSheets.size === 0 || (exPreset !== 'all' && (!exFrom || !exTo))} onclick={downloadExport}>
 					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="3" width="12" height="8" rx="1.5"/><path d="M12 17v-6M9 14l3 3 3-3"/><path d="M3 15v4a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4"/></svg>
 					Télécharger
 				</button>
