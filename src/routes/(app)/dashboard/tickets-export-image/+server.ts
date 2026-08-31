@@ -29,7 +29,7 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 		error(404, 'Sprint/version introuvable.');
 	}
 
-	const { svg } = buildSprintTicketsSvg(dashboard, grouped, wsRow[0]?.accentColor ?? '#16A34A');
+	const { svg } = await buildSprintTicketsSvg(dashboard, grouped, wsRow[0]?.accentColor ?? '#16A34A');
 
 	return new Response(svg, {
 		headers: {

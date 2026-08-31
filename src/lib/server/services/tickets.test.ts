@@ -125,6 +125,24 @@ describe('updateTicketField — permissions par rôle', () => {
 		);
 	});
 
+	it('assigneeId : null par défaut, éditable, résout le nom du membre (assigneeName), retombe à null si retiré', async () => {
+		const { workspaceId, userId } = await makeWorkspace();
+		const { userId: memberId } = await addMember(workspaceId, 'USER', 'assignee-member');
+		const t = await createTicket(workspaceId, { key: 'T-ASSIGN', title: 'x' });
+		const [created] = await listTickets(workspaceId).then((rows) => rows.filter((r) => r.id === t.id));
+		expect(created.assigneeId).toBeNull();
+		expect(created.assigneeName).toBeNull();
+
+		await updateTicketField(workspaceId, t.id, 'assigneeId', memberId, 'USER', userId);
+		const [assigned] = await listTickets(workspaceId).then((rows) => rows.filter((r) => r.id === t.id));
+		expect(assigned.assigneeId).toBe(memberId);
+		expect(assigned.assigneeName).toBe('assignee-member');
+
+		await updateTicketField(workspaceId, t.id, 'assigneeId', '', 'USER', userId);
+		const [unassigned] = await listTickets(workspaceId).then((rows) => rows.filter((r) => r.id === t.id));
+		expect(unassigned.assigneeId).toBeNull();
+	});
+
 	it('un ADMIN non créateur de l’espace peut éditer la clé (isOwner=false)', async () => {
 		const { workspaceId } = await makeWorkspace();
 		const { userId: adminId } = await addMember(workspaceId, 'ADMIN');

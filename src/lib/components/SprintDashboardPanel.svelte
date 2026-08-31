@@ -1,8 +1,15 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
+	import { tick } from 'svelte';
+	import { goto, invalidateAll } from '$app/navigation';
 	import { navigating } from '$app/state';
+	import { deserialize } from '$app/forms';
+	import { confirmDialog } from '$lib/confirm.svelte';
+	import { toast } from 'svelte-sonner';
 	import { downloadSvgAsPng } from '$lib/utils/svgToPng';
 	import { jiraTicketUrl, type JiraLinkConfig } from '$lib/jiraLink';
+	import UserAvatar from './UserAvatar.svelte';
+	import Tooltip from './Tooltip.svelte';
+	import TicketEditModal from './TicketEditModal.svelte';
 
 	function round2(n: number) {
 		return Math.round((n + Number.EPSILON) * 100) / 100;
@@ -53,6 +60,9 @@
 		ecartVsEstime: number;
 		ecartVsBudget: number | null;
 		avancement: number;
+		priority: number;
+		assigneeId: string | null;
+		assigneeName: string | null;
 	};
 
 	let {
@@ -60,9 +70,20 @@
 		baseHref,
 		options,
 		selectedId,
-		dashboard,
+		dashboard: dashboardProp,
 		emptyLabel,
-		jiraCfg
+		jiraCfg,
+		states,
+		projects,
+		sprints,
+		versions,
+		ssps,
+		ticketGroups: allTicketGroups,
+		members,
+		testPhase,
+		canEditEstimation,
+		isAdmin,
+		isOwner
 	}: {
 		title: string;
 		baseHref: string;
@@ -71,13 +92,37 @@
 		dashboard: SprintDashboard | null;
 		emptyLabel: string;
 		jiraCfg: JiraLinkConfig;
+		// Tout ce qui suit sert uniquement au menu clic droit + à la modale d'édition complète
+		// (TicketEditModal, même modal que Tickets & chiffrage) sur les tickets de ce dashboard.
+		states: { id: string; label: string; emoji: string | null; color: string | null }[];
+		projects: { id: string; name: string }[];
+		sprints: { id: string; name: string }[];
+		versions: { id: string; name: string }[];
+		ssps: { id: string; code: string; label: string }[];
+		ticketGroups: { id: string; label: string }[];
+		members: { id: string; displayName: string; factice: boolean }[];
+		testPhase: boolean;
+		canEditEstimation: boolean;
+		isAdmin: boolean;
+		isOwner: boolean;
 	} = $props();
 
+	// Copie locale reactive (`$state`) du prop : le patch optimiste du menu clic droit (cf.
+	// patchTicket plus bas) doit muter un objet que Svelte suit, pas juste le contenu d'un prop
+	// (une mutation de propriété profonde sur `dashboardProp` ne déclenche aucun rendu — vérifié en
+	// pratique, cf. `rows = $state(...)` dans tickets/+page.svelte, même contrainte). Resynchronisée
+	// dès que le prop change réellement (changement de sprint/version, ou invalidateAll après
+	// suppression/édition complète).
+	let dashboard = $state(dashboardProp);
+	$effect(() => {
+		dashboard = dashboardProp;
+	});
+
 	const pct = (x: number) => Math.round(x * 100);
-	// État, Ticket, Estimé, RAE, Consommé, Écart vs estimé, Avancement — + Budget / Écart vs budget
-	// si visibles (isAdmin), pour le colspan de l'en-tête et de la ligne de sous-total par groupe.
+	// État, Ticket, Assigné, Estimé, RAE, Consommé, Écart vs estimé, Avancement — + Budget / Écart vs
+	// budget si visibles (isAdmin), pour le colspan de l'en-tête et de la ligne de sous-total par groupe.
 	const usColCount = $derived(
-		7 + (dashboard?.kpis.budgetTotal !== null ? 1 : 0) + (dashboard?.kpis.ecartVsBudgetTotal !== null ? 1 : 0)
+		8 + (dashboard?.kpis.budgetTotal !== null ? 1 : 0) + (dashboard?.kpis.ecartVsBudgetTotal !== null ? 1 : 0)
 	);
 
 	// Sections par groupe de tickets : préférence locale (retour utilisateur), pas serveur — chacun
@@ -89,6 +134,143 @@
 	});
 	function onToggleGroup() {
 		localStorage.setItem(GROUP_KEY, groupByTicketGroup ? '1' : '0');
+	}
+
+	// Menu clic droit sur une ligne — même panneau que Tickets & chiffrage (tickets/+page.svelte,
+	// voir les commentaires là-bas pour le détail du positionnement/flip). Différences : pas
+	// d'"Ajouter à Mon imputation" (naviguerait hors de la page Synthèse), remplacé par "Éditer" qui
+	// ouvre TicketEditModal sans quitter la vue ; et après une mise à jour, `invalidateAll()` plutôt
+	// qu'une mutation locale — les KPIs/écarts agrégés du dashboard doivent être recalculés côté
+	// serveur, pas juste le champ isolé qu'on vient de changer.
+	let ctxRow = $state<SprintDashboardTicket | null>(null);
+	let ctxAnchor = $state<{ x: number; y: number } | null>(null);
+	let ctxPos = $state({ x: 0, y: 0 });
+	let ctxSubmenu = $state<'state' | 'priority' | 'assignee' | null>(null);
+	let ctxMenuEl: HTMLDivElement | null = $state(null);
+	let editTicketId = $state<string | null>(null);
+
+	async function positionCtxMenu() {
+		if (!ctxAnchor) return;
+		await tick();
+		if (!ctxMenuEl) return;
+		let { x, y } = ctxAnchor;
+		if (x + ctxMenuEl.offsetWidth > window.innerWidth) x = Math.max(4, window.innerWidth - ctxMenuEl.offsetWidth - 4);
+		if (y + ctxMenuEl.offsetHeight > window.innerHeight) y = Math.max(4, window.innerHeight - ctxMenuEl.offsetHeight - 4);
+		ctxPos = { x, y };
+	}
+	function openContextMenu(e: MouseEvent, row: SprintDashboardTicket) {
+		e.preventDefault();
+		ctxRow = row;
+		ctxAnchor = { x: e.clientX, y: e.clientY };
+		ctxPos = { ...ctxAnchor };
+		ctxSubmenu = null;
+		positionCtxMenu();
+	}
+	function closeContextMenu() {
+		ctxRow = null;
+		ctxAnchor = null;
+		ctxSubmenu = null;
+	}
+	function openCtxSubmenu(which: 'state' | 'priority' | 'assignee' | null) {
+		ctxSubmenu = which;
+		positionCtxMenu();
+	}
+	function onWindowClickCloseCtxMenu(e: MouseEvent) {
+		if (ctxRow && !(e.target as HTMLElement).closest('.ctx-menu')) closeContextMenu();
+	}
+	function onWindowKeydownCtxMenu(e: KeyboardEvent) {
+		if (e.key !== 'Escape') return;
+		if (editTicketId) return; // TicketEditModal gère déjà son propre Escape (onClose)
+		closeContextMenu();
+	}
+	async function ctxCopy(text: string, label: string) {
+		closeContextMenu();
+		try {
+			await navigator.clipboard.writeText(text);
+			toast.success(`${label} copié ✓`);
+		} catch {
+			toast.error('Impossible de copier.');
+		}
+	}
+	// État/priorité/assigné n'entrent dans le calcul d'aucun KPI/écart affiché ici (avancement,
+	// consommé, écarts vs estimé/budget ne dépendent que de estTotal/raeTotal/consumed) : patcher
+	// le ticket en local suffit, pas besoin d'un invalidateAll qui recharge tout le dashboard (chart,
+	// répartitions...) pour un simple changement de badge. Les données du load ayant traversé un
+	// aller-retour JSON, le même ticket existe comme des objets DISTINCTS dans dashboard.tickets et
+	// dans chaque dashboard.ticketGroups[].tickets — il faut patcher chaque occurrence trouvée.
+	function patchTicket(ticketId: string, patch: Partial<SprintDashboardTicket>) {
+		if (!dashboard) return;
+		const apply = (list: SprintDashboardTicket[]) => {
+			const t = list.find((x) => x.id === ticketId);
+			if (t) Object.assign(t, patch);
+		};
+		apply(dashboard.tickets);
+		for (const g of dashboard.ticketGroups) apply(g.tickets);
+	}
+	async function ctxUpdate(ticketId: string, field: string, value: string | number | null) {
+		const body = new FormData();
+		body.set('ticketId', ticketId);
+		body.set('field', field);
+		body.set('value', value == null ? '' : String(value));
+		const res = await fetch('/tickets?/update', { method: 'POST', body });
+		const result = deserialize(await res.text());
+		if (result.type === 'failure') {
+			toast.error((result.data?.error as string) ?? 'Erreur lors de l’enregistrement.');
+		} else {
+			toast.success('Enregistré ✓');
+		}
+	}
+	function ctxSetState(row: SprintDashboardTicket, stateId: string | null) {
+		closeContextMenu();
+		const s = stateId ? states.find((x) => x.id === stateId) : null;
+		patchTicket(row.id, { stateLabel: s?.label ?? null, stateEmoji: s?.emoji ?? null, stateColor: s?.color ?? null });
+		ctxUpdate(row.id, 'stateId', stateId);
+	}
+	function ctxSetPriority(row: SprintDashboardTicket, priority: number) {
+		closeContextMenu();
+		patchTicket(row.id, { priority });
+		ctxUpdate(row.id, 'priority', priority);
+	}
+	function ctxSetAssignee(row: SprintDashboardTicket, assigneeId: string | null) {
+		closeContextMenu();
+		const m = assigneeId ? members.find((x) => x.id === assigneeId) : null;
+		patchTicket(row.id, { assigneeId, assigneeName: m?.displayName ?? null });
+		ctxUpdate(row.id, 'assigneeId', assigneeId);
+	}
+	function ctxEdit(row: SprintDashboardTicket) {
+		closeContextMenu();
+		editTicketId = row.id;
+	}
+	// Reproduit le flux de suppression de tickets/+page.svelte (vérif imputationCount,
+	// confirmDialog, POST /tickets?/delete) sans passer par le <form>/use:enhance de la modale.
+	async function ctxDelete(row: SprintDashboardTicket) {
+		closeContextMenu();
+		const res = await fetch(`/api/tickets/${row.id}`);
+		const t = res.ok ? await res.json() : null;
+		if (!t || t.imputationCount > 0) {
+			if (t) {
+				const n = t.imputationCount;
+				toast.error('Suppression impossible', { description: `${n} imputation${n > 1 ? 's sont liées' : ' est liée'} à ce ticket.` });
+			} else {
+				toast.error('Erreur lors de la vérification.');
+			}
+			return;
+		}
+		const ok = await confirmDialog({
+			title: 'Supprimer le ticket',
+			message: `Supprimer définitivement ${row.key} — « ${row.title} » ? Cette action est irréversible.`,
+			confirmLabel: 'Supprimer'
+		});
+		if (!ok) return;
+		const body = new FormData();
+		body.set('ticketId', row.id);
+		const delRes = await fetch('/tickets?/delete', { method: 'POST', body });
+		const result = deserialize(await delRes.text());
+		if (result.type === 'failure') {
+			toast.error((result.data?.error as string) ?? 'Erreur lors de la suppression.');
+		} else {
+			await invalidateAll();
+		}
 	}
 
 	// Export en image (PNG) de la table Tickets — but : coller directement dans une diapo (retour
@@ -338,7 +520,7 @@
 			{#if dashboard.tickets.length === 0}
 				<p class="empty">Aucun ticket.</p>
 			{:else}
-				{#snippet ticketRow(t: (typeof dashboard.tickets)[number])}
+				{#snippet ticketRow(t: SprintDashboardTicket)}
 					<tr
 						class="us-row"
 						tabindex="0"
@@ -347,6 +529,7 @@
 						onkeydown={(e) => {
 							if (e.key === 'Enter') goto(`/tickets?ticket=${encodeURIComponent(t.key)}`);
 						}}
+						oncontextmenu={(e) => openContextMenu(e, t)}
 					>
 						<td>
 							<span
@@ -360,13 +543,19 @@
 							{:else}
 								<span class="key tabnum">{t.key}</span>
 							{/if}
+							<span class="priority-badge" style="--pcolor:var(--priority-{t.priority})" title="Priorité P{t.priority}">P{t.priority}</span>
 							<span class="title">{t.title}</span>
 						</td>
-						{#if dashboard.kpis.budgetTotal !== null}<td class="num tabnum">{t.budget ?? '—'}</td>{/if}
+						<td class="assignee-cell">
+							{#if t.assigneeId}
+								<Tooltip text={t.assigneeName ?? ''}><UserAvatar userId={t.assigneeId} name={t.assigneeName ?? '?'} size={24} /></Tooltip>
+							{/if}
+						</td>
+						{#if dashboard!.kpis.budgetTotal !== null}<td class="num tabnum">{t.budget ?? '—'}</td>{/if}
 						<td class="num tabnum">{t.estTotal}</td>
 						<td class="num tabnum">{t.raeTotal}</td>
 						<td class="num tabnum">{t.consumed || '—'}</td>
-						{#if dashboard.kpis.ecartVsBudgetTotal !== null}
+						{#if dashboard!.kpis.ecartVsBudgetTotal !== null}
 							<td class="num tabnum" class:over={(t.ecartVsBudget ?? 0) > 0} class:under={(t.ecartVsBudget ?? 0) < 0}>{(t.ecartVsBudget ?? 0) > 0 ? '+' : ''}{t.ecartVsBudget ?? 0}</td>
 						{/if}
 						<td class="num tabnum" class:over={t.ecartVsEstime > 0} class:under={t.ecartVsEstime < 0}>{t.ecartVsEstime > 0 ? '+' : ''}{t.ecartVsEstime || 0}</td>
@@ -382,7 +571,7 @@
 					<table class="us-table">
 						<thead>
 							<tr>
-								<th>État</th><th>Ticket</th>
+								<th>État</th><th>Ticket</th><th class="assignee-cell"></th>
 								{#if dashboard.kpis.budgetTotal !== null}<th class="num">Budget</th>{/if}
 								<th class="num">Estimé</th><th class="num">RAE</th><th class="num">Consommé</th>
 								{#if dashboard.kpis.ecartVsBudgetTotal !== null}<th class="num">Écart vs budget</th>{/if}
@@ -426,6 +615,7 @@
 									<tr class="us-subtotal-row">
 										<td></td>
 										<td class="ttl">Sous-total</td>
+										<td></td>
 										{#if dashboard.kpis.budgetTotal !== null}<td></td>{/if}
 										<td class="num tabnum">{g.estTotal}</td>
 										<td class="num tabnum">{g.raeTotal}</td>
@@ -452,6 +642,80 @@
 		</div>
 	{/if}
 </div>
+
+<svelte:window onkeydown={onWindowKeydownCtxMenu} onclick={onWindowClickCloseCtxMenu} />
+
+{#if ctxRow}
+	{@const row = ctxRow}
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<!-- svelte-ignore a11y_interactive_supports_focus -->
+	<div
+		class="ctx-menu"
+		role="menu"
+		bind:this={ctxMenuEl}
+		style="left:{ctxPos.x}px; top:{ctxPos.y}px;"
+		onclick={(e) => e.stopPropagation()}
+	>
+		{#if ctxSubmenu === null}
+			<button type="button" class="ctx-item" role="menuitem" onclick={() => ctxCopy(row.key, 'Clé')}>Copier la clé</button>
+			<button type="button" class="ctx-item" role="menuitem" onclick={() => ctxCopy(`${location.origin}/tickets?ticket=${row.key}`, 'Lien')}>Copier le lien</button>
+			<div class="ctx-sep"></div>
+			<button type="button" class="ctx-item" role="menuitem" onclick={() => openCtxSubmenu('state')}>Changer l'état →</button>
+			<button type="button" class="ctx-item" role="menuitem" onclick={() => openCtxSubmenu('priority')}>Changer la priorité →</button>
+			<button type="button" class="ctx-item" role="menuitem" onclick={() => openCtxSubmenu('assignee')}>Assigner à… →</button>
+			<div class="ctx-sep"></div>
+			<button type="button" class="ctx-item" role="menuitem" onclick={() => ctxEdit(row)}>Éditer</button>
+			{#if isOwner}
+				<div class="ctx-sep"></div>
+				<button type="button" class="ctx-item danger" role="menuitem" onclick={() => ctxDelete(row)}>Supprimer</button>
+			{/if}
+		{:else if ctxSubmenu === 'state'}
+			<button type="button" class="ctx-item ctx-back" role="menuitem" onclick={() => openCtxSubmenu(null)}>← Retour</button>
+			<div class="ctx-sep"></div>
+			<button type="button" class="ctx-item" role="menuitem" onclick={() => ctxSetState(row, null)}>—</button>
+			{#each states as s (s.id)}
+				<button type="button" class="ctx-item" role="menuitem" onclick={() => ctxSetState(row, s.id)}>{s.emoji} {s.label}</button>
+			{/each}
+		{:else if ctxSubmenu === 'priority'}
+			<button type="button" class="ctx-item ctx-back" role="menuitem" onclick={() => openCtxSubmenu(null)}>← Retour</button>
+			<div class="ctx-sep"></div>
+			{#each [0, 1, 2, 3, 4] as n (n)}
+				<button type="button" class="ctx-item ctx-priority" role="menuitem" onclick={() => ctxSetPriority(row, n)}>
+					<span class="ctx-priority-dot" style="--pcolor:var(--priority-{n})"></span>P{n}
+				</button>
+			{/each}
+		{:else if ctxSubmenu === 'assignee'}
+			<button type="button" class="ctx-item ctx-back" role="menuitem" onclick={() => openCtxSubmenu(null)}>← Retour</button>
+			<div class="ctx-sep"></div>
+			<button type="button" class="ctx-item" role="menuitem" onclick={() => ctxSetAssignee(row, null)}>—</button>
+			{#each members.filter((m) => !m.factice) as m (m.id)}
+				<button type="button" class="ctx-item" role="menuitem" onclick={() => ctxSetAssignee(row, m.id)}>{m.displayName}</button>
+			{/each}
+		{/if}
+	</div>
+{/if}
+
+<TicketEditModal
+	ticketId={editTicketId}
+	{states}
+	{projects}
+	{sprints}
+	{versions}
+	{ssps}
+	ticketGroups={allTicketGroups}
+	{members}
+	{testPhase}
+	{canEditEstimation}
+	{isAdmin}
+	{isOwner}
+	onClose={() => (editTicketId = null)}
+	onSaved={() => invalidateAll()}
+	onDeleted={() => {
+		editTicketId = null;
+		invalidateAll();
+	}}
+/>
 
 <style>
 	.topbar {
@@ -755,6 +1019,9 @@
 	.us-table td.num {
 		text-align: right;
 	}
+	.assignee-cell {
+		width: 1%;
+	}
 	.us-table td {
 		padding: 8px 10px;
 		border-top: 1px solid var(--border);
@@ -826,6 +1093,17 @@
 		color: var(--text-mute);
 		flex-shrink: 0;
 	}
+	/* Même badge que Tickets & chiffrage (--priority-0..4, app.css) — juste copié ici plutôt que
+	   partagé, pas de composant dédié pour un si petit bout de markup. */
+	.priority-badge {
+		font-size: 10px;
+		font-weight: 700;
+		padding: 1px 5px;
+		border-radius: 4px;
+		color: var(--pcolor);
+		background: color-mix(in srgb, var(--pcolor) 18%, var(--surface-2));
+		flex-shrink: 0;
+	}
 	.us-table .title {
 		font-weight: 500;
 		/* Plafonne le titre (pas la cellule elle-même, sinon la case se détache de sa colonne et
@@ -886,5 +1164,59 @@
 		.grid {
 			grid-template-columns: 1fr;
 		}
+	}
+
+	/* Menu clic droit — copié tel quel de tickets/+page.svelte (.ctx-menu et suivants). */
+	.ctx-menu {
+		position: fixed;
+		z-index: 30;
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		min-width: 220px;
+		max-height: 70vh;
+		overflow-y: auto;
+		padding: 6px;
+		border-radius: var(--r-md, 10px);
+		border: 1px solid var(--border);
+		background: var(--surface);
+		box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+	}
+	.ctx-item {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		width: 100%;
+		padding: 7px 9px;
+		border-radius: 8px;
+		font-size: 12.5px;
+		font-weight: 600;
+		color: var(--text-soft);
+		text-align: left;
+		white-space: nowrap;
+	}
+	.ctx-item:hover {
+		background: var(--accent-tint, var(--surface-2));
+		color: var(--text);
+	}
+	.ctx-item.danger:hover {
+		background: rgba(192, 57, 43, 0.12);
+		color: #c0392b;
+	}
+	.ctx-item.ctx-back {
+		color: var(--text-mute);
+		font-weight: 700;
+	}
+	.ctx-priority-dot {
+		width: 9px;
+		height: 9px;
+		border-radius: 50%;
+		background: var(--pcolor);
+		flex-shrink: 0;
+	}
+	.ctx-sep {
+		height: 1px;
+		margin: 4px 2px;
+		background: var(--border);
 	}
 </style>

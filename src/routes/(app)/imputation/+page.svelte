@@ -1292,6 +1292,7 @@
 	versions={data.versions}
 	ssps={data.ssps}
 	ticketGroups={data.ticketGroups}
+	members={data.assignableMembers}
 	testPhase={data.testPhase}
 	canEditEstimation={data.canEditEstimation}
 	isAdmin={data.isAdmin}

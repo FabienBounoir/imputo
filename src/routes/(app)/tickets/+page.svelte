@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import { enhance, deserialize } from '$app/forms';
 	import { goto } from '$app/navigation';
 	import { page, navigating } from '$app/state';
@@ -7,6 +8,8 @@
 	import { confirmDialog } from '$lib/confirm.svelte';
 	import { toast } from 'svelte-sonner';
 	import SspPicker from '$lib/components/SspPicker.svelte';
+	import UserAvatar from '$lib/components/UserAvatar.svelte';
+	import Tooltip from '$lib/components/Tooltip.svelte';
 	import { jiraTicketUrl } from '$lib/jiraLink';
 	import { slide } from 'svelte/transition';
 	let { data, form } = $props();
@@ -176,6 +179,8 @@
 		groupIds: string[];
 		activityBreakdown: ActivityBreakdownRow[];
 		priority: number;
+		assigneeId: string | null;
+		assigneeName: string | null;
 	};
 
 	type ActivityBreakdownRow = {
@@ -268,7 +273,9 @@
 			hasActivityEstimation: t.hasActivityEstimation,
 			groupIds: [...t.groupIds],
 			activityBreakdown: t.activityBreakdown.map((a) => ({ ...a, contributors: [...a.contributors] })),
-			priority: t.priority
+			priority: t.priority,
+			assigneeId: t.assigneeId,
+			assigneeName: t.assigneeName
 		};
 	}
 
@@ -405,6 +412,112 @@
 				editId = null;
 			}
 		};
+	}
+
+	// Menu clic droit sur une ligne — panneau position:fixed local à la page, même convention que
+	// .member-menu (admin/+page.svelte), TargetPicker et SspPicker : pas de composant Menu partagé
+	// dans ce repo, chaque consommateur reproduit son propre panneau plutôt que d'en factoriser un.
+	// ctxAnchor = point de clic brut (jamais réécrit), ctxPos = position rendue après correction de
+	// débordement — recalculée depuis ctxAnchor à chaque changement de contenu (sous-menu), jamais
+	// depuis ctxPos, sinon une correction s'accumulerait sur la précédente.
+	let ctxRow = $state<Row | null>(null);
+	let ctxAnchor = $state<{ x: number; y: number } | null>(null);
+	let ctxPos = $state({ x: 0, y: 0 });
+	let ctxSubmenu = $state<'state' | 'priority' | 'assignee' | null>(null);
+	let ctxMenuEl: HTMLDivElement | null = $state(null);
+
+	async function positionCtxMenu() {
+		if (!ctxAnchor) return;
+		await tick();
+		if (!ctxMenuEl) return;
+		let { x, y } = ctxAnchor;
+		if (x + ctxMenuEl.offsetWidth > window.innerWidth) x = Math.max(4, window.innerWidth - ctxMenuEl.offsetWidth - 4);
+		if (y + ctxMenuEl.offsetHeight > window.innerHeight) y = Math.max(4, window.innerHeight - ctxMenuEl.offsetHeight - 4);
+		ctxPos = { x, y };
+	}
+	function openContextMenu(e: MouseEvent, row: Row) {
+		e.preventDefault();
+		ctxRow = row;
+		ctxAnchor = { x: e.clientX, y: e.clientY };
+		ctxPos = { ...ctxAnchor };
+		ctxSubmenu = null;
+		positionCtxMenu();
+	}
+	function closeContextMenu() {
+		ctxRow = null;
+		ctxAnchor = null;
+		ctxSubmenu = null;
+	}
+	function openCtxSubmenu(which: 'state' | 'priority' | 'assignee' | null) {
+		ctxSubmenu = which;
+		positionCtxMenu();
+	}
+	function onWindowClickCloseCtxMenu(e: MouseEvent) {
+		if (ctxRow && !(e.target as HTMLElement).closest('.ctx-menu')) closeContextMenu();
+	}
+	async function ctxCopy(text: string, label: string) {
+		closeContextMenu();
+		try {
+			await navigator.clipboard.writeText(text);
+			toast.success(`${label} copié ✓`);
+		} catch {
+			toast.error('Impossible de copier.');
+		}
+	}
+	function ctxSetState(row: Row, stateId: string | null) {
+		row.stateId = stateId;
+		save(row, 'stateId', stateId);
+		closeContextMenu();
+	}
+	function ctxSetPriority(row: Row, priority: number) {
+		row.priority = priority;
+		save(row, 'priority', priority);
+		closeContextMenu();
+	}
+	function ctxSetAssignee(row: Row, assigneeId: string | null) {
+		row.assigneeId = assigneeId;
+		row.assigneeName = assigneeId ? (data.ref.members.find((m) => m.id === assigneeId)?.displayName ?? null) : null;
+		save(row, 'assigneeId', assigneeId);
+		closeContextMenu();
+	}
+	function ctxAddToImputation(row: Row) {
+		closeContextMenu();
+		goto(`/imputation?quickadd=1&ticketId=${row.id}`);
+	}
+	// Reproduit le flux de confirmDeleteTicket (vérif imputationCount, confirmDialog, POST ?/delete)
+	// sans passer par le <form>/use:enhance de la modale — même forme que save() (fetch direct +
+	// deserialize). Léger doublon volontaire : la suppression touche à une permission sensible
+	// (créateur d'espace/ADMIN), pas question de refactorer le flux existant pour économiser
+	// quelques lignes.
+	async function deleteFromMenu(row: Row) {
+		closeContextMenu();
+		const res = await fetch(`/api/tickets/${row.id}`);
+		const t = res.ok ? await res.json() : null;
+		if (!t || t.imputationCount > 0) {
+			if (t) {
+				const n = t.imputationCount;
+				toast.error('Suppression impossible', { description: `${n} imputation${n > 1 ? 's sont liées' : ' est liée'} à ce ticket.` });
+			} else {
+				toast.error('Erreur lors de la vérification.');
+			}
+			return;
+		}
+		const ok = await confirmDialog({
+			title: 'Supprimer le ticket',
+			message: `Supprimer définitivement ${row.key} — « ${row.title} » ? Cette action est irréversible.`,
+			confirmLabel: 'Supprimer'
+		});
+		if (!ok) return;
+		const body = new FormData();
+		body.set('ticketId', row.id);
+		const delRes = await fetch('?/delete', { method: 'POST', body });
+		const result = deserialize(await delRes.text());
+		if (result.type === 'failure') {
+			toast.error((result.data?.error as string) ?? 'Erreur lors de la suppression.');
+		} else {
+			rows = rows.filter((r) => r.id !== row.id);
+			if (editId === row.id) editId = null;
+		}
 	}
 
 	// Historique (champs budget/estimation) — chargé à la demande à l'ouverture de la modal, pas
@@ -591,6 +704,7 @@
 		if (e.key === 'Escape') {
 			editId = null;
 			showCreate = false;
+			closeContextMenu();
 			return;
 		}
 		// Shift+N nouveau ticket — seulement si on ne tape pas déjà ailleurs et qu'aucun autre modal
@@ -826,7 +940,7 @@
 			<tbody>
 				{#each rows as r (r.id)}
 					{@const st = r.stateId ? stateById.get(r.stateId) : null}
-					<tr class="ticket-row" id="ticket-{r.id}" class:highlighted={r.key === data.highlightKey}>
+					<tr class="ticket-row" id="ticket-{r.id}" class:highlighted={r.key === data.highlightKey} oncontextmenu={(e) => openContextMenu(e, r)}>
 						<td class="ttl" class:sub={r.isChild}>
 							<div class="ttl-wrap">
 								<button
@@ -853,6 +967,11 @@
 											<div class="key tabnum">{r.key}</div>
 										{/if}
 										<span class="priority-badge" style="--pcolor:var(--priority-{r.priority})" title="Priorité P{r.priority}">P{r.priority}</span>
+										{#if r.assigneeId}
+											<Tooltip text={r.assigneeName ?? ''}>
+											<span class="assignee-avatar"><UserAvatar userId={r.assigneeId} name={r.assigneeName ?? '?'} size={20} /></span>
+										</Tooltip>
+										{/if}
 										<select
 											class="cell-select state-select"
 											style={st?.color ? `color:${st.color};font-weight:600;` : ''}
@@ -1098,8 +1217,17 @@
 									editId = t.id;
 								}
 							}}
+							oncontextmenu={(e) => openContextMenu(e, t)}
 						>
-							<div class="kkey tabnum">{t.key}</div>
+							<div class="kcard-head">
+								<div class="kkey tabnum">{t.key}</div>
+								<span class="priority-badge" style="--pcolor:var(--priority-{t.priority})" title="Priorité P{t.priority}">P{t.priority}</span>
+								{#if t.assigneeId}
+									<Tooltip text={t.assigneeName ?? ''}>
+									<span class="assignee-avatar"><UserAvatar userId={t.assigneeId} name={t.assigneeName ?? '?'} size={18} /></span>
+								</Tooltip>
+								{/if}
+							</div>
 							<div class="ktitle">{t.title}</div>
 							<div class="kmeta">
 								<span class="kbar"><i style="width:{pct(avancement(t))}%"></i></span>
@@ -1115,7 +1243,58 @@
 	{/if}
 </div>
 
-<svelte:window onkeydown={onGlobalKeydown} />
+<svelte:window onkeydown={onGlobalKeydown} onclick={onWindowClickCloseCtxMenu} />
+
+{#if ctxRow}
+	{@const row = ctxRow}
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<!-- svelte-ignore a11y_interactive_supports_focus -->
+	<div
+		class="ctx-menu"
+		role="menu"
+		bind:this={ctxMenuEl}
+		style="left:{ctxPos.x}px; top:{ctxPos.y}px;"
+		onclick={(e) => e.stopPropagation()}
+	>
+		{#if ctxSubmenu === null}
+			<button type="button" class="ctx-item" role="menuitem" onclick={() => ctxCopy(row.key, 'Clé')}>Copier la clé</button>
+			<button type="button" class="ctx-item" role="menuitem" onclick={() => ctxCopy(`${location.origin}/tickets?ticket=${row.key}`, 'Lien')}>Copier le lien</button>
+			<div class="ctx-sep"></div>
+			<button type="button" class="ctx-item" role="menuitem" onclick={() => openCtxSubmenu('state')}>Changer l'état →</button>
+			<button type="button" class="ctx-item" role="menuitem" onclick={() => openCtxSubmenu('priority')}>Changer la priorité →</button>
+			<button type="button" class="ctx-item" role="menuitem" onclick={() => openCtxSubmenu('assignee')}>Assigner à… →</button>
+			<div class="ctx-sep"></div>
+			<button type="button" class="ctx-item" role="menuitem" onclick={() => ctxAddToImputation(row)}>Ajouter à Mon imputation</button>
+			{#if data.isOwner}
+				<div class="ctx-sep"></div>
+				<button type="button" class="ctx-item danger" role="menuitem" onclick={() => deleteFromMenu(row)}>Supprimer</button>
+			{/if}
+		{:else if ctxSubmenu === 'state'}
+			<button type="button" class="ctx-item ctx-back" role="menuitem" onclick={() => openCtxSubmenu(null)}>← Retour</button>
+			<div class="ctx-sep"></div>
+			<button type="button" class="ctx-item" role="menuitem" onclick={() => ctxSetState(row, null)}>—</button>
+			{#each data.ref.states as s (s.id)}
+				<button type="button" class="ctx-item" role="menuitem" onclick={() => ctxSetState(row, s.id)}>{s.emoji} {s.label}</button>
+			{/each}
+		{:else if ctxSubmenu === 'priority'}
+			<button type="button" class="ctx-item ctx-back" role="menuitem" onclick={() => openCtxSubmenu(null)}>← Retour</button>
+			<div class="ctx-sep"></div>
+			{#each [0, 1, 2, 3, 4] as n (n)}
+				<button type="button" class="ctx-item ctx-priority" role="menuitem" onclick={() => ctxSetPriority(row, n)}>
+					<span class="ctx-priority-dot" style="--pcolor:var(--priority-{n})"></span>P{n}
+				</button>
+			{/each}
+		{:else if ctxSubmenu === 'assignee'}
+			<button type="button" class="ctx-item ctx-back" role="menuitem" onclick={() => openCtxSubmenu(null)}>← Retour</button>
+			<div class="ctx-sep"></div>
+			<button type="button" class="ctx-item" role="menuitem" onclick={() => ctxSetAssignee(row, null)}>—</button>
+			{#each data.ref.members.filter((m) => !m.factice) as m (m.id)}
+				<button type="button" class="ctx-item" role="menuitem" onclick={() => ctxSetAssignee(row, m.id)}>{m.displayName}</button>
+			{/each}
+		{/if}
+	</div>
+{/if}
 
 {#if editRow}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1161,6 +1340,20 @@
 				<label class="dfield"><span>Version</span>
 					<select class="cell-select" bind:value={editRow.versionId} onchange={() => save(editRow!, 'versionId', editRow!.versionId)}>
 						<option value={null}>—</option>{#each data.ref.versions as v (v.id)}<option value={v.id}>{v.name}</option>{/each}
+					</select>
+				</label>
+				<label class="dfield"><span>Assigné à</span>
+					<select
+						class="cell-select"
+						bind:value={editRow.assigneeId}
+						onchange={() => {
+							editRow!.assigneeName = editRow!.assigneeId
+								? (data.ref.members.find((m) => m.id === editRow!.assigneeId)?.displayName ?? null)
+								: null;
+							save(editRow!, 'assigneeId', editRow!.assigneeId);
+						}}
+					>
+						<option value={null}>—</option>{#each data.ref.members.filter((m) => !m.factice) as m (m.id)}<option value={m.id}>{m.displayName}</option>{/each}
 					</select>
 				</label>
 				<div class="dfield"><span>Priorité</span>
@@ -1877,6 +2070,64 @@
 		background: color-mix(in srgb, var(--pcolor) 18%, var(--surface-2));
 		flex-shrink: 0;
 	}
+	.assignee-avatar {
+		display: flex;
+		flex-shrink: 0;
+	}
+	/* Même style que .member-menu (admin/+page.svelte) — panneau position:fixed local à la page,
+	   pas de composant Menu partagé dans ce repo (cf. TargetPicker/SspPicker, même convention). */
+	.ctx-menu {
+		position: fixed;
+		z-index: 30;
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		min-width: 220px;
+		max-height: 70vh;
+		overflow-y: auto;
+		padding: 6px;
+		border-radius: var(--r-md, 10px);
+		border: 1px solid var(--border);
+		background: var(--surface);
+		box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+	}
+	.ctx-item {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		width: 100%;
+		padding: 7px 9px;
+		border-radius: 8px;
+		font-size: 12.5px;
+		font-weight: 600;
+		color: var(--text-soft);
+		text-align: left;
+		white-space: nowrap;
+	}
+	.ctx-item:hover {
+		background: var(--accent-tint, var(--surface-2));
+		color: var(--text);
+	}
+	.ctx-item.danger:hover {
+		background: rgba(192, 57, 43, 0.12);
+		color: #c0392b;
+	}
+	.ctx-item.ctx-back {
+		color: var(--text-mute);
+		font-weight: 700;
+	}
+	.ctx-priority-dot {
+		width: 9px;
+		height: 9px;
+		border-radius: 50%;
+		background: var(--pcolor);
+		flex-shrink: 0;
+	}
+	.ctx-sep {
+		height: 1px;
+		margin: 4px 2px;
+		background: var(--border);
+	}
 	.consumed {
 		font-weight: 700;
 		color: var(--text-soft);
@@ -2162,6 +2413,14 @@
 	.kcard.dragging {
 		opacity: 0.45;
 		border-color: var(--accent);
+	}
+	.kcard-head {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+	.kcard-head .kkey {
+		margin-right: auto;
 	}
 	.kkey {
 		font-size: 11px;

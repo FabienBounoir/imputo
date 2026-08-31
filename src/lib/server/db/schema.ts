@@ -477,6 +477,10 @@ export const ticket = pgTable(
 		// Admin only, invisible pour un USER standard.
 		enveloppeTotale: numeric('enveloppe_totale', { precision: 7, scale: 2 }),
 		sspId: uuid('ssp_id').references(() => ssp.id, { onDelete: 'set null' }),
+		// Personne responsable du ticket — optionnel, jamais synchronisé depuis Jira (contrairement à
+		// priority/sprint/version) : purement local à l'espace. set null si le membre est retiré, pas
+		// de cascade (le ticket reste, juste sans responsable).
+		assigneeId: uuid('assignee_id').references(() => user.id, { onDelete: 'set null' }),
 		// 0 (P0, le plus urgent) à 4 (P4/backlog, le moins urgent) — slider dans la modale d'édition,
 		// même sens que le mapping Jira (cf. jiraSync.ts). Défaut 2 (Normal) : couvre aussi bien la
 		// création (nouveau ticket) que le rattrapage (tickets déjà existants avant cette colonne,

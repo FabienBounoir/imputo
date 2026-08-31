@@ -442,6 +442,13 @@
       "when": 1788030096370,
       "tag": "0062_sticky_scarecrow",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1788193649151,
+      "tag": "0063_misty_kang",
+      "breakpoints": true
     }
   ]
 }

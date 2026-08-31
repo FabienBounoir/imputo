@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createTicket, upsertTicketActivityRae } from './tickets';
+import { createTicket, updateTicketField, upsertTicketActivityRae } from './tickets';
 import { setCell } from './imputation';
 import { createRef, listRefs } from './referentials';
 import { createActivity, listActivities, reorderActivities, createState, listStates } from './params';
@@ -39,6 +39,20 @@ describe('getSprintDashboard', () => {
 		expect(dash.kpis.raeTotal).toBe(2);
 		expect(dash.tickets.map((t) => t.key)).toEqual([`SP-${ws.id}`]);
 		expect(dash.byPerson.find((p) => p.name === 'sprintdash owner')?.consumed).toBe(1);
+	});
+
+	it('propage la priorité du ticket (même échelle que Tickets & chiffrage)', async () => {
+		const ws = await makeWorkspace('sprintdash-priority');
+		await createRef(ws.workspaceId, 'sprint', `Sprint ${ws.id}`);
+		const [sprint] = (await listRefs(ws.workspaceId, 'sprint')).filter((s) => s.name === `Sprint ${ws.id}`);
+
+		const t = await createTicket(ws.workspaceId, { key: `PR-${ws.id}`, title: 'Ticket', sprintId: sprint.id });
+		const dashDefault = await getSprintDashboard(ws.workspaceId, sprint.id);
+		expect(dashDefault.tickets[0].priority).toBe(2); // défaut "Normal", cf. schema.ts
+
+		await updateTicketField(ws.workspaceId, t.id, 'priority', '0', 'ADMIN', ws.userId);
+		const dashUrgent = await getSprintDashboard(ws.workspaceId, sprint.id);
+		expect(dashUrgent.tickets[0].priority).toBe(0);
 	});
 
 	it('excludeUserIds retire un membre de byPerson (cf. membres "factice")', async () => {

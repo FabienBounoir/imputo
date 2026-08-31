@@ -121,7 +121,14 @@ export type TicketRow = {
 	sspLabel: string | null;
 	/** 0 (plus bas) à 5 (plus haut) — slider dans la modale d'édition, cf. schema.ts. */
 	priority: number;
+	assigneeId: string | null;
+	/** Dénormalisé depuis `user` — évite un aller-retour supplémentaire côté appelant pour l'avatar/tooltip (Synthèse). */
+	assigneeName: string | null;
 };
+
+// Alias distinct de `user` : la requête de base joint déjà potentiellement d'autres tables, et
+// `user` seul resterait ambigu s'il fallait un jour joindre le compte courant à côté (changeLog…).
+const assigneeUser = alias(user, 'assignee_user');
 
 /** Colonnes de base communes à listTickets/listTicketsPage (avant enrichissement). */
 const TICKET_BASE_SELECT = {
@@ -148,6 +155,8 @@ const TICKET_BASE_SELECT = {
 	sspCode: ssp.code,
 	sspLabel: ssp.label,
 	priority: ticket.priority,
+	assigneeId: ticket.assigneeId,
+	assigneeName: assigneeUser.displayName,
 	stateLabel: state.label,
 	stateEmoji: state.emoji,
 	stateColor: state.color,
@@ -159,6 +168,7 @@ function baseTicketsQuery() {
 	return db
 		.select(TICKET_BASE_SELECT)
 		.from(ticket)
+		.leftJoin(assigneeUser, eq(ticket.assigneeId, assigneeUser.id))
 		.leftJoin(state, eq(ticket.stateId, state.id))
 		.leftJoin(sprint, eq(ticket.sprintId, sprint.id))
 		.leftJoin(project, eq(ticket.projectId, project.id))
@@ -349,6 +359,8 @@ async function enrichTickets(
 			sspCode: t.sspCode,
 			sspLabel: t.sspLabel,
 			priority: t.priority,
+			assigneeId: t.assigneeId,
+			assigneeName: t.assigneeName,
 			consumed,
 			ecartVsEstime: ecartVsEstime(resolved.real, consumed, estimationResolved),
 			ecartVsBudget: enveloppeTotale === null ? null : ecartVsBudget(resolved.real, consumed, enveloppeTotale),
@@ -688,7 +700,8 @@ const EDITABLE_FIELDS = new Set([
 	'sprintId',
 	'versionId',
 	'sspId',
-	'priority'
+	'priority',
+	'assigneeId'
 ]);
 /**
  * Chiffrage global du ticket — ADMIN/MANAGER seulement (retour utilisateur : un USER ne doit

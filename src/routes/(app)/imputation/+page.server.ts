@@ -99,6 +99,9 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 		projects: ref.projects,
 		sprints: ref.sprints,
 		ticketGroups: ref.ticketGroups,
+		// "Assigné à" (TicketEditModal) : ouvert à tout membre, pas gaté par canViewOthers comme
+		// `members` ci-dessous (qui sert à un autre usage) — même règle que Tickets & chiffrage.
+		assignableMembers: ref.members.filter((m) => !m.factice),
 		testPhase: ws.testPhase,
 		canEditEstimation: isManagerOrAdmin(locals.role),
 		tickets,
