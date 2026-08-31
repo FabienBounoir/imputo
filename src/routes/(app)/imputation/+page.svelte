@@ -282,6 +282,20 @@
 		setAmount(row, day, next);
 	}
 
+	/** Clic droit sur une case : popup au-dessus proposant directement toutes les valeurs du CYCLE
+	 * (plus rapide que de cliquer plusieurs fois pour dérouler). */
+	let cellPicker = $state<{ row: Row; day: string; top: number; left: number } | null>(null);
+	function openCellPicker(e: MouseEvent, row: Row, day: string) {
+		e.preventDefault();
+		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		cellPicker = { row, day, top: rect.top, left: rect.left + rect.width / 2 };
+	}
+	function pickCellValue(value: number) {
+		if (!cellPicker) return;
+		setAmount(cellPicker.row, cellPicker.day, value);
+		cellPicker = null;
+	}
+
 	function hasLockedDay(row: Row) {
 		return Object.keys(row.lockedDays).length > 0;
 	}
@@ -1178,6 +1192,7 @@
 										data-cell="{ri}-{di}"
 										onclick={(e) => cycle(row, d, e.shiftKey)}
 										onkeydown={(e) => onCellKey(e, ri, di, row, d)}
+										oncontextmenu={(e) => openCellPicker(e, row, d)}
 									>{fmt(row.amounts[d])}</button>
 								{/if}
 							</td>
@@ -1228,7 +1243,7 @@
 			<span class="kbd">Touchez une case pour faire défiler les valeurs · appui long pour vider</span>
 		{:else if !data.readOnly}
 			{@const keyEntries = Object.entries(KEYMAP).filter(([k]) => k !== '0')}
-			<span class="kbd">Clique pour faire défiler <b>·</b> → {CYCLE.slice(1).map((v) => fmt(v)).join(' → ')} <b>·</b> <kbd>Shift</kbd>+clic pour reculer</span>
+			<span class="kbd">Clique pour faire défiler <b>·</b> → {CYCLE.slice(1).map((v) => fmt(v)).join(' → ')} <b>·</b> <kbd>Shift</kbd>+clic pour reculer <b>·</b> clic droit pour choisir directement</span>
 			<span class="kbd">Clavier : {#each keyEntries as [k] (k)}<kbd>{k}</kbd> {/each}→ {keyEntries.map(([, v]) => fmt(v)).join(' / ')} · <kbd>0</kbd>/<kbd>Suppr</kbd> vide · <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> naviguer · <kbd>←</kbd>/<kbd>→</kbd> en bord = période ±</span>
 		{/if}
 	</div>
@@ -1237,8 +1252,26 @@
 
 <svelte:window
 	bind:innerWidth
-	onkeydown={(e) => e.key === 'Escape' && ((confirmDelete = null), (activityPickerRow = null))}
+	onkeydown={(e) => e.key === 'Escape' && ((confirmDelete = null), (activityPickerRow = null), (cellPicker = null))}
 />
+
+{#if cellPicker}
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="cell-picker-backdrop" onclick={() => (cellPicker = null)} oncontextmenu={(e) => (e.preventDefault(), (cellPicker = null))}>
+		<div
+			class="cell-picker"
+			style="top:{cellPicker.top}px; left:{cellPicker.left}px;"
+			onclick={(e) => e.stopPropagation()}
+		>
+			{#each CYCLE as v (v)}
+				<button type="button" class="cell-picker-opt" class:sel={(cellPicker.row.amounts[cellPicker.day] ?? 0) === v} onclick={() => pickCellValue(v)}>
+					{fmt(v)}
+				</button>
+			{/each}
+		</div>
+	</div>
+{/if}
 
 {#if confirmDelete}
 	{@const row = confirmDelete}
@@ -1305,6 +1338,42 @@
 />
 
 <style>
+	.cell-picker-backdrop {
+		position: fixed;
+		inset: 0;
+		z-index: 60;
+		background: transparent;
+	}
+	.cell-picker {
+		position: fixed;
+		z-index: 61;
+		transform: translate(-50%, calc(-100% - 6px));
+		display: flex;
+		gap: 2px;
+		padding: 4px;
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+	}
+	.cell-picker-opt {
+		padding: 4px 8px;
+		border: 1px solid transparent;
+		border-radius: 6px;
+		background: none;
+		cursor: pointer;
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+	}
+	.cell-picker-opt:hover {
+		background: var(--accent-tint);
+	}
+	.cell-picker-opt.sel {
+		border-color: var(--accent);
+		color: var(--accent-ink);
+		background: var(--accent-tint);
+		font-weight: 600;
+	}
 	.week-confetti {
 		position: fixed;
 		top: -50px;
