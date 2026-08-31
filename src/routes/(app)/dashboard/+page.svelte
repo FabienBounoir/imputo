@@ -3,6 +3,7 @@
 	import { navigating } from '$app/state';
 	import { parseISODate, toISODate, addDays, dayName, dayNum, formatRange, isPublicHolidayFR, mondayOf, isoWeek } from '$lib/utils/date';
 	import Tooltip from '$lib/components/Tooltip.svelte';
+	import UserAvatar from '$lib/components/UserAvatar.svelte';
 	let { data } = $props();
 
 	// Synthèse hebdo : bascule % de capacité (vue compacte) / détail jour par jour (5 jours ouvrés).
@@ -68,6 +69,11 @@
 		return cols;
 	});
 	const weeklyPersons = $derived([...new Set(data.weeklySynthesis.map((r) => r.name))].sort((a, b) => a.localeCompare(b)));
+	const weeklyUserIdByName = $derived.by(() => {
+		const m = new Map<string, string>();
+		for (const r of data.weeklySynthesis) m.set(r.name, r.userId);
+		return m;
+	});
 	const weeklyCell = $derived.by(() => {
 		const m = new Map<string, (typeof data.weeklySynthesis)[number]>();
 		for (const r of data.weeklySynthesis) m.set(`${r.name}:${r.mondayISO}`, r);
@@ -344,7 +350,7 @@
 						<tbody>
 							{#each weeklyPersons as name (name)}
 								<tr>
-									<td>{name}</td>
+									<td class="weekly-name"><UserAvatar userId={weeklyUserIdByName.get(name)} name={name} size={20} />{name}</td>
 									{#each weekCols as [monday] (monday)}
 										{@const cell = weeklyCell.get(`${name}:${monday}`)}
 										<td class="num tabnum" class:over={cell?.overCapacity}>
@@ -377,7 +383,7 @@
 						<tbody>
 							{#each weeklyPersons as name (name)}
 								<tr>
-									<td>{name}</td>
+									<td class="weekly-name"><UserAvatar userId={weeklyUserIdByName.get(name)} name={name} size={20} />{name}</td>
 									{#each weekCols as [monday] (monday)}
 										{@const cell = weeklyCell.get(`${name}:${monday}`)}
 										{#each weekdays(monday) as iso (iso)}
@@ -420,7 +426,7 @@
 						<tbody>
 							{#each sspPersons as name (name)}
 								<tr>
-									<td>{name}</td>
+									<td class="weekly-name"><UserAvatar userId={weeklyUserIdByName.get(name)} name={name} size={20} />{name}</td>
 									{#each sspCols as ssp (ssp)}
 										<td class="num tabnum">{sspCell.get(`${name}:${ssp}`) || '·'}</td>
 									{/each}
@@ -725,6 +731,11 @@
 	.weekly-table td.over {
 		color: #c0392b;
 		font-weight: 700;
+	}
+	.weekly-table td.weekly-name {
+		display: flex;
+		align-items: center;
+		gap: 8px;
 	}
 	.weekly-daily th.week-sep {
 		text-align: center;

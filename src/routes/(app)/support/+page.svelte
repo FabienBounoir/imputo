@@ -3,6 +3,7 @@
 	import { toast } from 'svelte-sonner';
 	import { confirmDialog } from '$lib/confirm.svelte';
 	import { formatDayRange } from '$lib/utils/date';
+	import UserAvatar from '$lib/components/UserAvatar.svelte';
 
 	let { data, form } = $props();
 
@@ -65,7 +66,9 @@
 		{:else}
 			<div class="header-row">
 				<div class="header-person">
-					<span class="duty-dot" aria-hidden="true"></span>
+					<span class="duty-avatar-wrap" aria-hidden="true">
+						<UserAvatar userId={data.current.userId} name={data.current.displayName} size={52} />
+					</span>
 					<div>
 						<span class="eyebrow">{eyebrow}</span>
 						<h2>{data.current.displayName}</h2>
@@ -147,6 +150,7 @@
 							class:sel={m.userId === current.userId}
 							disabled={m.userId === current.userId}
 						>
+							<UserAvatar userId={m.userId} name={m.displayName} size={22} />
 							{m.displayName}
 							{#if m.userId === current.userId}<span class="candidate-tag">actuel</span>{/if}
 						</button>
@@ -200,18 +204,13 @@
 		align-items: center;
 		gap: 20px;
 	}
-	/* Pastille pulsante plutôt qu'un avatar à initiales : le nom est juste à côté, l'avatar
-	   n'apportait aucune info et cassait le responsive avec sa largeur fixe. */
-	.duty-dot {
+	.duty-avatar-wrap {
 		position: relative;
-		width: 12px;
-		height: 12px;
 		flex-shrink: 0;
 		border-radius: 50%;
-		background: var(--accent);
 		box-shadow: 0 0 0 4px var(--accent-tint-2);
 	}
-	.duty-dot::after {
+	.duty-avatar-wrap::after {
 		content: '';
 		position: absolute;
 		inset: -6px;
@@ -220,7 +219,7 @@
 		animation: pulse 2.6s ease-out infinite;
 	}
 	@media (prefers-reduced-motion: reduce) {
-		.duty-dot::after {
+		.duty-avatar-wrap::after {
 			animation: none;
 		}
 	}

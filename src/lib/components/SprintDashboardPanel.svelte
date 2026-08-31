@@ -690,7 +690,10 @@
 			<div class="ctx-sep"></div>
 			<button type="button" class="ctx-item" role="menuitem" onclick={() => ctxSetAssignee(row, null)}>—</button>
 			{#each members.filter((m) => !m.factice) as m (m.id)}
-				<button type="button" class="ctx-item" role="menuitem" onclick={() => ctxSetAssignee(row, m.id)}>{m.displayName}</button>
+				<button type="button" class="ctx-item" role="menuitem" onclick={() => ctxSetAssignee(row, m.id)}>
+					<UserAvatar userId={m.id} name={m.displayName} size={18} />
+					{m.displayName}
+				</button>
 			{/each}
 		{/if}
 	</div>

@@ -20,6 +20,7 @@
 	import QuickAddPalette from '$lib/components/QuickAddPalette.svelte';
 	import TicketEditModal from '$lib/components/TicketEditModal.svelte';
 	import ImputationMobile from '$lib/components/ImputationMobile.svelte';
+	import UserAvatar from '$lib/components/UserAvatar.svelte';
 	import { ABSENCE_TYPE_COLORS, ABSENCE_TYPE_LABELS, ABSENCE_PERIOD_LABELS } from '$lib/absenceTypes';
 	import type { Row } from '$lib/imputationRow';
 	import { jiraTicketUrl } from '$lib/jiraLink';
@@ -855,7 +856,8 @@
 						<td class="task">
 							<button type="button" class="team-toggle" onclick={() => toggleMember(m.userId)} aria-expanded={isOpen}>
 								<svg class="chev" class:open={isOpen} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 6 6-6 6" /></svg>
-								<b>{m.name}</b>
+								<UserAvatar userId={m.userId} name={m.name} size={20} />
+					<b>{m.name}</b>
 							</button>
 						</td>
 						{#each days as d (d)}

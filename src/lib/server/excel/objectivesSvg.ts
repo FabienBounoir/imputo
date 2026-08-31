@@ -3,6 +3,7 @@ import { db, workspace } from '$lib/server/db';
 import { getRefData } from '$lib/server/services/tickets';
 import { listObjectivesForWorkspace, listVacationsForWeek, type WeeklyObjectiveWithUser } from '$lib/server/services/weeklyObjectives';
 import { mondayOf, parseISODate, isoWeek, formatRange } from '$lib/utils/date';
+import { fetchAvatarDataUris, avatarCircle, AVATAR_GRADIENT_DEF } from './avatarSvg';
 
 // Largeur de carte fixe (pas de rétrécissement avec plus de colonnes) : seul le nombre de colonnes
 // varie pour rapprocher le contenu du cadre 16/9 (cf. MAX_COLS plus bas) — un plafond trop bas
@@ -42,13 +43,16 @@ const VAC_CHIP_H = 22;
 const VAC_CHIP_GAP_X = 6;
 const VAC_CHIP_GAP_Y = 6;
 const VAC_ICON_SIZE = 12;
+const VAC_AVATAR_R = 8;
 const VAC_CHAR_W = 6;
 const VAC_CHIP_FILL = '#F3F1EA';
 const VAC_CHIP_TEXT = '#6B7280';
 
 function vacChipWidth(name: string): number {
-	return 10 + VAC_ICON_SIZE + 4 + Math.ceil(name.length * VAC_CHAR_W) + 10;
+	return 10 + VAC_AVATAR_R * 2 + 4 + VAC_ICON_SIZE + 4 + Math.ceil(name.length * VAC_CHAR_W) + 10;
 }
+
+const CARD_AVATAR_R = 9;
 
 // Palmier plein (île + palmes), même dessin que l'icône vacances de la page pour rester cohérent
 // entre l'appli et l'export. Contrairement aux autres icônes, c'est un tracé plein en viewBox 32.
@@ -166,7 +170,7 @@ export async function buildObjectivesSvg(workspaceId: string, weekMondayISO: str
 	// blocks : un objectif par entrée, avec ses lignes (jusqu'à 2 si le libellé est long) — lines
 	// reste la version "1 ligne" pour le cas simple "aucun objectif".
 	type ObjBlock = { kind: 'TICKET' | 'CUSTOM'; ticketKey: string | null; lines: string[] };
-	type Card = { name: string; lines: string[]; blocks: ObjBlock[]; empty: boolean; height: number; count: number };
+	type Card = { userId: string; name: string; lines: string[]; blocks: ObjBlock[]; empty: boolean; height: number; count: number };
 	const TEXT_INDENT = 17; // largeur icône + espace — même repère pour tout le texte, y compris les retours à la ligne
 	function buildBlock(o: WeeklyObjectiveWithUser): ObjBlock {
 		return { kind: o.kind, ticketKey: o.kind === 'TICKET' ? o.ticketKey : null, lines: wrapLines(objectiveLine(o), innerW) };
@@ -181,9 +185,12 @@ export async function buildObjectivesSvg(workspaceId: string, weekMondayISO: str
 			const blocks: ObjBlock[] = mine.length === 0 ? [] : mine.map(buildBlock);
 			const totalLines = blocks.length > 0 ? blocks.reduce((n, b) => n + b.lines.length, 0) : lines.length;
 			const height = HEADER_H + PAD * 2 + Math.max(1, totalLines) * LINE_H;
-			return { name: m.displayName, lines, blocks, empty: mine.length === 0, height, count: mine.length };
+			return { userId: m.id, name: m.displayName, lines, blocks, empty: mine.length === 0, height, count: mine.length };
 		})
 		.sort((a, b) => b.count - a.count);
+
+	// Un fetch par personne (active ou en vacances), tous en parallèle.
+	const avatarByUserId = await fetchAvatarDataUris([...activeMembers, ...vacationMembers].map((m) => m.id));
 
 	// Choix du nombre de colonnes (2 max — des cartes larges plutôt qu'une grille à colonnes
 	// étroites) : celui qui rapproche le plus le contenu d'un cadre 16/9.
@@ -213,9 +220,9 @@ export async function buildObjectivesSvg(workspaceId: string, weekMondayISO: str
 	const { cols, rows, rowHeights, width: contentWidth } = layout;
 
 	// Puces "en vacances" repliées sur plusieurs lignes si besoin, dans la largeur du contenu.
-	const vacRows: { name: string; w: number }[][] = [];
+	const vacRows: { userId: string; name: string; w: number }[][] = [];
 	{
-		let row: { name: string; w: number }[] = [];
+		let row: { userId: string; name: string; w: number }[] = [];
 		let rowW = 0;
 		for (const m of vacationMembers) {
 			const w = vacChipWidth(m.displayName);
@@ -225,7 +232,7 @@ export async function buildObjectivesSvg(workspaceId: string, weekMondayISO: str
 				row = [];
 				rowW = 0;
 			}
-			row.push({ name: m.displayName, w });
+			row.push({ userId: m.id, name: m.displayName, w });
 			rowW += (row.length > 1 ? VAC_CHIP_GAP_X : 0) + w;
 		}
 		if (row.length) vacRows.push(row);
@@ -248,6 +255,7 @@ export async function buildObjectivesSvg(workspaceId: string, weekMondayISO: str
 
 	const parts: string[] = [];
 	parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`);
+	parts.push(`<defs>${AVATAR_GRADIENT_DEF}</defs>`);
 	parts.push(`<rect x="0" y="0" width="${width}" height="${height}" fill="${WHITE}"/>`);
 	parts.push(
 		`<text x="${originX}" y="${originY + 16}" font-size="15" font-weight="700" fill="${TEXT_DARK}" ${FONT}>Objectifs — Semaine ${isoWeek(monday)} · ${esc(formatRange(monday))}</text>`
@@ -261,8 +269,13 @@ export async function buildObjectivesSvg(workspaceId: string, weekMondayISO: str
 			const x = originX + i * (CARD_W + CARD_GAP);
 			parts.push(`<rect x="${x}" y="${y}" width="${CARD_W}" height="${rowH}" rx="8" fill="${WHITE}" stroke="${BORDER}"/>`);
 			parts.push(`<path d="M${x + 8},${y} h${CARD_W - 16} a8,8 0 0 1 8,8 v${HEADER_H - 8} h-${CARD_W} v-${HEADER_H - 8} a8,8 0 0 1 8,-8 z" fill="${HEADER_FILL}"/>`);
+			const avatarCx = x + PAD + CARD_AVATAR_R;
+			const avatarCy = y + HEADER_H / 2;
+			parts.push(avatarCircle(avatarByUserId.get(c.userId), c.name, avatarCx, avatarCy, CARD_AVATAR_R, `objAvatar${r}_${i}`, FONT));
+			const nameX = x + PAD + CARD_AVATAR_R * 2 + 6;
+			const nameMaxW = innerW - CARD_AVATAR_R * 2 - 6;
 			parts.push(
-				`<text x="${x + PAD}" y="${y + HEADER_H / 2 + 4}" font-size="12.5" font-weight="700" fill="${TEXT_DARK}" ${FONT}>${esc(truncate(c.name, innerW))}</text>`
+				`<text x="${nameX}" y="${y + HEADER_H / 2 + 4}" font-size="12.5" font-weight="700" fill="${TEXT_DARK}" ${FONT}>${esc(truncate(c.name, nameMaxW))}</text>`
 			);
 			if (c.empty) {
 				parts.push(
@@ -296,13 +309,17 @@ export async function buildObjectivesSvg(workspaceId: string, weekMondayISO: str
 
 	if (vacRows.length > 0) {
 		y += CARD_GAP;
-		vacRows.forEach((row) => {
+		vacRows.forEach((row, ri) => {
 			let x = originX;
-			row.forEach((chip) => {
+			row.forEach((chip, ci) => {
 				parts.push(`<rect x="${x}" y="${y}" width="${chip.w}" height="${VAC_CHIP_H}" rx="${VAC_CHIP_H / 2}" fill="${VAC_CHIP_FILL}"/>`);
-				parts.push(palmIcon(x + 10, y + (VAC_CHIP_H - VAC_ICON_SIZE) / 2));
+				const avatarCx = x + 10 + VAC_AVATAR_R;
+				const avatarCy = y + VAC_CHIP_H / 2;
+				parts.push(avatarCircle(avatarByUserId.get(chip.userId), chip.name, avatarCx, avatarCy, VAC_AVATAR_R, `vacAvatar${ri}_${ci}`, FONT));
+				const iconX = x + 10 + VAC_AVATAR_R * 2 + 4;
+				parts.push(palmIcon(iconX, y + (VAC_CHIP_H - VAC_ICON_SIZE) / 2));
 				parts.push(
-					`<text x="${x + 10 + VAC_ICON_SIZE + 4}" y="${y + VAC_CHIP_H / 2 + 4}" font-size="11" font-weight="600" fill="${VAC_CHIP_TEXT}" ${FONT}>${esc(chip.name)}</text>`
+					`<text x="${iconX + VAC_ICON_SIZE + 4}" y="${y + VAC_CHIP_H / 2 + 4}" font-size="11" font-weight="600" fill="${VAC_CHIP_TEXT}" ${FONT}>${esc(chip.name)}</text>`
 				);
 				x += chip.w + VAC_CHIP_GAP_X;
 			});
