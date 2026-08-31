@@ -20,9 +20,11 @@
 	import QuickAddPalette from '$lib/components/QuickAddPalette.svelte';
 	import TicketEditModal from '$lib/components/TicketEditModal.svelte';
 	import ImputationMobile from '$lib/components/ImputationMobile.svelte';
+	import UserAvatar from '$lib/components/UserAvatar.svelte';
 	import { ABSENCE_TYPE_COLORS, ABSENCE_TYPE_LABELS, ABSENCE_PERIOD_LABELS } from '$lib/absenceTypes';
 	import type { Row } from '$lib/imputationRow';
 	import { jiraTicketUrl } from '$lib/jiraLink';
+	import { buildCycle, cycleNext } from '$lib/utils/imputationCycle';
 
 	let { data } = $props();
 
@@ -55,11 +57,7 @@
 	function round(n: number) {
 		return Math.round((n + Number.EPSILON) * 1000) / 1000;
 	}
-	let CYCLE = $derived.by(() => {
-		const step = data.imputationStep > 0 ? data.imputationStep : 0.25;
-		const n = Math.max(1, Math.round(1 / step));
-		return Array.from({ length: n + 1 }, (_, i) => round(i * step));
-	});
+	let CYCLE = $derived(buildCycle(data.imputationStep));
 	let KEYMAP = $derived.by(() => {
 		const map: Record<string, number> = { '0': 0 };
 		CYCLE.filter((v) => v > 0).forEach((v, i) => {
@@ -275,10 +273,21 @@
 
 	/** Clic = avance dans CYCLE, Shift+clic = recule (pas de conflit avec le clic droit/molette). */
 	function cycle(row: Row, day: string, reverse = false) {
-		const cur = row.amounts[day] ?? 0;
-		const delta = reverse ? -1 : 1;
-		const next = CYCLE[(CYCLE.indexOf(cur) + delta + CYCLE.length) % CYCLE.length];
-		setAmount(row, day, next);
+		setAmount(row, day, cycleNext(CYCLE, row.amounts[day] ?? 0, reverse));
+	}
+
+	/** Clic droit sur une case : popup au-dessus proposant directement toutes les valeurs du CYCLE
+	 * (plus rapide que de cliquer plusieurs fois pour dérouler). */
+	let cellPicker = $state<{ row: Row; day: string; top: number; left: number } | null>(null);
+	function openCellPicker(e: MouseEvent, row: Row, day: string) {
+		e.preventDefault();
+		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		cellPicker = { row, day, top: rect.top, left: rect.left + rect.width / 2 };
+	}
+	function pickCellValue(value: number) {
+		if (!cellPicker) return;
+		setAmount(cellPicker.row, cellPicker.day, value);
+		cellPicker = null;
 	}
 
 	function hasLockedDay(row: Row) {
@@ -855,7 +864,8 @@
 						<td class="task">
 							<button type="button" class="team-toggle" onclick={() => toggleMember(m.userId)} aria-expanded={isOpen}>
 								<svg class="chev" class:open={isOpen} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 6 6-6 6" /></svg>
-								<b>{m.name}</b>
+								<UserAvatar userId={m.userId} name={m.name} size={20} />
+					<b>{m.name}</b>
 							</button>
 						</td>
 						{#each days as d (d)}
@@ -1176,6 +1186,7 @@
 										data-cell="{ri}-{di}"
 										onclick={(e) => cycle(row, d, e.shiftKey)}
 										onkeydown={(e) => onCellKey(e, ri, di, row, d)}
+										oncontextmenu={(e) => openCellPicker(e, row, d)}
 									>{fmt(row.amounts[d])}</button>
 								{/if}
 							</td>
@@ -1226,7 +1237,7 @@
 			<span class="kbd">Touchez une case pour faire défiler les valeurs · appui long pour vider</span>
 		{:else if !data.readOnly}
 			{@const keyEntries = Object.entries(KEYMAP).filter(([k]) => k !== '0')}
-			<span class="kbd">Clique pour faire défiler <b>·</b> → {CYCLE.slice(1).map((v) => fmt(v)).join(' → ')} <b>·</b> <kbd>Shift</kbd>+clic pour reculer</span>
+			<span class="kbd">Clique pour faire défiler <b>·</b> → {CYCLE.slice(1).map((v) => fmt(v)).join(' → ')} <b>·</b> <kbd>Shift</kbd>+clic pour reculer <b>·</b> clic droit pour choisir directement</span>
 			<span class="kbd">Clavier : {#each keyEntries as [k] (k)}<kbd>{k}</kbd> {/each}→ {keyEntries.map(([, v]) => fmt(v)).join(' / ')} · <kbd>0</kbd>/<kbd>Suppr</kbd> vide · <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> naviguer · <kbd>←</kbd>/<kbd>→</kbd> en bord = période ±</span>
 		{/if}
 	</div>
@@ -1235,8 +1246,26 @@
 
 <svelte:window
 	bind:innerWidth
-	onkeydown={(e) => e.key === 'Escape' && ((confirmDelete = null), (activityPickerRow = null))}
+	onkeydown={(e) => e.key === 'Escape' && ((confirmDelete = null), (activityPickerRow = null), (cellPicker = null))}
 />
+
+{#if cellPicker}
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="cell-picker-backdrop" onclick={() => (cellPicker = null)} oncontextmenu={(e) => (e.preventDefault(), (cellPicker = null))}>
+		<div
+			class="cell-picker"
+			style="top:{cellPicker.top}px; left:{cellPicker.left}px;"
+			onclick={(e) => e.stopPropagation()}
+		>
+			{#each CYCLE as v (v)}
+				<button type="button" class="cell-picker-opt" class:sel={(cellPicker.row.amounts[cellPicker.day] ?? 0) === v} onclick={() => pickCellValue(v)}>
+					{fmt(v)}
+				</button>
+			{/each}
+		</div>
+	</div>
+{/if}
 
 {#if confirmDelete}
 	{@const row = confirmDelete}
@@ -1292,6 +1321,7 @@
 	versions={data.versions}
 	ssps={data.ssps}
 	ticketGroups={data.ticketGroups}
+	members={data.assignableMembers}
 	testPhase={data.testPhase}
 	canEditEstimation={data.canEditEstimation}
 	isAdmin={data.isAdmin}
@@ -1302,6 +1332,42 @@
 />
 
 <style>
+	.cell-picker-backdrop {
+		position: fixed;
+		inset: 0;
+		z-index: 60;
+		background: transparent;
+	}
+	.cell-picker {
+		position: fixed;
+		z-index: 61;
+		transform: translate(-50%, calc(-100% - 6px));
+		display: flex;
+		gap: 2px;
+		padding: 4px;
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+	}
+	.cell-picker-opt {
+		padding: 4px 8px;
+		border: 1px solid transparent;
+		border-radius: 6px;
+		background: none;
+		cursor: pointer;
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+	}
+	.cell-picker-opt:hover {
+		background: var(--accent-tint);
+	}
+	.cell-picker-opt.sel {
+		border-color: var(--accent);
+		color: var(--accent-ink);
+		background: var(--accent-tint);
+		font-weight: 600;
+	}
 	.week-confetti {
 		position: fixed;
 		top: -50px;

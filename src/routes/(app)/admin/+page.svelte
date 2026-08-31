@@ -1074,7 +1074,7 @@
 								<button class="ord-btn" type="submit" disabled={i === data.supportMembers.length - 1} aria-label="Descendre">▼</button>
 							</form>
 						</div>
-						<span class="ref-name">{m.displayName}</span>
+						<span class="ref-name rotation-name"><UserAvatar userId={m.userId} name={m.displayName} size={20} />{m.displayName}</span>
 						<form method="POST" action="?/supportMemberRemove" use:enhance>
 							<input type="hidden" name="id" value={m.id} />
 							<button class="ref-btn" type="submit">🗑 Retirer</button>
@@ -2309,6 +2309,11 @@
 	}
 	.ref-name:disabled {
 		color: var(--text-mute);
+	}
+	.rotation-name {
+		display: flex;
+		align-items: center;
+		gap: 8px;
 	}
 	.ref-item.archived {
 		opacity: 0.7;

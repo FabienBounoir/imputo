@@ -59,6 +59,10 @@ export type SprintDashboardTicket = {
 	ecartVsEstime: number;
 	ecartVsBudget: number | null;
 	avancement: number;
+	/** 0 (plus bas) à 5 (plus haut) — même échelle que Tickets & chiffrage, cf. schema.ts. */
+	priority: number;
+	assigneeId: string | null;
+	assigneeName: string | null;
 };
 
 /**
@@ -121,7 +125,10 @@ export async function getSprintDashboard(
 			consumed: t.consumed,
 			ecartVsEstime: t.ecartVsEstime,
 			ecartVsBudget: t.ecartVsBudget,
-			avancement: t.avancement
+			avancement: t.avancement,
+			priority: t.priority,
+			assigneeId: t.assigneeId,
+			assigneeName: t.assigneeName
 		});
 	}
 	estTotal = round(estTotal);

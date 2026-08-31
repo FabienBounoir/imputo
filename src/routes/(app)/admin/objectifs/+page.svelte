@@ -4,6 +4,7 @@
 	import { navigating } from '$app/state';
 	import { toast } from 'svelte-sonner';
 	import TargetPicker from '$lib/components/TargetPicker.svelte';
+	import UserAvatar from '$lib/components/UserAvatar.svelte';
 	import { downloadSvgAsPng } from '$lib/utils/svgToPng';
 
 	let { data, form } = $props();
@@ -216,6 +217,7 @@
 					}}
 				>
 					<div class="person-card-head">
+						<UserAvatar userId={m.id} name={m.displayName} size={26} />
 						<h3>{m.displayName}</h3>
 						{#if mine.length > 0}<span class="obj-count">{mine.length}</span>{/if}
 					</div>
@@ -242,6 +244,7 @@
 			<div class="vac-strip">
 				{#each vacationMembers as m (m.id)}
 					<button type="button" class="vac-chip" class:selected={m.id === data.selectedUserId} onclick={() => selectUser(m.id)}>
+						<UserAvatar userId={m.id} name={m.displayName} size={16} />
 						{@render vacationIcon()} {m.displayName}
 					</button>
 				{/each}
@@ -490,6 +493,9 @@
 		margin-top: 14px;
 	}
 	.vac-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
 		font-size: 11.5px;
 		font-weight: 600;
 		color: var(--text-mute);

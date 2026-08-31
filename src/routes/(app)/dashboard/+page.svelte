@@ -2,6 +2,8 @@
 	import { goto } from '$app/navigation';
 	import { navigating } from '$app/state';
 	import { parseISODate, toISODate, addDays, dayName, dayNum, formatRange, isPublicHolidayFR, mondayOf, isoWeek } from '$lib/utils/date';
+	import Tooltip from '$lib/components/Tooltip.svelte';
+	import UserAvatar from '$lib/components/UserAvatar.svelte';
 	let { data } = $props();
 
 	// Synthèse hebdo : bascule % de capacité (vue compacte) / détail jour par jour (5 jours ouvrés).
@@ -67,6 +69,11 @@
 		return cols;
 	});
 	const weeklyPersons = $derived([...new Set(data.weeklySynthesis.map((r) => r.name))].sort((a, b) => a.localeCompare(b)));
+	const weeklyUserIdByName = $derived.by(() => {
+		const m = new Map<string, string>();
+		for (const r of data.weeklySynthesis) m.set(r.name, r.userId);
+		return m;
+	});
 	const weeklyCell = $derived.by(() => {
 		const m = new Map<string, (typeof data.weeklySynthesis)[number]>();
 		for (const r of data.weeklySynthesis) m.set(`${r.name}:${r.mondayISO}`, r);
@@ -303,10 +310,12 @@
 					{#each d.byPerson as p (p.name)}
 						<div class="barrow">
 							<span class="lbl">{p.name}</span>
-							<div class="track stacked">
-								<i class="prod" style="width:{(p.productive / maxPerson) * 100}%"></i>
-								<i class="nonprod" style="width:{(p.nonProductive / maxPerson) * 100}%"></i>
-							</div>
+							<Tooltip text="{p.productive} j productif · {p.nonProductive} j non productif">
+								<div class="track stacked">
+									<i class="prod" style="width:{(p.productive / maxPerson) * 100}%"></i>
+									<i class="nonprod" style="width:{(p.nonProductive / maxPerson) * 100}%"></i>
+								</div>
+							</Tooltip>
 							<span class="val tabnum">{p.total}</span>
 						</div>
 					{/each}
@@ -341,7 +350,7 @@
 						<tbody>
 							{#each weeklyPersons as name (name)}
 								<tr>
-									<td>{name}</td>
+									<td class="weekly-name"><UserAvatar userId={weeklyUserIdByName.get(name)} name={name} size={20} />{name}</td>
 									{#each weekCols as [monday] (monday)}
 										{@const cell = weeklyCell.get(`${name}:${monday}`)}
 										<td class="num tabnum" class:over={cell?.overCapacity}>
@@ -374,7 +383,7 @@
 						<tbody>
 							{#each weeklyPersons as name (name)}
 								<tr>
-									<td>{name}</td>
+									<td class="weekly-name"><UserAvatar userId={weeklyUserIdByName.get(name)} name={name} size={20} />{name}</td>
 									{#each weekCols as [monday] (monday)}
 										{@const cell = weeklyCell.get(`${name}:${monday}`)}
 										{#each weekdays(monday) as iso (iso)}
@@ -417,7 +426,7 @@
 						<tbody>
 							{#each sspPersons as name (name)}
 								<tr>
-									<td>{name}</td>
+									<td class="weekly-name"><UserAvatar userId={weeklyUserIdByName.get(name)} name={name} size={20} />{name}</td>
 									{#each sspCols as ssp (ssp)}
 										<td class="num tabnum">{sspCell.get(`${name}:${ssp}`) || '·'}</td>
 									{/each}
@@ -552,6 +561,9 @@
 		align-items: center;
 		gap: 12px;
 	}
+	.barrow :global(.tt-wrap) {
+		width: 100%;
+	}
 	.barrow .lbl {
 		font-size: 13px;
 		color: var(--text-soft);
@@ -560,6 +572,7 @@
 		text-overflow: ellipsis;
 	}
 	.track {
+		width: 100%;
 		height: 10px;
 		border-radius: 20px;
 		background: var(--surface-sunk);
@@ -718,6 +731,11 @@
 	.weekly-table td.over {
 		color: #c0392b;
 		font-weight: 700;
+	}
+	.weekly-table td.weekly-name {
+		display: flex;
+		align-items: center;
+		gap: 8px;
 	}
 	.weekly-daily th.week-sep {
 		text-align: center;

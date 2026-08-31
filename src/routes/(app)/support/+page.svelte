@@ -3,6 +3,8 @@
 	import { toast } from 'svelte-sonner';
 	import { confirmDialog } from '$lib/confirm.svelte';
 	import { formatDayRange } from '$lib/utils/date';
+	import UserAvatar from '$lib/components/UserAvatar.svelte';
+	import { buildDeck, evaluatePick, clearOpen, isWon } from '$lib/utils/memoryGame';
 
 	let { data, form } = $props();
 
@@ -10,6 +12,60 @@
 	$effect(() => {
 		if (form?.error) toast.error(form.error);
 	});
+
+	// Jeu des paires caché dans la grille du planning : les cases existantes deviennent des cartes
+	// dès qu'on en clique une (pas de mode séparé). cardSeeds[i] === '' => case hors-jeu (nombre
+	// de cases impair) ou jeu pas encore démarré.
+	const flatDays = $derived(data.calendar.flatMap((week) => week.days));
+	// Styles Dicebear "personnage" (on exclut icons/shapes/rings/thumbs, pas des avatars).
+	const DICEBEAR_STYLES = [
+		'adventurer',
+		'avataaars',
+		'big-ears',
+		'big-smile',
+		'bottts',
+		'croodles',
+		'fun-emoji',
+		'lorelei',
+		'micah',
+		'notionists',
+		'open-peeps',
+		'personas',
+		'pixel-art',
+		'critters'
+	];
+	let dicebearStyle = $state('critters');
+	let gameActive = $state(false);
+	let busy = $state(false);
+	let game = $state({ cardSeeds: [] as string[], matched: new Set<number>(), openIndexes: [] as number[], moves: 0 });
+
+	function startGame(total: number) {
+		dicebearStyle = DICEBEAR_STYLES[Math.floor(Math.random() * DICEBEAR_STYLES.length)];
+		game = { cardSeeds: buildDeck(total), matched: new Set(), openIndexes: [], moves: 0 };
+		gameActive = true;
+	}
+
+	function resetGame() {
+		gameActive = false;
+		game = { cardSeeds: [], matched: new Set(), openIndexes: [], moves: 0 };
+	}
+
+	function pick(i: number) {
+		if (busy) return;
+		if (!gameActive) startGame(flatDays.length);
+
+		const { state, result } = evaluatePick(game, i);
+		game = state;
+		if (result === 'mismatch') {
+			busy = true;
+			setTimeout(() => {
+				game = clearOpen(game);
+				busy = false;
+			}, 700);
+		}
+	}
+
+	const gameWon = $derived(isWon(game));
 
 	// Le nombre de jours par semaine dans la grille reflète déjà le réglage "samedi inclus" (cf.
 	// listDutyCalendar côté serveur) — on en déduit l'entête plutôt que de dupliquer le réglage ici.
@@ -65,7 +121,9 @@
 		{:else}
 			<div class="header-row">
 				<div class="header-person">
-					<span class="duty-dot" aria-hidden="true"></span>
+					<span class="duty-avatar-wrap" aria-hidden="true">
+						<UserAvatar userId={data.current.userId} name={data.current.displayName} size={52} />
+					</span>
 					<div>
 						<span class="eyebrow">{eyebrow}</span>
 						<h2>{data.current.displayName}</h2>
@@ -98,18 +156,34 @@
 
 	{#if data.calendar.length > 0}
 		<section class="card calendar-card">
-			<h3>Planning</h3>
+			<div class="cal-head-row">
+				<h3>Planning</h3>
+				{#if gameActive}
+					<span class="game-status">{gameWon ? `Gagné en ${game.moves} coups 🎉` : `${game.moves} coups`}</span>
+					<button type="button" class="link-btn" onclick={resetGame}>Réinitialiser</button>
+				{/if}
+			</div>
 			<div class="cal-scroll">
 				<div class="cal-grid" style="--cal-cols:{WEEKDAYS.length}">
 					{#each WEEKDAYS as w (w)}<div class="cal-head">{w}</div>{/each}
-					{#each data.calendar as week (week.weekStart)}
-						{#each week.days as day, i (day.date)}
-							{@const active = Boolean(data.current) && day.date >= data.current!.periodStart && day.date <= data.current!.periodEnd}
-							<div class="cal-cell" class:today={day.date === data.todayISO} class:active>
-								<span class="cal-daynum"><span class="cal-weekday">{WEEKDAYS[i]}</span> {fmtCellDate(day.date)}</span>
+					{#each flatDays as day, i (day.date)}
+						{@const active = Boolean(data.current) && day.date >= data.current!.periodStart && day.date <= data.current!.periodEnd}
+						{@const flipped = gameActive && game.cardSeeds[i] && (game.matched.has(i) || game.openIndexes.includes(i))}
+						<!-- svelte-ignore a11y_click_events_have_key_events -->
+						<!-- svelte-ignore a11y_no_static_element_interactions -->
+						<div class="cal-cell" class:today={day.date === data.todayISO} class:active class:game={gameActive} onclick={() => pick(i)}>
+							{#if gameActive && game.cardSeeds[i]}
+								<div class="cal-flip" class:flipped>
+									<div class="cal-face cal-back">?</div>
+									<div class="cal-face cal-front">
+										<img src="https://api.dicebear.com/10.x/{dicebearStyle}/svg?seed={encodeURIComponent(game.cardSeeds[i])}" alt="" />
+									</div>
+								</div>
+							{:else}
+								<span class="cal-daynum"><span class="cal-weekday">{WEEKDAYS[i % WEEKDAYS.length]}</span> {fmtCellDate(day.date)}</span>
 								<span class="cal-name">{firstName(day.displayName)}</span>
-							</div>
-						{/each}
+							{/if}
+						</div>
 					{/each}
 				</div>
 			</div>
@@ -147,6 +221,7 @@
 							class:sel={m.userId === current.userId}
 							disabled={m.userId === current.userId}
 						>
+							<UserAvatar userId={m.userId} name={m.displayName} size={22} />
 							{m.displayName}
 							{#if m.userId === current.userId}<span class="candidate-tag">actuel</span>{/if}
 						</button>
@@ -200,18 +275,13 @@
 		align-items: center;
 		gap: 20px;
 	}
-	/* Pastille pulsante plutôt qu'un avatar à initiales : le nom est juste à côté, l'avatar
-	   n'apportait aucune info et cassait le responsive avec sa largeur fixe. */
-	.duty-dot {
+	.duty-avatar-wrap {
 		position: relative;
-		width: 12px;
-		height: 12px;
 		flex-shrink: 0;
 		border-radius: 50%;
-		background: var(--accent);
 		box-shadow: 0 0 0 4px var(--accent-tint-2);
 	}
-	.duty-dot::after {
+	.duty-avatar-wrap::after {
 		content: '';
 		position: absolute;
 		inset: -6px;
@@ -220,7 +290,7 @@
 		animation: pulse 2.6s ease-out infinite;
 	}
 	@media (prefers-reduced-motion: reduce) {
-		.duty-dot::after {
+		.duty-avatar-wrap::after {
 			animation: none;
 		}
 	}
@@ -320,7 +390,7 @@
 		align-items: center;
 		justify-content: center;
 		gap: 6px;
-		min-height: 64px;
+		min-height: 70px;
 		padding: 12px 8px 10px;
 		border-radius: var(--r-md);
 		background: var(--surface-sunk);
@@ -332,6 +402,54 @@
 	}
 	.cal-cell.today {
 		border-color: var(--accent);
+	}
+	.cal-cell.game {
+		cursor: pointer;
+	}
+	.cal-flip {
+		position: relative;
+		width: 46px;
+		height: 46px;
+		perspective: 400px;
+	}
+	.cal-flip > * {
+		transition: transform 0.3s;
+	}
+	.cal-face {
+		position: absolute;
+		inset: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 50%;
+		backface-visibility: hidden;
+		transform-style: preserve-3d;
+	}
+	.cal-back {
+		background: var(--border);
+		color: var(--text-mute);
+		font-weight: 700;
+		font-size: 18px;
+	}
+	.cal-front {
+		background: var(--accent-tint-2);
+		transform: rotateY(180deg);
+	}
+	.cal-front img {
+		width: 100%;
+		height: 100%;
+		border-radius: 50%;
+		object-fit: cover;
+	}
+	.cal-flip.flipped .cal-back {
+		transform: rotateY(180deg);
+	}
+	.cal-flip.flipped .cal-front {
+		transform: rotateY(360deg);
+	}
+	.game-status {
+		font-size: 12.5px;
+		color: var(--text-mute);
 	}
 	.cal-daynum {
 		position: absolute;
@@ -364,6 +482,16 @@
 	}
 	:global([data-theme='dark']) .cal-cell.active .cal-name {
 		color: color-mix(in srgb, var(--accent) 78%, #fff);
+	}
+	.cal-head-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		margin-bottom: 12px;
+	}
+	.cal-head-row h3 {
+		margin: 0;
 	}
 
 	/* < 640px : la grille à colonnes fixes ne rentre plus (elle "dépassait" et forçait un scroll

@@ -18,4 +18,15 @@
 	dashboard={data.dashboard}
 	emptyLabel="Aucune version dans cet espace."
 	{jiraCfg}
+	states={data.states}
+	projects={data.projects}
+	sprints={data.sprints}
+	versions={data.versions}
+	ssps={data.ssps}
+	ticketGroups={data.ticketGroups}
+	members={data.assignableMembers}
+	testPhase={data.testPhase}
+	canEditEstimation={data.canEditEstimation}
+	isAdmin={data.isAdmin}
+	isOwner={data.isOwner}
 />

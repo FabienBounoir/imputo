@@ -20,12 +20,22 @@ const WARN = '#C2410C';
 const SUCCESS = '#22C55E'; // même vert que --success (app.css) : écart négatif = bon signe, jamais teinté par l'accent
 const SUBTOTAL_FILL = '#FBFAF6';
 const BAR_BG = '#F3F1EA';
+// Mêmes teintes fixes que --priority-0..4 (app.css, thème clair) — export toujours rendu sur fond
+// blanc, comme le reste de ce fichier (pas de thème sombre côté image).
+const PRIORITY_COLORS = ['#e34948', '#4a3aa7', '#eda100', '#1baf7a', '#2a78d6'];
 
 const STATE_W = 140;
 const TICKET_W = 300;
+const ASSIGNEE_W = 150;
 const NUM_W = 78;
 const ECART_W = 150;
 const PROG_W = 110;
+// Même dégradé que le repli initiales de UserAvatar.svelte (app.css `.avatar`) — utilisé si la
+// vraie photo Dicebear (cf. fetchAvatarDataUri) échoue à charger (offline, API bloquée…).
+const AVATAR_GRADIENT_FROM = '#f2b56b';
+const AVATAR_GRADIENT_TO = '#e8744f';
+const AVATAR_R = 11;
+const AVATAR_FETCH_TIMEOUT_MS = 3000;
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
@@ -41,11 +51,38 @@ function hexToRgb(hex: string): [number, number, number] {
 	const n = parseInt(h.length === 3 ? h.replace(/./g, (c) => c + c) : h, 16);
 	return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
+// Mêmes règles que UserAvatar.svelte : deux premiers mots du nom, première lettre, majuscule.
+function initials(name: string): string {
+	return name
+		.split(/\s+/)
+		.map((w) => w[0])
+		.join('')
+		.slice(0, 2)
+		.toUpperCase();
+}
+
 function mixHex(hex: string, withHex: string, ratio: number): string {
 	const [r1, g1, b1] = hexToRgb(hex);
 	const [r2, g2, b2] = hexToRgb(withHex);
 	const mix = (a: number, b: number) => Math.round(a * ratio + b * (1 - ratio));
 	return `#${[mix(r1, r2), mix(g1, g2), mix(b1, b2)].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+}
+
+// Même avatar Dicebear (seed = userId) que UserAvatar.svelte, mais embarqué en data URI puisqu'une
+// image SVG exportée ne peut pas pointer vers une URL externe (rien ne garantit que le viewer y ait
+// accès, ni que l'image reste disponible). null si l'appel échoue (offline, API bloquée, timeout) —
+// l'appelant retombe alors sur le rendu initiales/dégradé, comme UserAvatar côté client.
+async function fetchAvatarDataUri(userId: string): Promise<string | null> {
+	try {
+		const res = await fetch(`https://api.dicebear.com/10.x/critters/svg?seed=${encodeURIComponent(userId)}`, {
+			signal: AbortSignal.timeout(AVATAR_FETCH_TIMEOUT_MS)
+		});
+		if (!res.ok) return null;
+		const svg = await res.text();
+		return `data:image/svg+xml;base64,${Buffer.from(svg, 'utf8').toString('base64')}`;
+	} catch {
+		return null;
+	}
 }
 
 export type TicketsSvg = { svg: string; width: number; height: number };
@@ -55,13 +92,22 @@ export type TicketsSvg = { svg: string; width: number; height: number };
  * groupement optionnel que SprintDashboardPanel.svelte (`grouped` = préférence locale du client,
  * cf. downloadSprintTicketsPng côté page).
  */
-export function buildSprintTicketsSvg(dashboard: SprintDashboard, grouped: boolean, accent = '#16A34A'): TicketsSvg {
+export async function buildSprintTicketsSvg(dashboard: SprintDashboard, grouped: boolean, accent = '#16A34A'): Promise<TicketsSvg> {
 	const hasBudget = dashboard.kpis.budgetTotal !== null;
 	const hasEcartBudget = dashboard.kpis.ecartVsBudgetTotal !== null;
+
+	// Un seul fetch par personne même si elle a plusieurs tickets (dédupliqué), tous en parallèle
+	// plutôt qu'un par ligne — un export à 50 tickets ne doit pas attendre 50 aller-retours en série.
+	const assigneeIds = [...new Set(dashboard.tickets.map((t) => t.assigneeId).filter((id): id is string => id !== null))];
+	const avatarEntries = await Promise.all(assigneeIds.map(async (id) => [id, await fetchAvatarDataUri(id)] as const));
+	const avatarByUserId = new Map(avatarEntries);
 
 	const cols: { label: string; w: number; num?: boolean }[] = [
 		{ label: 'État', w: STATE_W },
 		{ label: 'Ticket', w: TICKET_W },
+		// Pas de libellé d'en-tête : l'avatar (+ nom en export) se suffit à lui-même, un texte
+		// "Assigné" dans l'en-tête n'apporterait rien et grignoterait de la place (retour utilisateur).
+		{ label: '', w: ASSIGNEE_W },
 		...(hasBudget ? [{ label: 'Budget', w: NUM_W, num: true }] : []),
 		{ label: 'Estimé', w: NUM_W, num: true },
 		{ label: 'RAE', w: NUM_W, num: true },
@@ -94,6 +140,14 @@ export function buildSprintTicketsSvg(dashboard: SprintDashboard, grouped: boole
 
 	const parts: string[] = [];
 	parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`);
+	parts.push(
+		`<defs>` +
+			`<linearGradient id="avatarGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="${AVATAR_GRADIENT_FROM}"/><stop offset="100%" stop-color="${AVATAR_GRADIENT_TO}"/></linearGradient>` +
+			// Cercle centré sur l'origine locale : appliqué depuis un <g transform="translate(cx,cy)">
+			// pour rogner l'image Dicebear (rectangulaire) en rond, réutilisé par tous les avatars.
+			`<clipPath id="avatarClip"><circle cx="0" cy="0" r="${AVATAR_R}"/></clipPath>` +
+			`</defs>`
+	);
 	parts.push(`<rect x="0" y="0" width="${width}" height="${height}" fill="${WHITE}"/>`);
 
 	const titleLabel = dashboard.kind === 'VERSION' ? 'Tickets de la version' : 'Tickets du sprint';
@@ -131,14 +185,46 @@ export function buildSprintTicketsSvg(dashboard: SprintDashboard, grouped: boole
 	function numCell(x: number, w: number, y: number, v: number | string): string {
 		return `<text x="${x + w - 10}" y="${y + ROW_H / 2 + 4}" font-size="12" text-anchor="end" fill="${TEXT_DARK}" ${FONT}>${v}</text>`;
 	}
+	// Même badge "P0"…"P4" que Tickets & chiffrage (--priority-0..4, app.css) et le tableau en
+	// ligne (SprintDashboardPanel.svelte) — fond teinté à 18% comme le pill d'état juste en dessous.
+	function priorityBadge(x: number, y: number, priority: number): { svg: string; w: number } {
+		const color = PRIORITY_COLORS[priority] ?? PRIORITY_COLORS[2];
+		const label = `P${priority}`;
+		const w = Math.ceil(label.length * 6.4) + 10;
+		const h = 15;
+		const badgeY = y + ROW_H / 2 - h / 2 - 1;
+		const svg =
+			`<rect x="${x}" y="${badgeY}" width="${w}" height="${h}" rx="4" fill="${mixHex(color, WHITE, 0.18)}"/>` +
+			`<text x="${x + w / 2}" y="${badgeY + h / 2 + 4}" font-size="10" font-weight="700" text-anchor="middle" fill="${color}" ${FONT}>${label}</text>`;
+		return { svg, w };
+	}
 	function ticketCell(x: number, w: number, y: number, t: SprintDashboardTicket): string {
 		const keyW = Math.ceil(t.key.length * 6.2) + 8;
-		const titleX = x + 10 + keyW;
-		const titleMaxW = Math.max(20, w - 10 - keyW - 10);
+		const badge = priorityBadge(x + 10 + keyW, y, t.priority);
+		const titleX = x + 10 + keyW + badge.w + 8;
+		const titleMaxW = Math.max(20, w - 10 - keyW - badge.w - 8 - 10);
 		return (
 			`<text x="${x + 10}" y="${y + ROW_H / 2 + 4}" font-size="11" font-weight="600" fill="${HEADER_TEXT}" ${FONT}>${esc(t.key)}</text>` +
+			badge.svg +
 			`<text x="${titleX}" y="${y + ROW_H / 2 + 4}" font-size="12" font-weight="500" fill="${TEXT_DARK}" ${FONT}>${esc(truncate(t.title, titleMaxW))}</text>`
 		);
+	}
+	// Avatar (vraie photo Dicebear si récupérée, sinon initiales sur dégradé — cf. AVATAR_GRADIENT_*
+	// et avatarByUserId) + nom à côté — contrairement au tableau en ligne (SprintDashboardPanel.svelte,
+	// avatar seul + tooltip au survol), une image statique ne peut pas porter de tooltip, donc le nom
+	// est toujours affiché ici.
+	function assigneeCell(x: number, w: number, y: number, t: SprintDashboardTicket): string {
+		if (!t.assigneeId) return '';
+		const cx = x + 10 + AVATAR_R;
+		const cy = y + ROW_H / 2;
+		const nameX = x + 10 + AVATAR_R * 2 + 8;
+		const nameMaxW = Math.max(20, w - 10 - AVATAR_R * 2 - 8 - 10);
+		const photo = avatarByUserId.get(t.assigneeId);
+		const avatar = photo
+			? `<g transform="translate(${cx},${cy})" clip-path="url(#avatarClip)"><image x="${-AVATAR_R}" y="${-AVATAR_R}" width="${AVATAR_R * 2}" height="${AVATAR_R * 2}" href="${photo}"/></g>`
+			: `<circle cx="${cx}" cy="${cy}" r="${AVATAR_R}" fill="url(#avatarGrad)"/>` +
+				`<text x="${cx}" y="${cy + 4}" font-size="9.5" font-weight="700" text-anchor="middle" fill="${WHITE}" ${FONT}>${esc(initials(t.assigneeName || '?'))}</text>`;
+		return avatar + `<text x="${nameX}" y="${cy + 4}" font-size="12" fill="${TEXT_DARK}" ${FONT}>${esc(truncate(t.assigneeName ?? '', nameMaxW))}</text>`;
 	}
 	function stateCell(x: number, w: number, y: number, t: SprintDashboardTicket): string {
 		const label = `${t.stateEmoji ?? ''} ${t.stateLabel ?? '—'}`.trim();
@@ -160,6 +246,8 @@ export function buildSprintTicketsSvg(dashboard: SprintDashboard, grouped: boole
 		parts.push(stateCell(colX[i], cols[i].w, y, t));
 		i++;
 		parts.push(ticketCell(colX[i], cols[i].w, y, t));
+		i++;
+		parts.push(assigneeCell(colX[i], cols[i].w, y, t));
 		i++;
 		if (hasBudget) {
 			parts.push(numCell(colX[i], cols[i].w, y, t.budget ?? '—'));
@@ -196,7 +284,7 @@ export function buildSprintTicketsSvg(dashboard: SprintDashboard, grouped: boole
 			}
 			parts.push(`<rect x="${MARGIN}" y="${y}" width="${tableW}" height="${SUBTOTAL_H}" fill="${SUBTOTAL_FILL}"/>`);
 			parts.push(`<text x="${MARGIN + 10}" y="${y + SUBTOTAL_H / 2 + 4}" font-size="12" font-weight="700" fill="${TEXT_SOFT}" ${FONT}>Sous-total</text>`);
-			let i = hasBudget ? 2 : 1;
+			let i = hasBudget ? 3 : 2;
 			// Estimé / RAE / Consommé du sous-groupe, alignés sur les mêmes colonnes que les lignes ticket
 			// (écart(s) laissés vides, comme la table en ligne — seul l'avancement de groupe a du sens).
 			const subVals = [g.estTotal, g.raeTotal, g.consumed || '—'];

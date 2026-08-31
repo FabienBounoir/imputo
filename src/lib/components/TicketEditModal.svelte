@@ -18,6 +18,7 @@
 		versions,
 		ssps,
 		ticketGroups,
+		members,
 		testPhase,
 		canEditEstimation,
 		isAdmin,
@@ -33,6 +34,8 @@
 		versions: { id: string; name: string }[];
 		ssps: { id: string; code: string; label: string }[];
 		ticketGroups: { id: string; label: string }[];
+		/** Pour "Assigné à" — mêmes membres que le filtre `!m.factice` de Tickets & chiffrage. */
+		members: { id: string; displayName: string; factice: boolean }[];
 		testPhase: boolean;
 		canEditEstimation: boolean;
 		isAdmin: boolean;
@@ -69,6 +72,8 @@
 		ecartVsBudget: number | null;
 		groupIds: string[];
 		imputationCount: number;
+		priority: number;
+		assigneeId: string | null;
 	};
 	type HistoryEntry = {
 		field: string | null;
@@ -138,10 +143,54 @@
 		pendingSaves.set(key, setTimeout(() => { pendingSaves.delete(key); fn(); }, delay));
 	}
 
-	async function save(field: string, value: string | number | null) {
+	// Même slider maison que Tickets & chiffrage (tickets/+page.svelte) — voir les commentaires
+	// là-bas pour le détail (piste inversée 0/Urgent à droite, pointer capture, etc.). Adapté ici
+	// pour opérer sur `ticket` directement (pas de tableau de lignes dans cette modale).
+	function setPriority(value: number) {
 		if (!ticket) return;
+		const v = Math.max(0, Math.min(4, Math.round(value)));
+		if (v === ticket.priority) return;
+		ticket.priority = v;
+		const snapshot = { id: ticket.id, title: ticket.title, sprintId: ticket.sprintId, versionId: ticket.versionId };
+		debouncedSave(`priority-${ticket.id}`, () => save('priority', v, snapshot));
+	}
+	function priorityValueAt(e: PointerEvent, el: HTMLElement) {
+		const rect = el.getBoundingClientRect();
+		const ratio = (e.clientX - rect.left) / rect.width;
+		return 4 - Math.min(1, Math.max(0, ratio)) * 4;
+	}
+	function priorityPos(v: number): number {
+		return (4 - v) * 25;
+	}
+	function onPriorityPointerDown(e: PointerEvent) {
+		const el = e.currentTarget as HTMLElement;
+		el.setPointerCapture(e.pointerId);
+		setPriority(priorityValueAt(e, el));
+	}
+	function onPriorityPointerMove(e: PointerEvent) {
+		if (e.buttons !== 1) return;
+		setPriority(priorityValueAt(e, e.currentTarget as HTMLElement));
+	}
+	function onPriorityKey(e: KeyboardEvent) {
+		if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
+			e.preventDefault();
+			setPriority(ticket!.priority - 1);
+		} else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
+			e.preventDefault();
+			setPriority(ticket!.priority + 1);
+		}
+	}
+
+	// `snapshotArg` : pour un appel différé (debouncedSave, 600ms), `ticket` peut être redevenu null
+	// entre-temps si la modale a été fermée (effet ticketId ci-dessus) — sans un id capturé au moment
+	// du changement, la sauvegarde serait silencieusement perdue (le early-return ci-dessous) et
+	// onSaved ne serait jamais notifié, laissant la vue appelante (dashboard, Mon imputation) affichant
+	// l'ancienne valeur malgré un clic déjà validé par l'utilisateur.
+	async function save(field: string, value: string | number | null, snapshotArg?: { id: string; title: string; sprintId: string | null; versionId: string | null }) {
+		const snapshot = snapshotArg ?? (ticket ? { id: ticket.id, title: ticket.title, sprintId: ticket.sprintId, versionId: ticket.versionId } : null);
+		if (!snapshot) return;
 		const body = new FormData();
-		body.set('ticketId', ticket.id);
+		body.set('ticketId', snapshot.id);
 		body.set('field', field);
 		body.set('value', value == null ? '' : String(value));
 		const res = await fetch('/tickets?/update', { method: 'POST', body });
@@ -149,38 +198,42 @@
 		if (result.type === 'failure') {
 			toast.error((result.data?.error as string) ?? 'Erreur lors de l’enregistrement.');
 		} else {
-			flash();
+			flash(snapshot);
 		}
 	}
 	// Saisie d'une estimation : pré-remplit le RAE correspondant s'il est encore vide (sinon un
 	// ticket estimé mais sans RAE afficherait 100 % d'avancement) — même règle que la page tickets.
-	async function saveEst(which: 'real' | 'test') {
-		if (!ticket) return;
+	// `value`/`snapshot` capturés par l'appelant (onchange, avant le debounce) : à l'exécution différée
+	// `ticket` peut déjà être redevenu null si la modale a été fermée entre-temps, cf. save() ci-dessus.
+	async function saveEst(which: 'real' | 'test', value: number, snapshot: { id: string; title: string; sprintId: string | null; versionId: string | null }) {
+		const live = ticket?.id === snapshot.id ? ticket : null;
 		if (which === 'real') {
-			await save('estimationReal', ticket.estimationReal);
-			if (!ticket.raeReal) {
-				ticket.raeReal = ticket.estimationReal;
-				await save('raeReal', ticket.raeReal);
+			await save('estimationReal', value, snapshot);
+			if (live && !live.raeReal) {
+				live.raeReal = value;
+				await save('raeReal', value, snapshot);
 			}
 		} else {
-			await save('estimationTest', ticket.estimationTest);
-			if (!ticket.raeTest) {
-				ticket.raeTest = ticket.estimationTest;
-				await save('raeTest', ticket.raeTest);
+			await save('estimationTest', value, snapshot);
+			if (live && !live.raeTest) {
+				live.raeTest = value;
+				await save('raeTest', value, snapshot);
 			}
 		}
 	}
 	async function saveFlag(key: string, value: string) {
 		if (!ticket) return;
+		const snapshot = { id: ticket.id, title: ticket.title, sprintId: ticket.sprintId, versionId: ticket.versionId };
 		const body = new FormData();
 		body.set('ticketId', ticket.id);
 		body.set('key', key);
 		body.set('value', value ?? '');
 		await fetch('/tickets?/flag', { method: 'POST', body });
-		flash();
+		flash(snapshot);
 	}
 	async function toggleGroup(groupId: string) {
 		if (!ticket) return;
+		const snapshot = { id: ticket.id, title: ticket.title, sprintId: ticket.sprintId, versionId: ticket.versionId };
 		const member = !ticket.groupIds.includes(groupId);
 		ticket.groupIds = member ? [...ticket.groupIds, groupId] : ticket.groupIds.filter((g) => g !== groupId);
 		const body = new FormData();
@@ -188,11 +241,12 @@
 		body.set('groupId', groupId);
 		body.set('member', String(member));
 		await fetch('/tickets?/groupToggle', { method: 'POST', body });
-		flash();
+		flash(snapshot);
 	}
-	function flash() {
+	function flash(snapshot?: { id: string; title: string; sprintId: string | null; versionId: string | null }) {
 		toast.success('Enregistré ✓');
-		if (ticket) onSaved?.({ id: ticket.id, title: ticket.title, sprintId: ticket.sprintId, versionId: ticket.versionId });
+		const t = snapshot ?? ticket;
+		if (t) onSaved?.(t);
 	}
 
 	// Bloque si des imputations sont liées (pas de popup dans ce cas — juste le message), sinon
@@ -262,11 +316,44 @@
 							<option value={null}>—</option>{#each versions as v (v.id)}<option value={v.id}>{v.name}</option>{/each}
 						</select>
 					</label>
-					<label class="dfield"><span>Estimé</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={ticket.estimationReal} disabled={!canEditEstimation || ticket.hasActivityEstimation} title={estRealTitle} onchange={() => debouncedSave(`est-${ticket!.id}-real`, () => saveEst('real'))} /></label>
+					<label class="dfield"><span>Assigné à</span>
+						<select class="cell-select" bind:value={ticket.assigneeId} onchange={() => save('assigneeId', ticket!.assigneeId)}>
+							<option value={null}>—</option>{#each members.filter((m) => !m.factice) as m (m.id)}<option value={m.id}>{m.displayName}</option>{/each}
+						</select>
+					</label>
+					<div class="dfield"><span>Priorité</span>
+						<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+						<div
+							class="priority-slider"
+							role="slider"
+							tabindex="0"
+							aria-label="Priorité, de 4 (Backlog, le moins urgent) à 0 (Urgent, le plus urgent)"
+							aria-valuemin="0"
+							aria-valuemax="4"
+							aria-valuenow={ticket.priority}
+							onpointerdown={onPriorityPointerDown}
+							onpointermove={onPriorityPointerMove}
+							onkeydown={onPriorityKey}
+						>
+							<div class="priority-track">
+								<div class="priority-scale"></div>
+								<div class="priority-mask" style="width:{100 - priorityPos(ticket.priority)}%"></div>
+								{#each [0, 1, 2, 3, 4] as n (n)}
+									<span class="priority-tick" style="left:{priorityPos(n)}%"></span>
+								{/each}
+							</div>
+							<div class="priority-thumb tabnum" style="left:{priorityPos(ticket.priority)}%; --pcolor:var(--priority-{ticket.priority})">{ticket.priority}</div>
+						</div>
+						<div class="priority-ends">
+							<span>← Backlog</span>
+							<span>Urgent →</span>
+						</div>
+					</div>
+					<label class="dfield"><span>Estimé</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={ticket.estimationReal} disabled={!canEditEstimation || ticket.hasActivityEstimation} title={estRealTitle} onchange={() => { const v = ticket!.estimationReal; const snapshot = { id: ticket!.id, title: ticket!.title, sprintId: ticket!.sprintId, versionId: ticket!.versionId }; debouncedSave(`est-${ticket!.id}-real`, () => saveEst('real', v, snapshot)); }} /></label>
 					<label class="dfield"><span>RAE Réal</span><input class="cell-input" type="number" step="0.25" min="0" value={ticket.raeReal} disabled title="Compilation des RAE par activité (voir le tableau)" /></label>
 					{#if testPhase}
-						<label class="dfield"><span>Est. Test</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={ticket.estimationTest} disabled={!canEditEstimation} title={estTitle} onchange={() => debouncedSave(`est-${ticket!.id}-test`, () => saveEst('test'))} /></label>
-						<label class="dfield"><span>Prépa</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={ticket.prepa} disabled={!canEditEstimation} title={estTitle} onchange={() => debouncedSave(`f-${ticket!.id}-prepa`, () => save('prepa', ticket!.prepa))} /></label>
+						<label class="dfield"><span>Est. Test</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={ticket.estimationTest} disabled={!canEditEstimation} title={estTitle} onchange={() => { const v = ticket!.estimationTest; const snapshot = { id: ticket!.id, title: ticket!.title, sprintId: ticket!.sprintId, versionId: ticket!.versionId }; debouncedSave(`est-${ticket!.id}-test`, () => saveEst('test', v, snapshot)); }} /></label>
+						<label class="dfield"><span>Prépa</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={ticket.prepa} disabled={!canEditEstimation} title={estTitle} onchange={() => { const v = ticket!.prepa; const snapshot = { id: ticket!.id, title: ticket!.title, sprintId: ticket!.sprintId, versionId: ticket!.versionId }; debouncedSave(`f-${ticket!.id}-prepa`, () => save('prepa', v, snapshot)); }} /></label>
 						<label class="dfield"><span>RAE Test</span><input class="cell-input" type="number" step="0.25" min="0" value={ticket.raeTest} disabled title="Compilation des RAE par activité (voir le tableau)" /></label>
 						{#each FLAG_FIELDS as fl (fl.key)}
 							<label class="dfield"><span>{fl.label}</span>
@@ -278,8 +365,8 @@
 					{/if}
 					<div class="dfield"><span>Code SSP</span><SspPicker {ssps} bind:value={() => ticket!.sspId ?? '', (v) => (ticket!.sspId = v || null)} onpick={(v) => save('sspId', v || null)} /></div>
 					{#if isAdmin}
-						<label class="dfield"><span>Estimation prévisionnel</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={ticket.estimationPrev} onchange={() => debouncedSave(`f-${ticket!.id}-estimationPrev`, () => save('estimationPrev', ticket!.estimationPrev))} /></label>
-						<label class="dfield"><span>Enveloppe totale</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={ticket.enveloppeTotale} onchange={() => debouncedSave(`f-${ticket!.id}-enveloppeTotale`, () => save('enveloppeTotale', ticket!.enveloppeTotale))} /></label>
+						<label class="dfield"><span>Estimation prévisionnel</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={ticket.estimationPrev} onchange={() => { const v = ticket!.estimationPrev; const snapshot = { id: ticket!.id, title: ticket!.title, sprintId: ticket!.sprintId, versionId: ticket!.versionId }; debouncedSave(`f-${ticket!.id}-estimationPrev`, () => save('estimationPrev', v, snapshot)); }} /></label>
+						<label class="dfield"><span>Enveloppe totale</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={ticket.enveloppeTotale} onchange={() => { const v = ticket!.enveloppeTotale; const snapshot = { id: ticket!.id, title: ticket!.title, sprintId: ticket!.sprintId, versionId: ticket!.versionId }; debouncedSave(`f-${ticket!.id}-enveloppeTotale`, () => save('enveloppeTotale', v, snapshot)); }} /></label>
 					{/if}
 					<label class="dfield wide"><span>Commentaire</span><input class="cell-input" placeholder="Note libre…" bind:value={ticket.comment} onchange={() => save('comment', ticket!.comment)} /></label>
 					{#if ticketGroups.length > 0}
@@ -579,5 +666,97 @@
 		.tk-grid {
 			grid-template-columns: 1fr 1fr;
 		}
+	}
+	/* Slider de priorité — copié tel quel de tickets/+page.svelte (voir les commentaires là-bas). */
+	.priority-slider {
+		position: relative;
+		width: 100%;
+		height: 24px;
+		margin-top: 10px;
+		cursor: grab;
+		outline: none;
+		touch-action: none;
+		user-select: none;
+		-webkit-user-select: none;
+	}
+	.priority-ends {
+		display: flex;
+		justify-content: space-between;
+		margin-top: 2px;
+		font-size: 9.5px;
+		font-weight: 600;
+		color: var(--text-mute);
+		text-transform: uppercase;
+		letter-spacing: 0.02em;
+	}
+	.priority-slider:active {
+		cursor: grabbing;
+	}
+	.priority-slider:active .priority-thumb {
+		transform: translateY(-50%) scale(1.15);
+		transition: none;
+	}
+	.priority-track {
+		position: absolute;
+		inset: 50% 0 auto 0;
+		height: 7px;
+		transform: translateY(-50%);
+		border-radius: 20px;
+		background: var(--surface-sunk);
+		border: 1px solid var(--border);
+		overflow: hidden;
+	}
+	.priority-scale {
+		position: absolute;
+		inset: 0;
+		background: linear-gradient(
+			90deg,
+			var(--priority-4) 0%,
+			var(--priority-3) 25%,
+			var(--priority-2) 50%,
+			var(--priority-1) 75%,
+			var(--priority-0) 100%
+		);
+	}
+	.priority-mask {
+		position: absolute;
+		inset: 0 0 0 auto;
+		background: var(--surface-sunk);
+		transition: width 0.15s ease;
+	}
+	.priority-tick {
+		position: absolute;
+		top: 50%;
+		width: 5px;
+		height: 5px;
+		border-radius: 50%;
+		background: rgba(255, 255, 255, 0.85);
+		border: 1px solid rgba(0, 0, 0, 0.2);
+		transform: translate(-50%, -50%);
+	}
+	.priority-thumb {
+		position: absolute;
+		top: 50%;
+		width: 20px;
+		height: 20px;
+		margin-left: -10px;
+		border-radius: 50%;
+		background: var(--surface);
+		border: 2px solid var(--pcolor);
+		color: var(--pcolor);
+		font-size: 10.5px;
+		font-weight: 700;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		transform: translateY(-50%);
+		box-shadow: var(--shadow-sm);
+		transition: left 0.15s ease;
+		pointer-events: none;
+	}
+	.priority-slider:focus-visible .priority-thumb {
+		box-shadow:
+			0 0 0 3px color-mix(in srgb, var(--pcolor) 35%, transparent),
+			var(--shadow-sm);
 	}
 </style>
