@@ -4,10 +4,10 @@ import { getRefData } from '$lib/server/services/tickets';
 import { listObjectivesForWorkspace, listVacationsForWeek, type WeeklyObjectiveWithUser } from '$lib/server/services/weeklyObjectives';
 import { mondayOf, parseISODate, isoWeek, formatRange } from '$lib/utils/date';
 
-// Cartes larges plutôt qu'étroites : en 16/9 forcé, une grille à beaucoup de colonnes étroites
-// laisse un cadre proche du contenu mais force les tâches à retourner à la ligne ; des cartes plus
-// larges (2 colonnes max, cf. plus bas) remplissent mieux la largeur dispo et les tâches courantes
-// tiennent sur une seule ligne.
+// Largeur de carte fixe (pas de rétrécissement avec plus de colonnes) : seul le nombre de colonnes
+// varie pour rapprocher le contenu du cadre 16/9 (cf. MAX_COLS plus bas) — un plafond trop bas
+// oblige le cadre à s'étirer en largeur bien au-delà du contenu pour tenir le ratio, ce qui laisse
+// de grandes marges vides à gauche/droite quand il y a beaucoup de monde.
 const CARD_W = 420;
 const CARD_GAP = 16;
 const HEADER_H = 26;
@@ -87,7 +87,19 @@ function truncate(text: string, maxWidth: number): string {
 function wrapLines(text: string, maxWidth: number, maxLines = 2): string[] {
 	const maxChars = Math.max(3, Math.floor(maxWidth / CHAR_W));
 	if (text.length <= maxChars) return [text];
-	const words = text.split(' ');
+
+	// Le "[Activité]" final peut contenir un espace dans son libellé (ex. "[Retours qualif]") :
+	// détaché avant la découpe en mots, sinon un retour à la ligne peut tomber entre les deux mots
+	// et le couper en "[Retours" / "qualif]" — ce qui casse l'affichage ET la coloration de
+	// lineTspans (qui exige un "[...]" fermé en fin de ligne exacte). Jamais coupé en plein mot,
+	// mais rattaché à la dernière ligne seulement s'il y tient — sinon il repart sur sa propre
+	// ligne plutôt que de déborder du cadre de la carte (la hauteur de carte s'adapte déjà au
+	// nombre de lignes, cf. `totalLines` dans buildObjectivesSvg).
+	const m = text.match(/^(.*?)(\s?\[[^[\]]*\])$/);
+	const bracket = m ? m[2] : '';
+	const body = m ? m[1] : text;
+
+	const words = body.split(' ');
 	const lines: string[] = [];
 	let current = '';
 	let i = 0;
@@ -104,11 +116,20 @@ function wrapLines(text: string, maxWidth: number, maxLines = 2): string[] {
 	if (current) lines.push(truncate(current, maxWidth));
 	const rest = words.slice(i).join(' ');
 	if (rest) lines.push(truncate(rest, maxWidth));
+
+	if (bracket) {
+		const lastIdx = lines.length - 1;
+		const withBracket = lastIdx >= 0 ? lines[lastIdx] + bracket : bracket.trimStart();
+		if (lastIdx >= 0 && withBracket.length <= maxChars) lines[lastIdx] = withBracket;
+		else lines.push(truncate(bracket.trimStart(), maxWidth));
+	}
 	return lines;
 }
 
 function objectiveLine(o: WeeklyObjectiveWithUser): string {
-	const base = o.kind === 'TICKET' ? `${o.ticketKey} — ${o.ticketTitle}` : (o.label ?? '');
+	// Même règle que Mon imputation (`row.objectiveNote || row.label`) : une note posée sur un
+	// objectif TICKET remplace le titre du ticket affiché, la clé reste toujours visible.
+	const base = o.kind === 'TICKET' ? `${o.ticketKey} — ${o.label || o.ticketTitle}` : (o.label ?? '');
 	return o.activityLabel ? `${base} [${o.activityLabel}]` : base;
 }
 
@@ -178,7 +199,7 @@ export async function buildObjectivesSvg(workspaceId: string, weekMondayISO: str
 		return { cols, rows, rowHeights, width, height };
 	}
 	const TARGET_RATIO = 16 / 9;
-	const MAX_COLS = 2;
+	const MAX_COLS = 6;
 	let layout = layoutFor(1);
 	let bestScore = Infinity;
 	for (let c = 1; c <= Math.min(MAX_COLS, cards.length); c++) {
