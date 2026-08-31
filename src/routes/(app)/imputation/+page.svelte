@@ -24,6 +24,7 @@
 	import { ABSENCE_TYPE_COLORS, ABSENCE_TYPE_LABELS, ABSENCE_PERIOD_LABELS } from '$lib/absenceTypes';
 	import type { Row } from '$lib/imputationRow';
 	import { jiraTicketUrl } from '$lib/jiraLink';
+	import { buildCycle, cycleNext } from '$lib/utils/imputationCycle';
 
 	let { data } = $props();
 
@@ -56,11 +57,7 @@
 	function round(n: number) {
 		return Math.round((n + Number.EPSILON) * 1000) / 1000;
 	}
-	let CYCLE = $derived.by(() => {
-		const step = data.imputationStep > 0 ? data.imputationStep : 0.25;
-		const n = Math.max(1, Math.round(1 / step));
-		return Array.from({ length: n + 1 }, (_, i) => round(i * step));
-	});
+	let CYCLE = $derived(buildCycle(data.imputationStep));
 	let KEYMAP = $derived.by(() => {
 		const map: Record<string, number> = { '0': 0 };
 		CYCLE.filter((v) => v > 0).forEach((v, i) => {
@@ -276,10 +273,7 @@
 
 	/** Clic = avance dans CYCLE, Shift+clic = recule (pas de conflit avec le clic droit/molette). */
 	function cycle(row: Row, day: string, reverse = false) {
-		const cur = row.amounts[day] ?? 0;
-		const delta = reverse ? -1 : 1;
-		const next = CYCLE[(CYCLE.indexOf(cur) + delta + CYCLE.length) % CYCLE.length];
-		setAmount(row, day, next);
+		setAmount(row, day, cycleNext(CYCLE, row.amounts[day] ?? 0, reverse));
 	}
 
 	/** Clic droit sur une case : popup au-dessus proposant directement toutes les valeurs du CYCLE
