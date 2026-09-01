@@ -14,6 +14,11 @@
 #   OPENSHIFT_TOKEN_LOGS           token d'un ServiceAccount avec accès edit sur imputo-logs
 #                                  (Loki + Grafana, namespace séparé — voir openshift/logging/)
 #   OPENSHIFT_NAMESPACE_LOGS       (optionnel, défaut imputo-logs)
+#   GRAFANA_ANNOTATIONS_TOKEN      token d'un Service Account Grafana (rôle Editor suffit — voir
+#                                  openshift/logging/README.md) : pose une annotation de déploiement
+#                                  sur tous les graphes à chaque `deploy:preprod`/`deploy:production`
+#                                  réussi. Optionnel — si absent, le déploiement se termine quand
+#                                  même normalement, juste sans l'annotation (`|| true`).
 #
 # Audit de sécurité récurrent (job `audit`, tourne aussi à chaque push) : pour qu'il tourne même
 # sans nouveau commit et attraper une faille publiée après coup sur une lib déjà en place —
@@ -145,6 +150,15 @@ deploy:preprod:
     - oc patch configmap imputo-config --type merge -p "{\"data\":{\"BASE_URL\":\"https://${HOST}\",\"ORIGIN\":\"https://${HOST}\"}}"
     - oc start-build imputo --build-arg=APP_VERSION="v$CI_COMMIT_SHORT_SHA" --follow
     - oc rollout status deployment/imputo --timeout=5m
+    # Ligne verticale sur tous les graphes Grafana au moment du déploiement — corrèle un pic
+    # d'erreur avec "un déploiement vient-il de se produire ?" sans avoir à croiser les dates à la
+    # main. `|| true` : optionnel, ne doit jamais faire échouer un déploiement par ailleurs réussi.
+    - |
+      if [ -n "$GRAFANA_ANNOTATIONS_TOKEN" ]; then
+        curl -s -o /dev/null -H "Authorization: Bearer $GRAFANA_ANNOTATIONS_TOKEN" -H "Content-Type: application/json" \
+          -X POST "https://grafana-imputo-logs.apps.ocp4.innershift.sodigital.io/api/annotations" \
+          -d "{\"text\":\"Deploiement preprod v$CI_COMMIT_SHORT_SHA\",\"tags\":[\"deploy\",\"env:${NS}\"],\"time\":$(($(date +%s%N)/1000000))}" || true
+      fi
     # `rollout status` ne garantit que le scale-down de l'ancien ReplicaSet, pas la disparition
     # effective du pod (un pod Terminating compte encore dans le quota CPU du namespace, capé à
     # 4 cores sur imputo-preprod). Sans cette pause, le build imputo-tools puis le Job imputo-seed
@@ -240,6 +254,12 @@ deploy:production:
     - *apply_base_manifests
     - oc start-build imputo --commit="$CI_COMMIT_TAG" --build-arg=APP_VERSION="$CI_COMMIT_TAG" --follow
     - oc rollout status deployment/imputo --timeout=5m
+    - |
+      if [ -n "$GRAFANA_ANNOTATIONS_TOKEN" ]; then
+        curl -s -o /dev/null -H "Authorization: Bearer $GRAFANA_ANNOTATIONS_TOKEN" -H "Content-Type: application/json" \
+          -X POST "https://grafana-imputo-logs.apps.ocp4.innershift.sodigital.io/api/annotations" \
+          -d "{\"text\":\"Deploiement production $CI_COMMIT_TAG\",\"tags\":[\"deploy\",\"env:${NS}\"],\"time\":$(($(date +%s%N)/1000000))}" || true
+      fi
     # imputo:tools n'existait jusqu'ici qu'en preprod (seed de démo) — nécessaire ici pour le
     # CronJob de sync Jira récurrent, qui tourne isolé du pod web (voir cronjob-jira-sync.yaml).
     # Pas d'imputo-seed en prod : ça reste strictement un outil de démo preprod.

@@ -193,3 +193,29 @@ environnement affiché), les 6 règles s'évaluent sans erreur (`health: ok`) co
 données de prod et preprod, alertes réellement déclenchées (`cron_failed` provoqué volontairement,
 l'app scalée à 0 replica deux fois sur preprod pour la sonde interne et le health check externe) et
 reçues dans Teams à chaque fois.
+
+## Annotations de déploiement
+
+Chaque `deploy:preprod`/`deploy:production` réussi pose une ligne verticale sur tous les graphes
+Grafana au moment exact du déploiement (`.gitlab-ci.yml`, appel direct à `/api/annotations` — pas
+besoin de credentials OpenShift, juste un token Grafana). Sert à corréler visuellement un pic
+d'erreur avec "un déploiement vient-il d'avoir lieu" sans croiser les dates à la main.
+
+**Token** : Service Account Grafana `ci-annotations` (rôle **Editor** — le minimum qui permette
+d'écrire une annotation ; pas de rôle plus fin dédié aux annotations seules). Recréer si perdu :
+
+```sh
+GRAFANA_PW=$(oc get secret grafana-admin -n imputo-logs -o jsonpath='{.data.GF_SECURITY_ADMIN_PASSWORD}' | base64 -d)
+oc port-forward -n imputo-logs svc/grafana 3300:3000 &
+
+curl -s -u "admin:$GRAFANA_PW" -H 'Content-Type: application/json' \
+  -X POST 'http://localhost:3300/api/serviceaccounts' -d '{"name": "ci-annotations", "role": "Editor"}'
+# noter le "id" retourné, puis :
+curl -s -u "admin:$GRAFANA_PW" -H 'Content-Type: application/json' \
+  -X POST 'http://localhost:3300/api/serviceaccounts/<id>/tokens' -d '{"name": "gitlab-ci"}'
+```
+
+Le token (`glsa_...`) va dans **GitLab (mirror) > Settings > CI/CD > Variables**, nom
+`GRAFANA_ANNOTATIONS_TOKEN`, "Masked" coché — jamais commité. Optionnel côté pipeline : son
+absence ne fait pas échouer le déploiement (`|| true`), l'annotation est juste silencieusement
+sautée.

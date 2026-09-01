@@ -114,7 +114,15 @@ const handleRequest: Handle = async ({ event, resolve }) => {
 
 // Filet de sécurité pour tout ce qui remonte non catché depuis un load/action/endpoint
 // (les catch() existants dans les routes gèrent déjà les erreurs métier attendues).
-export const handleError: HandleServerError = ({ error, event }) => {
-	logger.error('request_error', error, { path: event.url.pathname, method: event.request.method });
+export const handleError: HandleServerError = ({ error, event, status }) => {
+	const context = { path: event.url.pathname, method: event.request.method };
+	if (status === 404) {
+		// Aucune route ne correspond (favicon.ico, bot, vieux lien...) : SvelteKit lève quand même
+		// une Error pour ça, mais ce n'est pas un bug applicatif — pas la peine de polluer les
+		// dashboards/alertes "erreurs" avec du bruit attendu et permanent.
+		logger.warn('route_not_found', context);
+	} else {
+		logger.error('request_error', error, context);
+	}
 	return { message: 'Une erreur est survenue.' };
 };
