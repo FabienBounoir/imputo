@@ -70,14 +70,19 @@ export const handle: Handle = async ({ event, resolve }) => {
 	const start = Date.now();
 	const response = await resolve(event);
 
-	logger.info('request', {
-		method: event.request.method,
-		path: event.url.pathname,
-		status: response.status,
-		durationMs: Date.now() - start,
-		userId: event.locals.user?.id,
-		workspaceId: event.locals.workspace?.workspaceId
-	});
+	// Sonde OpenShift (readiness/liveness/startup, GET / toutes les 10-20s en continu) : noierait
+	// sinon les vrais logs, pour un signal nul (elle ne teste rien d'applicatif, juste que le port répond).
+	const isProbe = event.request.headers.get('user-agent')?.startsWith('kube-probe');
+	if (!isProbe) {
+		logger.info('request', {
+			method: event.request.method,
+			path: event.url.pathname,
+			status: response.status,
+			durationMs: Date.now() - start,
+			userId: event.locals.user?.id,
+			workspaceId: event.locals.workspace?.workspaceId
+		});
+	}
 
 	// Headers de sécurité, posés ici plutôt que dans app.html : ça couvre aussi /api,
 	// qui ne rend aucun <head>. HSTS est ignoré par le navigateur sur du HTTP simple,
