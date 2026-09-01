@@ -1,6 +1,7 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { saveSubscription } from '$lib/server/services/push';
+import { logger } from '$lib/server/logger';
 
 export const POST: RequestHandler = async ({ locals, request }) => {
 	if (!locals.user) error(401, 'Non authentifié.');
@@ -9,6 +10,9 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 	try {
 		await saveSubscription(locals.user.id, sub, request.headers.get('user-agent'));
 	} catch (e) {
+		// Peut être un endpoint hors liste blanche (isAllowedPushEndpoint) : tentative de SSRF plutôt
+		// qu'un simple abonnement raté, d'où warn même si le retour client reste un 400 générique.
+		logger.warn('push_subscribe_rejected', { userId: locals.user.id, error: e instanceof Error ? e.message : String(e) });
 		error(400, e instanceof Error ? e.message : 'Abonnement invalide.');
 	}
 	return json({ ok: true });

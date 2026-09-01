@@ -1,5 +1,6 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
+import { logger } from '$lib/server/logger';
 import {
 	getClosingView,
 	openClosing,
@@ -36,6 +37,7 @@ export const actions: Actions = {
 		try {
 			await openClosing(locals.workspace!.workspaceId, month);
 		} catch (e) {
+			logger.error('cloture_open_failed', e, { workspaceId: locals.workspace!.workspaceId, month });
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		// Redirection (et pas un simple retour) pour deux raisons : sans `seq` dans l'URL le load
@@ -57,6 +59,10 @@ export const actions: Actions = {
 				Number(f.get('amount'))
 			);
 		} catch (e) {
+			logger.error('cloture_set_complement_failed', e, {
+				workspaceId: locals.workspace!.workspaceId,
+				closingId: String(f.get('closingId'))
+			});
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { ok: true };
@@ -75,6 +81,10 @@ export const actions: Actions = {
 				raw === '' ? null : Number(raw)
 			);
 		} catch (e) {
+			logger.error('cloture_set_planned_failed', e, {
+				workspaceId: locals.workspace!.workspaceId,
+				closingId: String(f.get('closingId'))
+			});
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { ok: true };
@@ -92,6 +102,10 @@ export const actions: Actions = {
 				raw === '' ? null : Number(raw)
 			);
 		} catch (e) {
+			logger.error('cloture_set_workdays_failed', e, {
+				workspaceId: locals.workspace!.workspaceId,
+				closingId: String(f.get('closingId'))
+			});
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { ok: true };
@@ -107,6 +121,10 @@ export const actions: Actions = {
 				String(f.get('sspId'))
 			);
 		} catch (e) {
+			logger.error('cloture_add_ssp_failed', e, {
+				workspaceId: locals.workspace!.workspaceId,
+				closingId: String(f.get('closingId'))
+			});
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { ok: true };
@@ -122,6 +140,10 @@ export const actions: Actions = {
 				String(f.get('sspId'))
 			);
 		} catch (e) {
+			logger.error('cloture_remove_ssp_failed', e, {
+				workspaceId: locals.workspace!.workspaceId,
+				closingId: String(f.get('closingId'))
+			});
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { ok: true };
@@ -131,11 +153,14 @@ export const actions: Actions = {
 		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
 		const f = await request.formData();
 		const month = String(f.get('month'));
+		const closingId = String(f.get('closingId'));
 		try {
-			await integrate(locals.workspace!.workspaceId, String(f.get('closingId')), locals.user!.id);
+			await integrate(locals.workspace!.workspaceId, closingId, locals.user!.id);
 		} catch (e) {
+			logger.error('cloture_integrate_failed', e, { workspaceId: locals.workspace!.workspaceId, closingId, month });
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
+		logger.info('cloture_integrated', { workspaceId: locals.workspace!.workspaceId, closingId, month, byUserId: locals.user!.id });
 		// Plus aucune passe ouverte après l'intégration : sans `seq`, le load retombe sur la plus
 		// récente, celle qu'on vient de figer. Même motif que `open` ci-dessus.
 		redirect(303, `/admin/cloture?month=${month}`);

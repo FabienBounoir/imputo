@@ -11,6 +11,7 @@ import {
 	type JiraIssue
 } from './jiraClient';
 import { decryptSecret } from '../auth/secretCrypto';
+import { logger } from '../logger';
 
 // $env-libre par design (comme db/connection.ts) : ce module tourne à la fois dans SvelteKit
 // (action "forcer le sync") et sous tsx brut (scripts/jira-sync.ts, CronJob) où $env ne se
@@ -75,6 +76,7 @@ async function finalizeError(
 			.set({ jiraLastSyncAt: new Date(), jiraLastSyncStatus: 'ERROR', jiraLastSyncError: message })
 			.where(eq(workspace.id, workspaceId));
 		await db.insert(jiraSyncRun).values({ workspaceId, startedAt: new Date(), status: 'ERROR', error: message });
+		logger.error('jira_sync_failed', undefined, { workspaceId, authFailure: false, error: message });
 		return { ok: false, workspaceId, error: message };
 	}
 
@@ -92,10 +94,12 @@ async function finalizeError(
 	const failures = row?.failures ?? 0;
 	if (failures < MAX_CONSECUTIVE_AUTH_FAILURES) {
 		await db.insert(jiraSyncRun).values({ workspaceId, startedAt: new Date(), status: 'ERROR', error: message });
+		logger.error('jira_sync_failed', undefined, { workspaceId, authFailure: true, failures, error: message });
 		return { ok: false, workspaceId, error: message };
 	}
 
 	const disabledMessage = `${message} — synchronisation planifiée désactivée automatiquement après ${MAX_CONSECUTIVE_AUTH_FAILURES} échecs consécutifs.`;
+	logger.warn('jira_sync_circuit_breaker_tripped', { workspaceId, failures });
 	await db
 		.update(workspace)
 		.set({ jiraSyncEnabled: false, jiraLastSyncError: disabledMessage })
@@ -359,6 +363,12 @@ export async function syncWorkspace(
 		await db.update(ticket).set({ createdBySyncRunId: run.id }).where(inArray(ticket.id, createdIds));
 	}
 
+	logger.info('jira_sync_completed', {
+		workspaceId,
+		ticketsSeen: issues.length,
+		ticketsCreated: createdIds.length,
+		durationMs: Date.now() - syncStartedAt.getTime()
+	});
 	return { ok: true, workspaceId, ticketsUpserted: issues.length };
 }
 

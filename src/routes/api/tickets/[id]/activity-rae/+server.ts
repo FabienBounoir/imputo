@@ -6,6 +6,7 @@ import {
 	upsertTicketActivityRae,
 	type TicketActivityField
 } from '$lib/server/services/tickets';
+import { logger } from '$lib/server/logger';
 
 const FIELDS: TicketActivityField[] = ['raeReal', 'raeTest', 'estimation', 'budget'];
 const DENIED_MESSAGE: Record<TicketActivityField, string> = {
@@ -37,6 +38,7 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
 		const rows = await getTicketActivityBreakdown(ws.workspaceId, params.id);
 		return json({ rows });
 	} catch (e) {
+		logger.error('ticket_activity_rae_failed', e, { workspaceId: ws.workspaceId, ticketId: params.id, activityId, field });
 		error(400, e instanceof Error ? e.message : 'Erreur.');
 	}
 };

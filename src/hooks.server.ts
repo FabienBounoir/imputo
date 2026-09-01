@@ -1,4 +1,4 @@
-import type { Handle } from '@sveltejs/kit';
+import type { Handle, HandleServerError } from '@sveltejs/kit';
 import {
 	SESSION_COOKIE,
 	validateSession,
@@ -6,6 +6,12 @@ import {
 	setSessionWorkspace
 } from '$lib/server/auth/session';
 import { listMembershipsForUser, getDeactivatedWorkspace } from '$lib/server/services/workspaces';
+import { logger } from '$lib/server/logger';
+
+// hooks.server.ts n'est chargé qu'une fois au boot : c'est le seul endroit fiable pour
+// attraper ce qui échappe complètement à SvelteKit (promesse non attendue, throw hors requête).
+process.on('unhandledRejection', (reason) => logger.error('unhandled_rejection', reason));
+process.on('uncaughtException', (err) => logger.error('uncaught_exception', err));
 
 export const handle: Handle = async ({ event, resolve }) => {
 	event.locals.user = null;
@@ -61,7 +67,17 @@ export const handle: Handle = async ({ event, resolve }) => {
 		}
 	}
 
+	const start = Date.now();
 	const response = await resolve(event);
+
+	logger.info('request', {
+		method: event.request.method,
+		path: event.url.pathname,
+		status: response.status,
+		durationMs: Date.now() - start,
+		userId: event.locals.user?.id,
+		workspaceId: event.locals.workspace?.workspaceId
+	});
 
 	// Headers de sécurité, posés ici plutôt que dans app.html : ça couvre aussi /api,
 	// qui ne rend aucun <head>. HSTS est ignoré par le navigateur sur du HTTP simple,
@@ -71,4 +87,11 @@ export const handle: Handle = async ({ event, resolve }) => {
 	response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
 	response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
 	return response;
+};
+
+// Filet de sécurité pour tout ce qui remonte non catché depuis un load/action/endpoint
+// (les catch() existants dans les routes gèrent déjà les erreurs métier attendues).
+export const handleError: HandleServerError = ({ error, event }) => {
+	logger.error('request_error', error, { path: event.url.pathname, method: event.request.method });
+	return { message: 'Une erreur est survenue.' };
 };

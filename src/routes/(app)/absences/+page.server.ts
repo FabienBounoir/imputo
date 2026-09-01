@@ -1,5 +1,6 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
+import { logger } from '$lib/server/logger';
 import { getRefData } from '$lib/server/services/tickets';
 import { isManagerOrAdmin } from '$lib/server/services/workspaces';
 import { notifyAbsencePending, notifyAbsenceValidated } from '$lib/server/services/notifications';
@@ -152,6 +153,7 @@ export const actions: Actions = {
 				);
 			}
 		} catch (e) {
+			logger.error('absence_create_failed', e, { workspaceId: ws.workspaceId, type, startDate, endDate });
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { ok: true };
@@ -180,6 +182,7 @@ export const actions: Actions = {
 				{ startDate, endDate, type, period }
 			);
 		} catch (e) {
+			logger.error('absence_update_failed', e, { workspaceId: ws.workspaceId, absenceId: id });
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { ok: true };
@@ -200,6 +203,7 @@ export const actions: Actions = {
 				await notifyAbsenceValidated(ws.workspaceId, ws.workspaceName, validated.userId, validated.startDate, validated.endDate, id);
 			}
 		} catch (e) {
+			logger.error('absence_validate_failed', e, { workspaceId: ws.workspaceId, absenceId: id });
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { ok: true };
@@ -223,6 +227,7 @@ export const actions: Actions = {
 		try {
 			await addExternalMember(ws.workspaceId, String(f.get('displayName') ?? ''));
 		} catch (e) {
+			logger.error('absence_add_external_failed', e, { workspaceId: ws.workspaceId });
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { ok: true };

@@ -1,5 +1,6 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
+import { logger } from '$lib/server/logger';
 import { getRefData, listTickets } from '$lib/server/services/tickets';
 import { isManagerOrAdmin } from '$lib/server/services/workspaces';
 import {
@@ -71,6 +72,7 @@ export const actions: Actions = {
 		try {
 			await addObjective(ws.workspaceId, locals.user!.id, { userId, weekMondayISO, kind, ticketId, label, activityId });
 		} catch (e) {
+			logger.error('objective_add_failed', e, { workspaceId: ws.workspaceId, userId, weekMondayISO });
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { objOk: true };
@@ -83,6 +85,7 @@ export const actions: Actions = {
 		try {
 			await removeObjective(ws.workspaceId, String(f.get('id')));
 		} catch (e) {
+			logger.error('objective_remove_failed', e, { workspaceId: ws.workspaceId, id: String(f.get('id')) });
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { objOk: true };
@@ -96,6 +99,7 @@ export const actions: Actions = {
 		try {
 			await moveObjective(ws.workspaceId, String(f.get('id')), dir);
 		} catch (e) {
+			logger.error('objective_move_failed', e, { workspaceId: ws.workspaceId, id: String(f.get('id')), dir });
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { objOk: true };
@@ -112,6 +116,7 @@ export const actions: Actions = {
 		try {
 			await setVacation(ws.workspaceId, userId, weekMondayISO, onVacation);
 		} catch (e) {
+			logger.error('objective_toggle_vacation_failed', e, { workspaceId: ws.workspaceId, userId, weekMondayISO });
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { objOk: true };

@@ -3,6 +3,7 @@ import type { Actions, PageServerLoad } from './$types';
 import { registerSchema } from '$lib/server/validation/auth';
 import { createWorkspaceWithOwner } from '$lib/server/services/workspaces';
 import { createSession, setSessionCookie } from '$lib/server/auth/session';
+import { logger } from '$lib/server/logger';
 
 export const load: PageServerLoad = async ({ locals }) => {
 	if (locals.user) redirect(303, '/imputation');
@@ -29,6 +30,7 @@ export const actions: Actions = {
 			userId = res.userId;
 			workspaceId = res.workspaceId;
 		} catch (e) {
+			logger.error('register_failed', e, { email: data.email, workspaceName: data.workspaceName });
 			return fail(400, {
 				error: e instanceof Error ? e.message : 'Erreur inattendue',
 				values

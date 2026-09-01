@@ -10,7 +10,9 @@ function fakeEvent(token?: string) {
 	if (token) cookies.set(SESSION_COOKIE, token);
 	return {
 		cookies,
-		locals: {} as App.Locals
+		locals: {} as App.Locals,
+		request: new Request('http://localhost/'),
+		url: new URL('http://localhost/')
 	};
 }
 

@@ -48,6 +48,7 @@
 		"drizzle-orm": "^0.44.6",
 		"exceljs": "^4.4.0",
 		"gsap": "^3.15.0",
+		"pino": "^10.3.1",
 		"postgres": "^3.4.7",
 		"svelte-confetti": "^2.3.2",
 		"svelte-sonner": "^1.2.1",

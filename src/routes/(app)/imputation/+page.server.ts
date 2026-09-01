@@ -1,5 +1,6 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
+import { logger } from '$lib/server/logger';
 import {
 	getTimesheet,
 	getTeamTimesheet,
@@ -179,6 +180,7 @@ export const actions: Actions = {
 				objectiveId
 			});
 		} catch (e) {
+			logger.error('imputation_set_cell_failed', e, { workspaceId: ws.workspaceId, subjectId, targetType, targetId, day });
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { ok: true };
@@ -223,6 +225,7 @@ export const actions: Actions = {
 				objectiveId
 			});
 		} catch (e) {
+			logger.error('imputation_delete_row_failed', e, { workspaceId: ws.workspaceId, subjectId, targetType, targetId });
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { ok: true };
@@ -267,6 +270,7 @@ export const actions: Actions = {
 				objectiveId
 			});
 		} catch (e) {
+			logger.error('imputation_pin_row_failed', e, { workspaceId: ws.workspaceId, subjectId, targetType, targetId });
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { ok: true };
@@ -312,6 +316,14 @@ export const actions: Actions = {
 				objectiveId
 			});
 		} catch (e) {
+			logger.error('imputation_reassign_activity_failed', e, {
+				workspaceId: ws.workspaceId,
+				subjectId,
+				targetType,
+				targetId,
+				fromActivityId,
+				toActivityId
+			});
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { ok: true };
