@@ -10,31 +10,123 @@ metadata:
 data:
   01-overview.json: |
     {
-      "title": "Imputo — Vue d'ensemble (Preprod)",
-      "uid": "imputo-overview-preprod",
-      "timezone": "browser",
-      "schemaVersion": 39,
-      "version": 1,
-      "refresh": "30s",
-      "time": {
-        "from": "now-6h",
-        "to": "now"
+      "annotations": {
+        "list": [
+          {
+            "builtIn": 1,
+            "datasource": {
+              "type": "grafana",
+              "uid": "-- Grafana --"
+            },
+            "enable": true,
+            "hide": true,
+            "iconColor": "rgba(0, 211, 255, 1)",
+            "name": "Annotations & Alerts",
+            "type": "dashboard"
+          },
+          {
+            "datasource": {
+              "type": "grafana",
+              "uid": "-- Grafana --"
+            },
+            "enable": true,
+            "hide": false,
+            "iconColor": "rgba(255, 96, 96, 1)",
+            "name": "Déploiements",
+            "tags": [
+              "env:imputo-preprod"
+            ],
+            "type": "tags"
+          }
+        ]
       },
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 0,
+      "links": [],
       "panels": [
         {
-          "id": 1,
-          "title": "Requêtes / min",
-          "type": "timeseries",
           "datasource": {
             "type": "loki",
             "uid": "loki"
           },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 0,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "auto",
+                "showValues": false,
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
           "gridPos": {
             "h": 7,
-            "w": 8,
+            "w": 12,
             "x": 0,
             "y": 0
           },
+          "id": 1,
+          "options": {
+            "legend": {
+              "calcs": [],
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "12.4.9",
           "targets": [
             {
               "datasource": {
@@ -42,32 +134,98 @@ data:
                 "uid": "loki"
               },
               "expr": "sum(count_over_time({app=\"imputo\", env=\"imputo-preprod\"} | json | msg=\"request\" [1m]))",
-              "legendFormat": "requêtes"
+              "legendFormat": "requêtes",
+              "refId": "A"
             }
-          ]
+          ],
+          "title": "Requêtes / min",
+          "type": "timeseries"
         },
         {
-          "id": 2,
-          "title": "Taux d'erreur HTTP (5xx, %)",
-          "type": "timeseries",
           "datasource": {
             "type": "loki",
             "uid": "loki"
           },
-          "gridPos": {
-            "h": 7,
-            "w": 8,
-            "x": 8,
-            "y": 0
-          },
           "fieldConfig": {
             "defaults": {
-              "unit": "percent",
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 0,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "auto",
+                "showValues": false,
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
               "max": 100,
-              "min": 0
+              "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              },
+              "unit": "percent"
             },
             "overrides": []
           },
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 12,
+            "y": 0
+          },
+          "id": 2,
+          "options": {
+            "legend": {
+              "calcs": [],
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "12.4.9",
           "targets": [
             {
               "datasource": {
@@ -75,30 +233,96 @@ data:
                 "uid": "loki"
               },
               "expr": "100 * sum(count_over_time({app=\"imputo\", env=\"imputo-preprod\"} | json | msg=\"request\" | status >= 500 [5m])) / sum(count_over_time({app=\"imputo\", env=\"imputo-preprod\"} | json | msg=\"request\" [5m]))",
-              "legendFormat": "% 5xx"
+              "legendFormat": "% 5xx",
+              "refId": "A"
             }
-          ]
+          ],
+          "title": "Taux d'erreur HTTP (5xx, %)",
+          "type": "timeseries"
         },
         {
-          "id": 3,
-          "title": "Latence p95 par route",
-          "type": "timeseries",
           "datasource": {
             "type": "loki",
             "uid": "loki"
           },
-          "gridPos": {
-            "h": 7,
-            "w": 8,
-            "x": 16,
-            "y": 0
-          },
           "fieldConfig": {
             "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 0,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "auto",
+                "showValues": false,
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              },
               "unit": "ms"
             },
             "overrides": []
           },
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 0,
+            "y": 7
+          },
+          "id": 3,
+          "options": {
+            "legend": {
+              "calcs": [],
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "12.4.9",
           "targets": [
             {
               "datasource": {
@@ -106,151 +330,58 @@ data:
                 "uid": "loki"
               },
               "expr": "quantile_over_time(0.95, {app=\"imputo\", env=\"imputo-preprod\"} | json | msg=\"request\" | unwrap durationMs [5m]) by (path)",
-              "legendFormat": "{{path}}"
-            }
-          ]
-        },
-        {
-          "id": 4,
-          "title": "Top 10 routes par volume",
-          "type": "bargauge",
-          "datasource": {
-            "type": "loki",
-            "uid": "loki"
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 0,
-            "y": 15
-          },
-          "targets": [
-            {
-              "datasource": {
-                "type": "loki",
-                "uid": "loki"
-              },
-              "expr": "topk(10, sum by (path) (count_over_time({app=\"imputo\", env=\"imputo-preprod\"} | json | msg=\"request\" [$__range])))",
               "legendFormat": "{{path}}",
-              "queryType": "instant"
+              "refId": "A"
             }
           ],
-          "options": {
-            "reduceOptions": {
-              "values": true,
-              "calcs": [
-                "lastNotNull"
-              ],
-              "fields": ""
-            },
-            "orientation": "horizontal",
-            "displayMode": "gradient",
-            "showUnfilled": true
-          }
+          "title": "Latence p95 par route",
+          "type": "timeseries"
         },
         {
-          "id": 5,
-          "title": "Répartition par code statut",
-          "type": "piechart",
           "datasource": {
             "type": "loki",
             "uid": "loki"
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 12,
-            "y": 15
-          },
-          "targets": [
-            {
-              "datasource": {
-                "type": "loki",
-                "uid": "loki"
-              },
-              "expr": "sum by (status) (count_over_time({app=\"imputo\", env=\"imputo-preprod\"} | json | msg=\"request\" [$__range]))",
-              "legendFormat": "{{status}}",
-              "queryType": "instant"
-            }
-          ],
-          "options": {
-            "reduceOptions": {
-              "values": true,
-              "calcs": [
-                "lastNotNull"
-              ],
-              "fields": ""
-            },
-            "pieType": "pie",
-            "displayLabels": [
-              "name",
-              "percent"
-            ],
-            "legend": {
-              "displayMode": "list",
-              "placement": "right",
-              "values": [
-                "value"
-              ]
-            }
-          }
-        },
-        {
-          "id": 6,
-          "title": "Logs bruts — erreurs",
-          "type": "logs",
-          "datasource": {
-            "type": "loki",
-            "uid": "loki"
-          },
-          "gridPos": {
-            "h": 10,
-            "w": 24,
-            "x": 0,
-            "y": 23
-          },
-          "options": {
-            "showTime": true,
-            "wrapLogMessage": true,
-            "sortOrder": "Descending"
-          },
-          "targets": [
-            {
-              "datasource": {
-                "type": "loki",
-                "uid": "loki"
-              },
-              "expr": "{app=\"imputo\", env=\"imputo-preprod\", level=\"error\"}"
-            }
-          ]
-        },
-        {
-          "id": 7,
-          "title": "Utilisateurs actifs (24h)",
-          "type": "stat",
-          "datasource": {
-            "type": "loki",
-            "uid": "loki"
-          },
-          "gridPos": {
-            "h": 7,
-            "w": 8,
-            "x": 0,
-            "y": 7
           },
           "fieldConfig": {
             "defaults": {
+              "mappings": [],
               "thresholds": {
+                "mode": "absolute",
                 "steps": [
                   {
                     "color": "blue",
-                    "value": null
+                    "value": 0
                   }
                 ]
               }
             },
             "overrides": []
           },
+          "gridPos": {
+            "h": 7,
+            "w": 5,
+            "x": 12,
+            "y": 7
+          },
+          "id": 7,
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "percentChangeColorMode": "standard",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "showPercentChange": false,
+            "textMode": "auto",
+            "wideLayout": true
+          },
+          "pluginVersion": "12.4.9",
           "targets": [
             {
               "datasource": {
@@ -258,28 +389,217 @@ data:
                 "uid": "loki"
               },
               "expr": "count(count by (userId) (count_over_time({app=\"imputo\", env=\"imputo-preprod\"} | json | msg=\"request\" | userId != \"\" [24h])))",
-              "queryType": "instant"
+              "instant": true,
+              "queryType": "instant",
+              "refId": "A"
             }
-          ]
+          ],
+          "title": "Utilisateurs actifs (24h)",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                }
+              },
+              "mappings": []
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 7,
+            "x": 17,
+            "y": 7
+          },
+          "id": 5,
+          "options": {
+            "displayLabels": [
+              "name",
+              "percent"
+            ],
+            "legend": {
+              "displayMode": "list",
+              "placement": "right",
+              "showLegend": true,
+              "values": [
+                "value"
+              ]
+            },
+            "pieType": "pie",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": true
+            },
+            "sort": "desc",
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "12.4.9",
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "sum by (status) (count_over_time({app=\"imputo\", env=\"imputo-preprod\"} | json | msg=\"request\" [$__range]))",
+              "instant": true,
+              "queryType": "instant",
+              "legendFormat": "{{status}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Répartition par code statut",
+          "type": "piechart"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 24,
+            "x": 0,
+            "y": 14
+          },
+          "id": 4,
+          "options": {
+            "displayMode": "gradient",
+            "legend": {
+              "calcs": [],
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": false
+            },
+            "maxVizHeight": 300,
+            "minVizHeight": 16,
+            "minVizWidth": 8,
+            "namePlacement": "auto",
+            "orientation": "horizontal",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": true
+            },
+            "showUnfilled": true,
+            "sizing": "auto",
+            "valueMode": "color"
+          },
+          "pluginVersion": "12.4.9",
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "topk(10, sum by (path) (count_over_time({app=\"imputo\", env=\"imputo-preprod\"} | json | msg=\"request\" [$__range])))",
+              "instant": true,
+              "queryType": "instant",
+              "legendFormat": "{{path}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Top 10 routes par volume",
+          "type": "bargauge"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 24,
+            "x": 0,
+            "y": 23
+          },
+          "id": 6,
+          "options": {
+            "dedupStrategy": "none",
+            "enableInfiniteScrolling": false,
+            "enableLogDetails": true,
+            "showControls": false,
+            "showTime": true,
+            "sortOrder": "Descending",
+            "unwrappedColumns": false,
+            "wrapLogMessage": true
+          },
+          "pluginVersion": "12.4.9",
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "{app=\"imputo\", env=\"imputo-preprod\", level=\"error\"}",
+              "refId": "A"
+            }
+          ],
+          "title": "Logs bruts — erreurs",
+          "type": "logs"
         }
       ],
-      "annotations": {
-        "list": [
-          {
-            "name": "Déploiements",
-            "datasource": {
-              "type": "grafana",
-              "uid": "-- Grafana --"
-            },
-            "enable": true,
-            "iconColor": "rgba(255, 96, 96, 1)",
-            "type": "tags",
-            "tags": [
-              "env:imputo-preprod"
-            ]
-          }
-        ]
-      }
+      "preload": false,
+      "refresh": "30s",
+      "schemaVersion": 42,
+      "tags": [],
+      "templating": {
+        "list": []
+      },
+      "time": {
+        "from": "now-6h",
+        "to": "now"
+      },
+      "timepicker": {},
+      "timezone": "browser",
+      "title": "Imputo — Vue d'ensemble (Preprod)",
+      "uid": "imputo-overview-preprod",
+      "version": 4,
+      "weekStart": ""
     }
   02-jobs.json: |
     {
