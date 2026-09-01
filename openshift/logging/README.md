@@ -102,15 +102,48 @@ curl -s -u "admin:$GRAFANA_PW" -H 'Content-Type: application/json' \
   }
 }'
 
-# Route tout vers ce contact point (une seule destination pour l'instant, pas de règle de routage fine).
-# group_by inclut env : une alerte prod et une alerte preprod notifient séparément, jamais mélangées
-# dans un seul message Teams qui rendrait ambigu quel environnement est concerné.
+# Deuxième contact point pour la prod (canal Teams différent — TEAMS_URL_PROD), même template.
+curl -s -u "admin:$GRAFANA_PW" -H 'Content-Type: application/json' \
+  -X POST 'http://localhost:3300/api/v1/provisioning/contact-points' -d '{
+  "name": "teams-alerting-prod",
+  "type": "webhook",
+  "settings": {
+    "url": "'"$TEAMS_URL_PROD"'",
+    "httpMethod": "POST",
+    "payload": {
+      "template": "{\n  \"type\": \"AdaptiveCard\",\n  \"$schema\": \"http://adaptivecards.io/schemas/adaptive-card.json\",\n  \"version\": \"1.4\",\n  \"body\": [\n    { \"type\": \"TextBlock\", \"text\": \"{{ .Status | toUpper }}: {{ .CommonLabels.alertname }}\", \"weight\": \"Bolder\", \"size\": \"Medium\" },\n    { \"type\": \"TextBlock\", \"text\": \"Environnement : {{ .CommonLabels.env }}\", \"weight\": \"Bolder\", \"color\": \"Attention\" },\n    { \"type\": \"TextBlock\", \"text\": \"{{ .CommonAnnotations.summary }}\", \"wrap\": true }\n  ]\n}"
+    }
+  }
+}'
+
+# Politique de routage : teams-alerting (preprod) par défaut, route imbriquée sur le label env pour
+# rediriger la prod vers son propre canal — deux équipes/canaux Teams différents, jamais mélangés.
+# group_by inclut env partout : deux alertes sur des environnements différents notifient toujours
+# séparément, même règle même dans le même canal.
 curl -s -u "admin:$GRAFANA_PW" -H 'Content-Type: application/json' \
   -X PUT 'http://localhost:3300/api/v1/provisioning/policies' -d '{
-  "receiver": "teams-alerting", "group_by": ["grafana_folder", "alertname", "env"],
-  "group_wait": "30s", "group_interval": "5m", "repeat_interval": "4h"
+  "receiver": "teams-alerting",
+  "group_by": ["grafana_folder", "alertname", "env"],
+  "group_wait": "30s", "group_interval": "5m", "repeat_interval": "4h",
+  "routes": [
+    {
+      "receiver": "teams-alerting-prod",
+      "object_matchers": [["env", "=", "imputo"]],
+      "group_by": ["grafana_folder", "alertname", "env"],
+      "group_wait": "30s", "group_interval": "5m", "repeat_interval": "4h",
+      "continue": false
+    }
+  ]
 }'
 ```
+
+L'URL du webhook Teams prod vit dans le secret `teams-webhook-prod` (même précaution que
+`teams-webhook` — jamais commitée, jamais file-provisioned).
+
+**Piège à ne pas reproduire** : ne jamais créer la règle "Health check externe (prod)" avant que la
+prod tourne réellement avec `/api/health` (ce commit doit d'abord y être déployé) — sinon la
+requête Infinity reçoit un 404 (ancien code sans l'endpoint) et déclenche une fausse alerte
+immédiate dans le canal prod fraîchement branché.
 
 **Règles d'alerte actives** (dossier "Imputo - Alertes", groupe `imputo-alerts`, évaluées /1min) —
 `by (env)` sur chaque requête : une alerte prod et une alerte preprod sont deux instances
