@@ -118,7 +118,7 @@
 </script>
 
 <div class="topbar">
-	<h1>Support<small>Qui regarde les tickets</small></h1>
+	<h1>Support<small>{data.supportEnabled ? 'Qui regarde les tickets' : 'Temps passé sur les tickets'}</small></h1>
 	<div class="spacer"></div>
 	{#if data.canViewHistory}
 		<a class="btn btn-ghost" href="/support/historique">Historique complet →</a>
@@ -126,6 +126,7 @@
 </div>
 
 <div class="content support-layout">
+	{#if data.supportEnabled}
 	<section class="card header-card">
 		{#if !data.current}
 			<p class="empty-hint">Aucun membre dans la rotation pour l'instant — à configurer dans Paramètres &amp; membres.</p>
@@ -200,12 +201,25 @@
 			</div>
 		</section>
 	{/if}
+	{/if}
 
 	{#if data.timeTrackingEnabled}
 		<section class="card time-block">
-			<h3>Mon temps sur le support</h3>
+			<div class="time-block-header">
+				<h3>Mon temps sur le support</h3>
+				<button
+					type="button"
+					class="btn btn-primary time-add-btn"
+					title="Ajouter une saisie (Shift+T)"
+					onclick={() => window.dispatchEvent(new CustomEvent('supporttimeopen'))}
+				>
+					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg>
+					Ajouter
+					<kbd class="shortcut-kbd"><span class="shortcut-shift">⇧</span>T</kbd>
+				</button>
+			</div>
 			{#if data.ownTimeEntries.length === 0}
-				<p class="empty-hint">Aucune saisie pour l'instant — <kbd>Shift</kbd>+<kbd>T</kbd> depuis n'importe quelle page pour en ajouter une.</p>
+				<p class="empty-hint">Aucune saisie pour l'instant.</p>
 			{:else}
 				<div class="time-table-wrap">
 					<table class="time-table">
@@ -712,11 +726,44 @@
 	.time-block {
 		padding: 24px 28px 28px;
 	}
+	.time-block-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		margin-bottom: 16px;
+	}
 	.time-block h3 {
 		font-family: var(--font-display);
 		font-size: 17px;
 		font-weight: 600;
-		margin-bottom: 16px;
+	}
+	.time-add-btn {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		white-space: nowrap;
+	}
+	.shortcut-kbd {
+		display: inline-flex;
+		align-items: center;
+		font-family: ui-monospace, monospace;
+		font-size: 10.5px;
+		line-height: 1;
+		background: rgba(255, 255, 255, 0.22);
+		border: 1px solid rgba(255, 255, 255, 0.3);
+		border-radius: 4px;
+		padding: 2px 5px;
+		margin-left: 2px;
+	}
+	/* Le glyphe ⇧ n'existe pas dans les polices monospace (cf. .shortcut-kbd) : le navigateur
+	   retombe sur une police système/emoji, plus fine et mal alignée à côté du "T". On le sort du
+	   monospace et on le regrossit pour qu'il porte le même poids visuel que la lettre. */
+	.shortcut-shift {
+		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+		font-size: 1.3em;
+		line-height: 1;
+		margin-right: 1px;
 	}
 	.time-table-wrap {
 		overflow-x: auto;

@@ -168,3 +168,46 @@ describe('support : rotation à deux, remplacement ponctuel, passer son tour, vu
 		});
 	});
 });
+
+describe('support : suivi du temps sans rotation activée', () => {
+	it("une équipe sans roulement voit uniquement le suivi du temps, jamais l'état vide de rotation", () => {
+		cy.registerAndLogin().then(() => {
+			// Espace neuf : rotation ET suivi du temps désactivés par défaut → redirige.
+			cy.visit('/support');
+			cy.location('pathname').should('eq', '/imputation');
+
+			// N'active QUE le suivi du temps, jamais la rotation.
+			cy.visit('/admin');
+			cy.clickReliably(() => cy.contains('.tabs button', 'Support'), '#support-cadence');
+			cy.contains('.card.block', 'Temps sur les tickets de support')
+				.contains('button', /^Activer$/)
+				.click();
+			cy.contains('.card.block', 'Temps sur les tickets de support')
+				.contains('button', /^Désactiver$/)
+				.should('exist');
+			// La rotation, elle, est bien restée désactivée.
+			cy.contains('.card.block', 'Support actuellement').contains('button', /^Activer$/).should('exist');
+
+			cy.visit('/support');
+			cy.location('pathname').should('eq', '/support');
+			cy.contains('Aucun membre dans la rotation').should('not.exist');
+			cy.get('.header-card').should('not.exist');
+			cy.get('.calendar-card').should('not.exist');
+
+			cy.contains('.time-block h3', 'Mon temps sur le support').should('be.visible');
+			cy.contains('.empty-hint', 'Aucune saisie').should('be.visible');
+
+			// Le bouton visible ouvre la même palette que le raccourci Shift+T.
+			cy.clickReliably(() => cy.contains('.time-add-btn', 'Ajouter'), '.st-palette');
+			cy.get('.st-palette').should('be.visible');
+			cy.get('#st-ticket').type('INC-4242');
+			cy.get('#st-duration').type('1h30m');
+			cy.contains('.st-palette button', 'Enregistrer').click();
+			cy.get('.st-palette').should('not.exist');
+
+			cy.visit('/support');
+			cy.contains('.time-table td', 'INC-4242').should('be.visible');
+			cy.contains('.time-table td', '1h 30m').should('be.visible');
+		});
+	});
+});

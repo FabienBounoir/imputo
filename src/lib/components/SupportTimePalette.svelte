@@ -1,11 +1,12 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import { parseDuration, formatDuration } from '$lib/supportDuration';
 
 	// Saisie rapide du temps passé sur un ticket de support (Shift+T, n'importe quelle page) — cf.
-	// /api/support-time. Pas de launcher visible : purement au clavier, comme le spotlight global
-	// (CommandPalette.svelte) — ce composant n'existe que pour armer le raccourci et héberger la
-	// petite palette qu'il ouvre, il n'a rien à afficher tant qu'elle est fermée.
+	// /api/support-time. Ce composant héberge la palette et arme le raccourci ; l'event window
+	// 'supporttimeopen' permet aussi à un bouton visible (page Support) de l'ouvrir sans lien
+	// direct entre les deux composants.
 	let { enabled }: { enabled: boolean } = $props();
 
 	let open = $state(false);
@@ -100,6 +101,13 @@
 			openPalette();
 		}
 	}
+	onMount(() => {
+		const onOpenEvent = () => {
+			if (!open && enabled) openPalette();
+		};
+		window.addEventListener('supporttimeopen', onOpenEvent);
+		return () => window.removeEventListener('supporttimeopen', onOpenEvent);
+	});
 </script>
 
 <svelte:window onkeydown={onWindowKeydown} />

@@ -232,7 +232,7 @@
 				<span class="badge" title="Congés en attente de validation">{data.pendingAbsencesCount}</span>
 			{/if}
 		</a>
-		{#if data.workspace?.supportEnabled}
+		{#if data.workspace?.supportEnabled || data.workspace?.supportTimeTrackingEnabled}
 			<a
 				class="nav-item"
 				class:active={isActive('/support')}
