@@ -38,6 +38,11 @@ spec:
               value: 'false'
             - name: GF_AUTH_ANONYMOUS_ENABLED
               value: 'false'
+            # Plugin communautaire "Infinity" : seule façon pour Grafana de taper une URL HTTP et
+            # d'alerter sur son code retour, nativement il ne sait faire ça qu'à travers Loki.
+            # Sert au check santé externe (voir /api/health côté appli et README.md).
+            - name: GF_INSTALL_PLUGINS
+              value: yesoreyeram-infinity-datasource
           resources:
             requests:
               cpu: 100m

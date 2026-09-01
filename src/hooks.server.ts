@@ -75,9 +75,19 @@ const handleRequest: Handle = async ({ event, resolve }) => {
 	const response = await resolve(event);
 
 	// Sonde OpenShift (readiness/liveness/startup, GET / toutes les 10-20s en continu) : noierait
-	// sinon les vrais logs, pour un signal nul (elle ne teste rien d'applicatif, juste que le port répond).
+	// les dashboards business si elle passait par `msg: "request"` (elles filtrent déjà dessus,
+	// donc invisibles là), mais on la logge quand même sous `msg: "probe"` — c'est le seul signal
+	// qui arrive à intervalle garanti indépendamment du trafic réel, donc la seule base fiable
+	// pour une alerte "app silencieuse" (voir openshift/logging/README.md).
 	const isProbe = event.request.headers.get('user-agent')?.startsWith('kube-probe');
-	if (!isProbe) {
+	// /api/health : sondé depuis l'extérieur par Grafana (plugin Infinity, voir openshift/logging/
+	// README.md) pour couvrir DNS/TLS/routeur — la sonde interne OpenShift ci-dessus n'y passe
+	// jamais. Le résultat vit dans l'alerte Grafana elle-même (assertion sur le code retour HTTP),
+	// pas la peine de le dupliquer dans Loki, on filtre juste pour ne pas polluer "request".
+	const isHealthCheck = event.url.pathname === '/api/health';
+	if (isProbe) {
+		logger.info('probe', { status: response.status });
+	} else if (!isHealthCheck) {
 		logger.info('request', {
 			method: event.request.method,
 			path: event.url.pathname,
