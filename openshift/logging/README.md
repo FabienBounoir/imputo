@@ -219,3 +219,51 @@ Le token (`glsa_...`) va dans **GitLab (mirror) > Settings > CI/CD > Variables**
 `GRAFANA_ANNOTATIONS_TOKEN`, "Masked" coché — jamais commité. Optionnel côté pipeline : son
 absence ne fait pas échouer le déploiement (`|| true`), l'annotation est juste silencieusement
 sautée.
+
+**Filtrage par environnement** : chaque dashboard a sa propre requête d'annotation
+(`annotations.list` dans le JSON, filtrée par tag `env:imputo-preprod` / `env:imputo`) — sans ça,
+Grafana affiche par défaut *toutes* les annotations sur *tous* les dashboards, préprod comprise sur
+les graphes prod. Vérifié en direct : deux annotations postées avec des tags différents, chaque
+filtre ne remonte que la sienne.
+
+## Playlists ("mur" de monitoring)
+
+Deux playlists (Grafana ne supporte pas leur provisioning déclaratif par fichier, contrairement aux
+dashboards — créées via l'API, à recréer si le PVC est perdu) : **"Imputo - Preprod (mur)"** et
+**"Imputo - Prod (mur)"**, chacune fait défiler les 5 dashboards de son dossier toutes les 30s.
+Accessible depuis Grafana : **Dashboards > Playlists**.
+
+```sh
+curl -s -u "admin:$GRAFANA_PW" -H 'Content-Type: application/json' -X POST 'http://localhost:3300/api/playlists' -d '{
+  "name": "Imputo - Preprod (mur)",
+  "interval": "30s",
+  "items": [
+    {"type": "dashboard_by_uid", "value": "imputo-overview-preprod"},
+    {"type": "dashboard_by_uid", "value": "imputo-jobs-preprod"},
+    {"type": "dashboard_by_uid", "value": "imputo-jira-preprod"},
+    {"type": "dashboard_by_uid", "value": "imputo-security-preprod"},
+    {"type": "dashboard_by_uid", "value": "imputo-errors-preprod"}
+  ]
+}'
+# Même chose pour prod avec les uid "...-prod" et le nom "Imputo - Prod (mur)".
+```
+
+## Piège LogQL : `instant: true` vs `queryType: "instant"`
+
+**`"instant": true` sur un target de panel/règle est silencieusement ignoré** par ce datasource —
+Grafana retombe sur une requête `query_range` avec un pas d'1 seconde, forçant Loki à réévaluer la
+requête des milliers de fois sur la fenêtre au lieu d'une seule. Invisible sur une agrégation simple
+(`sum(...)`, `topk(...)` : quelques dizaines de ms de trop, personne ne le remarque), mais une
+agrégation imbriquée coûteuse (ex. `count(count by (userId) (...))` pour compter des utilisateurs
+distincts) passe de **50ms à un timeout pur et simple** — découvert en construisant le panel
+"Utilisateurs actifs (24h)". La bonne propriété est **`"queryType": "instant"`** sur le target — les
+6 panels concernés (bargauge/piechart/stat déjà en place) ont été corrigés rétroactivement en même
+temps que ce piège a été trouvé.
+
+Symptôme complémentaire rencontré en chassant ça (pas la vraie cause, mais des filets de sécurité
+gardés) : `limits_config.max_query_series` de Loki (défaut 500) peut sauter sur un `count by
+(userId)` avec beaucoup de comptes distincts — monté à 5000 dans `configmap.yaml`. Idem,
+`grafana-provisioning-configmap.yaml` a `jsonData.timeout: 60` (défaut 30s) et
+`deployment.yaml` (Loki) a `limits.cpu: 1500m` (défaut 500m, quota du namespace quasi inutilisé) —
+ceintures et bretelles pour une future requête réellement lourde, même si le vrai fix ci-dessus
+suffisait déjà à résoudre ce cas précis.
