@@ -20,6 +20,9 @@ data:
         isDefault: true
         jsonData:
           maxLines: 1000
+          # Défaut 30s trop court pour un distinct-count sur un champ JSON non indexé (ex.
+          # utilisateurs actifs/jour) — doit parser tout le volume de la fenêtre.
+          timeout: 60
       # Requêtes HTTP génériques (pas de "url" ici : fournie par chaque requête) — sert au check
       # santé externe sur la vraie Route publique (voir /api/health, README.md).
       - name: Infinity

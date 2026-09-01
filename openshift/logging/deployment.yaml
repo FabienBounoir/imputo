@@ -29,7 +29,11 @@ spec:
               cpu: 100m
               memory: 128Mi
             limits:
-              cpu: 500m
+              # Au-delà de la simple ingestion, une requête "distinct count" sur un champ JSON non
+              # indexé (ex. userId) doit décompresser + parser tout le volume de la fenêtre — bien
+              # plus lourd en CPU qu'ingérer des lignes. Quota du namespace quasi inutilisé (~1%),
+              # marge large ici.
+              cpu: 1500m
               memory: 512Mi
           readinessProbe:
             httpGet:
