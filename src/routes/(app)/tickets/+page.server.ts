@@ -1,6 +1,7 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
+import { logger } from '$lib/server/logger';
 import {
 	listTicketsPage,
 	getRefData,
@@ -195,6 +196,7 @@ export const actions: Actions = {
 				enveloppeTotale: isAdmin ? empty(d.enveloppeTotale) : null
 			});
 		} catch (e) {
+			if (!isUniqueViolation(e)) logger.error('ticket_create_failed', e, { workspaceId: ws.workspaceId });
 			return fail(400, {
 				error: isUniqueViolation(e) ? 'Un ticket avec cette clé existe déjà.' : 'Erreur lors de la création.'
 			});
@@ -220,6 +222,8 @@ export const actions: Actions = {
 				locals.user!.id === ws.createdByUserId || locals.role === 'ADMIN'
 			);
 		} catch (e) {
+			if (!isUniqueViolation(e))
+				logger.error('ticket_update_failed', e, { workspaceId: ws.workspaceId, ticketId, field });
 			return fail(400, {
 				error: isUniqueViolation(e) ? 'Un ticket avec cette clé existe déjà.' : 'Erreur lors de la mise à jour.'
 			});
@@ -238,6 +242,7 @@ export const actions: Actions = {
 		try {
 			await setTicketInGroup(ws.workspaceId, ticketId, groupId, member);
 		} catch (e) {
+			logger.error('ticket_group_toggle_failed', e, { workspaceId: ws.workspaceId, ticketId, groupId });
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { ok: true };
@@ -254,6 +259,7 @@ export const actions: Actions = {
 		try {
 			await setTicketFlag(ws.workspaceId, ticketId, key, value);
 		} catch (e) {
+			logger.error('ticket_flag_failed', e, { workspaceId: ws.workspaceId, ticketId, key });
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { ok: true };
@@ -272,6 +278,7 @@ export const actions: Actions = {
 		try {
 			await deleteTicket(ws.workspaceId, ticketId);
 		} catch (e) {
+			logger.error('ticket_delete_failed', e, { workspaceId: ws.workspaceId, ticketId });
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { ok: true, deletedId: ticketId };

@@ -12,6 +12,7 @@ import { notifySupportDutyChanged } from '$lib/server/services/notifications';
 import { listOwnTimeEntries, updateTimeEntry } from '$lib/server/services/supportTime';
 import { parseDuration } from '$lib/supportDuration';
 import { todayInParis } from '$lib/utils/date';
+import { logger } from '$lib/server/logger';
 
 const CALENDAR_WEEKS = 6;
 
@@ -56,6 +57,7 @@ export const actions: Actions = {
 		try {
 			await setOverride(ws.workspaceId, periodStart, userId);
 		} catch (e) {
+			logger.error('support_override_failed', e, { workspaceId: ws.workspaceId, periodStart, userId });
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		await notifySupportDutyChanged(ws.workspaceId, ws.workspaceName, periodStart);

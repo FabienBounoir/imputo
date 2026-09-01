@@ -1,4 +1,5 @@
 import { fail, redirect } from '@sveltejs/kit';
+import { logger } from '$lib/server/logger';
 import { z } from 'zod';
 import { and, eq } from 'drizzle-orm';
 import type { Actions, PageServerLoad } from './$types';
@@ -451,6 +452,7 @@ export const actions: Actions = {
 		try {
 			await setMemberRole(ws.workspaceId, userId, role);
 		} catch (e) {
+			logger.error('admin_member_role_failed', e, { workspaceId: ws.workspaceId, userId, role });
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { memberOk: true };
@@ -483,6 +485,7 @@ export const actions: Actions = {
 		try {
 			await setMemberActive(ws.workspaceId, userId, active);
 		} catch (e) {
+			logger.error('admin_member_active_failed', e, { workspaceId: ws.workspaceId, userId, active });
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { memberOk: true };
@@ -522,6 +525,11 @@ export const actions: Actions = {
 		try {
 			await transferOwnership(ws.workspaceId, locals.user!.id, userId);
 		} catch (e) {
+			logger.error('admin_transfer_ownership_failed', e, {
+				workspaceId: ws.workspaceId,
+				fromUserId: locals.user!.id,
+				toUserId: userId
+			});
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { ownerOk: true };
@@ -542,6 +550,7 @@ export const actions: Actions = {
 			});
 			return { invite: msg };
 		} catch (e) {
+			logger.error('admin_member_invite_failed', e, { workspaceId: ws.workspaceId, userId });
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 	},
@@ -553,6 +562,7 @@ export const actions: Actions = {
 		try {
 			await cancelInvite(ws.workspaceId, userId);
 		} catch (e) {
+			logger.error('admin_member_cancel_invite_failed', e, { workspaceId: ws.workspaceId, userId });
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { memberOk: true };
@@ -795,6 +805,7 @@ export const actions: Actions = {
 				changedByUserId: locals.user!.id
 			});
 		} catch (e) {
+			logger.error('admin_jira_save_failed', e, { workspaceId: ws.workspaceId });
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { jiraSaveOk: true };
@@ -838,6 +849,7 @@ export const actions: Actions = {
 			const deleted = await undoJiraSyncRun(ws.workspaceId, runId, locals.user!.id);
 			return { jiraUndoOk: true, jiraUndoDeleted: deleted };
 		} catch (e) {
+			logger.error('admin_jira_undo_sync_run_failed', e, { workspaceId: ws.workspaceId, runId });
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 	}

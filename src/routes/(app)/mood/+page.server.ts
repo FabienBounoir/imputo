@@ -2,6 +2,7 @@ import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { currentMoodPeriod, todayInParis } from '$lib/utils/date';
 import { getMoodConfig, getMyVote, getMyStreak, getPeriodParticipation, submitVote } from '$lib/server/services/mood';
+import { logger } from '$lib/server/logger';
 
 export const load: PageServerLoad = async ({ locals }) => {
 	const ws = locals.workspace!;
@@ -33,6 +34,8 @@ export const actions: Actions = {
 		try {
 			await submitVote(ws.workspaceId, locals.user!.id, start, end, score, message);
 		} catch (e) {
+			// Pas `message` : c'est le commentaire libre de l'utilisateur, hors de propos pour du debug.
+			logger.error('mood_vote_failed', e, { workspaceId: ws.workspaceId, periodStart: start, score });
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { ok: true };

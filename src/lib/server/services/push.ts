@@ -2,6 +2,7 @@ import webpush from 'web-push';
 import { and, eq } from 'drizzle-orm';
 import { db, pushSubscription } from '$lib/server/db';
 import { config } from '$lib/server/config';
+import { logger } from '$lib/server/logger';
 
 export type PushPayload = { title: string; body: string; url?: string; tag?: string };
 
@@ -31,6 +32,7 @@ function ensureVapid(): boolean {
 	if (configured !== null) return configured;
 	configured = Boolean(config.vapidPublic && config.vapidPrivate);
 	if (configured) webpush.setVapidDetails(config.vapidSubject, config.vapidPublic, config.vapidPrivate);
+	else logger.warn('push_vapid_not_configured');
 	return configured;
 }
 
@@ -88,8 +90,10 @@ export async function sendToUser(userId: string, payload: PushPayload): Promise<
 			if (code === 404 || code === 410) {
 				await db.delete(pushSubscription).where(eq(pushSubscription.id, s.id)); // subscription expirée
 			} else if (s.failureCount + 1 >= 5) {
+				logger.warn('push_subscription_dropped', { userId, statusCode: code, failureCount: s.failureCount + 1 });
 				await db.delete(pushSubscription).where(eq(pushSubscription.id, s.id));
 			} else {
+				logger.error('push_send_failed', e, { userId, statusCode: code, failureCount: s.failureCount + 1 });
 				await db
 					.update(pushSubscription)
 					.set({ failureCount: s.failureCount + 1 })
