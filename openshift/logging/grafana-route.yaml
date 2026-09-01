@@ -1,0 +1,17 @@
+# Pas de spec.host : sous-domaine généré par OpenShift, récupérable avec
+# `oc get route grafana -n imputo-logs -o jsonpath='{.spec.host}'`.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: grafana
+  labels:
+    app: grafana
+spec:
+  to:
+    kind: Service
+    name: grafana
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
