@@ -11,6 +11,14 @@
 #                                  qu'à son propre namespace)
 #   OPENSHIFT_NAMESPACE_PREPROD    (optionnel, défaut imputo-preprod)
 #   OPENSHIFT_NAMESPACE_PROD       (optionnel, défaut imputo)
+#   OPENSHIFT_TOKEN_LOGS           token d'un ServiceAccount avec accès edit sur imputo-logs
+#                                  (Loki + Grafana, namespace séparé — voir openshift/logging/)
+#   OPENSHIFT_NAMESPACE_LOGS       (optionnel, défaut imputo-logs)
+#
+# Audit de sécurité récurrent (job `audit`, tourne aussi à chaque push) : pour qu'il tourne même
+# sans nouveau commit et attraper une faille publiée après coup sur une lib déjà en place —
+# CI/CD > Schedules > New schedule, cible la branche `main`, cron hebdomadaire par ex. `0 6 * * 1`
+# (lundi 6h). Aucune variable supplémentaire à fournir, le job tourne à l'identique.
 
 stages:
   - test
@@ -26,12 +34,24 @@ variables:
   SESSION_SECRET: ci-session-secret
   CRON_SECRET: ci-cron-secret
 
+# node_modules mis en cache par le hash du lockfile — chaque job de ce fichier fait son propre
+# `npm ci`, ce cache évite de retélécharger tout le registre npm à chaque run.
+.npm_cache: &npm_cache
+  key:
+    files:
+      - package-lock.json
+  paths:
+    - .npm/
+  policy: pull-push
+
 .test_base:
   stage: test
   services:
     - postgres:16-alpine
+  cache:
+    <<: *npm_cache
   before_script:
-    - npm ci
+    - npm ci --cache .npm --prefer-offline
     - node scripts/migrate.js
 
 test:unit:
@@ -51,6 +71,42 @@ test:e2e:
     - npm run dev &
     - node -e "const t=Date.now();(async()=>{while(Date.now()-t<60000){try{if((await fetch('http://localhost:5173/login')).ok)process.exit(0)}catch{}await new Promise(r=>setTimeout(r,1000))}process.exit(1)})()"
     - npx cypress run
+
+# Ni l'un ni l'autre n'était vérifié en CI jusqu'ici — une erreur de type ou un build cassé ne se
+# découvrait qu'en local (ou pire, pendant le déploiement OpenShift lui-même pour le build).
+check:types:
+  stage: test
+  image: node:22-alpine
+  cache:
+    <<: *npm_cache
+  script:
+    - npm ci --cache .npm --prefer-offline
+    - npm run check
+
+check:build:
+  stage: test
+  image: node:22-alpine
+  cache:
+    <<: *npm_cache
+  script:
+    - npm ci --cache .npm --prefer-offline
+    - npm run build
+
+# `--audit-level=high` : échoue le job (pipeline rouge, visible) sur une faille haute/critique
+# nouvellement introduite ou publiée depuis le dernier run — pas sur les modérées/basses, trop de
+# bruit pour ce niveau de criticité. Tourne à chaque push (attrape une dépendance vulnérable
+# ajoutée dans une MR) et sur schedule (attrape une faille publiée après coup sur une lib déjà en
+# place — voir README.md pour configurer le Pipeline Schedule côté GitLab, pas faisable depuis ce
+# fichier seul).
+audit:
+  stage: test
+  image: node:22-alpine
+  allow_failure: true
+  cache:
+    <<: *npm_cache
+  script:
+    - npm ci --cache .npm --prefer-offline
+    - npm audit --audit-level=high
 
 .oc_base:
   image: quay.io/openshift/origin-cli:latest
@@ -102,6 +158,37 @@ deploy:preprod:
       done
     - oc start-build imputo-tools --follow
     - sed "s#CHANGEME-namespace#${NS}#" openshift/cronjob-jira-sync.yaml | oc apply -f -
+
+# Manuel, jamais automatique : Loki + Grafana (namespace imputo-logs, séparé, quota indépendant —
+# voir openshift/logging/README.md) ne suivent pas le cycle release d'imputo lui-même, pas besoin
+# de les redéployer à chaque push main. Ni build ni ImageStream ici — Loki/Grafana utilisent des
+# images publiques (docker.io/grafana/*), `oc apply` suffit. `grafana-secret.yaml` est
+# volontairement absent de la liste : c'est un template avec un placeholder CHANGEME, l'appliquer
+# écraserait le vrai secret admin déjà en place sur le cluster (voir le fichier lui-même).
+deploy:logging:
+  extends: .oc_base
+  stage: deploy
+  rules:
+    - when: manual
+      allow_failure: true
+  variables:
+    OPENSHIFT_TOKEN: $OPENSHIFT_TOKEN_LOGS
+  script:
+    - NS="${OPENSHIFT_NAMESPACE_LOGS:-imputo-logs}"
+    - oc project "$NS"
+    - oc apply -f openshift/logging/configmap.yaml -f openshift/logging/pvc.yaml
+        -f openshift/logging/service.yaml -f openshift/logging/networkpolicy.yaml
+        -f openshift/logging/deployment.yaml
+    - oc rollout status deployment/loki --timeout=3m
+    - oc apply -f openshift/logging/grafana-provisioning-configmap.yaml
+        -f openshift/logging/grafana-dashboard-preprod-configmap.yaml
+        -f openshift/logging/grafana-dashboard-prod-configmap.yaml -f openshift/logging/grafana-pvc.yaml
+        -f openshift/logging/grafana-service.yaml -f openshift/logging/grafana-deployment.yaml
+        -f openshift/logging/grafana-route.yaml
+    # Redémarre Grafana pour reprendre en compte tout de suite les ConfigMaps (dashboards,
+    # datasource) — sinon dépend de la resync périodique de kubelet, pas immédiate.
+    - oc rollout restart deployment/grafana
+    - oc rollout status deployment/grafana --timeout=3m
 
 # Entièrement manuels (pas de `needs`/auto sur main) : même avec le wait-loop plus haut, la fenêtre
 # juste après un rollout reste peu fiable — le quota CPU (4 cores sur imputo-preprod) peut être

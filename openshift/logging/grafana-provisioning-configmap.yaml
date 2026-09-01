@@ -1,0 +1,35 @@
+# Provisioning déclaratif (datasource + dashboard) plutôt que du clic dans l'UI : reproductible,
+# survit à un redéploiement de Grafana même sans le PVC (voir grafana-dashboard-{preprod,prod}-
+# configmap.yaml pour le contenu des dashboards). Deux dossiers séparés (pas un seul avec variable
+# $env) pour qu'il soit impossible d'ouvrir le mauvais environnement par erreur.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-provisioning
+  labels:
+    app: grafana
+data:
+  datasource.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Loki
+        type: loki
+        uid: loki
+        access: proxy
+        url: http://loki.imputo-logs.svc.cluster.local:3100
+        isDefault: true
+        jsonData:
+          maxLines: 1000
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: imputo-preprod
+        folder: Imputo - Preprod
+        type: file
+        options:
+          path: /etc/grafana/dashboards/preprod
+      - name: imputo-prod
+        folder: Imputo - Prod
+        type: file
+        options:
+          path: /etc/grafana/dashboards/prod

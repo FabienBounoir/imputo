@@ -1,0 +1,729 @@
+# Généré à partir de grafana-dashboard-configmap.yaml (variable $env retirée, requêtes figées
+# sur "imputo") — voir ce fichier pour la version source à éditer en premier, puis régénérer
+# les deux variantes plutôt que les éditer indépendamment (dérive garantie sinon).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-imputo-prod
+  labels:
+    app: grafana
+data:
+  01-overview.json: |
+    {
+      "title": "Imputo — Vue d'ensemble (Prod)",
+      "uid": "imputo-overview-prod",
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "30s",
+      "time": {
+        "from": "now-6h",
+        "to": "now"
+      },
+      "panels": [
+        {
+          "id": 1,
+          "title": "Requêtes / min",
+          "type": "timeseries",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 0,
+            "y": 0
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "sum(count_over_time({app=\"imputo\", env=\"imputo\"} | json | msg=\"request\" [1m]))",
+              "legendFormat": "requêtes"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "title": "Taux d'erreur HTTP (5xx, %)",
+          "type": "timeseries",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 8,
+            "y": 0
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "max": 100,
+              "min": 0
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "100 * sum(count_over_time({app=\"imputo\", env=\"imputo\"} | json | msg=\"request\" | status >= 500 [5m])) / sum(count_over_time({app=\"imputo\", env=\"imputo\"} | json | msg=\"request\" [5m]))",
+              "legendFormat": "% 5xx"
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "title": "Latence p95 par route",
+          "type": "timeseries",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 16,
+            "y": 0
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms"
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "quantile_over_time(0.95, {app=\"imputo\", env=\"imputo\"} | json | msg=\"request\" | unwrap durationMs [5m]) by (path)",
+              "legendFormat": "{{path}}"
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "title": "Top 10 routes par volume",
+          "type": "bargauge",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 7
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "topk(10, sum by (path) (count_over_time({app=\"imputo\", env=\"imputo\"} | json | msg=\"request\" [$__range])))",
+              "legendFormat": "{{path}}",
+              "instant": true
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "title": "Répartition par code statut",
+          "type": "piechart",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 7
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "sum by (status) (count_over_time({app=\"imputo\", env=\"imputo\"} | json | msg=\"request\" [$__range]))",
+              "legendFormat": "{{status}}",
+              "instant": true
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "title": "Logs bruts — erreurs",
+          "type": "logs",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 24,
+            "x": 0,
+            "y": 15
+          },
+          "options": {
+            "showTime": true,
+            "wrapLogMessage": true,
+            "sortOrder": "Descending"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "{app=\"imputo\", env=\"imputo\", level=\"error\"}"
+            }
+          ]
+        }
+      ]
+    }
+  02-jobs.json: |
+    {
+      "title": "Imputo — Jobs & Cron (Prod)",
+      "uid": "imputo-jobs-prod",
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "1m",
+      "time": {
+        "from": "now-24h",
+        "to": "now"
+      },
+      "panels": [
+        {
+          "id": 1,
+          "title": "Runs réussis par job",
+          "type": "timeseries",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 0
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "sum by (job) (count_over_time({app=\"imputo\", env=\"imputo\"} | json | msg=\"cron_completed\" [$__interval]))",
+              "legendFormat": "{{job}}"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "title": "Runs échoués par job",
+          "type": "timeseries",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 0
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "fixed",
+                "fixedColor": "red"
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "sum by (job) (count_over_time({app=\"imputo\", env=\"imputo\"} | json | msg=\"cron_failed\" [$__interval]))",
+              "legendFormat": "{{job}}"
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "title": "Durée moyenne par job",
+          "type": "timeseries",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 8
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms"
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "avg_over_time({app=\"imputo\", env=\"imputo\"} | json | msg=\"cron_completed\" | unwrap durationMs [$__interval]) by (job)",
+              "legendFormat": "{{job}}"
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "title": "Tentatives non autorisées",
+          "type": "timeseries",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 8
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "fixed",
+                "fixedColor": "orange"
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "sum by (job) (count_over_time({app=\"imputo\", env=\"imputo\"} | json | msg=\"cron_unauthorized\" [$__interval]))",
+              "legendFormat": "{{job}}"
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "title": "Logs bruts — jobs",
+          "type": "logs",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 24,
+            "x": 0,
+            "y": 16
+          },
+          "options": {
+            "showTime": true,
+            "wrapLogMessage": true,
+            "sortOrder": "Descending"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "{app=\"imputo\", env=\"imputo\"} | json | msg=~\"cron_.*\""
+            }
+          ]
+        }
+      ]
+    }
+  03-jira-sync.json: |
+    {
+      "title": "Imputo — Sync Jira (Prod)",
+      "uid": "imputo-jira-prod",
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "1m",
+      "time": {
+        "from": "now-24h",
+        "to": "now"
+      },
+      "panels": [
+        {
+          "id": 1,
+          "title": "Runs réussis / échoués",
+          "type": "timeseries",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 0
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "sum(count_over_time({app=\"imputo\", env=\"imputo\"} | json | msg=\"jira_sync_completed\" [$__interval]))",
+              "legendFormat": "réussis"
+            },
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "sum(count_over_time({app=\"imputo\", env=\"imputo\"} | json | msg=\"jira_sync_failed\" [$__interval]))",
+              "legendFormat": "échoués"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "title": "Tickets vus / créés (cumulé)",
+          "type": "timeseries",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 0
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "sum(sum_over_time({app=\"imputo\", env=\"imputo\"} | json | msg=\"jira_sync_completed\" | unwrap ticketsSeen [$__interval]))",
+              "legendFormat": "vus"
+            },
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "sum(sum_over_time({app=\"imputo\", env=\"imputo\"} | json | msg=\"jira_sync_completed\" | unwrap ticketsCreated [$__interval]))",
+              "legendFormat": "créés"
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "title": "Circuit breaker déclenché (fenêtre affichée)",
+          "type": "stat",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 6,
+            "w": 8,
+            "x": 0,
+            "y": 8
+          },
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "sum(count_over_time({app=\"imputo\", env=\"imputo\"} | json | msg=\"jira_sync_circuit_breaker_tripped\" [$__range]))",
+              "instant": true
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "title": "Logs bruts — sync Jira",
+          "type": "logs",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 24,
+            "x": 0,
+            "y": 14
+          },
+          "options": {
+            "showTime": true,
+            "wrapLogMessage": true,
+            "sortOrder": "Descending"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "{app=\"imputo\", env=\"imputo\"} | json | msg=~\"jira_sync_.*\""
+            }
+          ]
+        }
+      ]
+    }
+  04-erreurs-metier.json: |
+    {
+      "title": "Imputo — Erreurs applicatives (Prod)",
+      "uid": "imputo-errors-prod",
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "30s",
+      "time": {
+        "from": "now-6h",
+        "to": "now"
+      },
+      "panels": [
+        {
+          "id": 1,
+          "title": "Top types d'échecs (fenêtre affichée)",
+          "type": "bargauge",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 12,
+            "x": 0,
+            "y": 0
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "topk(15, sum by (msg) (count_over_time({app=\"imputo\", env=\"imputo\", level=\"error\"} | json [$__range])))",
+              "legendFormat": "{{msg}}",
+              "instant": true
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "title": "Erreurs dans le temps par type",
+          "type": "timeseries",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 12,
+            "x": 12,
+            "y": 0
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "sum by (msg) (count_over_time({app=\"imputo\", env=\"imputo\", level=\"error\"} | json [$__interval]))",
+              "legendFormat": "{{msg}}"
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "title": "Logs bruts — toutes erreurs",
+          "type": "logs",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 12,
+            "w": 24,
+            "x": 0,
+            "y": 10
+          },
+          "options": {
+            "showTime": true,
+            "wrapLogMessage": true,
+            "sortOrder": "Descending"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "{app=\"imputo\", env=\"imputo\", level=\"error\"}"
+            }
+          ]
+        }
+      ]
+    }
+  05-securite.json: |
+    {
+      "title": "Imputo — Sécurité (Prod)",
+      "uid": "imputo-security-prod",
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "1m",
+      "time": {
+        "from": "now-24h",
+        "to": "now"
+      },
+      "panels": [
+        {
+          "id": 1,
+          "title": "Tentatives cron non autorisées",
+          "type": "timeseries",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 0,
+            "y": 0
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "sum by (job) (count_over_time({app=\"imputo\", env=\"imputo\"} | json | msg=\"cron_unauthorized\" [$__interval]))",
+              "legendFormat": "{{job}}"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "title": "Abonnements push rejetés (endpoint hors liste blanche)",
+          "type": "timeseries",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 8,
+            "y": 0
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "sum(count_over_time({app=\"imputo\", env=\"imputo\"} | json | msg=\"push_subscribe_rejected\" [$__interval]))",
+              "legendFormat": "rejets"
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "title": "Échecs d'auth Jira (PAT)",
+          "type": "timeseries",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 0
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "sum(count_over_time({app=\"imputo\", env=\"imputo\"} | json | msg=\"jira_sync_failed\" | authFailure=\"true\" [$__interval]))",
+              "legendFormat": "échecs PAT"
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "title": "Logs bruts — événements sécurité",
+          "type": "logs",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 12,
+            "w": 24,
+            "x": 0,
+            "y": 8
+          },
+          "options": {
+            "showTime": true,
+            "wrapLogMessage": true,
+            "sortOrder": "Descending"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "{app=\"imputo\", env=\"imputo\"} | json | msg=~\"cron_unauthorized|push_subscribe_rejected|jira_sync_circuit_breaker_tripped\""
+            }
+          ]
+        }
+      ]
+    }

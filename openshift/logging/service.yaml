@@ -1,0 +1,16 @@
+# ClusterIP interne uniquement — pas de Route : le seul consommateur est le pod imputo(-preprod)
+# sur le même cluster, joignable par DNS de service inter-namespace (loki.imputo-logs.svc). Pas
+# d'exposition publique tant qu'un vrai besoin (Grafana externe) ne le justifie pas.
+apiVersion: v1
+kind: Service
+metadata:
+  name: loki
+  labels:
+    app: loki
+spec:
+  selector:
+    app: loki
+  ports:
+    - name: http
+      port: 3100
+      targetPort: 3100

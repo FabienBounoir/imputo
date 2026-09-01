@@ -6,14 +6,18 @@ import {
 	setSessionWorkspace
 } from '$lib/server/auth/session';
 import { listMembershipsForUser, getDeactivatedWorkspace } from '$lib/server/services/workspaces';
-import { logger } from '$lib/server/logger';
+import { logger, requestContext } from '$lib/server/logger';
+import { randomUUID } from 'node:crypto';
 
 // hooks.server.ts n'est chargé qu'une fois au boot : c'est le seul endroit fiable pour
 // attraper ce qui échappe complètement à SvelteKit (promesse non attendue, throw hors requête).
 process.on('unhandledRejection', (reason) => logger.error('unhandled_rejection', reason));
 process.on('uncaughtException', (err) => logger.error('uncaught_exception', err));
 
-export const handle: Handle = async ({ event, resolve }) => {
+export const handle: Handle = (input) =>
+	requestContext.run({ requestId: randomUUID() }, () => handleRequest(input));
+
+const handleRequest: Handle = async ({ event, resolve }) => {
 	event.locals.user = null;
 	event.locals.sessionToken = null;
 	event.locals.memberships = [];
@@ -83,6 +87,10 @@ export const handle: Handle = async ({ event, resolve }) => {
 			workspaceId: event.locals.workspace?.workspaceId
 		});
 	}
+
+	// Permet de retrouver dans les logs les requêtes d'un signalement précis (ex. capture réseau
+	// du navigateur) sans dépendre du timestamp — requestId lui-même vient du mixin pino, pas d'ici.
+	response.headers.set('X-Request-Id', requestContext.getStore()!.requestId);
 
 	// Headers de sécurité, posés ici plutôt que dans app.html : ça couvre aussi /api,
 	// qui ne rend aucun <head>. HSTS est ignoré par le navigateur sur du HTTP simple,

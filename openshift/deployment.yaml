@@ -37,6 +37,13 @@ spec:
                 name: imputo-config
             - secretRef:
                 name: imputo-secrets
+          env:
+            # Namespace du pod = label `env` sur les logs Loki (imputo vs imputo-preprod) — via
+            # Downward API pour ne jamais dépendre d'une valeur dupliquée à la main par environnement.
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
           readinessProbe:
             httpGet:
               path: /

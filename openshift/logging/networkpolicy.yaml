@@ -1,0 +1,25 @@
+# Le template de projet par défaut du cluster n'autorise en ingress que openshift-ingress,
+# openshift-monitoring et le même namespace (cf. allow-from-* déjà présentes) — tout le reste,
+# dont les pods imputo/imputo-preprod qui poussent leurs logs ici, est bloqué par défaut. On
+# n'ouvre que ces deux namespaces précis vers le port Loki, rien de plus large.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-imputo
+spec:
+  podSelector:
+    matchLabels:
+      app: loki
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: imputo-preprod
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: imputo
+      ports:
+        - protocol: TCP
+          port: 3100

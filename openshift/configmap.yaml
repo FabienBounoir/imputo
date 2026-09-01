@@ -19,3 +19,7 @@ data:
   AZURE_TENANT_ID: '8b87af7d-8647-4dc7-8df4-5f69a2011bb5'
   AZURE_CLIENT_ID: '8f4e2b06-c84d-491a-9648-d16a37120027'
   JIRA_BASE_URL: 'https://jira.constellation.soprasteria.com'
+  # DNS interne au cluster, pas un secret — voir openshift/logging/. Vide/absent = logs stdout
+  # uniquement (comportement par défaut de logger.ts). Ne fonctionne que si une NetworkPolicy
+  # autorise ce namespace en ingress sur imputo-logs (voir openshift/logging/networkpolicy.yaml).
+  LOKI_URL: 'http://loki.imputo-logs.svc.cluster.local:3100'
