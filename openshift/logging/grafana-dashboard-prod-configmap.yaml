@@ -224,7 +224,24 @@ data:
             }
           ]
         }
-      ]
+      ],
+      "annotations": {
+        "list": [
+          {
+            "name": "Déploiements",
+            "datasource": {
+              "type": "grafana",
+              "uid": "-- Grafana --"
+            },
+            "enable": true,
+            "iconColor": "rgba(255, 96, 96, 1)",
+            "type": "tags",
+            "tags": [
+              "env:imputo"
+            ]
+          }
+        ]
+      }
     }
   02-jobs.json: |
     {
@@ -392,7 +409,24 @@ data:
             }
           ]
         }
-      ]
+      ],
+      "annotations": {
+        "list": [
+          {
+            "name": "Déploiements",
+            "datasource": {
+              "type": "grafana",
+              "uid": "-- Grafana --"
+            },
+            "enable": true,
+            "iconColor": "rgba(255, 96, 96, 1)",
+            "type": "tags",
+            "tags": [
+              "env:imputo"
+            ]
+          }
+        ]
+      }
     }
   03-jira-sync.json: |
     {
@@ -544,7 +578,24 @@ data:
             }
           ]
         }
-      ]
+      ],
+      "annotations": {
+        "list": [
+          {
+            "name": "Déploiements",
+            "datasource": {
+              "type": "grafana",
+              "uid": "-- Grafana --"
+            },
+            "enable": true,
+            "iconColor": "rgba(255, 96, 96, 1)",
+            "type": "tags",
+            "tags": [
+              "env:imputo"
+            ]
+          }
+        ]
+      }
     }
   04-erreurs-metier.json: |
     {
@@ -651,7 +702,24 @@ data:
             }
           ]
         }
-      ]
+      ],
+      "annotations": {
+        "list": [
+          {
+            "name": "Déploiements",
+            "datasource": {
+              "type": "grafana",
+              "uid": "-- Grafana --"
+            },
+            "enable": true,
+            "iconColor": "rgba(255, 96, 96, 1)",
+            "type": "tags",
+            "tags": [
+              "env:imputo"
+            ]
+          }
+        ]
+      }
     }
   05-securite.json: |
     {
@@ -879,5 +947,22 @@ data:
             }
           ]
         }
-      ]
+      ],
+      "annotations": {
+        "list": [
+          {
+            "name": "Déploiements",
+            "datasource": {
+              "type": "grafana",
+              "uid": "-- Grafana --"
+            },
+            "enable": true,
+            "iconColor": "rgba(255, 96, 96, 1)",
+            "type": "tags",
+            "tags": [
+              "env:imputo"
+            ]
+          }
+        ]
+      }
     }
