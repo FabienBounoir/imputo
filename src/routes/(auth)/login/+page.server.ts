@@ -4,6 +4,7 @@ import { loginSchema } from '$lib/server/validation/auth';
 import { login } from '$lib/server/services/accounts';
 import { listMembershipsForUser } from '$lib/server/services/workspaces';
 import { createSession, setSessionCookie } from '$lib/server/auth/session';
+import { logger } from '$lib/server/logger';
 
 export const load: PageServerLoad = async ({ locals }) => {
 	if (locals.user) redirect(303, '/imputation');
@@ -18,14 +19,20 @@ export const actions: Actions = {
 
 		const res = await login(parsed.data.email, parsed.data.password);
 		if (res && 'locked' in res) {
+			// Rate-limit atteint : signal plus fort qu'un simple échec, cible potentielle de brute-force.
+			logger.warn('login_rate_limited', { email: parsed.data.email });
 			return fail(429, {
 				error: 'Trop de tentatives. Réessayez plus tard.',
 				retryAfterMs: res.retryAfterMs,
 				values: { email: form.email }
 			});
 		}
-		if (!res) return fail(400, { error: 'Email ou mot de passe incorrect.', values: { email: form.email } });
+		if (!res) {
+			logger.warn('login_failed', { email: parsed.data.email });
+			return fail(400, { error: 'Email ou mot de passe incorrect.', values: { email: form.email } });
+		}
 
+		logger.info('login_success', { userId: res.userId });
 		const memberships = await listMembershipsForUser(res.userId);
 		const { token, expiresAt } = await createSession(res.userId, memberships[0]?.workspaceId ?? null);
 		setSessionCookie(cookies, token, expiresAt);

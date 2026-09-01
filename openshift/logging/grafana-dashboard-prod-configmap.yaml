@@ -134,7 +134,19 @@ data:
               "legendFormat": "{{path}}",
               "instant": true
             }
-          ]
+          ],
+          "options": {
+            "reduceOptions": {
+              "values": true,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "orientation": "horizontal",
+            "displayMode": "gradient",
+            "showUnfilled": true
+          }
         },
         {
           "id": 5,
@@ -160,7 +172,28 @@ data:
               "legendFormat": "{{status}}",
               "instant": true
             }
-          ]
+          ],
+          "options": {
+            "reduceOptions": {
+              "values": true,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "pieType": "pie",
+            "displayLabels": [
+              "name",
+              "percent"
+            ],
+            "legend": {
+              "displayMode": "list",
+              "placement": "right",
+              "values": [
+                "value"
+              ]
+            }
+          }
         },
         {
           "id": 6,
@@ -550,7 +583,19 @@ data:
               "legendFormat": "{{msg}}",
               "instant": true
             }
-          ]
+          ],
+          "options": {
+            "reduceOptions": {
+              "values": true,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "orientation": "horizontal",
+            "displayMode": "gradient",
+            "showUnfilled": true
+          }
         },
         {
           "id": 2,
@@ -708,7 +753,7 @@ data:
             "h": 12,
             "w": 24,
             "x": 0,
-            "y": 8
+            "y": 22
           },
           "options": {
             "showTime": true,
@@ -722,6 +767,115 @@ data:
                 "uid": "loki"
               },
               "expr": "{app=\"imputo\", env=\"imputo\"} | json | msg=~\"cron_unauthorized|push_subscribe_rejected|jira_sync_circuit_breaker_tripped\""
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "title": "Connexions réussies / échouées",
+          "type": "timeseries",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "sum(count_over_time({app=\"imputo\", env=\"imputo\"} | json | msg=\"login_success\" [$__interval]))",
+              "legendFormat": "réussies"
+            },
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "sum(count_over_time({app=\"imputo\", env=\"imputo\"} | json | msg=\"login_failed\" [$__interval]))",
+              "legendFormat": "échouées"
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "title": "Comptes verrouillés (rate-limit)",
+          "type": "timeseries",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 8,
+            "y": 8
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "fixed",
+                "fixedColor": "red"
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "sum(count_over_time({app=\"imputo\", env=\"imputo\"} | json | msg=\"login_rate_limited\" [$__interval]))",
+              "legendFormat": "verrouillages"
+            }
+          ]
+        },
+        {
+          "id": 7,
+          "title": "Comptes distincts verrouillés",
+          "type": "stat",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 4,
+            "x": 16,
+            "y": 8
+          },
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "count(count by (email) (count_over_time({app=\"imputo\", env=\"imputo\"} | json | msg=\"login_rate_limited\" [$__range])))",
+              "instant": true
             }
           ]
         }
