@@ -117,11 +117,13 @@ curl -s -u "admin:$GRAFANA_PW" -H 'Content-Type: application/json' \
 indépendantes (l'une peut être active sans l'autre), `env` se propage automatiquement comme label
 sur l'instance sans rien de plus à déclarer côté règle :
 
-| Règle | Requête LogQL | Condition | `for` |
+| Règle | Requête | Condition | `for` |
 |---|---|---|---|
-| Taux d'erreur 5xx élevé | `100 * sum by (env) (count_over_time({app="imputo"} \| json \| msg="request" \| status >= 500 [5m])) / sum by (env) (count_over_time({app="imputo"} \| json \| msg="request" [5m]))` | > 10 (%) | 5m |
-| Échec d'un job cron | `sum by (env) (count_over_time({app="imputo"} \| json \| msg="cron_failed" [5m]))` | > 0 | 1m |
-| Circuit breaker Jira déclenché | `sum by (env) (count_over_time({app="imputo"} \| json \| msg="jira_sync_circuit_breaker_tripped" [15m]))` | > 0 | 1m |
+| Taux d'erreur 5xx élevé | LogQL : `100 * sum by (env) (count_over_time({app="imputo"} \| json \| msg="request" \| status >= 500 [5m])) / sum by (env) (count_over_time({app="imputo"} \| json \| msg="request" [5m]))` | > 10 (%) | 5m |
+| Échec d'un job cron | LogQL : `sum by (env) (count_over_time({app="imputo"} \| json \| msg="cron_failed" [5m]))` | > 0 | 1m |
+| Circuit breaker Jira déclenché | LogQL : `sum by (env) (count_over_time({app="imputo"} \| json \| msg="jira_sync_circuit_breaker_tripped" [15m]))` | > 0 | 1m |
+| App silencieuse (sonde interne) | LogQL : `sum by (env) (count_over_time({app="imputo"} \| json \| msg="probe" [5m]))` | < 1, **et** `noDataState: Alerting` (l'absence totale de série est elle-même le signal — contrairement aux 3 précédentes où "pas de donnée" = rien de grave) | 2m |
+| Health check externe (par env) | Infinity : `GET https://<route-publique>/api/health`, une règle par environnement (URL fixe, pas dérivée de Loki, donc pas de `by (env)` possible) | `execErrState: Alerting` — un code non-2xx fait échouer la requête Infinity elle-même (`"unsuccessful HTTP response code"`), c'est cet échec qui déclenche, pas un seuil sur une valeur | 1m |
 
 Recréées via `PUT /api/v1/provisioning/folder/{folderUID}/rule-groups/imputo-alerts` (voir
 l'historique de session ou reconstruire à partir du tableau ci-dessus — `datasourceUid: "loki"`
@@ -130,6 +132,22 @@ pour la requête, une étape `type: reduce` (`reducer: last`) puis `datasourceUi
 ne suffit pas, Grafana refuse d'alerter dessus directement ("looks like time series data, only
 reduced data can be alerted on") tant qu'elle n'a pas été réduite à un scalaire).
 
+**Health check externe — pourquoi en plus de la sonde interne** : `readinessProbe`/`livenessProbe`
+(OpenShift, sur le pod) et la règle "App silencieuse" ci-dessus ne testent que "le pod répond en
+interne au cluster" — pas DNS, TLS, ni le routeur OpenShift devant la Route publique. `/api/health`
+(`src/routes/api/health/+server.ts`, sans auth, filtré des logs `request`/`probe` dans
+`hooks.server.ts`) est tapé depuis l'extérieur par Grafana via le plugin communautaire **Infinity**
+(`yesoreyeram-infinity-datasource`, installé via `GF_INSTALL_PLUGINS` sur le déploiement Grafana,
+datasource provisionnée dans `grafana-provisioning-configmap.yaml`, uid `infinity`). Vérifié en
+direct (app scalée à 0 replica sur preprod, deux fois) : le routeur OpenShift renvoie un vrai `503`
+avec sa propre page HTML quand il n'y a plus de pod — jamais un faux 200 — donc le check déclenche
+correctement dans les deux cas (pod down *et* pod up mais logique cassée). **Une règle par
+environnement à dupliquer/maintenir manuellement** (URL en dur dans le rule group, pas de variable
+`env` possible ici) — seule `imputo-preprod` existe pour l'instant, ajouter l'équivalent prod une
+fois `imputo` déployé avec ce code.
+
 Testé de bout en bout le 2026-09-01 : contact point (carte reçue dans Teams, environnement
-affiché), les 3 règles s'évaluent sans erreur (`health: ok`) contre les vraies données Loki de
-preprod, alerte réellement déclenchée (`cron_failed` provoqué volontairement) et reçue dans Teams.
+affiché), les 5 règles s'évaluent sans erreur (`health: ok`) contre les vraies données de preprod,
+alertes réellement déclenchées (`cron_failed` provoqué volontairement, puis l'app scalée à 0
+replica deux fois pour la sonde interne et le health check externe) et reçues dans Teams à chaque
+fois.

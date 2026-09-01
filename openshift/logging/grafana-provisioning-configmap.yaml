@@ -20,6 +20,12 @@ data:
         isDefault: true
         jsonData:
           maxLines: 1000
+      # Requêtes HTTP génériques (pas de "url" ici : fournie par chaque requête) — sert au check
+      # santé externe sur la vraie Route publique (voir /api/health, README.md).
+      - name: Infinity
+        type: yesoreyeram-infinity-datasource
+        uid: infinity
+        isDefault: false
   dashboards.yaml: |
     apiVersion: 1
     providers:
