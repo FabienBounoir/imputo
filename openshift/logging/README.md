@@ -81,64 +81,24 @@ provisioning Grafana ne supporte pas nativement l'expansion de secrets Kubernete
 stockée dans le secret `teams-webhook` (créé une fois, jamais commité) et dans la config Grafana
 elle-même (persistée sur `grafana-data`, le PVC).
 
-**Pour recréer si le PVC est perdu** (récupérer d'abord l'URL du webhook Teams — Teams > canal
-"alerting" > **⋯** > **Flux de travail** > relancer/consulter celui déjà créé) :
+**Pour recréer si le PVC est perdu** : `scripts/restore-grafana-config.sh` reconstruit tout
+(contact points, politique de routage, règles d'alerte, playlists, Service Account d'annotations)
+en une seule commande — **idempotent**, testé en direct plusieurs fois de suite sans créer de
+doublon. Aucun secret dans le script ni dans git : les URLs de webhook Teams sont lues depuis les
+secrets Kubernetes `teams-webhook`/`teams-webhook-prod` (namespace `imputo-logs`), qui doivent déjà
+exister — si ce n'est pas le cas (première fois, ou secret aussi perdu), récupérer l'URL depuis
+Teams (canal cible > **⋯** > **Flux de travail** > relancer/consulter celui déjà créé) et créer le
+secret manuellement d'abord (`oc create secret generic teams-webhook --from-literal=url='...' -n
+imputo-logs`, idem `teams-webhook-prod`) :
 
 ```sh
-TEAMS_URL='<url de webhook Teams>'
-GRAFANA_PW=$(oc get secret grafana-admin -n imputo-logs -o jsonpath='{.data.GF_SECURITY_ADMIN_PASSWORD}' | base64 -d)
-oc port-forward -n imputo-logs svc/grafana 3300:3000 &
-
-curl -s -u "admin:$GRAFANA_PW" -H 'Content-Type: application/json' \
-  -X POST 'http://localhost:3300/api/v1/provisioning/contact-points' -d '{
-  "name": "teams-alerting",
-  "type": "webhook",
-  "settings": {
-    "url": "'"$TEAMS_URL"'",
-    "httpMethod": "POST",
-    "payload": {
-      "template": "{\n  \"type\": \"AdaptiveCard\",\n  \"$schema\": \"http://adaptivecards.io/schemas/adaptive-card.json\",\n  \"version\": \"1.4\",\n  \"body\": [\n    { \"type\": \"TextBlock\", \"text\": \"{{ .Status | toUpper }}: {{ .CommonLabels.alertname }}\", \"weight\": \"Bolder\", \"size\": \"Medium\" },\n    { \"type\": \"TextBlock\", \"text\": \"Environnement : {{ .CommonLabels.env }}\", \"weight\": \"Bolder\", \"color\": \"Attention\" },\n    { \"type\": \"TextBlock\", \"text\": \"{{ .CommonAnnotations.summary }}\", \"wrap\": true }\n  ]\n}"
-    }
-  }
-}'
-
-# Deuxième contact point pour la prod (canal Teams différent — TEAMS_URL_PROD), même template.
-curl -s -u "admin:$GRAFANA_PW" -H 'Content-Type: application/json' \
-  -X POST 'http://localhost:3300/api/v1/provisioning/contact-points' -d '{
-  "name": "teams-alerting-prod",
-  "type": "webhook",
-  "settings": {
-    "url": "'"$TEAMS_URL_PROD"'",
-    "httpMethod": "POST",
-    "payload": {
-      "template": "{\n  \"type\": \"AdaptiveCard\",\n  \"$schema\": \"http://adaptivecards.io/schemas/adaptive-card.json\",\n  \"version\": \"1.4\",\n  \"body\": [\n    { \"type\": \"TextBlock\", \"text\": \"{{ .Status | toUpper }}: {{ .CommonLabels.alertname }}\", \"weight\": \"Bolder\", \"size\": \"Medium\" },\n    { \"type\": \"TextBlock\", \"text\": \"Environnement : {{ .CommonLabels.env }}\", \"weight\": \"Bolder\", \"color\": \"Attention\" },\n    { \"type\": \"TextBlock\", \"text\": \"{{ .CommonAnnotations.summary }}\", \"wrap\": true }\n  ]\n}"
-    }
-  }
-}'
-
-# Politique de routage : teams-alerting (preprod) par défaut, route imbriquée sur le label env pour
-# rediriger la prod vers son propre canal — deux équipes/canaux Teams différents, jamais mélangés.
-# group_by inclut env partout : deux alertes sur des environnements différents notifient toujours
-# séparément, même règle même dans le même canal.
-curl -s -u "admin:$GRAFANA_PW" -H 'Content-Type: application/json' \
-  -X PUT 'http://localhost:3300/api/v1/provisioning/policies' -d '{
-  "receiver": "teams-alerting",
-  "group_by": ["grafana_folder", "alertname", "env"],
-  "group_wait": "30s", "group_interval": "5m", "repeat_interval": "4h",
-  "routes": [
-    {
-      "receiver": "teams-alerting-prod",
-      "object_matchers": [["env", "=", "imputo"]],
-      "group_by": ["grafana_folder", "alertname", "env"],
-      "group_wait": "30s", "group_interval": "5m", "repeat_interval": "4h",
-      "continue": false
-    }
-  ]
-}'
+oc login ...   # sur le bon cluster (voir plus haut)
+./openshift/logging/scripts/restore-grafana-config.sh
 ```
 
-L'URL du webhook Teams prod vit dans le secret `teams-webhook-prod` (même précaution que
-`teams-webhook` — jamais commitée, jamais file-provisioned).
+Si le Service Account `ci-annotations` n'existait pas encore, le script affiche un nouveau token à
+coller dans **GitLab CI/CD > Variables > GRAFANA_ANNOTATIONS_TOKEN** (impossible à restaurer à
+l'identique — un token perdu doit être régénéré).
 
 **Piège à ne pas reproduire** : ne jamais créer la règle "Health check externe (prod)" avant que la
 prod tourne réellement avec `/api/health` (ce commit doit d'abord y être déployé) — sinon la
@@ -158,10 +118,9 @@ sur l'instance sans rien de plus à déclarer côté règle :
 | App silencieuse (sonde interne) | LogQL : `sum by (env) (count_over_time({app="imputo"} \| json \| msg="probe" [5m]))` | < 1, **et** `noDataState: Alerting` (l'absence totale de série est elle-même le signal — contrairement aux 3 précédentes où "pas de donnée" = rien de grave) | 2m |
 | Health check externe (par env) | Infinity : `GET https://<route-publique>/api/health`, une règle par environnement (URL fixe, pas dérivée de Loki, donc pas de `by (env)` possible) | `execErrState: Alerting` — un code non-2xx fait échouer la requête Infinity elle-même (`"unsuccessful HTTP response code"`), c'est cet échec qui déclenche, pas un seuil sur une valeur | 1m |
 
-Recréées via `PUT /api/v1/provisioning/folder/{folderUID}/rule-groups/imputo-alerts` (voir
-l'historique de session ou reconstruire à partir du tableau ci-dessus — `datasourceUid: "loki"`
-pour la requête, une étape `type: reduce` (`reducer: last`) puis `datasourceUid: "__expr__"` +
-`type: threshold` pour la condition — **indispensable** : une requête Loki en `instant: true` seule
+Recréées par `scripts/restore-grafana-config.sh` (voir plus haut) — `datasourceUid: "loki"` pour la
+requête, une étape `type: reduce` (`reducer: last`) puis `datasourceUid: "__expr__"` +
+`type: threshold` pour la condition — **indispensable** : une requête Loki seule sans réduction
 ne suffit pas, Grafana refuse d'alerter dessus directement ("looks like time series data, only
 reduced data can be alerted on") tant qu'elle n'a pas été réduite à un scalaire).
 
