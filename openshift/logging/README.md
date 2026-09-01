@@ -176,11 +176,20 @@ direct (app scalée à 0 replica sur preprod, deux fois) : le routeur OpenShift 
 avec sa propre page HTML quand il n'y a plus de pod — jamais un faux 200 — donc le check déclenche
 correctement dans les deux cas (pod down *et* pod up mais logique cassée). **Une règle par
 environnement à dupliquer/maintenir manuellement** (URL en dur dans le rule group, pas de variable
-`env` possible ici) — seule `imputo-preprod` existe pour l'instant, ajouter l'équivalent prod une
-fois `imputo` déployé avec ce code.
+`env` possible ici) — `imputo-preprod` et `imputo` (prod) existent toutes les deux désormais.
 
-Testé de bout en bout le 2026-09-01 : contact point (carte reçue dans Teams, environnement
-affiché), les 5 règles s'évaluent sans erreur (`health: ok`) contre les vraies données de preprod,
-alertes réellement déclenchées (`cron_failed` provoqué volontairement, puis l'app scalée à 0
-replica deux fois pour la sonde interne et le health check externe) et reçues dans Teams à chaque
-fois.
+**Piège évité en prod** : la règle prod n'a été créée **qu'après** confirmation que `imputo`
+tournait bien avec ce code (`/api/health` répond 200) — la créer avant aurait tapé un 404 (ancien
+code sans l'endpoint) et déclenché une fausse alerte immédiate dans le canal Teams prod fraîchement
+branché.
+
+**Canaux Teams séparés prod/preprod** : deux contact points (`teams-alerting` pour preprod,
+`teams-alerting-prod` pour prod, secrets `teams-webhook`/`teams-webhook-prod`), routés via une
+politique de notification qui matche sur le label `env` — voir la section précédente pour les
+commandes de recréation.
+
+Testé de bout en bout le 2026-09-01 : contact points (cartes reçues dans les deux canaux Teams,
+environnement affiché), les 6 règles s'évaluent sans erreur (`health: ok`) contre les vraies
+données de prod et preprod, alertes réellement déclenchées (`cron_failed` provoqué volontairement,
+l'app scalée à 0 replica deux fois sur preprod pour la sonde interne et le health check externe) et
+reçues dans Teams à chaque fois.
