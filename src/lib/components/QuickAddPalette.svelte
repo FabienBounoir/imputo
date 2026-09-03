@@ -20,6 +20,7 @@
 		ticketKey: string | null;
 		ticketTitle: string | null;
 		label: string | null;
+		activityId: string | null;
 	};
 	type Activity = { id: string; label: string };
 
@@ -44,7 +45,7 @@
 	} = $props();
 
 	type FlatItem =
-		| { kind: 'objective-ticket'; objectiveId: string; ticketId: string; ticketKey: string; ticketTitle: string }
+		| { kind: 'objective-ticket'; objectiveId: string; ticketId: string; ticketKey: string; ticketTitle: string; activityId: string | null }
 		| { kind: 'objective-custom'; objectiveId: string; label: string }
 		| { kind: 'ticket'; ticket: Ticket }
 		| { kind: 'create-ticket'; query: string }
@@ -85,7 +86,8 @@
 						objectiveId: o.id,
 						ticketId: o.ticketId,
 						ticketKey: o.ticketKey ?? '',
-						ticketTitle: o.ticketTitle ?? ''
+						ticketTitle: o.ticketTitle ?? '',
+						activityId: o.activityId
 					});
 				} else if (o.kind === 'CUSTOM') {
 					out.push({ kind: 'objective-custom', objectiveId: o.id, label: o.label ?? '' });
@@ -194,6 +196,14 @@
 				return;
 			}
 			chosenTarget = resolveTargetValue(it);
+			// Un objectif TICKET a une activité fixe (attribuée par l'admin) : laisser le choix ici
+			// créerait une ligne sur une autre activité que celle de l'objectif, avec le même
+			// objectiveId — la ligne "attribuée" (syncedRows, activité de l'objectif) resterait alors
+			// non couverte et réapparaîtrait à côté, dupliquant la note sur les deux lignes.
+			if (it.kind === 'objective-ticket') {
+				commit(it.activityId);
+				return;
+			}
 			stage = 'activity';
 			query = '';
 			activeIndex = 0;
