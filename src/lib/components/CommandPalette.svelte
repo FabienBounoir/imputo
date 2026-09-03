@@ -18,7 +18,8 @@
 	// Commandes "/verbe" disponibles — ajouter ici pour qu'elles apparaissent dans la palette
 	// dès que l'utilisateur tape "/" (voir slashCommandMatches).
 	const slashCommandDefs: SlashCmd[] = [
-		{ verb: 'imput', label: "/imput <nom> — imputation d'un membre", icon: '🧑', adminOnly: true }
+		{ verb: 'imput', label: "/imput <nom> — imputation d'un membre", icon: '🧑', adminOnly: true },
+		{ verb: 'msg', label: '/msg <nom> — envoyer une notification', icon: '📣', adminOnly: true }
 	];
 	type RefItem = { id: string; name: string };
 	type MemberItem = { id: string; displayName: string };
@@ -26,6 +27,139 @@
 	let open = $state(false);
 	let query = $state('');
 	let selected = $state(0);
+
+	// Roulette : liste de noms persistée en local (par navigateur, pas par workspace — usage
+	// ponctuel type "qui présente le daily"), tirage avec crypto.getRandomValues (vrai aléatoire).
+	let rouletteOpen = $state(false);
+	let rouletteNames = $state<string[]>([]);
+	let rouletteNewName = $state('');
+	let rouletteWinner = $state<string | null>(null);
+	let rouletteSpinning = $state(false);
+	let rouletteDisplayName = $state('');
+
+	// Un seul AudioContext réutilisé (créé au premier tirage, dans le geste utilisateur — requis
+	// par les navigateurs). Bips synthétisés à l'oscillateur, pas de fichier audio à charger.
+	let audioCtx: AudioContext | null = null;
+	function playTick(freq: number) {
+		audioCtx ??= new AudioContext();
+		const osc = audioCtx.createOscillator();
+		const gain = audioCtx.createGain();
+		osc.type = 'square';
+		osc.frequency.value = freq;
+		gain.gain.setValueAtTime(0.06, audioCtx.currentTime);
+		gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.08);
+		osc.connect(gain).connect(audioCtx.destination);
+		osc.start();
+		osc.stop(audioCtx.currentTime + 0.08);
+	}
+
+	function openRoulette() {
+		try {
+			const stored: string[] = JSON.parse(localStorage.getItem('roulette-names') ?? '[]');
+			// Purge les doublons casse-différente accumulés avant le correctif de dédoublonnage
+			// (ex: "Alice" + "alice" enregistrés séparément), sinon la personne dupliquée garde un
+			// poids double au tirage même après la correction de addRouletteName.
+			const seen = new Set<string>();
+			rouletteNames = stored.filter((n) => {
+				const k = n.toLowerCase();
+				if (seen.has(k)) return false;
+				seen.add(k);
+				return true;
+			});
+			if (rouletteNames.length !== stored.length) saveRouletteNames();
+		} catch {
+			rouletteNames = [];
+		}
+		rouletteWinner = null;
+		rouletteOpen = true;
+	}
+	function closeRoulette() {
+		rouletteOpen = false;
+	}
+	function saveRouletteNames() {
+		localStorage.setItem('roulette-names', JSON.stringify(rouletteNames));
+	}
+	function addRouletteName() {
+		const name = rouletteNewName.trim();
+		// Comparaison insensible à la casse : "Alice" et "alice" ne doivent pas compter comme deux
+		// personnes distinctes, sinon la personne dupliquée a deux fois plus de chances d'être tirée.
+		if (!name || rouletteNames.some((n) => n.toLowerCase() === name.toLowerCase())) return;
+		rouletteNames = [...rouletteNames, name];
+		rouletteNewName = '';
+		rouletteWinner = null;
+		saveRouletteNames();
+	}
+	function removeRouletteName(name: string) {
+		rouletteNames = rouletteNames.filter((n) => n !== name);
+		rouletteWinner = null;
+		saveRouletteNames();
+	}
+	// Défilement type machine à sous : les noms passent vite puis ralentissent (delay croissant
+	// en ease-out) jusqu'à s'arrêter pile sur le nom tiré au sort au départ (finalIdx).
+	function spinRoulette() {
+		if (rouletteNames.length < 2 || rouletteSpinning) return;
+		rouletteSpinning = true;
+		rouletteWinner = null;
+		const finalIdx = crypto.getRandomValues(new Uint32Array(1))[0] % rouletteNames.length;
+		const totalTicks = rouletteNames.length * 3 + finalIdx + 1;
+		let tick = 0;
+		const step = () => {
+			rouletteDisplayName = rouletteNames[tick % rouletteNames.length];
+			playTick(tick < totalTicks - 1 ? 700 : 1100);
+			tick++;
+			if (tick < totalTicks) {
+				const progress = tick / totalTicks;
+				setTimeout(step, 40 + progress * progress * 260);
+			} else {
+				rouletteWinner = rouletteNames[finalIdx];
+				rouletteSpinning = false;
+			}
+		};
+		step();
+	}
+
+	// Modal "/msg <nom>" : ouverte avec le membre déjà choisi, envoie via /api/command/notify.
+	let notifyOpen = $state(false);
+	let notifyUserId = $state('');
+	let notifyUserName = $state('');
+	let notifyTitle = $state('');
+	let notifyBody = $state('');
+	let notifySending = $state(false);
+	let notifyError = $state<string | null>(null);
+	let notifySent = $state(false);
+	let notifyBodyEl: HTMLTextAreaElement | undefined = $state();
+
+	function openNotify(member: MemberItem) {
+		notifyUserId = member.id;
+		notifyUserName = member.displayName;
+		notifyTitle = '';
+		notifyBody = '';
+		notifyError = null;
+		notifySent = false;
+		notifyOpen = true;
+	}
+	function closeNotify() {
+		notifyOpen = false;
+	}
+	async function sendNotify() {
+		if (!notifyTitle.trim() || !notifyBody.trim() || notifySending) return;
+		notifySending = true;
+		notifyError = null;
+		try {
+			const res = await fetch('/api/command/notify', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ userId: notifyUserId, title: notifyTitle.trim(), body: notifyBody.trim() })
+			});
+			if (!res.ok) {
+				notifyError = (await res.json().catch(() => null))?.message ?? "Échec de l'envoi.";
+				return;
+			}
+			notifySent = true;
+		} finally {
+			notifySending = false;
+		}
+	}
 
 	let refData = $state<{ projects: RefItem[]; sprints: RefItem[]; versions: RefItem[]; members: MemberItem[] } | null>(null);
 	let ticketResults = $state<{ id: string; key: string; title: string }[]>([]);
@@ -75,6 +209,7 @@
 		cmds.push({ id: 'new-ticket', label: 'Nouveau ticket', icon: '➕', group: 'Actions', run: () => goto('/tickets?new=1') });
 		cmds.push({ id: 'new-absence', label: 'Déclarer une absence', icon: '🌴', group: 'Actions', run: () => goto('/absences?declare=1') });
 		cmds.push({ id: 'replay-tour', label: 'Revoir le tutoriel', icon: '🧭', group: 'Actions', run: requestTourReplay });
+		cmds.push({ id: 'roulette', label: 'Roulette (tirer une personne au sort)', icon: '🎲', group: 'Actions', run: openRoulette });
 		cmds.push({
 			id: 'export-month',
 			label: 'Exporter Excel (mois en cours)',
@@ -106,6 +241,8 @@
 	const slash = $derived(query.match(/^\/(\w*)\s*(.*)$/));
 	const slashVerb = $derived(slash?.[1].toLowerCase() ?? '');
 	const isImputSlash = $derived(data.role === 'ADMIN' && slash !== null && 'imput'.startsWith(slashVerb) && slashVerb.length > 0);
+	// Raccourci "/msg <nom>" (ADMIN) : ouvre la modal d'envoi de notification pour ce membre.
+	const isMsgSlash = $derived(data.role === 'ADMIN' && slash !== null && 'msg'.startsWith(slashVerb) && slashVerb.length > 0);
 
 	const filteredStatic = $derived.by((): Item[] => {
 		if (slash) return [];
@@ -132,7 +269,7 @@
 	// Tant qu'aucune commande n'est encore résolue (slashVerb vide ou ne matchant aucun verbe
 	// connu), on propose la liste des commandes "/..." disponibles au lieu d'un résultat vide.
 	const slashCommandMatches = $derived.by((): Item[] => {
-		if (!slash || isImputSlash) return [];
+		if (!slash || isImputSlash || isMsgSlash) return [];
 		return slashCommandDefs
 			.filter((c) => (!c.adminOnly || data.role === 'ADMIN') && c.verb.startsWith(slashVerb))
 			.map((c) => ({
@@ -159,6 +296,20 @@
 		}));
 	});
 
+	const msgMemberMatches = $derived.by((): Item[] => {
+		if (!isMsgSlash || !refData) return [];
+		const q = (slash?.[2] ?? '').trim().toLowerCase();
+		const pool = q ? refData.members.filter((m) => m.displayName.toLowerCase().includes(q)) : refData.members;
+		return pool.slice(0, 8).map((m) => ({
+			id: `msg-member-${m.id}`,
+			label: m.displayName,
+			icon: '📣',
+			group: 'Notifier…',
+			hint: 'Entrée pour écrire',
+			run: () => openNotify(m)
+		}));
+	});
+
 	const ticketItems = $derived.by(
 		(): Item[] =>
 			ticketResults.map((t) => ({
@@ -171,7 +322,13 @@
 	);
 
 	const visibleItems = $derived(
-		isImputSlash ? memberMatches : slash ? slashCommandMatches : [...filteredStatic, ...refMatches, ...ticketItems]
+		isImputSlash
+			? memberMatches
+			: isMsgSlash
+				? msgMemberMatches
+				: slash
+					? slashCommandMatches
+					: [...filteredStatic, ...refMatches, ...ticketItems]
 	);
 
 	$effect(() => {
@@ -235,6 +392,10 @@
 			open ? closePalette() : openPalette();
 		} else if (e.key === 'Escape' && open) {
 			closePalette();
+		} else if (e.key === 'Escape' && rouletteOpen) {
+			closeRoulette();
+		} else if (e.key === 'Escape' && notifyOpen) {
+			closeNotify();
 		} else if (
 			// Nouveau ticket depuis n'importe quelle page. Note : Shift+N, pas Ctrl/Cmd+N — les
 			// navigateurs réservent ce dernier pour "nouvelle fenêtre" et ne le laissent jamais
@@ -315,6 +476,16 @@
 					{:else}
 						<div class="cp-empty">Aucun membre trouvé.</div>
 					{/each}
+				{:else if isMsgSlash}
+					<div class="cp-group">Notifier…</div>
+					{#each msgMemberMatches as item, i (item.id)}
+						<button type="button" class="cp-item" class:on={i === selected} onclick={() => run(item)} onmouseenter={() => (selected = i)}>
+							<span class="cp-item-icon">{item.icon}</span>
+							<span class="cp-item-label">{item.label}</span>
+						</button>
+					{:else}
+						<div class="cp-empty">Aucun membre trouvé.</div>
+					{/each}
 				{:else if slash}
 					<div class="cp-group">Commandes</div>
 					{#each slashCommandMatches as item, i (item.id)}
@@ -343,6 +514,124 @@
 					{/if}
 				{/if}
 			</div>
+		</div>
+	</div>
+{/if}
+
+{#if rouletteOpen}
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="cp-backdrop" onclick={closeRoulette}>
+		<div class="cp-panel roulette-panel" onclick={(e) => e.stopPropagation()}>
+			<div class="cp-input-row">
+				<span class="cp-icon">🎲</span>
+				<input
+					use:autofocus
+					bind:value={rouletteNewName}
+					onkeydown={(e) => e.key === 'Enter' && addRouletteName()}
+					placeholder="Ajouter un nom…"
+					aria-label="Ajouter un nom à la roulette"
+				/>
+				<kbd>Esc</kbd>
+			</div>
+
+			<div class="roulette-body">
+				{#if rouletteNames.length === 0}
+					<div class="cp-empty">Ajoute au moins deux noms pour tirer au sort.</div>
+				{:else}
+					<div class="roulette-names">
+						{#each rouletteNames as name (name)}
+							<span
+								class="roulette-chip"
+								class:winner={name === rouletteWinner}
+								class:lit={rouletteSpinning && name === rouletteDisplayName}
+							>
+								{name}
+								<button
+									type="button"
+									aria-label={`Retirer ${name}`}
+									disabled={rouletteSpinning}
+									onclick={() => removeRouletteName(name)}>×</button
+								>
+							</span>
+						{/each}
+					</div>
+				{/if}
+
+				{#if rouletteSpinning}
+					<div class="roulette-reel">{rouletteDisplayName}</div>
+				{/if}
+
+				<button type="button" class="roulette-spin" disabled={rouletteNames.length < 2 || rouletteSpinning} onclick={spinRoulette}>
+					{rouletteSpinning ? 'Tirage…' : 'Tirer au sort'}
+				</button>
+
+				{#if rouletteWinner && !rouletteSpinning}
+					<div class="roulette-result">🎉 {rouletteWinner}</div>
+				{/if}
+			</div>
+		</div>
+	</div>
+{/if}
+
+{#if notifyOpen}
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="cp-backdrop" onclick={closeNotify}>
+		<div class="cp-panel notify-panel" onclick={(e) => e.stopPropagation()}>
+			<div class="cp-input-row">
+				<span class="cp-icon">📣</span>
+				<span class="notify-to">à {notifyUserName}</span>
+				<kbd>Esc</kbd>
+			</div>
+
+			{#if notifySent}
+				<div class="roulette-body">
+					<div class="roulette-result">✅ Notification envoyée à {notifyUserName}.</div>
+					<button type="button" class="roulette-spin" onclick={closeNotify}>Fermer</button>
+				</div>
+			{:else}
+				<div class="roulette-body">
+					<input
+						use:autofocus
+						bind:value={notifyTitle}
+						onkeydown={(e) => {
+							if (e.key !== 'Enter') return;
+							e.preventDefault();
+							notifyBodyEl?.focus();
+						}}
+						maxlength="60"
+						placeholder="Titre (ex: Rappel)"
+						aria-label="Titre de la notification"
+						class="notify-input"
+					/>
+					<textarea
+						bind:this={notifyBodyEl}
+						bind:value={notifyBody}
+						onkeydown={(e) => {
+							if (e.key !== 'Enter' || e.shiftKey) return;
+							e.preventDefault();
+							sendNotify();
+						}}
+						maxlength="200"
+						rows="3"
+						placeholder="Message… (Entrée pour envoyer, Maj+Entrée pour une nouvelle ligne)"
+						aria-label="Message de la notification"
+						class="notify-input"
+					></textarea>
+					{#if notifyError}
+						<div class="notify-error">{notifyError}</div>
+					{/if}
+					<button
+						type="button"
+						class="roulette-spin"
+						disabled={!notifyTitle.trim() || !notifyBody.trim() || notifySending}
+						onclick={sendNotify}
+					>
+						{notifySending ? 'Envoi…' : 'Envoyer'}
+					</button>
+				</div>
+			{/if}
 		</div>
 	</div>
 {/if}
@@ -438,5 +727,96 @@
 		text-align: center;
 		font-size: 13px;
 		color: var(--text-mute);
+	}
+
+	.roulette-panel {
+		max-height: unset;
+	}
+	.roulette-body {
+		padding: 16px;
+		display: flex;
+		flex-direction: column;
+		gap: 14px;
+	}
+	.roulette-names {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+	}
+	.roulette-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		padding: 6px 6px 6px 12px;
+		border-radius: 999px;
+		background: var(--accent-tint-2);
+		font-size: 13px;
+		color: var(--text);
+	}
+	.roulette-chip.winner,
+	.roulette-chip.lit {
+		background: var(--accent);
+		color: var(--accent-contrast, #fff);
+		font-weight: 600;
+	}
+	.roulette-reel {
+		align-self: flex-start;
+		font-size: 22px;
+		font-weight: 700;
+		padding: 10px 18px;
+		border-radius: var(--r-sm);
+		background: var(--accent-tint-2);
+		min-width: 120px;
+	}
+	.roulette-chip button {
+		width: 18px;
+		height: 18px;
+		border-radius: 50%;
+		font-size: 13px;
+		line-height: 1;
+		color: inherit;
+		opacity: 0.7;
+	}
+	.roulette-chip button:hover {
+		opacity: 1;
+	}
+	.roulette-spin {
+		align-self: flex-start;
+		padding: 9px 18px;
+		border-radius: var(--r-sm);
+		background: var(--accent);
+		color: var(--accent-contrast, #fff);
+		font-size: 13.5px;
+		font-weight: 600;
+	}
+	.roulette-spin:disabled {
+		opacity: 0.5;
+	}
+	.roulette-result {
+		font-size: 20px;
+		font-weight: 700;
+		text-align: center;
+		padding: 12px;
+	}
+
+	.notify-to {
+		flex: 1;
+		font-size: 14px;
+		color: var(--text-mute);
+	}
+	.notify-input {
+		width: 100%;
+		padding: 10px 12px;
+		border: 1px solid var(--border);
+		border-radius: var(--r-sm);
+		background: var(--surface);
+		color: var(--text);
+		font-size: 13.5px;
+		font-family: inherit;
+		resize: none;
+	}
+	.notify-error {
+		font-size: 12.5px;
+		color: var(--danger, #d33);
 	}
 </style>

@@ -525,6 +525,20 @@ export async function notifySupportDutyChanged(
 }
 
 /**
+ * Message libre envoyé par un admin à un membre précis, depuis la palette de commandes
+ * (/msg <nom>). Volontairement hors du système de préférences (`Prefs`/`PREF_KEY`) : dès que le
+ * membre a accepté les notifications (abonnement Push actif), ce type ne peut pas être désactivé
+ * côté membre — c'est le comportement demandé, pas un oubli de branchement sur `maybeNotify`.
+ * Pas de dédup `notificationLog` non plus : contrairement aux rappels du cron, un admin doit
+ * pouvoir renvoyer plusieurs messages le même jour.
+ */
+export async function sendAdminMessage(workspaceName: string, userId: string, title: string, body: string): Promise<boolean> {
+	if (!(await hasSubscription(userId))) return false;
+	const sent = await sendToUser(userId, { title: `📣 ${title} · ${workspaceName}`, body });
+	return sent > 0;
+}
+
+/**
  * Orchestrateur appelé par le cron. `trigger` = morning | evening | weekly.
  * `slot` identifie la relance du jour (ex: "0900"/"0915"/"0930") : seuls morning/evening
  * relancent plusieurs fois par jour, chaque appel ne renotifiant que ceux encore en défaut.
