@@ -5,12 +5,19 @@
 	import { formatDayRange } from '$lib/utils/date';
 	import UserAvatar from '$lib/components/UserAvatar.svelte';
 	import { buildDeck, evaluatePick, clearOpen, isWon } from '$lib/utils/memoryGame';
+	import { formatDuration } from '$lib/supportDuration';
 
 	let { data, form } = $props();
 
 	let pickerOpen = $state(false);
+	let editEntry = $state<(typeof data.ownTimeEntries)[number] | null>(null);
 	$effect(() => {
 		if (form?.error) toast.error(form.error);
+		if (form?.timeError) toast.error(form.timeError);
+		if (form?.timeOk) {
+			toast.success('Temps mis à jour ✓');
+			editEntry = null;
+		}
 	});
 
 	// Jeu des paires caché dans la grille du planning : les cases existantes deviennent des cartes
@@ -111,10 +118,15 @@
 </script>
 
 <div class="topbar">
-	<h1>Support<small>Qui regarde les tickets</small></h1>
+	<h1>Support<small>{data.supportEnabled ? 'Qui regarde les tickets' : 'Temps passé sur les tickets'}</small></h1>
+	<div class="spacer"></div>
+	{#if data.canViewHistory}
+		<a class="btn btn-ghost" href="/support/historique">Historique complet →</a>
+	{/if}
 </div>
 
 <div class="content support-layout">
+	{#if data.supportEnabled}
 	<section class="card header-card">
 		{#if !data.current}
 			<p class="empty-hint">Aucun membre dans la rotation pour l'instant — à configurer dans Paramètres &amp; membres.</p>
@@ -189,9 +201,55 @@
 			</div>
 		</section>
 	{/if}
+	{/if}
+
+	{#if data.timeTrackingEnabled}
+		<section class="card time-block">
+			<div class="time-block-header">
+				<h3>Mon temps sur le support</h3>
+				<button
+					type="button"
+					class="btn btn-primary time-add-btn"
+					title="Ajouter une saisie (Shift+T)"
+					onclick={() => window.dispatchEvent(new CustomEvent('supporttimeopen'))}
+				>
+					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg>
+					Ajouter
+					<kbd class="shortcut-kbd"><span class="shortcut-shift">⇧</span>T</kbd>
+				</button>
+			</div>
+			{#if data.ownTimeEntries.length === 0}
+				<p class="empty-hint">Aucune saisie pour l'instant.</p>
+			{:else}
+				<div class="time-table-wrap">
+					<table class="time-table">
+						<thead><tr><th>Jour</th><th>Ticket</th><th class="num">Durée</th><th></th></tr></thead>
+						<tbody>
+							{#each data.ownTimeEntries as entry (entry.id)}
+								<tr>
+									<td>{fmtFull(entry.day)}</td>
+									<td>{entry.ticketRef}</td>
+									<td class="num tabnum">{formatDuration(entry.minutes)}</td>
+									<td class="time-row-actions">
+										<button type="button" class="link-btn" onclick={() => (editEntry = entry)}>Modifier</button>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			{/if}
+		</section>
+	{/if}
 </div>
 
-<svelte:window onkeydown={(e) => pickerOpen && e.key === 'Escape' && (pickerOpen = false)} />
+<svelte:window
+	onkeydown={(e) => {
+		if (e.key !== 'Escape') return;
+		if (editEntry) editEntry = null;
+		else if (pickerOpen) pickerOpen = false;
+	}}
+/>
 
 {#if pickerOpen && data.current}
 	{@const current = data.current}
@@ -242,6 +300,37 @@
 			<div class="modal-actions">
 				<button class="btn btn-ghost" type="button" onclick={() => (pickerOpen = false)}>Fermer</button>
 			</div>
+		</div>
+	</div>
+{/if}
+
+{#if editEntry}
+	{@const entry = editEntry}
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="modal-backdrop" onclick={() => (editEntry = null)}>
+		<div class="modal" onclick={(e) => e.stopPropagation()}>
+			<h3>Modifier cette saisie</h3>
+			<p class="hint">Seules tes propres saisies sont modifiables.</p>
+			<form method="POST" action="?/editTimeEntry" use:enhance>
+				<input type="hidden" name="id" value={entry.id} />
+				<div class="field">
+					<label for="et-ticket">Ticket</label>
+					<input id="et-ticket" name="ticketRef" value={entry.ticketRef} required />
+				</div>
+				<div class="field">
+					<label for="et-duration">Durée</label>
+					<input id="et-duration" name="duration" value={formatDuration(entry.minutes)} required />
+				</div>
+				<div class="field">
+					<label for="et-day">Jour</label>
+					<input id="et-day" name="day" type="date" value={entry.day} required />
+				</div>
+				<div class="modal-actions">
+					<button class="btn btn-ghost" type="button" onclick={() => (editEntry = null)}>Annuler</button>
+					<button class="btn btn-primary" type="submit">Enregistrer</button>
+				</div>
+			</form>
 		</div>
 	</div>
 {/if}
@@ -631,5 +720,78 @@
 		display: flex;
 		justify-content: flex-end;
 		margin-top: 18px;
+	}
+
+	/* ---------- Temps sur le support ---------- */
+	.time-block {
+		padding: 24px 28px 28px;
+	}
+	.time-block-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		margin-bottom: 16px;
+	}
+	.time-block h3 {
+		font-family: var(--font-display);
+		font-size: 17px;
+		font-weight: 600;
+	}
+	.time-add-btn {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		white-space: nowrap;
+	}
+	.shortcut-kbd {
+		display: inline-flex;
+		align-items: center;
+		font-family: ui-monospace, monospace;
+		font-size: 10.5px;
+		line-height: 1;
+		background: rgba(255, 255, 255, 0.22);
+		border: 1px solid rgba(255, 255, 255, 0.3);
+		border-radius: 4px;
+		padding: 2px 5px;
+		margin-left: 2px;
+	}
+	/* Le glyphe ⇧ n'existe pas dans les polices monospace (cf. .shortcut-kbd) : le navigateur
+	   retombe sur une police système/emoji, plus fine et mal alignée à côté du "T". On le sort du
+	   monospace et on le regrossit pour qu'il porte le même poids visuel que la lettre. */
+	.shortcut-shift {
+		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+		font-size: 1.3em;
+		line-height: 1;
+		margin-right: 1px;
+	}
+	.time-table-wrap {
+		overflow-x: auto;
+	}
+	.time-table {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: 13.5px;
+	}
+	.time-table th {
+		text-align: left;
+		font-size: 11px;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		color: var(--text-mute);
+		padding: 0 10px 8px;
+		white-space: nowrap;
+	}
+	.time-table td {
+		padding: 9px 10px;
+		border-top: 1px solid var(--border);
+		white-space: nowrap;
+	}
+	.time-table .num {
+		text-align: right;
+	}
+	.time-row-actions {
+		text-align: right;
 	}
 </style>

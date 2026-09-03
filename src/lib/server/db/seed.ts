@@ -56,6 +56,7 @@ import {
 	jiraSyncRun,
 	supportRotationMember,
 	supportOverride,
+	supportTimeEntry,
 	monthlyClosing,
 	monthlyClosingLine,
 	monthlyClosingMember,
@@ -780,7 +781,7 @@ async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, pe
 	// la chaîne (dans leur ordre habituel), + un override sur la période courante pour voir ce cas
 	// (badge "remplacé") à l'écran sans attendre une vraie absence. Cadence WEEK = le défaut colonne,
 	// jamais changée explicitement ici. ----------
-	await db.update(workspace).set({ supportEnabled: true }).where(eq(workspace.id, ws.id));
+	await db.update(workspace).set({ supportEnabled: true, supportTimeTrackingEnabled: true }).where(eq(workspace.id, ws.id));
 
 	const rotationUserIds = personas.map((p) => userByEmail.get(p.email)!.id);
 	await db
@@ -793,6 +794,24 @@ async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, pe
 		rotationUserIds.length;
 	const overrideUserId = rotationUserIds[(normalIndex + 1) % rotationUserIds.length];
 	await db.insert(supportOverride).values({ workspaceId: ws.id, periodStart: currentPeriodStart, userId: overrideUserId });
+
+	// ---------- Temps sur les tickets de support (cf. workspace.supportTimeTrackingEnabled) : quelques
+	// saisies éparpillées sur les 10 derniers jours, réparties sur les personas, pour voir tout de suite
+	// "Mon temps sur le support" + "Historique de l'équipe" + l'export Excel avec de la matière. ----------
+	const SUPPORT_TICKET_REFS = ['INC-4821', 'INC-5032', 'SUP-118', 'INC-4790', 'SUP-102'];
+	const SUPPORT_DURATIONS_MIN = [15, 30, 45, 60, 90, 105, 150]; // 15m, 30m, 45m, 1h, 1h30m, 1h45m, 2h30m
+	const supportTimeRows: (typeof supportTimeEntry.$inferInsert)[] = [];
+	for (let i = 0; i < 14; i++) {
+		const p = personas[i % personas.length];
+		supportTimeRows.push({
+			workspaceId: ws.id,
+			userId: userByEmail.get(p.email)!.id,
+			ticketRef: rand(SUPPORT_TICKET_REFS),
+			minutes: rand(SUPPORT_DURATIONS_MIN),
+			day: toISODate(addDays(today, -Math.floor(i / personas.length) * 2 - (i % personas.length === 0 ? 0 : 1)))
+		});
+	}
+	await db.insert(supportTimeEntry).values(supportTimeRows);
 
 	// ---------- Absences : congés/formations passés (déjà pris) et à venir (prévisionnels) ----------
 	const absenceRows: (typeof absence.$inferInsert)[] = [];
@@ -1145,7 +1164,7 @@ async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, pe
 	const totalAbsences = insertedAbsences.length + clientAbsenceRows.length;
 	console.log(
 		`✓ "${wsName}" créé — ${totalTickets} tickets sur ${sprintDefs.length} sprints / ${VERSION_NAMES.length} versions, ` +
-			`${entryDrafts.length} imputations (${allDays.length} jours ouvrés, du ${allDays[0]} au ${allDays[allDays.length - 1]}), ${snapshotRows.length} snapshots, ${moodVoteRows.length} votes team mood sur 7 semaines, ${totalAbsences} absences (dont 1 membre externe), ${changeLogRows.length} entrées d'historique, 6 objectifs de semaine (dont David en vacances la semaine prochaine, sans objectif), 3 runs de sync Jira (import initial de ${insertedTickets.length} tickets, run récent de ${insertedRecentTickets.length} tickets encore annulables, 1 en échec), perm support activée (${rotationUserIds.length} personnes en rotation, 1 override sur la période courante), ${monthKeys.length} clôtures mensuelles (${monthKeys.length - 1} intégrées + 1 en brouillon sur ${currentMonthKey}), wrapped ${wrappedYear} figé pour ${personas.length} personnes (voir /wrapped?preview=1 en ADMIN).`
+			`${entryDrafts.length} imputations (${allDays.length} jours ouvrés, du ${allDays[0]} au ${allDays[allDays.length - 1]}), ${snapshotRows.length} snapshots, ${moodVoteRows.length} votes team mood sur 7 semaines, ${totalAbsences} absences (dont 1 membre externe), ${changeLogRows.length} entrées d'historique, 6 objectifs de semaine (dont David en vacances la semaine prochaine, sans objectif), 3 runs de sync Jira (import initial de ${insertedTickets.length} tickets, run récent de ${insertedRecentTickets.length} tickets encore annulables, 1 en échec), perm support activée (${rotationUserIds.length} personnes en rotation, 1 override sur la période courante), ${supportTimeRows.length} saisies de temps support, ${monthKeys.length} clôtures mensuelles (${monthKeys.length - 1} intégrées + 1 en brouillon sur ${currentMonthKey}), wrapped ${wrappedYear} figé pour ${personas.length} personnes (voir /wrapped?preview=1 en ADMIN).`
 	);
 	for (const p of personas) console.log(`  ${p.email.padEnd(32)} ${p.password.padEnd(14)} (${p.role})`);
 }

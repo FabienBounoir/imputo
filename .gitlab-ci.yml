@@ -148,7 +148,11 @@ deploy:preprod:
     # POST form submissions are forbidden", voir openshift/README.md).
     - HOST=$(oc get route imputo -o jsonpath='{.spec.host}')
     - oc patch configmap imputo-config --type merge -p "{\"data\":{\"BASE_URL\":\"https://${HOST}\",\"ORIGIN\":\"https://${HOST}\"}}"
-    - oc start-build imputo --build-arg=APP_VERSION="v$CI_COMMIT_SHORT_SHA" --follow
+    # --commit : le BuildConfig a sa source Git figée sur `main` (voir buildconfig.yaml), donc sans
+    # ça `oc start-build` build toujours main peu importe la branche du pipeline qui l'a déclenché —
+    # seul APP_VERSION reflétait alors la vraie branche, ce qui donnait un site affichant le bon SHA
+    # tout en tournant sur un code différent.
+    - oc start-build imputo --commit="$CI_COMMIT_SHA" --build-arg=APP_VERSION="v$CI_COMMIT_SHORT_SHA" --follow
     - oc rollout status deployment/imputo --timeout=5m
     # Ligne verticale sur tous les graphes Grafana au moment du déploiement — corrèle un pic
     # d'erreur avec "un déploiement vient-il de se produire ?" sans avoir à croiser les dates à la
@@ -170,7 +174,7 @@ deploy:preprod:
         oc get pods -l app=imputo --no-headers | grep -q Terminating || break
         sleep 2
       done
-    - oc start-build imputo-tools --follow
+    - oc start-build imputo-tools --commit="$CI_COMMIT_SHA" --follow
     - sed "s#CHANGEME-namespace#${NS}#" openshift/cronjob-jira-sync.yaml | oc apply -f -
 
 # Manuel, jamais automatique : Loki + Grafana (namespace imputo-logs, séparé, quota indépendant —
@@ -264,5 +268,5 @@ deploy:production:
     # CronJob de sync Jira récurrent, qui tourne isolé du pod web (voir cronjob-jira-sync.yaml).
     # Pas d'imputo-seed en prod : ça reste strictement un outil de démo preprod.
     - oc apply -f openshift/buildconfig-tools.yaml
-    - oc start-build imputo-tools --follow
+    - oc start-build imputo-tools --commit="$CI_COMMIT_TAG" --follow
     - sed "s#CHANGEME-namespace#${NS}#" openshift/cronjob-jira-sync.yaml | oc apply -f -

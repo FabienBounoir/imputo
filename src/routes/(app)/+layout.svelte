@@ -8,6 +8,7 @@
 	import TourHost from '$lib/components/TourHost.svelte';
 	import NotificationPromptModal from '$lib/components/NotificationPromptModal.svelte';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
+	import SupportTimePalette from '$lib/components/SupportTimePalette.svelte';
 	import Snow from '$lib/components/Snow.svelte';
 	import Hearts from '$lib/components/Hearts.svelte';
 	import Garland from '$lib/components/Garland.svelte';
@@ -231,7 +232,7 @@
 				<span class="badge" title="Congés en attente de validation">{data.pendingAbsencesCount}</span>
 			{/if}
 		</a>
-		{#if data.workspace?.supportEnabled}
+		{#if data.workspace?.supportEnabled || data.workspace?.supportTimeTrackingEnabled}
 			<a
 				class="nav-item"
 				class:active={isActive('/support')}
@@ -370,6 +371,7 @@
 />
 <NotificationPromptModal vapidPublicKey={data.vapidPublicKey} />
 <CommandPalette bind:this={commandPalette} {data} />
+<SupportTimePalette enabled={data.workspace?.supportTimeTrackingEnabled ?? false} />
 {#if seasonalVisible && seasonalIds.has('christmas')}<Snow />{/if}
 {#if seasonalVisible && seasonalIds.has('valentine')}<Hearts />{/if}
 {#if seasonalVisible && (seasonalIds.has('new-year') || seasonalIds.has('bastille-day'))}<Fireworks />{/if}

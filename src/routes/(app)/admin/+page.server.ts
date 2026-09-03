@@ -73,6 +73,7 @@ import {
 	setSupportEnabled,
 	setSupportCadence,
 	setSupportIncludeSaturday,
+	setSupportTimeTrackingEnabled,
 	listRotationMembers,
 	addRotationMember,
 	removeRotationMember,
@@ -191,6 +192,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		imputationStep: ws.imputationStep,
 		mood,
 		support,
+		supportTimeTrackingEnabled: ws.supportTimeTrackingEnabled,
 		supportMembers,
 		jira,
 		jiraSyncRuns,
@@ -295,6 +297,14 @@ export const actions: Actions = {
 		const ws = locals.workspace!;
 		const includeSaturday = (await request.formData()).get('includeSaturday') === 'true';
 		await setSupportIncludeSaturday(ws.workspaceId, includeSaturday);
+		return { supportOk: true };
+	},
+
+	supportTimeTrackingEnabled: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const enabled = (await request.formData()).get('enabled') === 'true';
+		await setSupportTimeTrackingEnabled(ws.workspaceId, enabled);
 		return { supportOk: true };
 	},
 
