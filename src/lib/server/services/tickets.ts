@@ -20,6 +20,7 @@ import {
 	type Role
 } from '$lib/server/db';
 import { isManagerOrAdmin } from './workspaces';
+import { resolveDefaultPerimeterId, assertPerimeterInWorkspace } from './perimeters';
 import { logChange } from './changeLog';
 import type { AbsenceType } from '$lib/absenceTypes';
 import {
@@ -1034,11 +1035,15 @@ export async function createTicket(
 		sspId?: string | null;
 		estimationPrev?: string | null;
 		enveloppeTotale?: string | null;
+		/** Omis = périmètre par défaut de l'espace (cf. resolveDefaultPerimeterId). */
+		perimeterId?: string;
 	}
 ) {
+	const perimeterId = data.perimeterId ?? (await resolveDefaultPerimeterId(workspaceId));
+	if (data.perimeterId) await assertPerimeterInWorkspace(workspaceId, data.perimeterId);
 	const [row] = await db
 		.insert(ticket)
-		.values({ workspaceId, ...data, raeUpdatedAt: new Date() })
+		.values({ workspaceId, ...data, perimeterId, raeUpdatedAt: new Date() })
 		.returning({ id: ticket.id });
 	return row;
 }

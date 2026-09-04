@@ -13,7 +13,7 @@ import {
 	listTicketsPage,
 	NO_ACTIVITY_ID
 } from './tickets';
-import { makeWorkspace, addMember } from './test-helpers';
+import { makeWorkspace, addMember, defaultPerimeterId } from './test-helpers';
 import { createActivity, listActivities } from './params';
 import { setCell } from './imputation';
 import { todayInParis } from '$lib/utils/date';
@@ -265,10 +265,11 @@ describe('deleteUntouchedSyncedTickets', () => {
 		const { workspaceId } = await makeWorkspace();
 		const runId = await makeSyncRun(workspaceId);
 		const otherRunId = await makeSyncRun(workspaceId);
+		const perimeterId = await defaultPerimeterId(workspaceId);
 		await db.insert(ticket).values([
-			{ workspaceId, key: 'S-1', title: 'A', createdBySyncRunId: runId },
-			{ workspaceId, key: 'S-2', title: 'B', createdBySyncRunId: runId },
-			{ workspaceId, key: 'S-3', title: 'Autre run', createdBySyncRunId: otherRunId }
+			{ workspaceId, perimeterId, key: 'S-1', title: 'A', createdBySyncRunId: runId },
+			{ workspaceId, perimeterId, key: 'S-2', title: 'B', createdBySyncRunId: runId },
+			{ workspaceId, perimeterId, key: 'S-3', title: 'Autre run', createdBySyncRunId: otherRunId }
 		]);
 
 		const deleted = await deleteUntouchedSyncedTickets(workspaceId, runId);
@@ -280,21 +281,22 @@ describe('deleteUntouchedSyncedTickets', () => {
 	it('conserve un ticket dès qu’il porte une trace humaine : champ édité, imputation, ou parent d’un autre ticket', async () => {
 		const { workspaceId, userId } = await makeWorkspace();
 		const runId = await makeSyncRun(workspaceId);
+		const perimeterId = await defaultPerimeterId(workspaceId);
 
 		const [edited] = await db
 			.insert(ticket)
-			.values({ workspaceId, key: 'K-EDIT', title: 'x', createdBySyncRunId: runId, comment: 'note manuelle' })
+			.values({ workspaceId, perimeterId, key: 'K-EDIT', title: 'x', createdBySyncRunId: runId, comment: 'note manuelle' })
 			.returning({ id: ticket.id });
 		const [withTime] = await db
 			.insert(ticket)
-			.values({ workspaceId, key: 'K-TIME', title: 'x', createdBySyncRunId: runId })
+			.values({ workspaceId, perimeterId, key: 'K-TIME', title: 'x', createdBySyncRunId: runId })
 			.returning({ id: ticket.id });
 		const [parent] = await db
 			.insert(ticket)
-			.values({ workspaceId, key: 'K-PARENT', title: 'x', createdBySyncRunId: runId })
+			.values({ workspaceId, perimeterId, key: 'K-PARENT', title: 'x', createdBySyncRunId: runId })
 			.returning({ id: ticket.id });
-		await db.insert(ticket).values({ workspaceId, key: 'K-CHILD', title: 'x', parentId: parent.id });
-		await db.insert(ticket).values({ workspaceId, key: 'K-CLEAN', title: 'x', createdBySyncRunId: runId });
+		await db.insert(ticket).values({ workspaceId, perimeterId, key: 'K-CHILD', title: 'x', parentId: parent.id });
+		await db.insert(ticket).values({ workspaceId, perimeterId, key: 'K-CLEAN', title: 'x', createdBySyncRunId: runId });
 
 		await db.insert(timeEntry).values({
 			workspaceId,
@@ -318,9 +320,11 @@ describe('deleteUntouchedSyncedTickets', () => {
 		const runId = await makeSyncRun(workspaceId);
 		const [ver] = await db.insert(sprint).values({ workspaceId, kind: 'VERSION', name: 'V36' }).returning({ id: sprint.id });
 		const [spr] = await db.insert(sprint).values({ workspaceId, kind: 'SPRINT', name: 'Sprint V36' }).returning({ id: sprint.id });
+		const perimeterId = await defaultPerimeterId(workspaceId);
 
 		await db.insert(ticket).values({
 			workspaceId,
+			perimeterId,
 			key: 'K-SPRINTVER',
 			title: 'x',
 			createdBySyncRunId: runId,
@@ -342,10 +346,11 @@ describe('deleteUntouchedSyncedTickets', () => {
 			.insert(ssp)
 			.values({ workspaceId, code: 'ZZ-1', label: 'Avec code' })
 			.returning();
+		const perimeterId = await defaultPerimeterId(workspaceId);
 		await db.insert(ticket).values([
-			{ workspaceId, key: 'NS-1', title: 'Avec SSP', sspId: s.id },
-			{ workspaceId, key: 'NS-2', title: 'Sans SSP' },
-			{ workspaceId, key: 'NS-3', title: 'Sans SSP bis' }
+			{ workspaceId, perimeterId, key: 'NS-1', title: 'Avec SSP', sspId: s.id },
+			{ workspaceId, perimeterId, key: 'NS-2', title: 'Sans SSP' },
+			{ workspaceId, perimeterId, key: 'NS-3', title: 'Sans SSP bis' }
 		]);
 
 		const filtered = await listTicketsPage(workspaceId, true, true, { noSsp: true });
@@ -356,10 +361,11 @@ describe('deleteUntouchedSyncedTickets', () => {
 
 	it('listTicketsPage: sort=priority ordonne du plus urgent (P0) au moins urgent', async () => {
 		const { workspaceId } = await makeWorkspace();
+		const perimeterId = await defaultPerimeterId(workspaceId);
 		await db.insert(ticket).values([
-			{ workspaceId, key: 'PRIO-LOW', title: 'Backlog', priority: 4 },
-			{ workspaceId, key: 'PRIO-HIGH', title: 'Urgent', priority: 0 },
-			{ workspaceId, key: 'PRIO-MID', title: 'Défaut' } // priority: default 2 (Normal)
+			{ workspaceId, perimeterId, key: 'PRIO-LOW', title: 'Backlog', priority: 4 },
+			{ workspaceId, perimeterId, key: 'PRIO-HIGH', title: 'Urgent', priority: 0 },
+			{ workspaceId, perimeterId, key: 'PRIO-MID', title: 'Défaut' } // priority: default 2 (Normal)
 		]);
 
 		const byPriority = await listTicketsPage(workspaceId, true, true, {}, undefined, true, 'priority');

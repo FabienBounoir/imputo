@@ -1,7 +1,7 @@
 import { and, desc, eq } from 'drizzle-orm';
 import { describe, it, expect } from 'vitest';
 import { db, workspace, project, sprint, ticket, jiraSyncRun } from '$lib/server/db';
-import { makeWorkspace } from './test-helpers';
+import { makeWorkspace, defaultPerimeterId } from './test-helpers';
 import { encryptSecret } from '../auth/secretCrypto';
 import { syncWorkspace, syncAllEnabledWorkspaces, WATERMARK_SAFETY_MARGIN_MS, type JiraSyncConfig } from './jiraSync';
 
@@ -142,7 +142,14 @@ describe('jiraSync / syncWorkspace', () => {
 		const ws = await makeJiraWorkspace({ conflictStrategy: 'JIRA_WINS' });
 		await db
 			.insert(ticket)
-			.values({ workspaceId: ws.workspaceId, key: 'T-1', title: 'Titre manuel', estimationReal: '5', comment: 'note manuelle' });
+			.values({
+				workspaceId: ws.workspaceId,
+				perimeterId: await defaultPerimeterId(ws.workspaceId),
+				key: 'T-1',
+				title: 'Titre manuel',
+				estimationReal: '5',
+				comment: 'note manuelle'
+			});
 
 		await syncWorkspace(db, cfg, ws.workspaceId, { fetchImpl: fakeFetch({ issues: [rawIssue('T-1', 'Titre Jira')] }) });
 
@@ -155,7 +162,9 @@ describe('jiraSync / syncWorkspace', () => {
 	describe('stratégie de conflit', () => {
 		it('JIRA_WINS écrase title/projectId d’un ticket déjà connu', async () => {
 			const ws = await makeJiraWorkspace({ conflictStrategy: 'JIRA_WINS' });
-			await db.insert(ticket).values({ workspaceId: ws.workspaceId, key: 'T-1', title: 'Titre manuel' });
+			await db
+				.insert(ticket)
+				.values({ workspaceId: ws.workspaceId, perimeterId: await defaultPerimeterId(ws.workspaceId), key: 'T-1', title: 'Titre manuel' });
 
 			await syncWorkspace(db, cfg, ws.workspaceId, { fetchImpl: fakeFetch({ issues: [rawIssue('T-1', 'Titre Jira')] }) });
 
@@ -165,7 +174,9 @@ describe('jiraSync / syncWorkspace', () => {
 
 		it('KEEP_LOCAL (défaut) ne modifie jamais un ticket déjà connu', async () => {
 			const ws = await makeJiraWorkspace({ conflictStrategy: 'KEEP_LOCAL' });
-			await db.insert(ticket).values({ workspaceId: ws.workspaceId, key: 'T-1', title: 'Titre manuel' });
+			await db
+				.insert(ticket)
+				.values({ workspaceId: ws.workspaceId, perimeterId: await defaultPerimeterId(ws.workspaceId), key: 'T-1', title: 'Titre manuel' });
 
 			await syncWorkspace(db, cfg, ws.workspaceId, { fetchImpl: fakeFetch({ issues: [rawIssue('T-1', 'Titre Jira')] }) });
 
@@ -314,7 +325,9 @@ describe('jiraSync / syncWorkspace', () => {
 		it('KEEP_LOCAL sur un ticket déjà connu ne crée pas de projet/sprint/version orphelin (repéré en test réel)', async () => {
 			const ws = await makeJiraWorkspace({ conflictStrategy: 'KEEP_LOCAL' });
 			// Ticket déjà connu (créé à la main, jamais synced) — KEEP_LOCAL ne le touchera pas.
-			await db.insert(ticket).values({ workspaceId: ws.workspaceId, key: 'T-1', title: 'Titre manuel' });
+			await db
+				.insert(ticket)
+				.values({ workspaceId: ws.workspaceId, perimeterId: await defaultPerimeterId(ws.workspaceId), key: 'T-1', title: 'Titre manuel' });
 
 			await syncWorkspace(db, cfg, ws.workspaceId, {
 				fetchImpl: fakeFetch({
