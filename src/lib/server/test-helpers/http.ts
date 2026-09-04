@@ -1,4 +1,5 @@
 import { listMembershipsForUser } from '$lib/server/services/workspaces';
+import { loadPerimeterCtx, EMPTY_PERIMETER_CTX } from '$lib/server/services/perimeters';
 
 // Fabrique les objets minimaux dont les handlers +server.ts / +page.server.ts ont besoin, sans
 // mocker tout RequestEvent (SvelteKit ne fournit pas de harness de test officiel pour ça, et ses
@@ -22,7 +23,12 @@ export async function fakeLocals(userId: string, opts: { email?: string; display
 		role: membership?.role ?? null,
 		canViewImputations: membership?.canViewImputations ?? false,
 		canViewMoodResults: membership?.canViewMoodResults ?? false,
-		deactivatedWorkspace: null
+		deactivatedWorkspace: null,
+		// Chargé pour de vrai, comme hooks.server.ts : un contexte périmètre bidon masquerait
+		// justement les régressions de droits qu'on veut attraper.
+		perimeterCtx: membership
+			? await loadPerimeterCtx(membership.workspaceId, userId, membership.role)
+			: EMPTY_PERIMETER_CTX
 	};
 }
 

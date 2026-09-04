@@ -25,7 +25,7 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 	const [ref, dashboard] = await Promise.all([
 		getRefData(ws.workspaceId, locals.user!.sortActivitiesAlpha),
 		selectedId
-			? getSprintDashboard(ws.workspaceId, selectedId, ws.testPhase, isAdmin, locals.user!.sortActivitiesAlpha, excludeUserIds)
+			? getSprintDashboard(ws.workspaceId, selectedId, ws.testPhase, locals.perimeterCtx, locals.user!.sortActivitiesAlpha, excludeUserIds)
 			: Promise.resolve(null)
 	]);
 	return {

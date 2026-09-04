@@ -1,6 +1,7 @@
 import { redirect } from '@sveltejs/kit';
 import type { LayoutServerLoad } from './$types';
 import { getPeriodParticipation, getMoodConfig, getMyVote } from '$lib/server/services/mood';
+import { hasLeadScope } from '$lib/server/services/perimeters';
 import { countPendingAbsences } from '$lib/server/services/absences';
 import { getCurrentDuty } from '$lib/server/services/support';
 import { getMyWrapped, isWrappedWindowOpen, wrappedYearFor } from '$lib/server/services/wrapped';
@@ -64,6 +65,11 @@ export const load: LayoutServerLoad = async ({ locals }) => {
 		workspace: locals.workspace,
 		memberships: locals.memberships,
 		role: locals.role,
+		// Périmètres de la personne + capacité à y agir comme CP : le chrome en a besoin (pastilles,
+		// entrées de navigation réservées aux pilotes). Les Set ne traversent pas la frontière
+		// serveur→client telles quelles, on n'expose donc que ce qui sert à l'affichage.
+		perimeters: locals.perimeterCtx.perimeters,
+		isPerimeterLead: hasLeadScope(locals.perimeterCtx),
 		canViewMoodResults: locals.canViewMoodResults,
 		moodStatus,
 		moodTotalVotes,

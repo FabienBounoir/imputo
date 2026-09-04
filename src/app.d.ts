@@ -1,5 +1,6 @@
 import type { Role } from '$lib/server/db';
 import type { MembershipInfo } from '$lib/server/services/workspaces';
+import type { PerimeterCtx } from '$lib/server/services/perimeters';
 
 declare global {
 	// Injectée par vite.config.ts (define) depuis ARG APP_VERSION du Dockerfile.
@@ -25,6 +26,8 @@ declare global {
 			canViewImputations: boolean;
 			canViewMoodResults: boolean;
 			deactivatedWorkspace: { workspaceId: string; workspaceName: string; accentColor: string } | null;
+			/** Périmètres de l'espace courant + capacité à y agir comme CP (cf. services/perimeters.ts). */
+			perimeterCtx: PerimeterCtx;
 		}
 		// interface Error {}
 		// interface PageData {}

@@ -41,6 +41,7 @@ function makeDashboard(overrides: Partial<SprintDashboard> = {}): SprintDashboar
 			ecartVsEstimeTotal: 0,
 			ecartVsBudgetTotal: null,
 			budgetTotal: null,
+			budgetPartial: false,
 			ticketCount: 1
 		},
 		byActivity: [],
@@ -84,6 +85,7 @@ describe('buildSprintTicketsSvg', () => {
 				ecartVsEstimeTotal: 0,
 				ecartVsBudgetTotal: 1,
 				budgetTotal: 10,
+				budgetPartial: false,
 				ticketCount: 1
 			},
 			tickets: [makeTicket({ budget: 10, ecartVsBudget: 1 })]

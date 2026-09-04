@@ -22,7 +22,7 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 	let wsRow;
 	try {
 		[dashboard, wsRow] = await Promise.all([
-			getSprintDashboard(ws.workspaceId, id, ws.testPhase, isAdmin, locals.user.sortActivitiesAlpha, excludeUserIds),
+			getSprintDashboard(ws.workspaceId, id, ws.testPhase, locals.perimeterCtx, locals.user.sortActivitiesAlpha, excludeUserIds),
 			db.select({ accentColor: workspace.accentColor }).from(workspace).where(eq(workspace.id, ws.workspaceId)).limit(1)
 		]);
 	} catch {

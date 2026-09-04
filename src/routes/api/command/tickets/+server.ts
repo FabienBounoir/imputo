@@ -1,7 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { listTicketsPage } from '$lib/server/services/tickets';
-import { isManagerOrAdmin } from '$lib/server/services/workspaces';
 
 /** Recherche ticket (clé/titre) pour la palette de commandes — quelques résultats, pas de pagination. */
 export const GET: RequestHandler = async ({ locals, url }) => {
@@ -14,7 +13,7 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 	const { rows } = await listTicketsPage(
 		ws.workspaceId,
 		ws.testPhase,
-		isManagerOrAdmin(locals.role),
+		locals.perimeterCtx,
 		{ query: q },
 		{ pageSize: 8, page: 1 },
 		false // réponse = juste id/key/title, jamais le détail par activité

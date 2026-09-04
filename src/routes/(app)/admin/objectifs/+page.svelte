@@ -195,9 +195,13 @@
 				<h3>Vue globale — Semaine {data.weekNumber}</h3>
 				<p class="hint">Ce que chaque membre a comme objectif cette semaine.</p>
 			</div>
-			<button class="btn btn-ghost" type="button" disabled={imgBusy} onclick={downloadObjectivesPng}>
-				{imgBusy ? 'Génération…' : '⬇ Exporter en image (PNG)'}
-			</button>
+			<!-- L'export rend la semaine de tout l'espace, sans notion de périmètre : réservé aux
+			     MANAGER/ADMIN, masqué pour un CP (qui ne pilote que sa population). -->
+			{#if data.canExportImage}
+				<button class="btn btn-ghost" type="button" disabled={imgBusy} onclick={downloadObjectivesPng}>
+					{imgBusy ? 'Génération…' : '⬇ Exporter en image (PNG)'}
+				</button>
+			{/if}
 		</div>
 		<div class="ref-grid">
 			{#each activeMembers as m (m.id)}

@@ -13,6 +13,7 @@ import {
 } from '$lib/server/services/imputation';
 import { getRefData, listTicketSummaries } from '$lib/server/services/tickets';
 import { getMembership, isManagerOrAdmin } from '$lib/server/services/workspaces';
+import { hasLeadScope, listPerimeterCollaborators } from '$lib/server/services/perimeters';
 import { listObjectivesForUserWeeks, vacationWeeks } from '$lib/server/services/weeklyObjectives';
 import { listAbsencesForRange, buildAbsenceGrid } from '$lib/server/services/absences';
 import { resolvePeriodPrefs } from '$lib/server/services/imputationPrefs';
@@ -24,9 +25,17 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 	const ws = locals.workspace;
 	if (!ws) redirect(303, '/register');
 	const isAdmin = locals.role === 'ADMIN';
-	// canViewOthers : peut consulter la feuille d'un tiers via ?u= (admin, ou capacité de lecture
-	// accordée indépendamment du rôle) — n'accorde aucun droit d'édition, cf. resolveSubjectId.
-	const canViewOthers = isAdmin || locals.canViewImputations;
+	const ctx = locals.perimeterCtx;
+	// Un CP (ou son backup) consulte la feuille des collaborateurs de SES périmètres : c'est le
+	// pendant direct de « des collaborateurs interviennent sur son périmètre ». `null` = aucune
+	// restriction de population (admin, ou capacité de lecture accordée indépendamment du rôle).
+	const leadCollaboratorIds =
+		isAdmin || locals.canViewImputations || !hasLeadScope(ctx)
+			? null
+			: new Set(await listPerimeterCollaborators(ws.workspaceId, [...ctx.leadPerimeterIds]));
+	// canViewOthers : peut consulter la feuille d'un tiers via ?u= (admin, capacité de lecture, ou
+	// CP sur sa population) — n'accorde aucun droit d'édition, cf. resolveSubjectId.
+	const canViewOthers = isAdmin || locals.canViewImputations || leadCollaboratorIds !== null;
 
 	const { granularity, mode } = resolvePeriodPrefs(
 		cookies,
@@ -43,7 +52,12 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 	// Membres "factice" (arrangements entre projets en clôture, pas de vraies personnes, cf.
 	// schema.ts membership.factice) : invisibles pour tout rôle non-ADMIN — sélecteur de membre,
 	// vue "Toute l'équipe", et accès direct via ?u= (sinon contournable en tapant l'URL).
-	const visibleMembers = isAdmin ? ref.members : ref.members.filter((m) => !m.factice);
+	// Un CP ne voit que sa population dans le sélecteur — et le filtre vaut aussi pour l'accès direct
+	// par ?u=, sinon il suffirait de taper l'URL d'un membre d'un autre périmètre.
+	const inLeadScope = (id: string) => !leadCollaboratorIds || id === user.id || leadCollaboratorIds.has(id);
+	const visibleMembers = (isAdmin ? ref.members : ref.members.filter((m) => !m.factice)).filter((m) =>
+		inLeadScope(m.id)
+	);
 
 	// Un admin, ou une personne avec la capacité canViewImputations, peut consulter l'imputation
 	// d'un autre membre via ?u=<userId> — en lecture seule sauf pour l'admin (cf. resolveSubjectId).
@@ -85,7 +99,15 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 	// `factice` dans son type. On retire juste les lignes concernées pour un non-admin, sans toucher
 	// aux totaux (mêmes heures réelles, juste la ventilation par personne qui reste masquée).
 	const facticeIds = isAdmin ? null : new Set(ref.members.filter((m) => m.factice).map((m) => m.id));
-	const visibleTeam = team && facticeIds ? { ...team, members: team.members.filter((m) => !facticeIds.has(m.userId)) } : team;
+	const visibleTeam =
+		team && (facticeIds || leadCollaboratorIds)
+			? {
+					...team,
+					members: team.members.filter(
+						(m) => !facticeIds?.has(m.userId) && inLeadScope(m.userId)
+					)
+				}
+			: team;
 
 	return {
 		sheet,

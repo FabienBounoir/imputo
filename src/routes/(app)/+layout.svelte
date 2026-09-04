@@ -287,7 +287,8 @@
 				Par sprint
 			</a>
 		</div>
-		{#if data.role === 'ADMIN' || data.role === 'MANAGER'}
+		<!-- Un CP (ou son backup) pilote les objectifs des collaborateurs de ses périmètres. -->
+		{#if data.role === 'ADMIN' || data.role === 'MANAGER' || data.isPerimeterLead}
 			<a class="nav-item" class:active={isActive('/admin/objectifs')} href="/admin/objectifs">
 				<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
 				Objectifs de la semaine

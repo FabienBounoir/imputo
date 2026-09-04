@@ -13,8 +13,9 @@ import {
 	listTicketsPage,
 	NO_ACTIVITY_ID
 } from './tickets';
-import { makeWorkspace, addMember, defaultPerimeterId } from './test-helpers';
+import { makeWorkspace, addMember, defaultPerimeterId, loadPerimeterCtx } from './test-helpers';
 import { createActivity, listActivities } from './params';
+import { setPerimeterMemberRole } from './perimeters';
 import { setCell } from './imputation';
 import { todayInParis } from '$lib/utils/date';
 
@@ -49,49 +50,80 @@ describe('updateTicketField — permissions par rôle', () => {
 		const { workspaceId, userId } = await makeWorkspace();
 		const t = await createTicket(workspaceId, { key: 'T-2', title: 'Titre initial' });
 
-		await updateTicketField(workspaceId, t.id, 'title', 'Titre modifié', 'USER', userId);
+		await updateTicketField(workspaceId, t.id, 'title', 'Titre modifié', await loadPerimeterCtx(workspaceId, userId, 'USER'), userId);
 		const [updated] = await listTickets(workspaceId).then((rows) => rows.filter((r) => r.id === t.id));
 		expect(updated.title).toBe('Titre modifié');
 	});
 
 	it('un USER ne peut PAS éditer un champ MANAGER_ONLY (estimationReal)', async () => {
-		const { workspaceId, userId } = await makeWorkspace();
+		const { workspaceId } = await makeWorkspace();
+		// Surtout pas le fondateur : il est ADMIN *et* CP du périmètre par défaut, le test passerait
+		// pour de mauvaises raisons.
+		const { userId } = await addMember(workspaceId, 'USER');
 		const t = await createTicket(workspaceId, { key: 'T-3', title: 'x' });
 
-		await expect(updateTicketField(workspaceId, t.id, 'estimationReal', '5', 'USER', userId)).rejects.toThrow(
+		await expect(updateTicketField(workspaceId, t.id, 'estimationReal', '5', await loadPerimeterCtx(workspaceId, userId, 'USER'), userId)).rejects.toThrow(
 			'Champ non éditable.'
 		);
 	});
 
 	it('un USER ne peut PAS éditer un champ ADMIN_ONLY (enveloppeTotale)', async () => {
-		const { workspaceId, userId } = await makeWorkspace();
+		const { workspaceId } = await makeWorkspace();
+		const { userId } = await addMember(workspaceId, 'USER');
 		const t = await createTicket(workspaceId, { key: 'T-4', title: 'x' });
 
-		await expect(updateTicketField(workspaceId, t.id, 'enveloppeTotale', '1000', 'USER', userId)).rejects.toThrow(
+		await expect(updateTicketField(workspaceId, t.id, 'enveloppeTotale', '1000', await loadPerimeterCtx(workspaceId, userId, 'USER'), userId)).rejects.toThrow(
 			'Champ non éditable.'
 		);
 	});
 
-	it('un MANAGER peut éditer estimationReal ET enveloppeTotale', async () => {
+	// Le chiffrage et le budget appartiennent désormais au CP du périmètre DU TICKET, pas à un rôle
+	// d'espace : un MANAGER qui ne pilote pas ce périmètre n'y touche plus.
+	it('le CP du périmètre du ticket peut éditer estimationReal ET enveloppeTotale', async () => {
 		const { workspaceId } = await makeWorkspace();
 		const { userId: managerId } = await addMember(workspaceId, 'MANAGER');
 		const t = await createTicket(workspaceId, { key: 'T-5', title: 'x' });
+		await setPerimeterMemberRole(workspaceId, await defaultPerimeterId(workspaceId), managerId, 'CP');
+		const cp = await loadPerimeterCtx(workspaceId, managerId, 'MANAGER');
 
-		await updateTicketField(workspaceId, t.id, 'estimationReal', '3.5', 'MANAGER', managerId);
-		await updateTicketField(workspaceId, t.id, 'enveloppeTotale', '2000', 'MANAGER', managerId);
+		await updateTicketField(workspaceId, t.id, 'estimationReal', '3.5', cp, managerId);
+		await updateTicketField(workspaceId, t.id, 'enveloppeTotale', '2000', cp, managerId);
 		const [updated] = await listTickets(workspaceId).then((rows) => rows.filter((r) => r.id === t.id));
 		expect(updated.estimationReal).toBe(3.5);
 		expect(updated.enveloppeTotale).toBe(2000);
+	});
+
+	it('un MANAGER qui ne pilote pas le périmètre du ticket ne peut PAS éditer estimationReal', async () => {
+		const { workspaceId } = await makeWorkspace();
+		const { userId: managerId } = await addMember(workspaceId, 'MANAGER');
+		const t = await createTicket(workspaceId, { key: 'T-5-BIS', title: 'x' });
+		const ctx = await loadPerimeterCtx(workspaceId, managerId, 'MANAGER');
+
+		await expect(updateTicketField(workspaceId, t.id, 'estimationReal', '3.5', ctx, managerId)).rejects.toThrow(
+			'Champ non éditable.'
+		);
+	});
+
+	it("le DP (ADMIN) pilote tous les périmètres sans y être rattaché", async () => {
+		const { workspaceId } = await makeWorkspace();
+		const { userId: adminId } = await addMember(workspaceId, 'ADMIN');
+		const t = await createTicket(workspaceId, { key: 'T-5-DP', title: 'x' });
+		const dp = await loadPerimeterCtx(workspaceId, adminId, 'ADMIN');
+		expect(dp.leadPerimeterIds.size).toBe(0); // aucun rattachement explicite
+
+		await updateTicketField(workspaceId, t.id, 'estimationReal', '7', dp, adminId);
+		const [updated] = await listTickets(workspaceId).then((rows) => rows.filter((r) => r.id === t.id));
+		expect(updated.estimationReal).toBe(7);
 	});
 
 	it('rejette un champ numérique négatif ou non numérique', async () => {
 		const { workspaceId, userId: adminId } = await makeWorkspace();
 		const t = await createTicket(workspaceId, { key: 'T-6', title: 'x' });
 
-		await expect(updateTicketField(workspaceId, t.id, 'estimationReal', '-1', 'ADMIN', adminId)).rejects.toThrow(
+		await expect(updateTicketField(workspaceId, t.id, 'estimationReal', '-1', await loadPerimeterCtx(workspaceId, adminId, 'ADMIN'), adminId)).rejects.toThrow(
 			'Valeur numérique invalide.'
 		);
-		await expect(updateTicketField(workspaceId, t.id, 'estimationReal', 'abc', 'ADMIN', adminId)).rejects.toThrow(
+		await expect(updateTicketField(workspaceId, t.id, 'estimationReal', 'abc', await loadPerimeterCtx(workspaceId, adminId, 'ADMIN'), adminId)).rejects.toThrow(
 			'Valeur numérique invalide.'
 		);
 	});
@@ -99,7 +131,7 @@ describe('updateTicketField — permissions par rôle', () => {
 	it('rejette un champ inconnu', async () => {
 		const { workspaceId, userId } = await makeWorkspace();
 		const t = await createTicket(workspaceId, { key: 'T-7', title: 'x' });
-		await expect(updateTicketField(workspaceId, t.id, 'notAField', 'x', 'ADMIN', userId)).rejects.toThrow(
+		await expect(updateTicketField(workspaceId, t.id, 'notAField', 'x', await loadPerimeterCtx(workspaceId, userId, 'ADMIN'), userId)).rejects.toThrow(
 			'Champ non éditable.'
 		);
 	});
@@ -110,17 +142,17 @@ describe('updateTicketField — permissions par rôle', () => {
 		const [created] = await listTickets(workspaceId).then((rows) => rows.filter((r) => r.id === t.id));
 		expect(created.priority).toBe(2);
 
-		await updateTicketField(workspaceId, t.id, 'priority', '0', 'USER', userId);
+		await updateTicketField(workspaceId, t.id, 'priority', '0', await loadPerimeterCtx(workspaceId, userId, 'USER'), userId);
 		const [updated] = await listTickets(workspaceId).then((rows) => rows.filter((r) => r.id === t.id));
 		expect(updated.priority).toBe(0);
 
-		await expect(updateTicketField(workspaceId, t.id, 'priority', '5', 'USER', userId)).rejects.toThrow(
+		await expect(updateTicketField(workspaceId, t.id, 'priority', '5', await loadPerimeterCtx(workspaceId, userId, 'USER'), userId)).rejects.toThrow(
 			'Priorité invalide (0 à 4).'
 		);
-		await expect(updateTicketField(workspaceId, t.id, 'priority', '-1', 'USER', userId)).rejects.toThrow(
+		await expect(updateTicketField(workspaceId, t.id, 'priority', '-1', await loadPerimeterCtx(workspaceId, userId, 'USER'), userId)).rejects.toThrow(
 			'Priorité invalide (0 à 4).'
 		);
-		await expect(updateTicketField(workspaceId, t.id, 'priority', '2.5', 'USER', userId)).rejects.toThrow(
+		await expect(updateTicketField(workspaceId, t.id, 'priority', '2.5', await loadPerimeterCtx(workspaceId, userId, 'USER'), userId)).rejects.toThrow(
 			'Priorité invalide (0 à 4).'
 		);
 	});
@@ -133,12 +165,12 @@ describe('updateTicketField — permissions par rôle', () => {
 		expect(created.assigneeId).toBeNull();
 		expect(created.assigneeName).toBeNull();
 
-		await updateTicketField(workspaceId, t.id, 'assigneeId', memberId, 'USER', userId);
+		await updateTicketField(workspaceId, t.id, 'assigneeId', memberId, await loadPerimeterCtx(workspaceId, userId, 'USER'), userId);
 		const [assigned] = await listTickets(workspaceId).then((rows) => rows.filter((r) => r.id === t.id));
 		expect(assigned.assigneeId).toBe(memberId);
 		expect(assigned.assigneeName).toBe('assignee-member');
 
-		await updateTicketField(workspaceId, t.id, 'assigneeId', '', 'USER', userId);
+		await updateTicketField(workspaceId, t.id, 'assigneeId', '', await loadPerimeterCtx(workspaceId, userId, 'USER'), userId);
 		const [unassigned] = await listTickets(workspaceId).then((rows) => rows.filter((r) => r.id === t.id));
 		expect(unassigned.assigneeId).toBeNull();
 	});
@@ -148,7 +180,7 @@ describe('updateTicketField — permissions par rôle', () => {
 		const { userId: adminId } = await addMember(workspaceId, 'ADMIN');
 		const t = await createTicket(workspaceId, { key: 'T-8', title: 'x' });
 
-		await updateTicketField(workspaceId, t.id, 'key', 'T-8-BIS', 'ADMIN', adminId);
+		await updateTicketField(workspaceId, t.id, 'key', 'T-8-BIS', await loadPerimeterCtx(workspaceId, adminId, 'ADMIN'), adminId);
 		const [updated] = await listTickets(workspaceId).then((rows) => rows.filter((r) => r.id === t.id));
 		expect(updated.key).toBe('T-8-BIS');
 	});
@@ -158,30 +190,37 @@ describe('updateTicketField — permissions par rôle', () => {
 		const { userId: managerId } = await addMember(workspaceId, 'MANAGER');
 		const t = await createTicket(workspaceId, { key: 'T-9', title: 'x' });
 
-		await expect(updateTicketField(workspaceId, t.id, 'key', 'T-9-BIS', 'MANAGER', managerId)).rejects.toThrow(
+		await expect(updateTicketField(workspaceId, t.id, 'key', 'T-9-BIS', await loadPerimeterCtx(workspaceId, managerId, 'MANAGER'), managerId)).rejects.toThrow(
 			'Champ non éditable.'
 		);
 	});
 });
 
-describe('canEditActivityField — budget par activité (ADMIN strict)', () => {
-	it('un MANAGER ne peut PAS éditer le budget par activité (contrairement au reste du chiffrage)', async () => {
+describe('canEditActivityField — budget par activité (lead du périmètre du ticket)', () => {
+	it('un MANAGER qui ne pilote pas le périmètre ne peut PAS éditer le budget par activité', async () => {
 		const { workspaceId } = await makeWorkspace();
 		const { userId: managerId } = await addMember(workspaceId, 'MANAGER');
 		const t = await createTicket(workspaceId, { key: 'T-10', title: 'x' });
 		await createActivity(workspaceId, `Dev-${t.id}`);
 		const [act] = (await listActivities(workspaceId)).filter((a) => a.label === `Dev-${t.id}`);
 
-		expect(await canEditActivityField(workspaceId, managerId, 'MANAGER', t.id, act.id, 'budget')).toBe(false);
+		const ctx = await loadPerimeterCtx(workspaceId, managerId, 'MANAGER');
+		expect(await canEditActivityField(workspaceId, managerId, ctx, t.id, act.id, 'budget')).toBe(false);
+
+		// …mais dès qu'il est CP de ce périmètre, oui.
+		await setPerimeterMemberRole(workspaceId, await defaultPerimeterId(workspaceId), managerId, 'CP');
+		const asCp = await loadPerimeterCtx(workspaceId, managerId, 'MANAGER');
+		expect(await canEditActivityField(workspaceId, managerId, asCp, t.id, act.id, 'budget')).toBe(true);
 	});
 
-	it('un ADMIN peut éditer le budget par activité', async () => {
+	it('le DP (ADMIN) peut éditer le budget par activité de tout périmètre', async () => {
 		const { workspaceId, userId: adminId } = await makeWorkspace();
 		const t = await createTicket(workspaceId, { key: 'T-11', title: 'x' });
 		await createActivity(workspaceId, `Dev-${t.id}`);
 		const [act] = (await listActivities(workspaceId)).filter((a) => a.label === `Dev-${t.id}`);
 
-		expect(await canEditActivityField(workspaceId, adminId, 'ADMIN', t.id, act.id, 'budget')).toBe(true);
+		const dp = await loadPerimeterCtx(workspaceId, adminId, 'ADMIN');
+		expect(await canEditActivityField(workspaceId, adminId, dp, t.id, act.id, 'budget')).toBe(true);
 	});
 
 	it("l'Estimé par activité reste éditable par tout membre, contrairement au budget", async () => {
@@ -191,8 +230,9 @@ describe('canEditActivityField — budget par activité (ADMIN strict)', () => {
 		await createActivity(workspaceId, `Dev-${t.id}`);
 		const [act] = (await listActivities(workspaceId)).filter((a) => a.label === `Dev-${t.id}`);
 
-		expect(await canEditActivityField(workspaceId, userId2, 'USER', t.id, act.id, 'estimation')).toBe(true);
-		expect(await canEditActivityField(workspaceId, userId2, 'USER', t.id, act.id, 'budget')).toBe(false);
+		const ctx = await loadPerimeterCtx(workspaceId, userId2, 'USER');
+		expect(await canEditActivityField(workspaceId, userId2, ctx, t.id, act.id, 'estimation')).toBe(true);
+		expect(await canEditActivityField(workspaceId, userId2, ctx, t.id, act.id, 'budget')).toBe(false);
 	});
 });
 
@@ -353,10 +393,10 @@ describe('deleteUntouchedSyncedTickets', () => {
 			{ workspaceId, perimeterId, key: 'NS-3', title: 'Sans SSP bis' }
 		]);
 
-		const filtered = await listTicketsPage(workspaceId, true, true, { noSsp: true });
+		const filtered = await listTicketsPage(workspaceId, true, 'SYSTEM', { noSsp: true });
 		expect(filtered.rows.map((r) => r.key).sort()).toEqual(['NS-2', 'NS-3']);
 		expect(filtered.total).toBe(2);
-		expect((await listTicketsPage(workspaceId, true, true, {})).total).toBe(3);
+		expect((await listTicketsPage(workspaceId, true, 'SYSTEM', {})).total).toBe(3);
 	});
 
 	it('listTicketsPage: sort=priority ordonne du plus urgent (P0) au moins urgent', async () => {
@@ -368,7 +408,7 @@ describe('deleteUntouchedSyncedTickets', () => {
 			{ workspaceId, perimeterId, key: 'PRIO-MID', title: 'Défaut' } // priority: default 2 (Normal)
 		]);
 
-		const byPriority = await listTicketsPage(workspaceId, true, true, {}, undefined, true, 'priority');
+		const byPriority = await listTicketsPage(workspaceId, true, 'SYSTEM', {}, undefined, true, 'priority');
 		expect(byPriority.rows.map((r) => r.key)).toEqual(['PRIO-HIGH', 'PRIO-MID', 'PRIO-LOW']);
 	});
 });

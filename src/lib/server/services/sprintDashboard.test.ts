@@ -3,7 +3,7 @@ import { createTicket, updateTicketField, upsertTicketActivityRae } from './tick
 import { setCell } from './imputation';
 import { createRef, listRefs } from './referentials';
 import { createActivity, listActivities, reorderActivities, createState, listStates } from './params';
-import { makeWorkspace, addMember } from './test-helpers';
+import { makeWorkspace, addMember, noLeadCtx, loadPerimeterCtx } from './test-helpers';
 import { getSprintDashboard } from './sprintDashboard';
 import { createTicketGroup, listTicketGroups, reorderTicketGroups, setTicketInGroup } from './ticketGroups';
 import { setMemberFactice } from './accounts';
@@ -50,7 +50,7 @@ describe('getSprintDashboard', () => {
 		const dashDefault = await getSprintDashboard(ws.workspaceId, sprint.id);
 		expect(dashDefault.tickets[0].priority).toBe(2); // défaut "Normal", cf. schema.ts
 
-		await updateTicketField(ws.workspaceId, t.id, 'priority', '0', 'ADMIN', ws.userId);
+		await updateTicketField(ws.workspaceId, t.id, 'priority', '0', await loadPerimeterCtx(ws.workspaceId, ws.userId, 'ADMIN'), ws.userId);
 		const dashUrgent = await getSprintDashboard(ws.workspaceId, sprint.id);
 		expect(dashUrgent.tickets[0].priority).toBe(0);
 	});
@@ -69,7 +69,7 @@ describe('getSprintDashboard', () => {
 		const withFactice = await getSprintDashboard(ws.workspaceId, sprint.id);
 		expect(withFactice.byPerson.map((p) => p.name).sort()).toEqual(['sprintdash-exclude owner', 'sprintdash-exclude-factice']);
 
-		const withoutFactice = await getSprintDashboard(ws.workspaceId, sprint.id, true, true, false, [facticeId]);
+		const withoutFactice = await getSprintDashboard(ws.workspaceId, sprint.id, true, 'SYSTEM', false, [facticeId]);
 		expect(withoutFactice.byPerson.map((p) => p.name)).toEqual(['sprintdash-exclude owner']);
 	});
 
@@ -85,12 +85,12 @@ describe('getSprintDashboard', () => {
 			estimationReal: '2'
 		});
 
-		const asAdmin = await getSprintDashboard(ws.workspaceId, version.id, true, true);
+		const asAdmin = await getSprintDashboard(ws.workspaceId, version.id, true, 'SYSTEM');
 		expect(asAdmin.kind).toBe('VERSION');
 		expect(asAdmin.kpis.ticketCount).toBe(1);
 		expect(asAdmin.kpis.ecartVsBudgetTotal).not.toBeNull();
 
-		const asUser = await getSprintDashboard(ws.workspaceId, version.id, true, false);
+		const asUser = await getSprintDashboard(ws.workspaceId, version.id, true, noLeadCtx);
 		expect(asUser.kpis.ecartVsBudgetTotal).toBeNull();
 	});
 
@@ -168,7 +168,7 @@ describe('getSprintDashboard', () => {
 		// Ordre de création (sortOrder) : Zebra avant Alpha, pas alphabétique.
 		expect(byDefault.byActivity.map((a) => a.label)).toEqual([`Zebra ${ws.id}`, `Alpha ${ws.id}`]);
 
-		const alphaSorted = await getSprintDashboard(ws.workspaceId, sprint.id, true, true, true);
+		const alphaSorted = await getSprintDashboard(ws.workspaceId, sprint.id, true, 'SYSTEM', true);
 		expect(alphaSorted.byActivity.map((a) => a.label)).toEqual([`Alpha ${ws.id}`, `Zebra ${ws.id}`]);
 
 		// Paramétrable dans les référentiels aussi : réordonner change l'ordre par défaut.
