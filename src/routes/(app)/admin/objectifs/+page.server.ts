@@ -3,6 +3,7 @@ import type { Actions, PageServerLoad } from './$types';
 import { logger } from '$lib/server/logger';
 import { getRefData, listRecentTicketSummaries } from '$lib/server/services/tickets';
 import { isManagerOrAdmin } from '$lib/server/services/workspaces';
+import { hasLeadScope, listPerimeterCollaborators } from '$lib/server/services/perimeters';
 import {
 	listObjectivesForWorkspace,
 	listVacationsForWeek,
@@ -11,9 +12,22 @@ import {
 	moveObjective,
 	setVacation,
 	setObjectiveDone,
+	getObjectiveOwner,
 	type ObjectiveKind
 } from '$lib/server/services/weeklyObjectives';
 import { mondayOf, parseISODate, toISODate, isoWeek, formatRange, addDays, todayInParis } from '$lib/utils/date';
+
+/**
+ * Population que l'appelant a le droit de piloter ici. `null` = tout l'espace (MANAGER/ADMIN,
+ * comportement historique) ; un Set = les collaborateurs des périmètres dont il est CP ou backup ;
+ * `false` = lecture seule. Un CP fixe les objectifs de son équipe, pas de celle des autres.
+ */
+async function objectiveScope(locals: App.Locals): Promise<Set<string> | null | false> {
+	if (isManagerOrAdmin(locals.role)) return null;
+	const ctx = locals.perimeterCtx;
+	if (!hasLeadScope(ctx)) return false;
+	return new Set(await listPerimeterCollaborators(locals.workspace!.workspaceId, [...ctx.leadPerimeterIds]));
+}
 
 export const load: PageServerLoad = async ({ locals, url }) => {
 	const ws = locals.workspace!;
@@ -28,7 +42,8 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	const monday = wParam ? mondayOf(parseISODate(wParam)) : currentMonday;
 	const mondayISO = toISODate(monday);
 
-	const canManage = isManagerOrAdmin(locals.role);
+	const scope = await objectiveScope(locals);
+	const canManage = scope !== false;
 	const prevMonday = addDays(monday, -7);
 	const [ref, tickets, objectives, vacations, carryover] = await Promise.all([
 		getRefData(ws.workspaceId),
@@ -42,7 +57,9 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		// Non cochés la semaine d'avant (celle affichée moins 7 j) : proposés en tête de palette pour
 		// être reportés d'une touche. Même garde que `tickets`, seule la palette s'en sert.
 		canManage
-			? listObjectivesForWorkspace(ws.workspaceId, toISODate(prevMonday)).then((rows) => rows.filter((o) => !o.doneAt))
+			? listObjectivesForWorkspace(ws.workspaceId, toISODate(prevMonday)).then((rows) =>
+					rows.filter((o) => !o.doneAt && (!scope || scope.has(o.userId)))
+				)
 			: Promise.resolve([])
 	]);
 
@@ -63,6 +80,11 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		carryover,
 		vacations: [...vacations],
 		canManage,
+		// Toute l'équipe reste visible, mais un CP n'agit que sur ses collaborateurs : null = tout le monde.
+		manageableIds: scope ? [...scope] : null,
+		// L'export image reste réservé aux MANAGER/ADMIN : il rend la semaine de TOUT l'espace, sans
+		// notion de périmètre (cf. export-image/+server.ts). Un CP pilote ses objectifs sans l'export.
+		canExportImage: scope === null,
 		selfId: locals.user!.id,
 		weekNumber: isoWeek(monday),
 		weekLabel: formatRange(monday),
@@ -85,7 +107,8 @@ function disabled(locals: App.Locals) {
 export const actions: Actions = {
 	addObjective: async ({ request, locals }) => {
 		if (disabled(locals)) return fail(403, { error: 'Objectifs désactivés sur cet espace.' });
-		if (!isManagerOrAdmin(locals.role)) return fail(403, { error: 'Réservé aux admins.' });
+		const scope = await objectiveScope(locals);
+		if (scope === false) return fail(403, { error: 'Réservé aux admins et aux CP.' });
 		const ws = locals.workspace!;
 		const f = await request.formData();
 		const userId = String(f.get('userId') ?? '');
@@ -95,6 +118,7 @@ export const actions: Actions = {
 		const label = (f.get('label') as string) || undefined;
 		const activityId = (f.get('activityId') as string) || undefined;
 		if (!userId || !weekMondayISO) return fail(400, { error: 'Données invalides.' });
+		if (scope && !scope.has(userId)) return fail(403, { error: 'Cette personne est hors de vos périmètres.' });
 		try {
 			await addObjective(ws.workspaceId, locals.user!.id, { userId, weekMondayISO, kind, ticketId, label, activityId });
 		} catch (e) {
@@ -106,9 +130,16 @@ export const actions: Actions = {
 
 	removeObjective: async ({ request, locals }) => {
 		if (disabled(locals)) return fail(403, { error: 'Objectifs désactivés sur cet espace.' });
-		if (!isManagerOrAdmin(locals.role)) return fail(403, { error: 'Réservé aux admins.' });
+		const scope = await objectiveScope(locals);
+		if (scope === false) return fail(403, { error: 'Réservé aux admins et aux CP.' });
 		const ws = locals.workspace!;
 		const f = await request.formData();
+		// L'objectif est désigné par son id : on remonte à son propriétaire pour vérifier la portée,
+		// sinon un CP pourrait supprimer l'objectif de n'importe qui en devinant un id.
+		if (scope) {
+			const owner = await getObjectiveOwner(ws.workspaceId, String(f.get('id')));
+			if (!owner || !scope.has(owner)) return fail(403, { error: 'Cet objectif est hors de vos périmètres.' });
+		}
 		try {
 			await removeObjective(ws.workspaceId, String(f.get('id')));
 		} catch (e) {
@@ -120,10 +151,15 @@ export const actions: Actions = {
 
 	moveObjective: async ({ request, locals }) => {
 		if (disabled(locals)) return fail(403, { error: 'Objectifs désactivés sur cet espace.' });
-		if (!isManagerOrAdmin(locals.role)) return fail(403, { error: 'Réservé aux admins.' });
+		const scope = await objectiveScope(locals);
+		if (scope === false) return fail(403, { error: 'Réservé aux admins et aux CP.' });
 		const ws = locals.workspace!;
 		const f = await request.formData();
 		const dir = f.get('dir') === 'up' ? 'up' : 'down';
+		if (scope) {
+			const owner = await getObjectiveOwner(ws.workspaceId, String(f.get('id')));
+			if (!owner || !scope.has(owner)) return fail(403, { error: 'Cet objectif est hors de vos périmètres.' });
+		}
 		try {
 			await moveObjective(ws.workspaceId, String(f.get('id')), dir);
 		} catch (e) {
@@ -134,8 +170,8 @@ export const actions: Actions = {
 	},
 
 	// Seule action ouverte aux membres : chacun coche les siennes, un manager peut cocher pour tout
-	// le monde. Le partage entre les deux est fait dans setObjectiveDone, pas ici — la case est
-	// affichée sur les objectifs de toute l'équipe, l'UI seule ne peut pas servir de garde.
+	// le monde (un CP pour ses collaborateurs). Le partage est fait dans setObjectiveDone, pas ici —
+	// la case est affichée sur les objectifs de toute l'équipe, l'UI seule ne peut pas servir de garde.
 	toggleDone: async ({ request, locals }) => {
 		if (disabled(locals)) return fail(403, { error: 'Objectifs désactivés sur cet espace.' });
 		const ws = locals.workspace!;
@@ -143,25 +179,24 @@ export const actions: Actions = {
 		const id = String(f.get('id') ?? '');
 		const done = f.get('done') === 'true';
 		if (!id) return fail(400, { error: 'Données invalides.' });
-		const ok = await setObjectiveDone(
-			ws.workspaceId,
-			id,
-			{ userId: locals.user!.id, isManager: isManagerOrAdmin(locals.role) },
-			done
-		);
+		const scope = await objectiveScope(locals);
+		const isManager = scope === null || (!!scope && scope.has((await getObjectiveOwner(ws.workspaceId, id)) ?? ''));
+		const ok = await setObjectiveDone(ws.workspaceId, id, { userId: locals.user!.id, isManager }, done);
 		if (!ok) return fail(403, { error: "Cet objectif n'est pas le vôtre." });
 		return { doneOk: true };
 	},
 
 	toggleVacation: async ({ request, locals }) => {
 		if (disabled(locals)) return fail(403, { error: 'Objectifs désactivés sur cet espace.' });
-		if (!isManagerOrAdmin(locals.role)) return fail(403, { error: 'Réservé aux admins.' });
+		const scope = await objectiveScope(locals);
+		if (scope === false) return fail(403, { error: 'Réservé aux admins et aux CP.' });
 		const ws = locals.workspace!;
 		const f = await request.formData();
 		const userId = String(f.get('userId') ?? '');
 		const weekMondayISO = String(f.get('weekMondayISO') ?? '');
 		const onVacation = f.get('onVacation') === 'true';
 		if (!userId || !weekMondayISO) return fail(400, { error: 'Données invalides.' });
+		if (scope && !scope.has(userId)) return fail(403, { error: 'Cette personne est hors de vos périmètres.' });
 		try {
 			await setVacation(ws.workspaceId, userId, weekMondayISO, onVacation);
 		} catch (e) {

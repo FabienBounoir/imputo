@@ -3,6 +3,7 @@ import { eq, and } from 'drizzle-orm';
 import { db, workspace, ticketSnapshot } from '$lib/server/db';
 import { createWorkspaceWithOwner } from './workspaces';
 import { createTicket, updateTicketField } from './tickets';
+import { loadPerimeterCtx } from './perimeters';
 import { setCell } from './imputation';
 import { runSnapshot } from './snapshot';
 
@@ -24,8 +25,8 @@ describe('runSnapshot', () => {
 		wsIds.push(a.workspaceId);
 
 		const t = await createTicket(a.workspaceId, { key: `SNAP-${rnd}`, title: 'Ticket snapshot' });
-		await updateTicketField(a.workspaceId, t.id, 'estimationReal', '5', 'ADMIN');
-		await updateTicketField(a.workspaceId, t.id, 'raeReal', '3', 'ADMIN');
+		await updateTicketField(a.workspaceId, t.id, 'estimationReal', '5', await loadPerimeterCtx(a.workspaceId, a.userId, 'ADMIN'));
+		await updateTicketField(a.workspaceId, t.id, 'raeReal', '3', await loadPerimeterCtx(a.workspaceId, a.userId, 'ADMIN'));
 		await setCell(a.workspaceId, a.userId, {
 			targetType: 'TICKET',
 			targetId: t.id,
@@ -47,7 +48,7 @@ describe('runSnapshot', () => {
 		expect(Number(rows[0].consumed)).toBe(2);
 
 		// Re-run le même jour : upsert, pas de doublon.
-		await updateTicketField(a.workspaceId, t.id, 'raeReal', '1', 'ADMIN');
+		await updateTicketField(a.workspaceId, t.id, 'raeReal', '1', await loadPerimeterCtx(a.workspaceId, a.userId, 'ADMIN'));
 		await runSnapshot(dateISO, a.workspaceId);
 		const rowsAfter = await db
 			.select()

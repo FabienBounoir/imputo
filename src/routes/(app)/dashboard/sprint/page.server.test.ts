@@ -6,6 +6,7 @@ const load = loadUntyped as (event: unknown) => Promise<Record<string, any>>;
 import { makeWorkspace, addMember } from '$lib/server/services/test-helpers';
 import { fakeLocals, fakeCookies } from '$lib/server/test-helpers/http';
 import { createRef, listRefs } from '$lib/server/services/referentials';
+import { createTicket } from '$lib/server/services/tickets';
 
 describe('dashboard/sprint +page.server load', () => {
 	it("sans sprint dans l'espace, options vides et dashboard null", async () => {
@@ -39,10 +40,22 @@ describe('dashboard/sprint +page.server load', () => {
 		expect(result.dashboard).not.toBeNull();
 	});
 
-	it('isAdmin (rôle) redige le budget TNF pour un USER, le montre pour un ADMIN', async () => {
+	// Le budget n'est plus gouverné par le rôle d'espace mais par le périmètre du ticket : le DP le
+	// voit partout, un membre qui ne pilote rien ne le voit nulle part.
+	it('redige le budget TNF pour un membre sans périmètre piloté, le montre pour le DP', async () => {
 		const { userId, workspaceId } = await makeWorkspace('dashsprint');
 		const { userId: memberId } = await addMember(workspaceId, 'USER', 'dashsprint-member');
 		await createRef(workspaceId, 'sprint', 'Sprint A');
+		const [sprint] = await listRefs(workspaceId, 'sprint');
+		// Un ticket porteur d'un budget : sans lui, les deux totaux sont null faute de matière et le
+		// test passerait sans rien prouver.
+		await createTicket(workspaceId, {
+			key: `DSB-${workspaceId.slice(0, 8)}`,
+			title: 'Ticket budgété',
+			sprintId: sprint.id,
+			estimationReal: '4',
+			enveloppeTotale: '10'
+		});
 		const cookies = fakeCookies();
 		const url = new URL('http://localhost/dashboard/sprint');
 
@@ -51,5 +64,7 @@ describe('dashboard/sprint +page.server load', () => {
 
 		expect(memberResult.dashboard?.kpis.ecartVsBudgetTotal).toBeNull();
 		expect(adminResult.dashboard?.kpis.ecartVsBudgetTotal).not.toBeNull();
+		expect(adminResult.dashboard?.kpis.budgetTotal).toBe(10);
+		expect(adminResult.dashboard?.kpis.budgetPartial).toBe(false);
 	});
 });

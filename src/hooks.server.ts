@@ -6,6 +6,7 @@ import {
 	setSessionWorkspace
 } from '$lib/server/auth/session';
 import { listMembershipsForUser, getDeactivatedWorkspace } from '$lib/server/services/workspaces';
+import { loadPerimeterCtx, EMPTY_PERIMETER_CTX } from '$lib/server/services/perimeters';
 import { logger, requestContext } from '$lib/server/logger';
 import { randomUUID } from 'node:crypto';
 
@@ -26,6 +27,7 @@ const handleRequest: Handle = async ({ event, resolve }) => {
 	event.locals.canViewImputations = false;
 	event.locals.canViewMoodResults = false;
 	event.locals.deactivatedWorkspace = null;
+	event.locals.perimeterCtx = EMPTY_PERIMETER_CTX;
 
 	const token = event.cookies.get(SESSION_COOKIE);
 	if (token) {
@@ -66,6 +68,12 @@ const handleRequest: Handle = async ({ event, resolve }) => {
 			event.locals.role = current?.role ?? null;
 			event.locals.canViewImputations = current?.canViewImputations ?? false;
 			event.locals.canViewMoodResults = current?.canViewMoodResults ?? false;
+			// Périmètres pilotés/fréquentés dans l'espace courant. Une requête de plus par requête
+			// authentifiée, couverte par perimeter_member_ws_user_idx — au même titre que les
+			// memberships ci-dessus, c'est du contexte dont presque tous les écrans ont besoin.
+			if (current) {
+				event.locals.perimeterCtx = await loadPerimeterCtx(current.workspaceId, user.id, current.role);
+			}
 		} else {
 			deleteSessionCookie(event.cookies);
 		}

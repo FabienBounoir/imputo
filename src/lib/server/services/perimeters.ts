@@ -69,6 +69,18 @@ export function canLead(ctx: PerimeterCtx, perimeterId: string | null): boolean 
 	return perimeterId !== null && ctx.leadPerimeterIds.has(perimeterId);
 }
 
+/**
+ * Portée de lead passée aux services : soit le contexte d'un utilisateur réel, soit `'SYSTEM'` pour
+ * un appelant sans rôle courant (cron de snapshot, jobs de notification, export planifié) qui doit
+ * voir les données non redactées. Remplace l'ancien booléen `isAdmin`, devenu insuffisant : la
+ * visibilité des champs budget se décide désormais ticket par ticket, selon SON périmètre.
+ */
+export type LeadScopeArg = PerimeterCtx | 'SYSTEM';
+
+export function canLeadArg(arg: LeadScopeArg, perimeterId: string | null): boolean {
+	return arg === 'SYSTEM' || canLead(arg, perimeterId);
+}
+
 /** `'ALL'` = aucune restriction (DP). Sinon la liste des périmètres pilotés, possiblement vide. */
 export function leadScope(ctx: PerimeterCtx): 'ALL' | string[] {
 	return ctx.isDp ? 'ALL' : [...ctx.leadPerimeterIds];

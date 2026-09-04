@@ -131,7 +131,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		: listTicketsPage(
 				ws.workspaceId,
 				ws.testPhase,
-				isAdmin,
+				locals.perimeterCtx,
 				queryFilters,
 				view === 'table' ? { pageSize: PAGE_SIZE, page } : undefined,
 				// Le détail par activité n'est rendu que dans les lignes fines de la vue tableau — le
@@ -222,7 +222,7 @@ export const actions: Actions = {
 				ticketId,
 				field,
 				value,
-				locals.role,
+				locals.perimeterCtx,
 				locals.user?.id ?? null,
 				locals.user!.id === ws.createdByUserId || locals.role === 'ADMIN'
 			);
