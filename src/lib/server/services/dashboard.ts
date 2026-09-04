@@ -13,6 +13,9 @@ export type Dashboard = {
 	};
 	byState: { label: string; emoji: string | null; color: string | null; count: number }[];
 	byProject: GroupProgress[];
+	/** Par périmètre applicatif — même mécanique de crosstab que byProject/bySprint. La vue croisée
+	 *  charges + économie, elle, vit dans services/perimeterConsolidation.ts. */
+	byPerimeter: GroupProgress[];
 	bySprint: GroupProgress[];
 	byVersion: GroupProgress[];
 	byGroup: GroupProgress[];
@@ -188,6 +191,7 @@ export async function getDashboard(
 			kpis: { estTotal: 0, consumedTotal: ticketConsumed, raeTotal: 0, avancement: 0, ticketCount: 0 },
 			byState: [],
 			byProject: [],
+			byPerimeter: [],
 			bySprint: [],
 			byVersion: [],
 			byGroup: [],
@@ -211,6 +215,7 @@ export async function getDashboard(
 	let consumedTotal = 0;
 	const stateCount = new Map<string | null, number>();
 	const projAgg = new Map<string, GroupProgress>();
+	const perimeterAgg = new Map<string, GroupProgress>();
 	const sprintAgg = new Map<string, GroupProgress>();
 	const versionAgg = new Map<string, GroupProgress>();
 	const groupAgg = new Map<string, GroupProgress>();
@@ -238,6 +243,8 @@ export async function getDashboard(
 		consumedTotal += t.consumed;
 		stateCount.set(t.stateId ?? null, (stateCount.get(t.stateId ?? null) ?? 0) + 1);
 		accumulate(projAgg, t.projectName ?? 'Sans projet', est, rae, t.consumed);
+		// Pas de repli « Sans périmètre » : ticket.perimeterId est NOT NULL.
+		accumulate(perimeterAgg, t.perimeterName, est, rae, t.consumed);
 		accumulate(sprintAgg, t.sprintName ?? 'Sans sprint', est, rae, t.consumed);
 		accumulate(
 			versionAgg,
@@ -268,6 +275,7 @@ export async function getDashboard(
 			}))
 			.sort((a, b) => b.est - a.est);
 	const byProject = finalizeGroups(projAgg);
+	const byPerimeter = finalizeGroups(perimeterAgg);
 	const bySprint = finalizeGroups(sprintAgg);
 	const byVersion = finalizeGroups(versionAgg);
 	const byGroup = finalizeGroups(groupAgg);
@@ -288,6 +296,7 @@ export async function getDashboard(
 		},
 		byState,
 		byProject,
+		byPerimeter,
 		bySprint,
 		byVersion,
 		byGroup,
