@@ -21,7 +21,7 @@ import {
 import { makeWorkspace, addMember, defaultPerimeterId, loadPerimeterCtx } from './test-helpers';
 import { createActivity, listActivities, listStates } from './params';
 import { listEntityHistory } from './changeLog';
-import { setPerimeterMemberRole } from './perimeters';
+import { setPerimeterMemberRole, createPerimeter } from './perimeters';
 import { setCell } from './imputation';
 import { todayInParis } from '$lib/utils/date';
 
@@ -556,5 +556,66 @@ describe('deleteUntouchedSyncedTickets', () => {
 		// de lui : la hiérarchie ne s'inverse pas avec le sens du tri.
 		const desc = await listTicketsPage(workspaceId, true, true, {}, undefined, true, 'created_desc');
 		expect(desc.rows.map((r) => r.key)).toEqual(['AUTRE', 'FAM-P', 'FAM-C']);
+	});
+});
+
+describe('updateTicketField — déplacement entre périmètres', () => {
+	it('un CP des deux périmètres déplace le ticket ; lead d’un seul côté ne suffit pas', async () => {
+		const { workspaceId } = await makeWorkspace();
+		const { userId } = await addMember(workspaceId, 'USER');
+		const source = await createPerimeter(workspaceId, 'Source', null, false);
+		const cible = await createPerimeter(workspaceId, 'Cible', null, false);
+		const t = await createTicket(workspaceId, { key: 'MV-1', title: 'x', perimeterId: source });
+
+		// Lead du départ seulement : refusé (sinon un CP pousserait ses tickets chez le voisin).
+		await setPerimeterMemberRole(workspaceId, source, userId, 'CP');
+		await expect(
+			updateTicketField(workspaceId, t.id, 'perimeterId', cible, await loadPerimeterCtx(workspaceId, userId, 'USER'), userId)
+		).rejects.toThrow('Déplacement réservé au CP des deux périmètres (ou au DP).');
+
+		// Lead des deux : accepté.
+		await setPerimeterMemberRole(workspaceId, cible, userId, 'CP_BACKUP');
+		await updateTicketField(
+			workspaceId,
+			t.id,
+			'perimeterId',
+			cible,
+			await loadPerimeterCtx(workspaceId, userId, 'USER'),
+			userId
+		);
+		const [moved] = await listTickets(workspaceId).then((rows) => rows.filter((r) => r.id === t.id));
+		expect(moved.perimeterId).toBe(cible);
+		expect(moved.perimeterName).toBe('Cible');
+	});
+
+	it('refuse un périmètre vide ou appartenant à un autre espace', async () => {
+		const a = await makeWorkspace('mv-a');
+		const b = await makeWorkspace('mv-b');
+		const chezB = await createPerimeter(b.workspaceId, 'Chez B', null, false);
+		const t = await createTicket(a.workspaceId, { key: 'MV-2', title: 'x' });
+		const dp = await loadPerimeterCtx(a.workspaceId, a.userId, 'ADMIN');
+
+		await expect(updateTicketField(a.workspaceId, t.id, 'perimeterId', '', dp, a.userId)).rejects.toThrow(
+			'Périmètre requis.'
+		);
+		// Le DP passe la garde de lead (il pilote tout) — c'est le contrôle d'espace qui doit tenir.
+		await expect(updateTicketField(a.workspaceId, t.id, 'perimeterId', chezB, dp, a.userId)).rejects.toThrow(
+			'Périmètre introuvable dans cet espace.'
+		);
+	});
+
+	it('createTicket refuse un périmètre d’un autre espace et retombe sur le défaut sans précision', async () => {
+		const a = await makeWorkspace('crt-a');
+		const b = await makeWorkspace('crt-b');
+		const chezB = await createPerimeter(b.workspaceId, 'Chez B', null, false);
+
+		await expect(
+			createTicket(a.workspaceId, { key: 'CRT-1', title: 'x', perimeterId: chezB })
+		).rejects.toThrow('Périmètre introuvable dans cet espace.');
+
+		const t = await createTicket(a.workspaceId, { key: 'CRT-2', title: 'x' });
+		const [row] = await listTickets(a.workspaceId).then((rows) => rows.filter((r) => r.id === t.id));
+		expect(row.perimeterId).toBe(await defaultPerimeterId(a.workspaceId));
+		expect(row.perimeterTransverse).toBe(false);
 	});
 });

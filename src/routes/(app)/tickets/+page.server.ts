@@ -15,6 +15,7 @@ import {
 } from '$lib/server/services/tickets';
 import { setTicketInGroup } from '$lib/server/services/ticketGroups';
 import { isManagerOrAdmin } from '$lib/server/services/workspaces';
+import { leadScope } from '$lib/server/services/perimeters';
 import {
 	getTicketFiltersPref,
 	setTicketFiltersSnapshot,
@@ -34,6 +35,9 @@ function isUniqueViolation(e: unknown): boolean {
 const createSchema = z.object({
 	key: z.string().trim().min(1, 'Clé requise').max(40),
 	title: z.string().trim().min(1, 'Titre requis').max(200),
+	// Omis = périmètre par défaut de l'espace (createTicket), pour ne pas casser une création
+	// programmatique ; le formulaire, lui, le pré-remplit toujours.
+	perimeterId: z.string().uuid().optional().or(z.literal('')),
 	parentId: z.string().uuid().optional().or(z.literal('')),
 	projectId: z.string().uuid().optional().or(z.literal('')),
 	sprintId: z.string().uuid().optional().or(z.literal('')),
@@ -76,6 +80,8 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 			if (snapshot.projectId && ref.projects.some((p) => p.id === snapshot.projectId)) target.set('project', snapshot.projectId);
 			if (snapshot.sprintId && ref.sprints.some((s) => s.id === snapshot.sprintId)) target.set('sprint', snapshot.sprintId);
 			if (snapshot.versionId && ref.versions.some((v) => v.id === snapshot.versionId)) target.set('version', snapshot.versionId);
+			if (snapshot.perimeterId && ref.perimeters.some((p) => p.id === snapshot.perimeterId))
+				target.set('perimeter', snapshot.perimeterId);
 			// `created` est le défaut de la page : ne poser le paramètre que pour les autres valeurs,
 			// sinon une simple arrivée à blanc déclencherait une redirection qui n'affiche rien de
 			// différent.
@@ -93,6 +99,9 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		projectId: url.searchParams.get('project') ?? undefined,
 		sprintId: url.searchParams.get('sprint') ?? undefined,
 		versionId: url.searchParams.get('version') ?? undefined,
+		// Un seul périmètre à la fois dans la barre de filtres (comme projet/sprint/version), même si
+		// le service en accepte plusieurs — la consolidation, elle, en croise plusieurs.
+		perimeterIds: url.searchParams.get('perimeter') ? [url.searchParams.get('perimeter')!] : undefined,
 		// Lien direct depuis un dashboard sprint/version (SprintDashboardPanel) : clé exacte,
 		// pas de recherche substring — sinon "SBX-3" isolerait aussi SBX-30..39.
 		exactKey: url.searchParams.get('ticket') ?? undefined,
@@ -152,6 +161,9 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		sort,
 		kanbanNeedsScope,
 		filters,
+		// Périmètres pilotés — 'ALL' pour le DP. Sert à savoir si le sélecteur de périmètre de la
+		// modale est actif : déplacer un ticket exige d'être lead des deux côtés (cf. updateTicketField).
+		leadPerimeters: leadScope(locals.perimeterCtx),
 		highlightKey,
 		ref,
 		testPhase: ws.testPhase,
@@ -183,6 +195,7 @@ export const actions: Actions = {
 			created = await createTicket(ws.workspaceId, {
 				key: d.key,
 				title: d.title,
+				perimeterId: empty(d.perimeterId) ?? undefined,
 				parentId: empty(d.parentId),
 				projectId: empty(d.projectId),
 				sprintId: empty(d.sprintId),
@@ -301,6 +314,7 @@ export const actions: Actions = {
 			projectId: (f.get('project') as string) || null,
 			sprintId: (f.get('sprint') as string) || null,
 			versionId: (f.get('version') as string) || null,
+			perimeterId: (f.get('perimeter') as string) || null,
 			sort: parseTicketSort(f.get('sort'))
 		});
 		return { ok: true };
