@@ -98,7 +98,7 @@ export function buildInviteMessage(opts: {
 	inviterName: string;
 	email: string;
 	token: string;
-}): { subject: string; body: string } {
+}): { subject: string; body: string; link: string } {
 	const link = `${config.publicBaseUrl}/invite/${opts.token}`;
 	return {
 		subject: `Invitation à rejoindre l'espace « ${opts.workspaceName} » sur Imputo`,
@@ -111,7 +111,8 @@ ${link}
 
 Ce lien est valable ${Math.round(config.magicLinkTtlMs / 86400000)} jours.
 
-À bientôt !`
+À bientôt !`,
+		link
 	};
 }
 

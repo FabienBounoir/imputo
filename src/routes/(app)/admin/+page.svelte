@@ -47,6 +47,16 @@
 			toast.success('Réglage mis à jour ✓', { description: 'Rechargez les autres onglets pour voir le changement.' });
 		else if (form.moodOk) toast.success('Réglage mis à jour ✓');
 		else if (form.pprRatioOk || form.imputationStepOk) toast.success('Réglage mis à jour ✓');
+		else if (form.invite) {
+			inviteCopyFailed = false;
+			navigator.clipboard
+				.writeText(form.invite.link)
+				.then(() => toast.success('Lien copié dans le presse-papier ✓'))
+				.catch(() => {
+					inviteCopyFailed = true;
+					toast.error("Impossible de copier automatiquement, copiez le lien ci-dessous");
+				});
+		}
 	});
 
 	// À utiliser sur TOUT formulaire d'édition en place (champ rempli depuis `data`).
@@ -185,7 +195,7 @@
 
 	const PRESETS = ['#16A34A', '#4F46E5', '#9333EA', '#0EA5E9', '#E11D48', '#EA580C', '#0D9488', '#CA8A04'];
 	let accent = $state(data.accentColor);
-	let copied = $state(false);
+	let inviteCopyFailed = $state(false);
 	// initialisé depuis la valeur enregistrée : le défilement lui-même vit dans le layout racine
 	// (toujours monté), donc il continue de tourner en changeant de page et après un rechargement.
 	let rgbMode = $state(data.accentRgb);
@@ -210,13 +220,6 @@
 	const rotationCandidates = $derived(
 		data.members.filter((m) => m.active && !data.supportMembers.some((rm) => rm.userId === m.id))
 	);
-
-	async function copyMessage() {
-		if (!form?.invite) return;
-		await navigator.clipboard.writeText(`${form.invite.subject}\n\n${form.invite.body}`);
-		copied = true;
-		setTimeout(() => (copied = false), 2000);
-	}
 
 	const TABS = [
 		{ key: 'general', label: 'Général' },
@@ -334,7 +337,7 @@
 	{#if tab === 'membres'}
 		<section class="card block">
 			<h3>Inviter un membre</h3>
-			<p class="hint">L'invitation génère un message à copier puis envoyer vous-même (pas d'email automatique).</p>
+			<p class="hint">L'invitation génère un lien à copier et transmettre vous-même (pas d'email automatique).</p>
 
 			<form method="POST" action="?/invite" use:enhance>
 				<div class="invite-row">
@@ -345,14 +348,13 @@
 				</div>
 			</form>
 
-			{#if form?.invite}
+			{#if form?.invite && inviteCopyFailed}
 				<div class="invite-msg">
 					<div class="invite-head">
-						<b>Message à copier &amp; envoyer</b>
-						<button class="btn btn-ghost" onclick={copyMessage}>{copied ? '✓ Copié' : 'Copier'}</button>
+						<b>Lien d'invitation</b>
+						<span class="hint">Copie automatique impossible, copiez-le manuellement :</span>
 					</div>
-					<div class="invite-subject">{form.invite.subject}</div>
-					<pre>{form.invite.body}</pre>
+					<div class="invite-subject">{form.invite.link}</div>
 				</div>
 			{/if}
 		</section>
