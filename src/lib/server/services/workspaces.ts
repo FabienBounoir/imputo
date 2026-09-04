@@ -7,11 +7,18 @@ import {
 	state,
 	activity,
 	category,
+	perimeter,
+	perimeterMember,
 	type Role
 } from '$lib/server/db';
 import { emailDomain } from '$lib/server/config';
 import { hashPassword } from '$lib/server/auth/password';
-import { DEFAULT_STATES, DEFAULT_ACTIVITIES, DEFAULT_CATEGORIES } from './defaults';
+import {
+	DEFAULT_STATES,
+	DEFAULT_ACTIVITIES,
+	DEFAULT_CATEGORIES,
+	TRANSVERSE_PERIMETER_NAME
+} from './defaults';
 
 /** Crée un espace + son utilisateur fondateur (ADMIN) + les référentiels par défaut. */
 export async function createWorkspaceWithOwner(input: {
@@ -47,7 +54,7 @@ export async function createWorkspaceWithOwner(input: {
 			role: 'ADMIN'
 		});
 
-		await seedDefaults(tx, ws.id);
+		await seedDefaults(tx, ws.id, u.id, ws.name);
 		return { userId: u.id, workspaceId: ws.id };
 	});
 }
@@ -65,15 +72,47 @@ export async function createWorkspaceForUser(userId: string, workspaceName: stri
 			.values({ name, allowedDomain: emailDomain(u.email), createdByUserId: userId })
 			.returning();
 		await tx.insert(membership).values({ workspaceId: ws.id, userId, role: 'ADMIN' });
-		await seedDefaults(tx, ws.id);
+		await seedDefaults(tx, ws.id, userId, ws.name);
 		return { workspaceId: ws.id };
 	});
 }
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
-/** Insère les référentiels par défaut dans un espace. */
-export async function seedDefaults(tx: Tx, workspaceId: string) {
+/**
+ * Insère les référentiels par défaut dans un espace, périmètres compris.
+ *
+ * Deux périmètres d'office : un périmètre applicatif nommé comme l'espace (destination de tout ce
+ * qui sera créé avant que l'admin ait découpé son organisation) et un périmètre transverse. Le
+ * fondateur y est posé CP — il est déjà ADMIN donc lead partout, mais le rattachement explicite
+ * évite un écran « aucun périmètre » au premier chargement.
+ */
+export async function seedDefaults(
+	tx: Tx,
+	workspaceId: string,
+	ownerUserId: string,
+	workspaceName: string
+) {
+	// Un espace littéralement nommé « Transverse » produirait deux périmètres de même nom, rejetés
+	// par perimeter_ws_name_uq — et ferait donc échouer l'inscription. On ne crée alors que le sien.
+	const nameClash = workspaceName.trim().toLowerCase() === TRANSVERSE_PERIMETER_NAME.toLowerCase();
+	const [defaultPerimeter] = await tx
+		.insert(perimeter)
+		.values(
+			nameClash
+				? [{ workspaceId, name: workspaceName, sortOrder: 0 }]
+				: [
+						{ workspaceId, name: workspaceName, sortOrder: 0 },
+						{ workspaceId, name: TRANSVERSE_PERIMETER_NAME, transverse: true, sortOrder: 100 }
+					]
+		)
+		.returning({ id: perimeter.id });
+	await tx.insert(perimeterMember).values({
+		workspaceId,
+		perimeterId: defaultPerimeter.id,
+		userId: ownerUserId,
+		role: 'CP'
+	});
 	await tx.insert(state).values(
 		DEFAULT_STATES.map((s, i) => ({
 			workspaceId,

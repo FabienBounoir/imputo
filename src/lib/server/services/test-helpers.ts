@@ -4,6 +4,10 @@ import { db, workspace, user, membership, ticket, type Role } from '$lib/server/
 import { createWorkspaceWithOwner } from './workspaces';
 import { inviteMember } from './accounts';
 
+// ticket.perimeterId est NOT NULL : tout insert brut de ticket dans un test doit le renseigner.
+// makeWorkspace() passe par createWorkspaceWithOwner, donc l'espace a toujours ses périmètres.
+export { resolveDefaultPerimeterId as defaultPerimeterId } from './perimeters';
+
 // Boilerplate partagé par les tests d'intégration service (vraie DB) : chaque fichier de test
 // qui importe ce module obtient son propre nettoyage en fin de run (modules vitest isolés par fichier).
 const wsIds: string[] = [];

@@ -12,6 +12,7 @@ import {
 } from './jiraClient';
 import { decryptSecret } from '../auth/secretCrypto';
 import { logger } from '../logger';
+import { resolveDefaultPerimeterId } from './perimeters';
 
 // $env-libre par design (comme db/connection.ts) : ce module tourne à la fois dans SvelteKit
 // (action "forcer le sync") et sous tsx brut (scripts/jira-sync.ts, CronJob) où $env ne se
@@ -231,6 +232,11 @@ export async function syncWorkspace(
 			}
 		}
 
+		// Jira ne connaît pas la notion de périmètre : les tickets importés atterrissent sur le
+		// périmètre par défaut de l'espace, à charge du CP/DP de les re-ventiler. Résolu une fois par
+		// run (et non par ticket) — la valeur ne change pas en cours de sync.
+		const landingPerimeterId = await resolveDefaultPerimeterId(workspaceId);
+
 		// Passe 1 : upsert de chaque ticket par (workspaceId, key transformée). estimationReal/raeReal/
 		// comment/sspCode/stateId/flags restent la propriété exclusive de la saisie humaine, quelle que
 		// soit la stratégie ci-dessous — jamais écrits ici. title/projectId/sprintId/versionId passent
@@ -250,7 +256,12 @@ export async function syncWorkspace(
 
 				const priority = ws.jiraSyncPriority ? resolveJiraPriority(issue.priorityName) : undefined;
 
-				const insertValues: typeof ticket.$inferInsert = { workspaceId, key, title: issue.summary };
+				const insertValues: typeof ticket.$inferInsert = {
+					workspaceId,
+					perimeterId: landingPerimeterId,
+					key,
+					title: issue.summary
+				};
 				if (ws.jiraSyncProject) insertValues.projectId = projectId;
 				if (ws.jiraSyncSprint) insertValues.sprintId = sprintId;
 				if (ws.jiraSyncVersion) insertValues.versionId = versionId;
@@ -284,7 +295,7 @@ export async function syncWorkspace(
 				// (repéré en test réel : ça polluait la DB de versions/sprints sans aucun ticket rattaché).
 				const [inserted] = await tx
 					.insert(ticket)
-					.values({ workspaceId, key, title: issue.summary })
+					.values({ workspaceId, perimeterId: landingPerimeterId, key, title: issue.summary })
 					.onConflictDoNothing({ target: [ticket.workspaceId, ticket.key] })
 					.returning({ id: ticket.id });
 

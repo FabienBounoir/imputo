@@ -43,3 +43,8 @@ export const DEFAULT_CATEGORIES: {
 	{ label: 'Jour férié', kind: 'NON_PRODUCTIVE' },
 	{ label: 'Formation', kind: 'NON_PRODUCTIVE', linkedAbsenceType: 'FORMATION' }
 ];
+
+// Périmètre transverse créé d'office à l'ouverture d'un espace : les chantiers transverses ont
+// ainsi une destination dès le jour 1, plutôt que d'atterrir arbitrairement dans un périmètre
+// applicatif (ticket.perimeterId est NOT NULL, il faut bien qu'ils aillent quelque part).
+export const TRANSVERSE_PERIMETER_NAME = 'Transverse';
