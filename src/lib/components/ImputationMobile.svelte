@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { toast } from 'svelte-sonner';
 	import { dayName, dayNum, parseISODate, isPublicHolidayFR } from '$lib/utils/date';
 	import {
 		ABSENCE_TYPE_COLORS,
@@ -16,6 +17,7 @@
 		capacity,
 		absences,
 		readOnly = false,
+		canManageObjectives = false,
 		onCycle,
 		onSetAmount,
 		onDelete,
@@ -30,6 +32,9 @@
 		capacity: number;
 		absences: Record<string, { type: AbsenceType; period: 'FULL' | 'AM' | 'PM' }>;
 		readOnly?: boolean;
+		/** Manager/admin uniquement : peut retirer un objectif depuis /admin/objectifs — change le
+		 * message du cadenas sur une ligne issue d'un objectif (cf. objectifs de la semaine). */
+		canManageObjectives?: boolean;
 		onCycle: (row: Row, day: string) => void;
 		onSetAmount: (row: Row, day: string, value: number) => void;
 		onDelete: (row: Row) => void;
@@ -38,6 +43,12 @@
 		absenceHref: (absenceId: string) => string;
 		rowIcon: Snippet<[Row]>;
 	} = $props();
+
+	function objectiveLockMessage(): string {
+		return canManageObjectives
+			? "Cette ligne vient d'un objectif de la semaine — retirez l'objectif depuis Objectifs de la semaine pour la faire disparaître."
+			: "Cette ligne vient d'un objectif de la semaine assigné par ton manager — demande-lui de le retirer depuis Objectifs de la semaine.";
+	}
 
 	function round(n: number) {
 		return Math.round((n + Number.EPSILON) * 1000) / 1000;
@@ -141,8 +152,8 @@
 					<b>{row.objectiveNote || row.label}</b>
 					<span class="sub">
 						<span class="ell">{row.sublabel}</span>
-						{#if readOnly}
-							{#if activityLabel(row)}<span class="tag">{activityLabel(row)}</span>{/if}
+						{#if readOnly || row.objectiveId}
+							{#if activityLabel(row)}<span class="tag" title={row.objectiveId ? "Activité fixée par l'objectif de la semaine" : undefined}>{activityLabel(row)}</span>{/if}
 						{:else if activityLabel(row)}
 							<button type="button" class="tag tag-link" onclick={() => onPickActivity(row)}>{activityLabel(row)}</button>
 						{:else}
@@ -187,6 +198,18 @@
 								><rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg
 							>
 						</a>
+					{:else if row.objectiveId}
+						<button
+							type="button"
+							class="mdel mdel-locked"
+							onclick={() => toast.message(objectiveLockMessage())}
+							aria-label="Ligne verrouillée par un objectif de la semaine"
+							title={objectiveLockMessage()}
+						>
+							<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+								><rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg
+							>
+						</button>
 					{:else}
 						<button type="button" class="mdel" onclick={() => onDelete(row)} aria-label="Supprimer la ligne">
 							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"

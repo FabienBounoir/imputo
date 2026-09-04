@@ -105,6 +105,10 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 		assignableMembers: ref.members.filter((m) => !m.factice),
 		testPhase: ws.testPhase,
 		canEditEstimation: isManagerOrAdmin(locals.role),
+		// Sert au message du cadenas sur une ligne issue d'un objectif (cf. imputation/+page.svelte) —
+		// seuls manager/admin peuvent retirer un objectif depuis /admin/objectifs, un simple membre doit
+		// leur demander plutôt que de tenter de le faire lui-même.
+		canManageObjectives: isManagerOrAdmin(locals.role),
 		tickets,
 		recentTicketIds,
 		pinnedRows,

@@ -12,6 +12,7 @@
 		type PeriodMode
 	} from '$lib/utils/date';
 	import { tick } from 'svelte';
+	import { toast } from 'svelte-sonner';
 	import { goto, afterNavigate, invalidateAll, replaceState } from '$app/navigation';
 	import { beep } from '$lib/sound';
 	import { Confetti } from 'svelte-confetti';
@@ -655,6 +656,14 @@
 		return data.activities.find((a) => a.id === row.activityId)?.label ?? null;
 	}
 
+	// Message du cadenas sur une ligne issue d'un objectif : seuls manager/admin peuvent la retirer
+	// (depuis /admin/objectifs) — un simple membre n'a pas ce lien, il doit passer par eux.
+	function objectiveLockMessage(): string {
+		return data.canManageObjectives
+			? "Cette ligne vient d'un objectif de la semaine — retirez l'objectif depuis Objectifs de la semaine pour la faire disparaître."
+			: "Cette ligne vient d'un objectif de la semaine assigné par ton manager — demande-lui de le retirer depuis Objectifs de la semaine.";
+	}
+
 	async function addRow() {
 		if (!pickTarget) return;
 		// Un pick TICKET issu de "🎯 Attribué cette semaine" (cf. TargetPicker) encode un 3e segment
@@ -998,6 +1007,7 @@
 			capacity={data.capacity}
 			absences={data.absences}
 			readOnly={data.readOnly}
+			canManageObjectives={data.canManageObjectives}
 			onCycle={(row, day) => cycle(row, day)}
 			onSetAmount={setAmount}
 			onDelete={requestDeleteRow}
@@ -1061,7 +1071,7 @@
 										{:else}
 											{row.sublabel}
 										{/if}
-										{#if !data.readOnly}
+										{#if !data.readOnly && !row.objectiveId}
 											{#if activityLabel(row)}
 												<button
 													type="button"
@@ -1078,7 +1088,7 @@
 												>+ Activité</button>
 											{/if}
 										{:else if activityLabel(row)}
-											<span class="tag-activity">{activityLabel(row)}</span>
+											<span class="tag-activity" title={row.objectiveId ? "Activité fixée par l'objectif de la semaine" : undefined}>{activityLabel(row)}</span>
 										{/if}
 										{#if row.sprintName}
 											<button
@@ -1113,6 +1123,16 @@
 										>
 											<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
 										</a>
+									{:else if row.objectiveId}
+										<button
+											type="button"
+											class="row-del row-del-locked"
+											onclick={() => toast.message(objectiveLockMessage())}
+											aria-label="Ligne verrouillée par un objectif de la semaine"
+											title={objectiveLockMessage()}
+										>
+											<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+										</button>
 									{:else}
 										<button class="row-del" onclick={() => requestDeleteRow(row)} aria-label="Supprimer la ligne">
 											<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg>

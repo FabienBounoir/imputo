@@ -16,6 +16,7 @@
 	import { parseISODate, formatDayRange, formatDateTime, isPublicHolidayFR } from '$lib/utils/date';
 	import { SCHOOL_ZONES, SCHOOL_ZONE_LABELS, SCHOOL_ZONE_COLORS, isSchoolHoliday } from '$lib/schoolZones';
 	import { downloadSvgAsPng } from '$lib/utils/svgToPng';
+	import { beep } from '$lib/sound';
 
 	let { data, form } = $props();
 	$effect(() => {
@@ -38,6 +39,144 @@
 	let imgBusy = $state(false);
 	let editingId = $state<string | null>(null);
 	let cellPopover = $state<{ top: number; left: number; displayName: string; cell: ClickableCell } | null>(null);
+
+	// Easter egg : ↑↓←→ dans cet ordre transforme la grille des absences en plateau de Snake
+	// (une case = un jour × un membre), couleurs reprises de ABSENCE_TYPE_COLORS.
+	type Point = { x: number; y: number };
+	const SNAKE_SEQUENCE = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+	const SNAKE_COLOR = ABSENCE_TYPE_COLORS.HORS_PROJET;
+	// Pouvoirs de la nourriture, un par couleur d'absence (bleu réservé au serpent lui-même) :
+	// congé validé = allonge (classique), formation = accélère (on "monte en compétence"),
+	// congé prévisionnel = téléporte ailleurs sur le plateau (rien n'est encore confirmé, ça bouge).
+	const FOOD_TYPES = ['CONGE_VALIDE', 'FORMATION', 'CONGE_PREVISIONNEL'] as const;
+	const SNAKE_MIN_SPEED_MS = 90;
+	const SNAKE_START_SPEED_MS = 180;
+	let snakeSeqProgress = 0;
+	let showSnakeGame = $state(false);
+	let snakeOver = $state(false);
+	let snakeScore = $state(0);
+	let snake = $state<Point[]>([]);
+	let snakeFood = $state<Point & { type: (typeof FOOD_TYPES)[number] }>({ x: 0, y: 0, type: 'CONGE_VALIDE' });
+	const snakeSet = $derived(new Set(snake.map((p) => `${p.x},${p.y}`)));
+	let snakeDir: Point = { x: 1, y: 0 };
+	// File d'attente de directions (2 max) : un tick lent (250ms au départ) ne doit pas avaler un
+	// changement de direction pressé juste après le précédent — sinon la 2e touche est perdue et le
+	// serpent continue tout droit dans le mur (retour utilisateur : "meurt souvent, bouge pas assez vite").
+	let snakeDirQueue: Point[] = [];
+	let snakeSpeed = SNAKE_START_SPEED_MS;
+	let snakeTimer: ReturnType<typeof setInterval>;
+
+	function snakeSpawnFood(cols: number, rows: number): typeof snakeFood {
+		let p: Point;
+		do {
+			p = { x: Math.floor(Math.random() * cols), y: Math.floor(Math.random() * rows) };
+		} while (snake.some((s) => s.x === p.x && s.y === p.y));
+		return { ...p, type: FOOD_TYPES[Math.floor(Math.random() * FOOD_TYPES.length)] };
+	}
+
+	// Téléporte tout le serpent (même forme, translatée) sur une nouvelle case au hasard — les
+	// segments qui débordent du plateau réapparaissent de l'autre côté (comme Pac-Man).
+	function snakeTeleport(cols: number, rows: number) {
+		const newHead = { x: Math.floor(Math.random() * cols), y: Math.floor(Math.random() * rows) };
+		snake = snake.map((_, i) => ({
+			x: (((newHead.x - i * snakeDir.x) % cols) + cols) % cols,
+			y: (((newHead.y - i * snakeDir.y) % rows) + rows) % rows
+		}));
+	}
+
+	function startSnakeGame() {
+		const cols = data.days.length;
+		const rows = data.rows.length;
+		if (cols < 3 || rows < 1) return;
+		snakeDir = { x: 1, y: 0 };
+		snakeDirQueue = [];
+		snake = [{ x: Math.floor(cols / 2), y: Math.floor(rows / 2) }];
+		snakeFood = snakeSpawnFood(cols, rows);
+		snakeScore = 0;
+		snakeOver = false;
+		snakeSpeed = SNAKE_START_SPEED_MS;
+		showSnakeGame = true;
+		clearInterval(snakeTimer);
+		snakeTimer = setInterval(snakeTick, snakeSpeed);
+	}
+
+	function stopSnakeGame() {
+		showSnakeGame = false;
+		snakeOver = false;
+		clearInterval(snakeTimer);
+	}
+
+	function snakeTick() {
+		const cols = data.days.length;
+		const rows = data.rows.length;
+		if (snakeDirQueue.length) snakeDir = snakeDirQueue.shift()!;
+		const head = { x: snake[0].x + snakeDir.x, y: snake[0].y + snakeDir.y };
+		const hitWall = head.x < 0 || head.y < 0 || head.x >= cols || head.y >= rows;
+		const hitSelf = snake.some((s) => s.x === head.x && s.y === head.y);
+		if (hitWall || hitSelf) {
+			snakeOver = true;
+			beep(110, { duration: 0.3, type: 'sawtooth', volume: 0.15 });
+			clearInterval(snakeTimer);
+			return;
+		}
+		const ate = head.x === snakeFood.x && head.y === snakeFood.y;
+		if (!ate) {
+			snake = [head, ...snake.slice(0, -1)];
+			return;
+		}
+		snakeScore++;
+		switch (snakeFood.type) {
+			case 'CONGE_VALIDE':
+				snake = [head, ...snake];
+				beep(660, { duration: 0.08, volume: 0.12 });
+				break;
+			case 'FORMATION':
+				snake = [head, ...snake.slice(0, -1)];
+				snakeSpeed = Math.max(SNAKE_MIN_SPEED_MS, snakeSpeed - 20);
+				clearInterval(snakeTimer);
+				snakeTimer = setInterval(snakeTick, snakeSpeed);
+				beep(880, { duration: 0.1, type: 'triangle', volume: 0.12 });
+				break;
+			case 'CONGE_PREVISIONNEL':
+				snake = [head, ...snake.slice(0, -1)];
+				snakeTeleport(cols, rows);
+				beep(440, { duration: 0.15, type: 'sine', volume: 0.12 });
+				break;
+		}
+		snakeFood = snakeSpawnFood(cols, rows);
+	}
+
+	function trackSnakeSequence(e: KeyboardEvent) {
+		if (showSnakeGame) {
+			if (e.key === 'Enter' && snakeOver) startSnakeGame();
+			const dirs: Record<string, Point> = {
+				ArrowUp: { x: 0, y: -1 },
+				ArrowDown: { x: 0, y: 1 },
+				ArrowLeft: { x: -1, y: 0 },
+				ArrowRight: { x: 1, y: 0 }
+			};
+			const d = dirs[e.key];
+			if (d && !snakeOver) {
+				e.preventDefault();
+				const last = snakeDirQueue[snakeDirQueue.length - 1] ?? snakeDir;
+				const isReverse = d.x === -last.x && d.y === -last.y;
+				const isSameAsLast = d.x === last.x && d.y === last.y;
+				if (!isReverse && !isSameAsLast && snakeDirQueue.length < 2) snakeDirQueue.push(d);
+			}
+			return;
+		}
+		const target = e.target as HTMLElement;
+		if (target.closest('input, textarea, select, [contenteditable]')) return;
+		if (e.key === SNAKE_SEQUENCE[snakeSeqProgress]) {
+			snakeSeqProgress++;
+			if (snakeSeqProgress === SNAKE_SEQUENCE.length) {
+				snakeSeqProgress = 0;
+				startSnakeGame();
+			}
+		} else {
+			snakeSeqProgress = e.key === SNAKE_SEQUENCE[0] ? 1 : 0;
+		}
+	}
 
 	// Arrivée depuis "Mon imputation" (clic sur une case verrouillée par une absence, cf. ?highlight=
 	// sur imputation/+page.svelte) : amène l'absence d'origine dans le viewport, la surbrillance
@@ -271,6 +410,13 @@
 				{/if}
 			</div>
 		</div>
+		{#if showSnakeGame}
+			<p class="hint" style="margin:0;">
+				🐍 Score : {snakeScore}{snakeOver
+					? ' — perdu ! Entrée pour rejouer, Échap pour quitter.'
+					: ' — Échap pour quitter.'}
+			</p>
+		{/if}
 		{#if data.rows.length === 0}
 			<p class="hint" style="margin:0;">Aucun membre actif.</p>
 		{:else}
@@ -310,7 +456,7 @@
 						{/each}
 					</thead>
 					<tbody>
-						{#each data.rows as m (m.id)}
+						{#each data.rows as m, rowIdx (m.id)}
 							<tr
 								class:external-row={m.external}
 								title={m.external
@@ -318,19 +464,29 @@
 									: undefined}
 							>
 								<td class="name-col" class:self-row={m.id === data.selfId}>{m.displayName}{#if m.external}<span class="ext-dot"></span>{/if}</td>
-								{#each data.days as d (d)}
+								{#each data.days as d, dayIdx (d)}
 									{@const cell = data.grid[m.id]?.[d]}
 									{@const editable = !!cell && (m.external ? data.canManageExternal : m.id === data.selfId || data.canManageOthers)}
+									{@const isSnakeCell = showSnakeGame && snakeSet.has(`${dayIdx},${rowIdx}`)}
+									{@const isFoodCell = showSnakeGame && snakeFood.x === dayIdx && snakeFood.y === rowIdx}
 									<!-- svelte-ignore a11y_click_events_have_key_events -->
 									<!-- svelte-ignore a11y_no_static_element_interactions -->
 									<td
 										class:weekend={isWeekend(d)}
 										class:today={d === data.todayISO}
 										class:holiday={isPublicHolidayFR(d)}
-										class:cell-editable={editable}
-										style={cellStyle(cell)}
-										title={cell ? `${m.displayName} — ${ABSENCE_TYPE_LABELS[cell.type]}${cell.period !== 'FULL' ? ' (' + ABSENCE_PERIOD_LABELS[cell.period] + ')' : ''}${data.canManageOthers ? ' · imputé le ' + formatDateTime(cell.createdAt) : ''}${editable ? ' · cliquer pour les actions' : ''}` : ''}
-										onclick={editable ? (e) => cell && handleCellClick(e, cell, m.displayName) : undefined}
+										class:cell-editable={editable && !showSnakeGame}
+										style={isSnakeCell
+											? `background:${SNAKE_COLOR};`
+											: isFoodCell
+												? `background:${ABSENCE_TYPE_COLORS[snakeFood.type]};`
+												: cellStyle(cell)}
+										title={showSnakeGame
+											? ''
+											: cell
+												? `${m.displayName} — ${ABSENCE_TYPE_LABELS[cell.type]}${cell.period !== 'FULL' ? ' (' + ABSENCE_PERIOD_LABELS[cell.period] + ')' : ''}${data.canManageOthers ? ' · imputé le ' + formatDateTime(cell.createdAt) : ''}${editable ? ' · cliquer pour les actions' : ''}`
+												: ''}
+										onclick={editable && !showSnakeGame ? (e) => cell && handleCellClick(e, cell, m.displayName) : undefined}
 									></td>
 								{/each}
 							</tr>
@@ -405,7 +561,9 @@
 
 <svelte:window
 	onkeydown={(e) => {
+		trackSnakeSequence(e);
 		if (e.key !== 'Escape') return;
+		if (showSnakeGame) stopSnakeGame();
 		if (showDeclareModal) closeDeclareModal();
 		showExtModal = false;
 		showImageModal = false;
