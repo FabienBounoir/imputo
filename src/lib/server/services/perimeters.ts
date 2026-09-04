@@ -81,6 +81,11 @@ export function canLeadArg(arg: LeadScopeArg, perimeterId: string | null): boole
 	return arg === 'SYSTEM' || canLead(arg, perimeterId);
 }
 
+/** Pendant de `leadScope` pour une portée qui peut être 'SYSTEM' (laquelle ne restreint rien). */
+export function leadScopeArg(arg: LeadScopeArg): 'ALL' | string[] {
+	return arg === 'SYSTEM' ? 'ALL' : leadScope(arg);
+}
+
 /** `'ALL'` = aucune restriction (DP). Sinon la liste des périmètres pilotés, possiblement vide. */
 export function leadScope(ctx: PerimeterCtx): 'ALL' | string[] {
 	return ctx.isDp ? 'ALL' : [...ctx.leadPerimeterIds];
