@@ -327,10 +327,12 @@
 				<div class="perim-group" style="--perim:{g.color ?? 'var(--muted)'}">
 					<h3>{g.name}</h3>
 					<div class="perim-totals tabnum">
-						<span>Budget <b>{g.budget || '—'}</b></span>
-						<span>Conso <b>{g.conso || '—'}</b></span>
-						<span>Prod <b>{g.prod || '—'}</b></span>
-						<span title="Conso − Prod, cumulé depuis l'origine">TNF <b>{g.tnf || '—'}</b></span>
+						<!-- Zéro affiché tel quel, comme la colonne « Cumul » des tableaux juste en dessous :
+						     un « — » à côté d'un « 0 » sur la même donnée se lirait comme deux choses. -->
+						<span>Budget <b>{g.budget}</b></span>
+						<span>Conso <b>{g.conso}</b></span>
+						<span>Prod <b>{g.prod}</b></span>
+						<span title="Conso − Prod, cumulé depuis l'origine">TNF <b>{g.tnf}</b></span>
 					</div>
 				</div>
 			{/if}

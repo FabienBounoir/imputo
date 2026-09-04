@@ -481,6 +481,11 @@
 										{head(c)} ↗
 									</a>
 								{:else}
+									{#if perimeterCaption(c)}
+										<span class="col-perim" style="--perim:{c.perimeterColor ?? 'var(--muted)'}" title="Périmètre du code">
+											{perimeterCaption(c)}
+										</span>
+									{/if}
 									{head(c)}{#if c.archived}<span class="tag-arch" title="Code archivé — colonne conservée car elle porte encore des jours">⌫</span>{/if}
 									{#if editable && isEmptyCol(c.id)}
 										<form method="POST" action="?/removeSsp" use:enhance class="col-rm">
