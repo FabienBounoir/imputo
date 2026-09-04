@@ -108,10 +108,19 @@ export async function listWorkspaceHistoryPage(
 
 	const conditions = [eq(changeLog.workspaceId, workspaceId), gte(changeLog.createdAt, since)];
 	if (opts.entityType) conditions.push(eq(changeLog.entityType, opts.entityType));
+// Postgres stocke created_at à la microseconde, mais le driver le rend en `Date` JS (milliseconde)
+// et le curseur repart en ISO — donc tronqué. Comparer ce curseur tronqué à la colonne brute fait
+// SAUTER des lignes : la dernière ligne d'une page à .834606 produit un curseur .834000, et la
+// ligne suivante à .834200 satisfait ni `< .834000` ni `= .834000`. On tronque donc des DEUX côtés
+// (tri et comparaison) pour que SQL et le curseur parlent de la même valeur ; l'ordre à l'intérieur
+// d'une milliseconde est alors départagé par l'id, comme prévu.
+	const createdAtMs = sql`date_trunc('milliseconds', ${changeLog.createdAt})`;
 	if (opts.cursor) {
-		const cursorDate = new Date(opts.cursor.createdAt);
+		// Cast explicite : comparé à une expression SQL (et non à une colonne typée), drizzle ne sait
+		// pas sérialiser un objet Date — on passe donc l'ISO du curseur tel quel.
+		const cursorDate = sql`${new Date(opts.cursor.createdAt).toISOString()}::timestamptz`;
 		conditions.push(
-			or(lt(changeLog.createdAt, cursorDate), and(eq(changeLog.createdAt, cursorDate), lt(changeLog.id, opts.cursor.id)))!
+			or(lt(createdAtMs, cursorDate), and(eq(createdAtMs, cursorDate), lt(changeLog.id, opts.cursor.id)))!
 		);
 	}
 	if (opts.query?.trim()) {
@@ -146,7 +155,7 @@ export async function listWorkspaceHistoryPage(
 		.leftJoin(externalMember, eq(absence.externalMemberId, externalMember.id))
 		.leftJoin(memberUser, and(eq(changeLog.entityType, 'MEMBER'), eq(changeLog.entityId, memberUser.id)))
 		.where(and(...conditions))
-		.orderBy(desc(changeLog.createdAt), desc(changeLog.id))
+		.orderBy(desc(createdAtMs), desc(changeLog.id))
 		.limit(limit + 1);
 
 	const hasMore = rows.length > limit;
