@@ -2796,7 +2796,14 @@
 		gap: 0.5rem;
 		flex: 1;
 		min-width: 0;
-		flex-wrap: wrap;
+	}
+	/* `.ref-name` est en width:100% pour les référentiels d'une seule colonne ; ici la ligne porte
+	   aussi la couleur, la case transverse et les pastilles de CP — on lui rend une largeur souple
+	   sinon elle pousse tout le reste sur les lignes suivantes. */
+	.perim-form .ref-name {
+		width: auto;
+		flex: 1 1 8rem;
+		min-width: 6rem;
 	}
 	.perim-color {
 		width: 2rem;

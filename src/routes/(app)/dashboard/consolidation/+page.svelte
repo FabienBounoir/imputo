@@ -24,7 +24,11 @@
 		navigateWith({ perimeters: next });
 	}
 
+	// Sur les colonnes d'argent, « — » veut dire MASQUÉ (périmètre non piloté) et jamais zéro : un
+	// budget réellement à 0 est une information, la confondre avec un chiffre caché serait trompeur.
+	// Les colonnes de charge, elles, gardent « — » pour 0 (une ligne sans ticket n'a rien à dire).
 	const fmt = (n: number | null) => (n === null ? '—' : String(n));
+	const dash = (n: number) => (n ? String(n) : '—');
 	const signed = (n: number | null) => (n === null ? '—' : `${n > 0 ? '+' : ''}${n}`);
 	const pct = (n: number) => Math.round(n * 100);
 </script>
@@ -111,22 +115,23 @@
 								{#if r.transverse}<span class="tag">transverse</span>{/if}
 								{#if r.perimeterId === null}<span class="tag" title="Codes SSP rattachés à aucun périmètre">partagé</span>{/if}
 							</td>
-							<td class="tabnum">{r.ticketCount || '—'}</td>
-							<td class="tabnum">{r.estTotal || '—'}</td>
-							<td class="tabnum">{r.consumedTotal || '—'}</td>
-							<td class="tabnum">{r.raeTotal || '—'}</td>
+							<td class="tabnum">{dash(r.ticketCount)}</td>
+							<td class="tabnum">{dash(r.estTotal)}</td>
+							<td class="tabnum">{dash(r.consumedTotal)}</td>
+							<td class="tabnum">{dash(r.raeTotal)}</td>
 							<td class="tabnum" class:gap-pos={r.ecartVsEstimeTotal > 0} class:gap-neg={r.ecartVsEstimeTotal < 0}>
-								{signed(r.ecartVsEstimeTotal || 0)}
+								<!-- Une ligne sans ticket n'a pas un écart « nul », elle n'en a pas. -->
+								{r.ticketCount ? signed(r.ecartVsEstimeTotal) : '—'}
 							</td>
 							<td class="tabnum">{r.ticketCount ? `${pct(r.avancement)} %` : '—'}</td>
 							{#if showMoney}
-								<td class="tabnum sep">{fmt(r.enveloppeTotal || null)}</td>
-								<td class="tabnum">{fmt(r.pprTotal || null)}</td>
+								<td class="tabnum sep">{fmt(r.enveloppeTotal)}</td>
+								<td class="tabnum">{fmt(r.pprTotal)}</td>
 								<td class="tabnum" class:gap-pos={(r.ecartVsBudgetTotal ?? 0) > 0} class:gap-neg={(r.ecartVsBudgetTotal ?? 0) < 0}>
 									{signed(r.ecartVsBudgetTotal)}
 								</td>
-								<td class="tabnum sep">{fmt(r.budgetTotal || null)}</td>
-								<td class="tabnum">{fmt(r.prodTotal || null)}</td>
+								<td class="tabnum sep">{fmt(r.budgetTotal)}</td>
+								<td class="tabnum">{fmt(r.prodTotal)}</td>
 								<td class="tabnum">{signed(r.tnfTotal)}</td>
 							{/if}
 						</tr>
@@ -252,7 +257,9 @@
 		color: var(--muted);
 		font-size: 0.78rem;
 	}
-	.left {
+	/* `table.cons th/td` a une spécificité supérieure à `.left` seul : sans le préfixe, la colonne
+	   des noms restait alignée à droite comme les colonnes de chiffres. */
+	table.cons .left {
 		text-align: left;
 	}
 	.sep {
