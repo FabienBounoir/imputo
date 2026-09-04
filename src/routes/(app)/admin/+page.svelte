@@ -85,6 +85,18 @@
 		submitTimers.set(form, setTimeout(() => form.requestSubmit(), delay));
 	}
 
+	// Onglet Périmètres : quel périmètre a son panneau d'équipe déplié, et le formulaire de création.
+	let openPerimeterTeam = $state<string | null>(null);
+	let perimeterAddOpen = $state(false);
+	const PERIMETER_ROLE_LABEL: Record<string, string> = {
+		CONTRIBUTOR: 'Collaborateur',
+		CP: 'CP',
+		CP_BACKUP: 'CP backup'
+	};
+	/** Rôle courant d'une personne dans un périmètre, '' si elle n'y est pas rattachée. */
+	const roleIn = (perimeterId: string, userId: string) =>
+		data.perimeters.find((p) => p.id === perimeterId)?.members.find((m) => m.userId === userId)?.role ?? '';
+
 	let accessModalFor = $state<string | null>(null);
 	const accessModalMember = $derived(data.members.find((m) => m.id === accessModalFor) ?? null);
 
@@ -224,6 +236,7 @@
 	const TABS = [
 		{ key: 'general', label: 'Général' },
 		{ key: 'membres', label: 'Membres' },
+		{ key: 'perimetres', label: 'Périmètres' },
 		{ key: 'referentiels', label: 'Référentiels' },
 		{ key: 'workflow', label: 'Workflow' },
 		{ key: 'support', label: 'Support' },
@@ -385,7 +398,21 @@
 							<tr class="member-sep"><td colspan="5">Désactivés</td></tr>
 						{/if}
 						<tr class:inactive={!m.active && !m.pending}>
-							<td><div class="mc"><UserAvatar userId={m.id} name={m.displayName} /><div><b>{m.displayName}{#if isSelf} <span class="you">vous</span>{/if}{#if m.factice} <span class="you factice-tag" title="Placeholder pour un arrangement entre projets (clôture) — exclu d'Objectifs de la semaine">factice</span>{/if}</b><span>{m.email}</span></div></div></td>
+							<td><div class="mc"><UserAvatar userId={m.id} name={m.displayName} /><div><b>{m.displayName}{#if isSelf} <span class="you">vous</span>{/if}{#if m.factice} <span class="you factice-tag" title="Placeholder pour un arrangement entre projets (clôture) — exclu d'Objectifs de la semaine">factice</span>{/if}</b><span>{m.email}</span>
+								<!-- Lecture seule : le rattachement se modifie dans l'onglet Périmètres, qui montre
+								     l'équipe complète d'un périmètre plutôt que l'inverse. -->
+								{#if m.perimeters.length > 0}
+									<span class="member-perims">
+										{#each m.perimeters as mp (mp.id)}
+											<span
+												class="member-perim"
+												style="--perim:{mp.color ?? 'var(--muted)'}"
+												title={mp.role === 'CP' ? 'CP du périmètre' : mp.role === 'CP_BACKUP' ? 'Backup du CP' : 'Collaborateur'}
+											>{#if mp.role !== 'CONTRIBUTOR'}{mp.role === 'CP' ? '★' : '☆'} {/if}{mp.name}</span>
+										{/each}
+									</span>
+								{/if}
+							</div></div></td>
 							<td>
 								{#if m.isOwner}
 									<span class="pill owner" title="Créateur de l'espace">👑 Créateur</span>
@@ -954,6 +981,159 @@
 				{/if}
 			</section>
 		</div>
+	{/if}
+
+	{#if tab === 'perimetres'}
+		<section class="card block">
+			<div class="ref-head">
+				<div>
+					<h3>Périmètres applicatifs</h3>
+					<p class="hint">
+						Un périmètre regroupe une application et les personnes qui interviennent dessus. Le
+						<strong>CP</strong> (et son <strong>backup</strong>, qui a exactement les mêmes droits) y
+						pilote le chiffrage et le budget ; un collaborateur peut appartenir à plusieurs périmètres
+						sans changer d'espace. En tant qu'admin, vous êtes DP : vous pilotez tous les périmètres,
+						même sans y être rattaché.
+					</p>
+				</div>
+				<button type="button" class="ref-add-icon-btn" aria-label="Ajouter un périmètre" onclick={() => (perimeterAddOpen = !perimeterAddOpen)}>+</button>
+			</div>
+
+			{#if perimeterAddOpen}
+				<!-- svelte-ignore a11y_click_events_have_key_events -->
+				<!-- svelte-ignore a11y_no_static_element_interactions -->
+				<div class="modal-backdrop" onclick={() => (perimeterAddOpen = false)}>
+					<div class="modal" onclick={(e) => e.stopPropagation()}>
+						<h3>Nouveau périmètre</h3>
+						<form
+							method="POST"
+							action="?/perimeterCreate"
+							use:enhance={() => async ({ result, update }) => {
+								await update();
+								if (result.type === 'success') perimeterAddOpen = false;
+							}}
+							class="modal-form"
+						>
+							<div class="modal-form-row">
+								<input class="ref-input" name="name" placeholder="Applications mobiles" required />
+								<input class="perim-color" name="color" type="color" value="#16A34A" title="Couleur de la pastille" />
+							</div>
+							<label class="perim-check">
+								<input type="checkbox" name="transverse" value="true" />
+								<span>Périmètre transverse (chantiers hors application) — exclu par défaut des consolidations par application.</span>
+							</label>
+							<div class="modal-actions">
+								<button type="button" class="btn btn-ghost" onclick={() => (perimeterAddOpen = false)}>Annuler</button>
+								<button class="btn btn-primary" type="submit">+ Ajouter</button>
+							</div>
+						</form>
+					</div>
+				</div>
+			{/if}
+
+			<div class="ref-list">
+				{#each data.perimeters as p, i (p.id)}
+					<div class="ref-item perim-item" class:archived={p.archived}>
+						<form method="POST" action="?/perimeterUpdate" class="perim-form" use:enhance={enhanceEdit}>
+							<input type="hidden" name="id" value={p.id} />
+							<input
+								class="perim-color"
+								name="color"
+								type="color"
+								value={p.color ?? '#94A3B8'}
+								disabled={p.archived}
+								title="Couleur de la pastille"
+								onchange={(e) => e.currentTarget.form?.requestSubmit()}
+							/>
+							<input
+								class="ref-name"
+								name="name"
+								value={p.name}
+								disabled={p.archived}
+								onchange={(e) => e.currentTarget.form?.requestSubmit()}
+							/>
+							<!-- checkbox non cochée = champ absent du POST : le hidden garantit un 'false' explicite. -->
+							<input type="hidden" name="transverse" value="false" />
+							<label class="perim-check" title="Chantiers transverses">
+								<input
+									type="checkbox"
+									name="transverse"
+									value="true"
+									checked={p.transverse}
+									disabled={p.archived}
+									onchange={(e) => e.currentTarget.form?.requestSubmit()}
+								/>
+								<span>transverse</span>
+							</label>
+							{#if p.ticketCount > 0}
+								<a class="tag-usage" href="/tickets?perimeter={p.id}" title="Voir ces tickets">
+									{p.ticketCount} ticket{p.ticketCount > 1 ? 's' : ''}
+								</a>
+							{/if}
+							{#each p.members.filter((m) => m.role !== 'CONTRIBUTOR') as lead (lead.userId)}
+								<span class="perim-lead" title={PERIMETER_ROLE_LABEL[lead.role]}>
+									{lead.role === 'CP' ? '★' : '☆'} {lead.displayName}
+								</span>
+							{/each}
+						</form>
+						<div class="ref-item-end">
+							{#if p.archived}<span class="tag-arch">archivé</span>{/if}
+							<button
+								type="button"
+								class="ref-btn"
+								onclick={() => (openPerimeterTeam = openPerimeterTeam === p.id ? null : p.id)}
+							>
+								👥 Équipe ({p.members.length})
+							</button>
+							{#if !p.archived}
+								<form method="POST" action="?/perimeterMove" use:enhance={enhanceEdit}>
+									<input type="hidden" name="id" value={p.id} />
+									<input type="hidden" name="dir" value="up" />
+									<button class="obj-order-btn" type="submit" disabled={i === 0} aria-label="Monter">↑</button>
+								</form>
+								<form method="POST" action="?/perimeterMove" use:enhance={enhanceEdit}>
+									<input type="hidden" name="id" value={p.id} />
+									<input type="hidden" name="dir" value="down" />
+									<button class="obj-order-btn" type="submit" disabled={i === data.perimeters.length - 1} aria-label="Descendre">↓</button>
+								</form>
+							{/if}
+							<form method="POST" action="?/perimeterArchive" use:enhance={enhanceEdit}>
+								<input type="hidden" name="id" value={p.id} />
+								<input type="hidden" name="archived" value={p.archived ? 'false' : 'true'} />
+								<button class="ref-btn" type="submit">{p.archived ? '↺ Restaurer' : '🗄 Archiver'}</button>
+							</form>
+						</div>
+
+						{#if openPerimeterTeam === p.id}
+							<div class="perim-team">
+								<p class="hint" style="margin:0 0 .5rem;">
+									Qui intervient sur ce périmètre, et à quel titre. « CP » et « CP backup » ouvrent les
+									mêmes droits (chiffrage, budget, objectifs, lecture des imputations de l'équipe).
+								</p>
+								{#each data.members.filter((m) => m.active && !m.factice) as m (m.id)}
+									<form method="POST" action="?/perimeterMember" class="perim-team-row" use:enhance={enhanceEdit}>
+										<input type="hidden" name="perimeterId" value={p.id} />
+										<input type="hidden" name="userId" value={m.id} />
+										<span class="perim-team-name">{m.displayName}</span>
+										<select
+											class="ref-input perim-role"
+											name="role"
+											value={roleIn(p.id, m.id)}
+											onchange={(e) => e.currentTarget.form?.requestSubmit()}
+										>
+											<option value="">Non rattaché</option>
+											<option value="CONTRIBUTOR">Collaborateur</option>
+											<option value="CP">CP</option>
+											<option value="CP_BACKUP">CP backup</option>
+										</select>
+									</form>
+								{/each}
+							</div>
+						{/if}
+					</div>
+				{/each}
+			</div>
+		</section>
 	{/if}
 
 	{#if tab === 'workflow'}
@@ -2596,5 +2776,89 @@
 		padding: 1px 5px;
 		border-radius: 4px;
 		font-size: 0.9em;
+	}
+
+	/* ---------- Onglet Périmètres ---------- */
+	.ref-head {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 1rem;
+	}
+	.perim-item {
+		/* La ligne peut déplier son panneau d'équipe : elle passe en colonne, contrairement aux
+		   autres ref-item qui restent sur une seule rangée. */
+		flex-wrap: wrap;
+	}
+	.perim-form {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		flex: 1;
+		min-width: 0;
+		flex-wrap: wrap;
+	}
+	.perim-color {
+		width: 2rem;
+		height: 1.75rem;
+		padding: 0;
+		border: 1px solid var(--border);
+		border-radius: 0.4rem;
+		background: none;
+		cursor: pointer;
+	}
+	.perim-check {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		font-size: 0.8rem;
+		color: var(--muted);
+		white-space: nowrap;
+	}
+	.perim-lead {
+		font-size: 0.78rem;
+		padding: 0.1rem 0.45rem;
+		border-radius: 999px;
+		background: color-mix(in srgb, var(--accent) 14%, transparent);
+		color: var(--text);
+		white-space: nowrap;
+	}
+	.perim-team {
+		flex-basis: 100%;
+		margin-top: 0.6rem;
+		padding-top: 0.6rem;
+		border-top: 1px solid var(--border);
+	}
+	.perim-team-row {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.2rem 0;
+	}
+	.perim-team-name {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.perim-role {
+		width: 11rem;
+		flex: none;
+	}
+	.member-perims {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.25rem;
+		margin-top: 0.2rem;
+	}
+	.member-perim {
+		font-size: 0.7rem;
+		line-height: 1.4;
+		padding: 0 0.4rem;
+		border-radius: 999px;
+		color: var(--text);
+		background: color-mix(in srgb, var(--perim) 18%, transparent);
+		border: 1px solid color-mix(in srgb, var(--perim) 40%, transparent);
 	}
 </style>

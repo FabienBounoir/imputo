@@ -68,7 +68,9 @@ export const load: LayoutServerLoad = async ({ locals }) => {
 		// Périmètres de la personne + capacité à y agir comme CP : le chrome en a besoin (pastilles,
 		// entrées de navigation réservées aux pilotes). Les Set ne traversent pas la frontière
 		// serveur→client telles quelles, on n'expose donc que ce qui sert à l'affichage.
-		perimeters: locals.perimeterCtx.perimeters,
+		// `myPerimetres` et non `perimeters` : les données de layout sont fusionnées dans celles de
+		// chaque page, et l'admin expose déjà SA liste (tous les périmètres de l'espace, un autre type).
+		myPerimetres: locals.perimeterCtx.perimeters,
 		isPerimeterLead: hasLeadScope(locals.perimeterCtx),
 		canViewMoodResults: locals.canViewMoodResults,
 		moodStatus,

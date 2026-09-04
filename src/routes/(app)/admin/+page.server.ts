@@ -38,6 +38,16 @@ import {
 	type RefType
 } from '$lib/server/services/referentials';
 import {
+	listPerimeters,
+	listPerimetersByUser,
+	createPerimeter,
+	updatePerimeter,
+	setPerimeterArchived,
+	movePerimeter,
+	setPerimeterMemberRole
+} from '$lib/server/services/perimeters';
+import type { PerimeterRole } from '$lib/server/db';
+import {
 	listCategories,
 	createCategory,
 	renameCategory,
@@ -141,6 +151,12 @@ const sspSchema = z.object({
 		.refine((v) => v === null || (Number.isFinite(v) && v >= 0), 'Budget invalide.')
 });
 
+/** Champ de formulaire vide -> null (couleur facultative d'un périmètre). */
+function emptyToNull(v: FormDataEntryValue | null): string | null {
+	const s = String(v ?? '').trim();
+	return s === '' ? null : s;
+}
+
 export const load: PageServerLoad = async ({ locals }) => {
 	if (locals.role !== 'ADMIN') redirect(303, '/imputation');
 	const ws = locals.workspace!;
@@ -162,7 +178,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		.where(eq(membership.workspaceId, ws.workspaceId));
 
 	// prettier-ignore
-	const [projects, sprints, versions, categories, ssps, activities, states, ticketGroups, mood, support, supportMembers, jira, jiraSyncRuns] =
+	const [projects, sprints, versions, categories, ssps, activities, states, ticketGroups, mood, support, supportMembers, jira, jiraSyncRuns, perimeters, perimetersByUser] =
 		await Promise.all([
 			listRefs(ws.workspaceId, 'project'),
 			listRefs(ws.workspaceId, 'sprint'),
@@ -176,11 +192,19 @@ export const load: PageServerLoad = async ({ locals }) => {
 			getSupportConfig(ws.workspaceId),
 			listRotationMembers(ws.workspaceId),
 			getJiraConfig(ws.workspaceId),
-			listJiraSyncRuns(ws.workspaceId)
+			listJiraSyncRuns(ws.workspaceId),
+			listPerimeters(ws.workspaceId),
+			listPerimetersByUser(ws.workspaceId)
 		]);
 
 	return {
-		members: members.map((m) => ({ ...m, pending: m.pending === null, isOwner: m.id === ws.createdByUserId })),
+		members: members.map((m) => ({
+			...m,
+			pending: m.pending === null,
+			isOwner: m.id === ws.createdByUserId,
+			// Colonne « Périmètres » de l'onglet Membres — une seule requête pour tout le monde.
+			perimeters: perimetersByUser.get(m.id) ?? []
+		})),
 		selfId: locals.user!.id,
 		isOwner: locals.user!.id === ws.createdByUserId,
 		allowedDomain: ws.allowedDomain,
@@ -203,7 +227,8 @@ export const load: PageServerLoad = async ({ locals }) => {
 		ssps,
 		activities,
 		states,
-		ticketGroups
+		ticketGroups,
+		perimeters
 	};
 };
 
@@ -400,6 +425,80 @@ export const actions: Actions = {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { refOk: type };
+	},
+
+	perimeterCreate: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const f = await request.formData();
+		try {
+			await createPerimeter(
+				ws.workspaceId,
+				String(f.get('name') ?? ''),
+				emptyToNull(f.get('color')),
+				f.get('transverse') === 'true'
+			);
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { perimeterOk: true };
+	},
+
+	perimeterUpdate: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const f = await request.formData();
+		try {
+			await updatePerimeter(
+				ws.workspaceId,
+				String(f.get('id')),
+				String(f.get('name') ?? ''),
+				emptyToNull(f.get('color')),
+				f.get('transverse') === 'true'
+			);
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { perimeterOk: true };
+	},
+
+	perimeterArchive: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const f = await request.formData();
+		try {
+			await setPerimeterArchived(ws.workspaceId, String(f.get('id')), f.get('archived') === 'true');
+		} catch (e) {
+			// Message métier (« des tickets y sont encore rattachés ») : à remonter tel quel, c'est lui
+			// qui dit à l'admin quoi faire.
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { perimeterOk: true };
+	},
+
+	perimeterMove: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const f = await request.formData();
+		await movePerimeter(ws.workspaceId, String(f.get('id')), f.get('dir') === 'up' ? 'up' : 'down');
+		return { perimeterOk: true };
+	},
+
+	perimeterMember: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const f = await request.formData();
+		const raw = String(f.get('role') ?? '');
+		// '' = retirer la personne du périmètre (le <select> propose « Non rattaché »).
+		const role = raw === '' ? null : (raw as PerimeterRole);
+		if (role !== null && !['CONTRIBUTOR', 'CP', 'CP_BACKUP'].includes(role))
+			return fail(400, { error: 'Rôle de périmètre inconnu.' });
+		try {
+			await setPerimeterMemberRole(ws.workspaceId, String(f.get('perimeterId')), String(f.get('userId')), role);
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { perimeterOk: true };
 	},
 
 	sspCreate: async ({ request, locals }) => {
