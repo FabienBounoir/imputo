@@ -552,6 +552,7 @@ export type TicketFiltersSnapshot = {
 	projectId: string | null;
 	sprintId: string | null;
 	versionId: string | null;
+	perimeterId: string | null;
 };
 
 /**
@@ -572,7 +573,8 @@ export function parseTicketFiltersSnapshot(raw: string | null): TicketFiltersSna
 			stateId: str(p.stateId),
 			projectId: str(p.projectId),
 			sprintId: str(p.sprintId),
-			versionId: str(p.versionId)
+			versionId: str(p.versionId),
+			perimeterId: str(p.perimeterId)
 		};
 	} catch {
 		return null;
@@ -666,6 +668,7 @@ export type RefData = {
 	members: { id: string; displayName: string; factice: boolean }[];
 	ticketGroups: { id: string; label: string }[];
 	ssps: { id: string; code: string; label: string }[];
+	perimeters: { id: string; name: string; color: string | null; transverse: boolean }[];
 };
 
 /**
@@ -676,7 +679,7 @@ export type RefData = {
  */
 export async function getRefData(workspaceId: string, sortActivitiesAlpha = false): Promise<RefData> {
 	// prettier-ignore
-	const [states, sprints, versions, projects, activities, categories, members, ticketGroups, ssps] = await Promise.all([
+	const [states, sprints, versions, projects, activities, categories, members, ticketGroups, ssps, perimeters] = await Promise.all([
 		db
 			.select({ id: state.id, label: state.label, emoji: state.emoji, color: state.color })
 			.from(state)
@@ -720,10 +723,20 @@ export async function getRefData(workspaceId: string, sortActivitiesAlpha = fals
 			.select({ id: ssp.id, code: ssp.code, label: ssp.label })
 			.from(ssp)
 			.where(and(eq(ssp.workspaceId, workspaceId), isNull(ssp.archivedAt)))
-			.orderBy(ssp.label)
+			.orderBy(ssp.label),
+		db
+			.select({
+				id: perimeter.id,
+				name: perimeter.name,
+				color: perimeter.color,
+				transverse: perimeter.transverse
+			})
+			.from(perimeter)
+			.where(and(eq(perimeter.workspaceId, workspaceId), isNull(perimeter.archivedAt)))
+			.orderBy(perimeter.sortOrder, perimeter.name)
 	]);
 	if (sortActivitiesAlpha) activities.sort((a, b) => a.label.localeCompare(b.label));
-	return { states, sprints, versions, projects, activities, categories, members, ticketGroups, ssps };
+	return { states, sprints, versions, projects, activities, categories, members, ticketGroups, ssps, perimeters };
 }
 
 /** Descriptif du ticket — éditable par tout membre de l'espace. */
@@ -791,6 +804,17 @@ export async function updateTicketField(
 	if (canLead(ctx, target.perimeterId))
 		for (const f of [...MANAGER_ONLY_FIELDS, ...ADMIN_ONLY_FIELDS]) allowedFields.add(f);
 	if (isOwner || ctx.isDp) for (const f of OWNER_ONLY_FIELDS) allowedFields.add(f);
+
+	// Déplacer un ticket d'un périmètre à l'autre demande d'être lead DES DEUX CÔTÉS : sinon un CP
+	// pourrait pousser ses tickets dans le périmètre d'un collègue (ou s'approprier les siens).
+	// La colonne étant NOT NULL, une valeur vide n'a pas de sens ici.
+	if (field === 'perimeterId') {
+		if (!rawValue) throw new Error('Périmètre requis.');
+		if (!canLead(ctx, target.perimeterId) || !canLead(ctx, rawValue))
+			throw new Error('Déplacement réservé au CP des deux périmètres (ou au DP).');
+		await assertPerimeterInWorkspace(workspaceId, rawValue);
+		allowedFields.add('perimeterId');
+	}
 	const numericFields = NUMERIC_FIELDS;
 	if (!allowedFields.has(field)) throw new Error('Champ non éditable.');
 	let value: string | null = rawValue === '' ? null : rawValue;
