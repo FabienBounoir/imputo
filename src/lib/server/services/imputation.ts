@@ -299,7 +299,9 @@ export async function getTeamTimesheet(workspaceId: string, days: string[]): Pro
 		.map((m) => ({
 			userId: m.userId,
 			name: m.name,
-			rows: [...m.rows.values()],
+			// Même tri que getTimesheet : sans lui, les lignes d'un membre restaient dans l'ordre de la
+			// Map, donc de la base — non déterministe d'un chargement à l'autre.
+			rows: [...m.rows.values()].sort(compareRows),
 			dayTotals: m.dayTotals,
 			total: round(Object.values(m.dayTotals).reduce((a, b) => a + b, 0))
 		}))

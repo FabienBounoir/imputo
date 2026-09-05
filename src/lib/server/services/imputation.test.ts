@@ -7,10 +7,12 @@ import {
 	pinRow,
 	unpinRow,
 	listPinnedRows,
-	getRecentTicketIds
+	getRecentTicketIds,
+	getTeamTimesheet
 } from './imputation';
 import { createTicket, listTicketSummaries } from './tickets';
 import { createPerimeter } from './perimeters';
+import { compareRows } from '$lib/imputationRow';
 import { listCategories, createActivity, listActivities } from './params';
 import { createAbsenceFor } from './absences';
 import { addObjective, listObjectivesForUser } from './weeklyObjectives';
@@ -638,6 +640,41 @@ describe('périmètre sur la feuille d’imputation', () => {
 		// Stable : sans le tri, l'ordre venait de la base et changeait d'un appel à l'autre.
 		const again = await getWeek(f.ws.workspaceId, f.ws.userId, MONDAY);
 		expect(again.rows.map((r) => r.rowKey)).toEqual(week.rows.map((r) => r.rowKey));
+	});
+
+	// La vue équipe est groupée par personne, jamais par périmètre — mais les lignes DANS un membre
+	// souffraient du même ordre non déterministe que la feuille perso avant son tri.
+	it('la vue équipe trie aussi les lignes de chaque membre, de façon stable', async () => {
+		const f = await fixture('team');
+		for (const [type, id] of [
+			['CATEGORY', f.mco.id],
+			['TICKET', f.tMobile.id],
+			['TICKET', f.tWeb.id]
+		] as const) {
+			await setCell(f.ws.workspaceId, f.ws.userId, {
+				targetType: type,
+				targetId: id,
+				activityId: null,
+				day: MONDAY,
+				amount: 1
+			});
+		}
+
+		const days = [MONDAY, FRIDAY];
+		const team = await getTeamTimesheet(f.ws.workspaceId, days);
+		const me = team.members.find((m) => m.userId === f.ws.userId)!;
+
+		// On vérifie l'INVARIANT (chaque ligne se classe avant la suivante selon compareRows), pas un
+		// ordre attendu en dur : la requête n'a pas d'ORDER BY, donc un ordre attendu peut coïncider
+		// avec ce que la base renvoie et faire passer le test même sans le tri — c'est exactement ce
+		// qui s'est produit à la première écriture de ce test.
+		for (let i = 1; i < me.rows.length; i++) {
+			expect(compareRows(me.rows[i - 1], me.rows[i])).toBeLessThanOrEqual(0);
+		}
+		// Et le résultat ne bouge pas d'un appel à l'autre.
+		const again = await getTeamTimesheet(f.ws.workspaceId, days);
+		const meAgain = again.members.find((m) => m.userId === f.ws.userId)!;
+		expect(meAgain.rows.map((r) => r.rowKey)).toEqual(me.rows.map((r) => r.rowKey));
 	});
 
 	it('listTicketSummaries remonte le périmètre (palette d’ajout + lignes construites côté client)', async () => {
