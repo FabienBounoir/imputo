@@ -162,6 +162,7 @@
 		key: string;
 		title: string;
 		isChild: boolean;
+		canLead: boolean;
 		perimeterId: string;
 		perimeterName: string;
 		perimeterColor: string | null;
@@ -216,19 +217,22 @@
 	let ticketsLoading = $state(true);
 	const colCount = $derived(6 + (data.testPhase ? 2 : 0) + (data.isAdmin ? 2 : 0));
 
-	// Chiffrage : verrouillé pour un USER standard (retour utilisateur). Le RAE d'une activité reste
-	// éditable par ses contributeurs — `contributors` est déjà chargé, aucun appel supplémentaire.
-	// Le serveur applique la même règle (canEditActivityRae), ceci n'est que l'affordance visuelle.
-	const estTitle = $derived(
-		data.canEditEstimation ? '' : "Estimation réservée aux profils Manager et Admin."
-	);
+	// Chiffrage : réservé au lead du périmètre DU TICKET — d'où une fonction de la ligne et non une
+	// constante de page (un CP pilote certains tickets de la liste et pas d'autres). Le RAE d'une
+	// activité reste éditable par ses contributeurs — `contributors` est déjà chargé, aucun appel
+	// supplémentaire. Le serveur applique exactement les mêmes règles (updateTicketField,
+	// canEditActivityRae) ; ceci n'est que l'affordance visuelle.
+	const LEAD_LOCKED = 'Chiffrage réservé au CP de ce périmètre (ou au DP).';
+	const estTitle = (r: { canLead: boolean }) => (r.canLead ? '' : LEAD_LOCKED);
 	const RAE_LOCKED = 'RAE réservé aux personnes ayant imputé sur cette activité.';
 	// Doit rester synchronisé avec NO_ACTIVITY_ID dans $lib/server/services/tickets.ts (pas de
 	// ticket_activity_rae possible pour ce bucket synthétique : rien à éditer ici, jamais un vrai id).
 	const NO_ACTIVITY_ID = '__no_activity__';
 	const NO_ACTIVITY_HINT = "Regroupe les imputations sans activité renseignée — pas d'activité réelle à éditer ici.";
-	function canEditRae(ar: { contributors: { userId: string }[] }) {
-		return data.canEditEstimation || ar.contributors.some((c) => c.userId === data.selfId);
+	// Même règle que le serveur (canEditActivityRae) : lead du périmètre DU TICKET, ou avoir soi-même
+	// imputé sur cette activité — d'où le ticket en paramètre, un drapeau global ne suffit pas.
+	function canEditRae(row: Row, ar: { contributors: { userId: string }[] }) {
+		return row.canLead || ar.contributors.some((c) => c.userId === data.selfId);
 	}
 
 	// RAE/Estimé/Budget par activité : lignes fines toujours visibles sous le ticket (plus de
@@ -261,6 +265,7 @@
 			key: t.key,
 			title: t.title,
 			isChild: t.isChild,
+			canLead: t.canLead,
 			perimeterId: t.perimeterId,
 			perimeterName: t.perimeterName,
 			perimeterColor: t.perimeterColor,
@@ -1057,6 +1062,8 @@
 									step="0.25"
 									min="0"
 									bind:value={r.enveloppeTotale}
+									disabled={!r.canLead}
+									title={r.canLead ? '' : 'Budget réservé au CP de ce périmètre (ou au DP).'}
 									onchange={() => debouncedSave(`env-${r.id}`, () => save(r, 'enveloppeTotale', r.enveloppeTotale))}
 								/>
 							</td>
@@ -1068,8 +1075,8 @@
 								step="0.25"
 								min="0"
 								bind:value={r.estimationReal}
-								disabled={!data.canEditEstimation || r.hasActivityEstimation}
-								title={r.hasActivityEstimation ? "Estimé = compilation des Estimés par activité ci-dessous (non éditable ici)" : estTitle}
+								disabled={!r.canLead || r.hasActivityEstimation}
+								title={r.hasActivityEstimation ? "Estimé = compilation des Estimés par activité ci-dessous (non éditable ici)" : estTitle(r)}
 								onchange={() => debouncedSave(`est-${r.id}-real`, () => saveEst(r, 'real'))}
 							/>
 						</td>
@@ -1085,7 +1092,7 @@
 							/>
 						</td>
 						{#if data.testPhase}
-							<td class="num col-detail"><input class="cell-input num-input" type="number" step="0.25" min="0" bind:value={r.estimationTest} disabled={!data.canEditEstimation} title={estTitle} onchange={() => debouncedSave(`est-${r.id}-test`, () => saveEst(r, 'test'))} /></td>
+							<td class="num col-detail"><input class="cell-input num-input" type="number" step="0.25" min="0" bind:value={r.estimationTest} disabled={!r.canLead} title={estTitle(r)} onchange={() => debouncedSave(`est-${r.id}-test`, () => saveEst(r, 'test'))} /></td>
 							<td class="num col-detail"><input class="cell-input num-input" type="number" step="0.25" min="0" value={r.raeTest} disabled title="RAE Test = compilation des RAE par activité ci-dessous (non éditable ici)" /></td>
 						{/if}
 						<td class="num tabnum consumed">{r.consumed || '—'}</td>
@@ -1127,7 +1134,7 @@
 						</tr>
 					{/if}
 					{#each r.activityBreakdown as ar (ar.activityId)}
-						{@const canRae = canEditRae(ar)}
+						{@const canRae = canEditRae(r, ar)}
 						{@const isOther = ar.activityId === NO_ACTIVITY_ID}
 						<tr class="activity-subrow" transition:slide={{ duration: 150 }}>
 							<td class="ar-name">↳ {ar.label}
@@ -1460,11 +1467,11 @@
 						<span>Urgent →</span>
 					</div>
 				</div>
-				<label class="dfield"><span>Estimé</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationReal} disabled={!data.canEditEstimation || editRow.hasActivityEstimation} title={editRow.hasActivityEstimation ? "Estimé = compilation des Estimés par activité ci-dessous (non éditable ici)" : estTitle} onchange={() => debouncedSave(`est-${editRow!.id}-real`, () => saveEst(editRow!, 'real'))} /></label>
+				<label class="dfield"><span>Estimé</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationReal} disabled={!editRow.canLead || editRow.hasActivityEstimation} title={editRow.hasActivityEstimation ? "Estimé = compilation des Estimés par activité ci-dessous (non éditable ici)" : estTitle(editRow)} onchange={() => debouncedSave(`est-${editRow!.id}-real`, () => saveEst(editRow!, 'real'))} /></label>
 				<label class="dfield"><span>RAE Réal</span><input class="cell-input" type="number" step="0.25" min="0" value={editRow.raeReal} disabled title="Compilation des RAE par activité (voir le tableau)" /></label>
 				{#if data.testPhase}
-					<label class="dfield"><span>Est. Test</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationTest} disabled={!data.canEditEstimation} title={estTitle} onchange={() => debouncedSave(`est-${editRow!.id}-test`, () => saveEst(editRow!, 'test'))} /></label>
-					<label class="dfield"><span>Prépa</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.prepa} disabled={!data.canEditEstimation} title={estTitle} onchange={() => debouncedSave(`f-${editRow!.id}-prepa`, () => save(editRow!, 'prepa', editRow!.prepa))} /></label>
+					<label class="dfield"><span>Est. Test</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationTest} disabled={!editRow.canLead} title={estTitle(editRow)} onchange={() => debouncedSave(`est-${editRow!.id}-test`, () => saveEst(editRow!, 'test'))} /></label>
+					<label class="dfield"><span>Prépa</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.prepa} disabled={!editRow.canLead} title={estTitle(editRow)} onchange={() => debouncedSave(`f-${editRow!.id}-prepa`, () => save(editRow!, 'prepa', editRow!.prepa))} /></label>
 					<label class="dfield"><span>RAE Test</span><input class="cell-input" type="number" step="0.25" min="0" value={editRow.raeTest} disabled title="Compilation des RAE par activité (voir le tableau)" /></label>
 					{#each FLAG_FIELDS as fl (fl.key)}
 						<label class="dfield"><span>{fl.label}</span>
@@ -1476,8 +1483,8 @@
 				{/if}
 				<div class="dfield"><span>Code SSP</span><SspPicker ssps={data.ref.ssps} bind:value={() => editRow!.sspId ?? '', (v) => (editRow!.sspId = v || null)} onpick={(v) => save(editRow!, 'sspId', v || null)} /></div>
 				{#if data.isAdmin}
-					<label class="dfield"><span>Estimation prévisionnel</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationPrev} onchange={() => debouncedSave(`f-${editRow!.id}-estimationPrev`, () => save(editRow!, 'estimationPrev', editRow!.estimationPrev))} /></label>
-					<label class="dfield"><span>Enveloppe totale</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.enveloppeTotale} onchange={() => debouncedSave(`f-${editRow!.id}-enveloppeTotale`, () => save(editRow!, 'enveloppeTotale', editRow!.enveloppeTotale))} /></label>
+					<label class="dfield"><span>Estimation prévisionnel</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationPrev} disabled={!editRow.canLead} title={estTitle(editRow)} onchange={() => debouncedSave(`f-${editRow!.id}-estimationPrev`, () => save(editRow!, 'estimationPrev', editRow!.estimationPrev))} /></label>
+					<label class="dfield"><span>Enveloppe totale</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.enveloppeTotale} disabled={!editRow.canLead} title={estTitle(editRow)} onchange={() => debouncedSave(`f-${editRow!.id}-enveloppeTotale`, () => save(editRow!, 'enveloppeTotale', editRow!.enveloppeTotale))} /></label>
 				{/if}
 				<label class="dfield wide"><span>Commentaire</span><input class="cell-input" placeholder="Note libre…" bind:value={editRow.comment} onchange={() => save(editRow!, 'comment', editRow!.comment)} /></label>
 				{#if data.ref.ticketGroups.length > 0}

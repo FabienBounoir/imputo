@@ -167,7 +167,6 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		// (isManagerOrAdmin) — cf. canEditActivityField côté service.
 		isStrictAdmin: locals.role === 'ADMIN',
 		/** Chiffrage global (estimations, prépa) : lecture seule pour un USER standard. */
-		canEditEstimation: isManagerOrAdmin(locals.role),
 		selfId: locals.user!.id,
 		// Édition de la clé / suppression de ticket : créateur de l'espace (super admin) ou ADMIN, cf. deleteTicket().
 		isOwner: locals.user!.id === ws.createdByUserId || locals.role === 'ADMIN',

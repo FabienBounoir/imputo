@@ -26,7 +26,6 @@
 	ticketGroups={data.ticketGroups}
 	members={data.assignableMembers}
 	testPhase={data.testPhase}
-	canEditEstimation={data.canEditEstimation}
 	isAdmin={data.isAdmin}
 	isOwner={data.isOwner}
 />

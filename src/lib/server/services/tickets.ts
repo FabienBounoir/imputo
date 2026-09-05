@@ -85,6 +85,14 @@ export type TicketRow = {
 	id: string;
 	key: string;
 	title: string;
+	/**
+	 * L'appelant pilote-t-il le périmètre de CE ticket (CP, backup, ou DP) ? Décide à la fois de la
+	 * visibilité des champs budget et de l'éditabilité du chiffrage — les deux suivent exactement la
+	 * même règle côté serveur (cf. updateTicketField), l'UI doit donc suivre la même, ticket par
+	 * ticket. Un drapeau global par page ne peut pas convenir : un CP pilote certains tickets et
+	 * pas d'autres dans la même liste.
+	 */
+	canLead: boolean;
 	/** Périmètre applicatif — toujours renseigné (ticket.perimeterId est NOT NULL). */
 	perimeterId: string;
 	perimeterName: string;
@@ -355,6 +363,7 @@ async function enrichTickets(
 			id: t.id,
 			key: t.key,
 			title: t.title,
+			canLead: canSeeBudget,
 			perimeterId: t.perimeterId,
 			perimeterName: t.perimeterName,
 			perimeterColor: t.perimeterColor,

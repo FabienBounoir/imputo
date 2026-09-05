@@ -265,6 +265,25 @@ describe('cloisonnement par périmètre (dans un même espace)', () => {
 		expect(rows.find((r) => r.id === tB.id)).toBeDefined();
 	});
 
+	// Régression : `canLead` alimente l'UI (champs de chiffrage éditables ou non). Il était calculé
+	// côté serveur mais jamais exposé, et les pages gardaient un drapeau global `isManagerOrAdmin` —
+	// un CP simple membre voyait donc « Estimation réservée aux profils Manager et Admin » sur SES
+	// propres tickets, alors que le serveur acceptait son écriture.
+	it('canLead accompagne chaque ticket et suit le périmètre, pas le rôle d’espace', async () => {
+		const { ws, cpId, tA, tB } = await makeTwoPerimeters('canlead');
+		const ctx = await loadPerimeterCtx(ws.workspaceId, cpId, 'USER');
+
+		const rows = await listTickets(ws.workspaceId, true, ctx);
+		expect(rows.find((r) => r.id === tA.id)?.canLead).toBe(true);
+		expect(rows.find((r) => r.id === tB.id)?.canLead).toBe(false);
+
+		// Le serveur et l'UI doivent dire la même chose : ce que canLead autorise doit passer.
+		await updateTicketField(ws.workspaceId, tA.id, 'estimationReal', '4', ctx, cpId);
+		await expect(
+			updateTicketField(ws.workspaceId, tB.id, 'estimationReal', '4', ctx, cpId)
+		).rejects.toThrow('Champ non éditable.');
+	});
+
 	it('le DP voit et édite le budget des deux périmètres sans y être rattaché', async () => {
 		const { ws, tA, tB } = await makeTwoPerimeters('dp');
 		const dp = await loadPerimeterCtx(ws.workspaceId, ws.userId, 'ADMIN');
