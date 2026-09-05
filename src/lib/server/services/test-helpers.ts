@@ -3,6 +3,14 @@ import { and, eq } from 'drizzle-orm';
 import { db, workspace, user, membership, ticket, type Role } from '$lib/server/db';
 import { createWorkspaceWithOwner } from './workspaces';
 import { inviteMember } from './accounts';
+import { EMPTY_PERIMETER_CTX, type PerimeterCtx } from './perimeters';
+
+// ticket.perimeterId est NOT NULL : tout insert brut de ticket dans un test doit le renseigner.
+// makeWorkspace() passe par createWorkspaceWithOwner, donc l'espace a toujours ses périmètres.
+export { resolveDefaultPerimeterId as defaultPerimeterId, loadPerimeterCtx } from './perimeters';
+
+/** Contexte périmètre d'un USER lambda : membre de rien, donc lead de rien. */
+export const noLeadCtx: PerimeterCtx = { ...EMPTY_PERIMETER_CTX, role: 'USER' };
 
 // Boilerplate partagé par les tests d'intégration service (vraie DB) : chaque fichier de test
 // qui importe ce module obtient son propre nettoyage en fin de run (modules vitest isolés par fichier).

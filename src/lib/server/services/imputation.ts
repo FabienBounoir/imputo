@@ -4,6 +4,7 @@ import {
 	db,
 	timeEntry,
 	ticket,
+	perimeter,
 	category,
 	activity,
 	sprint,
@@ -15,6 +16,7 @@ import {
 import { num, round } from './calc';
 import { toISODate, workWeek, parseISODate } from '$lib/utils/date';
 import type { AbsenceType } from '$lib/absenceTypes';
+import { compareRows } from '$lib/imputationRow';
 
 export type ImputationCell = { day: string; amount: number };
 export type ImputationRow = {
@@ -33,6 +35,13 @@ export type ImputationRow = {
 	/** Sprint/version du ticket (null hors ticket ou non rattaché) — affichés en puces sur la ligne. */
 	sprintName: string | null;
 	versionName: string | null;
+	/** Périmètre du ticket — `null` pour une catégorie ou un objectif libre, qui n'en ont pas. */
+	perimeterId: string | null;
+	perimeterName: string | null;
+	perimeterColor: string | null;
+	perimeterTransverse: boolean;
+	/** Ordre d'affichage du périmètre dans l'espace — sert au tri des lignes, jamais à l'affichage. */
+	perimeterSortOrder: number;
 	/**
 	 * RAE réel de la paire (ticket, activité). null quand la ligne ne porte pas d'activité :
 	 * le RAE est stocké par activité, il n'est alors ni affichable ni saisissable ici.
@@ -81,6 +90,11 @@ type RawEntry = {
 	ticketTitle: string | null;
 	sprintName: string | null;
 	versionName: string | null;
+	perimeterId: string | null;
+	perimeterName: string | null;
+	perimeterColor: string | null;
+	perimeterTransverse: boolean | null;
+	perimeterSortOrder: number | null;
 	categoryLabel: string | null;
 	categoryKind: string | null;
 	categoryLinkedAbsenceType: AbsenceType | null;
@@ -117,6 +131,11 @@ async function queryEntries(workspaceId: string, firstDay: string, lastDay: stri
 			ticketTitle: ticket.title,
 			sprintName: sprint.name,
 			versionName: versionSprint.name,
+			perimeterId: perimeter.id,
+			perimeterName: perimeter.name,
+			perimeterColor: perimeter.color,
+			perimeterTransverse: perimeter.transverse,
+			perimeterSortOrder: perimeter.sortOrder,
 			categoryLabel: category.label,
 			categoryKind: category.kind,
 			categoryLinkedAbsenceType: category.linkedAbsenceType,
@@ -128,6 +147,10 @@ async function queryEntries(workspaceId: string, firstDay: string, lastDay: stri
 		.leftJoin(ticket, eq(timeEntry.ticketId, ticket.id))
 		.leftJoin(sprint, eq(ticket.sprintId, sprint.id))
 		.leftJoin(versionSprint, eq(ticket.versionId, versionSprint.id))
+		// leftJoin et NON innerJoin, bien que ticket.perimeterId soit NOT NULL : la requête part de
+		// time_entry, et les lignes de catégorie (congés, MCO, formation) comme les objectifs libres
+		// n'ont pas de ticket du tout — un innerJoin les ferait disparaître de la feuille.
+		.leftJoin(perimeter, eq(ticket.perimeterId, perimeter.id))
 		.leftJoin(category, eq(timeEntry.categoryId, category.id))
 		.leftJoin(weeklyObjective, eq(timeEntry.objectiveId, weeklyObjective.id))
 		.leftJoin(activity, eq(timeEntry.activityId, activity.id))
@@ -166,6 +189,12 @@ function rowSkeleton(e: RawEntry, targetId: string, key: string): ImputationRow 
 		nonProductive: e.targetType === 'CATEGORY' && e.categoryKind === 'NON_PRODUCTIVE',
 		sprintName: e.targetType === 'TICKET' ? e.sprintName : null,
 		versionName: e.targetType === 'TICKET' ? e.versionName : null,
+		perimeterId: e.perimeterId,
+		perimeterName: e.perimeterName,
+		perimeterColor: e.perimeterColor,
+		perimeterTransverse: e.perimeterTransverse ?? false,
+		// Sans périmètre (catégorie, objectif libre) : passe en dernier au tri, section « Catégories ».
+		perimeterSortOrder: e.perimeterSortOrder ?? Number.MAX_SAFE_INTEGER,
 		raeReal: null,
 		estimation: null,
 		amounts: {},
@@ -213,7 +242,10 @@ export async function getTimesheet(
 	await attachActivityRae([...rows.values()]);
 
 	const total = round(Object.values(dayTotals).reduce((a, b) => a + b, 0));
-	return { days, firstDay, lastDay, rows: [...rows.values()], dayTotals, total };
+	// queryEntries n'a pas d'ORDER BY : sans ce tri, l'ordre des lignes vient de la base et change
+	// d'un chargement à l'autre. On trie ici plutôt que dans la requête pour que la grille, la vue
+	// mobile et les tests partagent exactement la même règle (cf. compareRows).
+	return { days, firstDay, lastDay, rows: [...rows.values()].sort(compareRows), dayTotals, total };
 }
 
 export type TeamMemberSheet = {
@@ -267,7 +299,9 @@ export async function getTeamTimesheet(workspaceId: string, days: string[]): Pro
 		.map((m) => ({
 			userId: m.userId,
 			name: m.name,
-			rows: [...m.rows.values()],
+			// Même tri que getTimesheet : sans lui, les lignes d'un membre restaient dans l'ordre de la
+			// Map, donc de la base — non déterministe d'un chargement à l'autre.
+			rows: [...m.rows.values()].sort(compareRows),
 			dayTotals: m.dayTotals,
 			total: round(Object.values(m.dayTotals).reduce((a, b) => a + b, 0))
 		}))

@@ -140,6 +140,38 @@
 		const totalKey = field === 'conso' ? 'totalConso' : field === 'prod' ? 'totalProd' : 'totalTnf';
 		return round2(view.rows.reduce((a, row) => a + row[totalKey], 0));
 	}
+
+	// Groupement par périmètre : on GROUPE, on ne découpe pas. La chaîne RAE est portée par le code
+	// SSP (amorcée par son budget) — un code partagé entre deux périmètres a un RAE non ventilable,
+	// d'où le groupe « Partagé » plutôt qu'une répartition arbitraire. Les sous-totaux restent des
+	// cumuls depuis l'origine, comme la colonne « Cumul » : même portée, donc comparables.
+	const groups = $derived(
+		[...view.rows
+			.reduce((acc, row) => {
+				const key = row.perimeterId ?? '';
+				const g = acc.get(key) ?? {
+					key,
+					name: row.perimeterName ?? 'Partagé',
+					color: row.perimeterColor,
+					rows: [] as typeof view.rows,
+					budget: 0,
+					conso: 0,
+					prod: 0,
+					tnf: 0
+				};
+				g.rows.push(row);
+				g.budget = round2(g.budget + (row.budgetDays ?? 0));
+				g.conso = round2(g.conso + row.totalConso);
+				g.prod = round2(g.prod + row.totalProd);
+				g.tnf = round2(g.tnf + row.totalTnf);
+				acc.set(key, g);
+				return acc;
+			}, new Map<string, { key: string; name: string; color: string | null; rows: typeof view.rows; budget: number; conso: number; prod: number; tnf: number }>())
+			.values()
+		].sort((a, b) => (a.key === '' ? 1 : b.key === '' ? -1 : a.name.localeCompare(b.name)))
+	);
+	/** Un seul groupe : les en-têtes n'apprendraient rien, on garde la liste plate d'avant. */
+	const showGroups = $derived(groups.length > 1);
 </script>
 
 <svelte:head><title>Suivi annuel — Imputo</title></svelte:head>
@@ -290,7 +322,21 @@
 		<!-- Mode pas encore connu (localStorage lu côté client uniquement) : rien plutôt qu'une mise
 		     en page qui changerait de forme une fraction de seconde plus tard. -->
 	{:else if viewMode === 'ssp'}
-		{#each view.rows as row (row.sspId)}
+		{#each groups as g (g.key)}
+			{#if showGroups}
+				<div class="perim-group" style="--perim:{g.color ?? 'var(--muted)'}">
+					<h3>{g.name}</h3>
+					<div class="perim-totals tabnum">
+						<!-- Zéro affiché tel quel, comme la colonne « Cumul » des tableaux juste en dessous :
+						     un « — » à côté d'un « 0 » sur la même donnée se lirait comme deux choses. -->
+						<span>Budget <b>{g.budget}</b></span>
+						<span>Conso <b>{g.conso}</b></span>
+						<span>Prod <b>{g.prod}</b></span>
+						<span title="Conso − Prod, cumulé depuis l'origine">TNF <b>{g.tnf}</b></span>
+					</div>
+				</div>
+			{/if}
+			{#each g.rows as row (row.sspId)}
 			<section class="card block ssp-block">
 				{@render cardHead(row.sspId, `${row.code} — ${row.label}`)}
 				{#if !collapsed[row.sspId]}
@@ -325,6 +371,7 @@
 					</div>
 				{/if}
 			</section>
+			{/each}
 		{/each}
 	{:else}
 		<!-- Mise en page façon Excel : un tableau par indicateur, tous les codes SSP en lignes. -->
@@ -596,5 +643,30 @@
 		border-color: var(--accent);
 		outline: 2px solid var(--accent-tint);
 		outline-offset: -1px;
+	}
+	/* En-tête de groupe périmètre + ses cumuls (mêmes portées que la colonne « Cumul »). */
+	.perim-group {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 0.5rem 1rem;
+		margin: 1rem 0 0.35rem;
+		padding-left: 0.6rem;
+		border-left: 3px solid var(--perim);
+	}
+	.perim-group h3 {
+		margin: 0;
+		font-size: 0.95rem;
+	}
+	.perim-totals {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.9rem;
+		font-size: 0.8rem;
+		color: var(--muted);
+	}
+	.perim-totals b {
+		color: var(--text);
 	}
 </style>

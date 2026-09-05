@@ -74,6 +74,8 @@
 			project: data.filters.projectId ?? '',
 			sprint: data.filters.sprintId ?? '',
 			version: data.filters.versionId ?? '',
+			// Un seul périmètre côté barre de filtres (cf. +page.server.ts) : d'où le [0].
+			perimeter: data.filters.perimeterIds?.[0] ?? '',
 			view: data.view,
 			sort: data.sort,
 			page: '1', // tout changement de filtre/vue revient en page 1 (sauf override explicite)
@@ -85,7 +87,7 @@
 		// Mémorisation (préférence de compte, § réglages) : même forme que ci-dessus, `page` exclue
 		// (jamais "remembered") — fire-and-forget comme ?/groupReorder plus haut dans ce fichier.
 		const body = new FormData();
-		for (const k of ['q', 'state', 'project', 'sprint', 'version', 'view'] as const) {
+		for (const k of ['q', 'state', 'project', 'sprint', 'version', 'perimeter', 'view'] as const) {
 			if (merged[k]) body.set(k, merged[k]);
 		}
 		fetch('?/rememberFilters', { method: 'POST', body });
@@ -94,7 +96,7 @@
 	// historique de sync Jira ?jiraRun=…, clôture mensuelle ?ssp=none) — sans ça le bouton
 	// Réinitialiser reste invisible et on ne peut plus revenir à la liste complète. Aucun de ces
 	// trois n'est reconstruit par navigateWith, donc n'importe quelle navigation les efface.
-	const hasFilters = $derived(!!(data.filters.query || data.filters.stateId || data.filters.projectId || data.filters.sprintId || data.filters.versionId || data.filters.exactKey || data.filters.syncRunId || data.filters.noSsp || data.filters.keys?.length));
+	const hasFilters = $derived(!!(data.filters.query || data.filters.stateId || data.filters.projectId || data.filters.sprintId || data.filters.versionId || data.filters.perimeterIds?.length || data.filters.exactKey || data.filters.syncRunId || data.filters.noSsp || data.filters.keys?.length));
 	// Filtres/vue/pagination naviguent tous via goto() (rechargement serveur) : un fieldset désactive
 	// la barre d'un coup pendant le trajet, pour qu'on ne confonde jamais l'ancienne liste avec la nouvelle.
 	const isNavigating = $derived(!!navigating.to);
@@ -107,7 +109,7 @@
 			goto('/tickets');
 			return;
 		}
-		navigateWith({ q: '', state: '', project: '', sprint: '', version: '' });
+		navigateWith({ q: '', state: '', project: '', sprint: '', version: '', perimeter: '' });
 	}
 
 	// Détail par activité (vue tableau) : `compact` est le défaut de compte (persisté, cf.
@@ -160,6 +162,11 @@
 		key: string;
 		title: string;
 		isChild: boolean;
+		canLead: boolean;
+		perimeterId: string;
+		perimeterName: string;
+		perimeterColor: string | null;
+		perimeterTransverse: boolean;
 		stateId: string | null;
 		projectId: string | null;
 		sprintId: string | null;
@@ -210,19 +217,22 @@
 	let ticketsLoading = $state(true);
 	const colCount = $derived(6 + (data.testPhase ? 2 : 0) + (data.isAdmin ? 2 : 0));
 
-	// Chiffrage : verrouillé pour un USER standard (retour utilisateur). Le RAE d'une activité reste
-	// éditable par ses contributeurs — `contributors` est déjà chargé, aucun appel supplémentaire.
-	// Le serveur applique la même règle (canEditActivityRae), ceci n'est que l'affordance visuelle.
-	const estTitle = $derived(
-		data.canEditEstimation ? '' : "Estimation réservée aux profils Manager et Admin."
-	);
+	// Chiffrage : réservé au lead du périmètre DU TICKET — d'où une fonction de la ligne et non une
+	// constante de page (un CP pilote certains tickets de la liste et pas d'autres). Le RAE d'une
+	// activité reste éditable par ses contributeurs — `contributors` est déjà chargé, aucun appel
+	// supplémentaire. Le serveur applique exactement les mêmes règles (updateTicketField,
+	// canEditActivityRae) ; ceci n'est que l'affordance visuelle.
+	const LEAD_LOCKED = 'Chiffrage réservé au CP de ce périmètre (ou au DP).';
+	const estTitle = (r: { canLead: boolean }) => (r.canLead ? '' : LEAD_LOCKED);
 	const RAE_LOCKED = 'RAE réservé aux personnes ayant imputé sur cette activité.';
 	// Doit rester synchronisé avec NO_ACTIVITY_ID dans $lib/server/services/tickets.ts (pas de
 	// ticket_activity_rae possible pour ce bucket synthétique : rien à éditer ici, jamais un vrai id).
 	const NO_ACTIVITY_ID = '__no_activity__';
 	const NO_ACTIVITY_HINT = "Regroupe les imputations sans activité renseignée — pas d'activité réelle à éditer ici.";
-	function canEditRae(ar: { contributors: { userId: string }[] }) {
-		return data.canEditEstimation || ar.contributors.some((c) => c.userId === data.selfId);
+	// Même règle que le serveur (canEditActivityRae) : lead du périmètre DU TICKET, ou avoir soi-même
+	// imputé sur cette activité — d'où le ticket en paramètre, un drapeau global ne suffit pas.
+	function canEditRae(row: Row, ar: { contributors: { userId: string }[] }) {
+		return row.canLead || ar.contributors.some((c) => c.userId === data.selfId);
 	}
 
 	// RAE/Estimé/Budget par activité : lignes fines toujours visibles sous le ticket (plus de
@@ -255,6 +265,11 @@
 			key: t.key,
 			title: t.title,
 			isChild: t.isChild,
+			canLead: t.canLead,
+			perimeterId: t.perimeterId,
+			perimeterName: t.perimeterName,
+			perimeterColor: t.perimeterColor,
+			perimeterTransverse: t.perimeterTransverse,
 			stateId: t.stateId,
 			projectId: t.projectId,
 			sprintId: t.sprintId,
@@ -380,6 +395,16 @@
 	// paginé dans ce mode, cf. +page.server.ts)
 	let dragId = $state<string | null>(null);
 	// Modal d'édition (ouverte au clic sur une carte Kanban).
+	/** Peut-on déplacer ce ticket ? Il faut piloter le périmètre de départ ET celui d'arrivée. */
+	const leadsPerimeter = (id: string) => data.leadPerimeters === 'ALL' || data.leadPerimeters.includes(id);
+	/** Périmètres proposés comme destination — ceux qu'on pilote (tous, pour le DP). */
+	const movablePerimeters = $derived(data.ref.perimeters.filter((p) => leadsPerimeter(p.id)));
+	/** Périmètre pré-sélectionné à la création : celui du filtre actif s'il est pilotable, sinon le
+	 *  premier périmètre piloté — le cas courant d'un CP qui saisit dans son propre périmètre. */
+	const defaultNewPerimeterId = $derived(
+		movablePerimeters.find((p) => p.id === data.filters.perimeterIds?.[0])?.id ?? movablePerimeters[0]?.id
+	);
+
 	let editId = $state<string | null>(null);
 	const editRow = $derived(rows.find((r) => r.id === editId) ?? null);
 
@@ -778,6 +803,20 @@
 						<div class="field qc-key"><label for="qc-key">Clé</label><input id="qc-key" name="key" placeholder="BLM-1234" use:autofocus required /></div>
 						<div class="field qc-title-f"><label for="qc-title">Titre</label><input id="qc-title" name="title" placeholder="Intitulé du ticket" value={prefillTitle} required /></div>
 					</div>
+					<!-- Périmètre : pré-rempli avec celui du filtre courant, sinon le premier que la personne
+					     pilote (un CP crée pour son périmètre). Masqué s'il n'y a rien à choisir : le
+					     serveur retombe alors sur le périmètre par défaut de l'espace. -->
+					{#if movablePerimeters.length > 1}
+						<div class="qc-row">
+							<div class="field"><label for="qc-perimeter">Périmètre</label>
+								<select id="qc-perimeter" name="perimeterId" value={defaultNewPerimeterId}>
+									{#each movablePerimeters as p (p.id)}<option value={p.id}>{p.name}{p.transverse ? ' (transverse)' : ''}</option>{/each}
+								</select>
+							</div>
+						</div>
+					{:else if movablePerimeters.length === 1}
+						<input type="hidden" name="perimeterId" value={movablePerimeters[0].id} />
+					{/if}
 					<div class="qc-row3">
 						<div class="field"><label for="qc-project">Projet</label>
 							<select id="qc-project" name="projectId"><option value="">—</option>{#each data.ref.projects as p (p.id)}<option value={p.id}>{p.name}</option>{/each}</select>
@@ -855,6 +894,20 @@
 				<select class="filter-sel" value={data.filters.stateId ?? ''} onchange={(e) => navigateWith({ state: e.currentTarget.value })} aria-label="Filtrer par état">
 					<option value="">Tous les états</option>
 					{#each data.ref.states as s (s.id)}<option value={s.id}>{s.emoji} {s.label}</option>{/each}
+				</select>
+			{/if}
+			<!-- Le périmètre est le scope le plus large : il vient avant projet/sprint/version. Masqué
+			     tant que l'espace n'a qu'un périmètre applicatif — un filtre à une seule valeur n'aide
+			     personne et encombre la barre. -->
+			{#if data.ref.perimeters.length > 1}
+				<select
+					class="filter-sel"
+					value={data.filters.perimeterIds?.[0] ?? ''}
+					onchange={(e) => navigateWith({ perimeter: e.currentTarget.value })}
+					aria-label="Filtrer par périmètre"
+				>
+					<option value="">Tous les périmètres</option>
+					{#each data.ref.perimeters as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
 				</select>
 			{/if}
 			<select class="filter-sel" value={data.filters.projectId ?? ''} onchange={(e) => navigateWith({ project: e.currentTarget.value })} aria-label="Filtrer par projet">
@@ -967,6 +1020,20 @@
 											<div class="key tabnum">{r.key}</div>
 										{/if}
 										<span class="priority-badge" style="--pcolor:var(--priority-{r.priority})" title="Priorité P{r.priority}">P{r.priority}</span>
+										<!-- Pastille de périmètre : n'a d'intérêt que si l'espace en a plusieurs (sinon elle
+										     répète la même valeur sur chaque ligne). Cliquable = filtre sur ce périmètre. -->
+										{#if data.ref.perimeters.length > 1}
+											<button
+												type="button"
+												class="perim-chip"
+												style="--perim:{r.perimeterColor ?? 'var(--muted)'}"
+												title={r.perimeterTransverse ? `${r.perimeterName} (transverse) — filtrer` : `${r.perimeterName} — filtrer`}
+												onclick={(e) => {
+													e.stopPropagation();
+													navigateWith({ perimeter: r.perimeterId });
+												}}>{r.perimeterName}</button
+											>
+										{/if}
 										{#if r.assigneeId}
 											<Tooltip text={r.assigneeName ?? ''}>
 											<span class="assignee-avatar"><UserAvatar userId={r.assigneeId} name={r.assigneeName ?? '?'} size={20} /></span>
@@ -995,6 +1062,8 @@
 									step="0.25"
 									min="0"
 									bind:value={r.enveloppeTotale}
+									disabled={!r.canLead}
+									title={r.canLead ? '' : 'Budget réservé au CP de ce périmètre (ou au DP).'}
 									onchange={() => debouncedSave(`env-${r.id}`, () => save(r, 'enveloppeTotale', r.enveloppeTotale))}
 								/>
 							</td>
@@ -1006,8 +1075,8 @@
 								step="0.25"
 								min="0"
 								bind:value={r.estimationReal}
-								disabled={!data.canEditEstimation || r.hasActivityEstimation}
-								title={r.hasActivityEstimation ? "Estimé = compilation des Estimés par activité ci-dessous (non éditable ici)" : estTitle}
+								disabled={!r.canLead || r.hasActivityEstimation}
+								title={r.hasActivityEstimation ? "Estimé = compilation des Estimés par activité ci-dessous (non éditable ici)" : estTitle(r)}
 								onchange={() => debouncedSave(`est-${r.id}-real`, () => saveEst(r, 'real'))}
 							/>
 						</td>
@@ -1023,7 +1092,7 @@
 							/>
 						</td>
 						{#if data.testPhase}
-							<td class="num col-detail"><input class="cell-input num-input" type="number" step="0.25" min="0" bind:value={r.estimationTest} disabled={!data.canEditEstimation} title={estTitle} onchange={() => debouncedSave(`est-${r.id}-test`, () => saveEst(r, 'test'))} /></td>
+							<td class="num col-detail"><input class="cell-input num-input" type="number" step="0.25" min="0" bind:value={r.estimationTest} disabled={!r.canLead} title={estTitle(r)} onchange={() => debouncedSave(`est-${r.id}-test`, () => saveEst(r, 'test'))} /></td>
 							<td class="num col-detail"><input class="cell-input num-input" type="number" step="0.25" min="0" value={r.raeTest} disabled title="RAE Test = compilation des RAE par activité ci-dessous (non éditable ici)" /></td>
 						{/if}
 						<td class="num tabnum consumed">{r.consumed || '—'}</td>
@@ -1065,7 +1134,7 @@
 						</tr>
 					{/if}
 					{#each r.activityBreakdown as ar (ar.activityId)}
-						{@const canRae = canEditRae(ar)}
+						{@const canRae = canEditRae(r, ar)}
 						{@const isOther = ar.activityId === NO_ACTIVITY_ID}
 						<tr class="activity-subrow" transition:slide={{ duration: 150 }}>
 							<td class="ar-name">↳ {ar.label}
@@ -1330,6 +1399,17 @@
 						<option value={null}>—</option>{#each data.ref.states as s (s.id)}<option value={s.id}>{s.emoji} {s.label}</option>{/each}
 					</select>
 				</label>
+				<label class="dfield"><span>Périmètre</span>
+					{#if leadsPerimeter(editRow.perimeterId)}
+						<select class="cell-select" bind:value={editRow.perimeterId} onchange={() => save(editRow!, 'perimeterId', editRow!.perimeterId)}>
+							{#each movablePerimeters as p (p.id)}<option value={p.id}>{p.name}{p.transverse ? ' (transverse)' : ''}</option>{/each}
+						</select>
+					{:else}
+						<!-- Pas lead de ce périmètre : lecture seule plutôt qu'un select désactivé qui
+						     laisserait croire qu'il manque juste un clic. -->
+						<span class="dfield-ro">{editRow.perimeterName}{editRow.perimeterTransverse ? ' (transverse)' : ''}</span>
+					{/if}
+				</label>
 				<label class="dfield"><span>Projet</span>
 					<select class="cell-select" bind:value={editRow.projectId} onchange={() => save(editRow!, 'projectId', editRow!.projectId)}>
 						<option value={null}>—</option>{#each data.ref.projects as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
@@ -1387,11 +1467,11 @@
 						<span>Urgent →</span>
 					</div>
 				</div>
-				<label class="dfield"><span>Estimé</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationReal} disabled={!data.canEditEstimation || editRow.hasActivityEstimation} title={editRow.hasActivityEstimation ? "Estimé = compilation des Estimés par activité ci-dessous (non éditable ici)" : estTitle} onchange={() => debouncedSave(`est-${editRow!.id}-real`, () => saveEst(editRow!, 'real'))} /></label>
+				<label class="dfield"><span>Estimé</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationReal} disabled={!editRow.canLead || editRow.hasActivityEstimation} title={editRow.hasActivityEstimation ? "Estimé = compilation des Estimés par activité ci-dessous (non éditable ici)" : estTitle(editRow)} onchange={() => debouncedSave(`est-${editRow!.id}-real`, () => saveEst(editRow!, 'real'))} /></label>
 				<label class="dfield"><span>RAE Réal</span><input class="cell-input" type="number" step="0.25" min="0" value={editRow.raeReal} disabled title="Compilation des RAE par activité (voir le tableau)" /></label>
 				{#if data.testPhase}
-					<label class="dfield"><span>Est. Test</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationTest} disabled={!data.canEditEstimation} title={estTitle} onchange={() => debouncedSave(`est-${editRow!.id}-test`, () => saveEst(editRow!, 'test'))} /></label>
-					<label class="dfield"><span>Prépa</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.prepa} disabled={!data.canEditEstimation} title={estTitle} onchange={() => debouncedSave(`f-${editRow!.id}-prepa`, () => save(editRow!, 'prepa', editRow!.prepa))} /></label>
+					<label class="dfield"><span>Est. Test</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationTest} disabled={!editRow.canLead} title={estTitle(editRow)} onchange={() => debouncedSave(`est-${editRow!.id}-test`, () => saveEst(editRow!, 'test'))} /></label>
+					<label class="dfield"><span>Prépa</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.prepa} disabled={!editRow.canLead} title={estTitle(editRow)} onchange={() => debouncedSave(`f-${editRow!.id}-prepa`, () => save(editRow!, 'prepa', editRow!.prepa))} /></label>
 					<label class="dfield"><span>RAE Test</span><input class="cell-input" type="number" step="0.25" min="0" value={editRow.raeTest} disabled title="Compilation des RAE par activité (voir le tableau)" /></label>
 					{#each FLAG_FIELDS as fl (fl.key)}
 						<label class="dfield"><span>{fl.label}</span>
@@ -1403,8 +1483,8 @@
 				{/if}
 				<div class="dfield"><span>Code SSP</span><SspPicker ssps={data.ref.ssps} bind:value={() => editRow!.sspId ?? '', (v) => (editRow!.sspId = v || null)} onpick={(v) => save(editRow!, 'sspId', v || null)} /></div>
 				{#if data.isAdmin}
-					<label class="dfield"><span>Estimation prévisionnel</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationPrev} onchange={() => debouncedSave(`f-${editRow!.id}-estimationPrev`, () => save(editRow!, 'estimationPrev', editRow!.estimationPrev))} /></label>
-					<label class="dfield"><span>Enveloppe totale</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.enveloppeTotale} onchange={() => debouncedSave(`f-${editRow!.id}-enveloppeTotale`, () => save(editRow!, 'enveloppeTotale', editRow!.enveloppeTotale))} /></label>
+					<label class="dfield"><span>Estimation prévisionnel</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationPrev} disabled={!editRow.canLead} title={estTitle(editRow)} onchange={() => debouncedSave(`f-${editRow!.id}-estimationPrev`, () => save(editRow!, 'estimationPrev', editRow!.estimationPrev))} /></label>
+					<label class="dfield"><span>Enveloppe totale</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.enveloppeTotale} disabled={!editRow.canLead} title={estTitle(editRow)} onchange={() => debouncedSave(`f-${editRow!.id}-enveloppeTotale`, () => save(editRow!, 'enveloppeTotale', editRow!.enveloppeTotale))} /></label>
 				{/if}
 				<label class="dfield wide"><span>Commentaire</span><input class="cell-input" placeholder="Note libre…" bind:value={editRow.comment} onchange={() => save(editRow!, 'comment', editRow!.comment)} /></label>
 				{#if data.ref.ticketGroups.length > 0}
@@ -2644,5 +2724,29 @@
 		font-size: 12.5px;
 		color: var(--text-mute);
 		margin: 14px 4px 0;
+	}
+
+	/* Pastille de périmètre sur une ligne de ticket — cliquable, filtre la liste. */
+	.perim-chip {
+		font-size: 0.68rem;
+		line-height: 1.5;
+		padding: 0 0.4rem;
+		border-radius: 999px;
+		max-width: 9rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		cursor: pointer;
+		color: var(--text);
+		background: color-mix(in srgb, var(--perim) 16%, transparent);
+		border: 1px solid color-mix(in srgb, var(--perim) 38%, transparent);
+	}
+	.perim-chip:hover {
+		background: color-mix(in srgb, var(--perim) 28%, transparent);
+	}
+	.dfield-ro {
+		display: block;
+		padding: 0.35rem 0;
+		color: var(--muted);
 	}
 </style>

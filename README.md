@@ -131,4 +131,5 @@ Voir [`.env.example`](./.env.example). Principales : `DATABASE_URL`, `SESSION_SE
 - ✅ Écran **Imputation** (grille hebdo, saisie 0.25→1)
 - ✅ Écran **Tickets** (chiffrage, double estimation/RAE, consommé & avancement calculés)
 - ✅ **Admin** (invitations, membres, couleur d'accent)
+- ✅ **Périmètres applicatifs** : CP / backup / DP, consolidation charges & économie (voir [`docs/SPECS-perimetres.md`](./docs/SPECS-perimetres.md))
 - ⏳ À venir : export Excel multi-feuilles, dashboard, intégration Jira

@@ -2,6 +2,7 @@ import { describe, it, expect, afterAll } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 import { db, workspace, user, membership, ticket, jiraSyncRun } from '$lib/server/db';
 import { createWorkspaceWithOwner } from './workspaces';
+import { resolveDefaultPerimeterId as defaultPerimeterId } from './perimeters';
 import {
 	login,
 	changePassword,
@@ -614,9 +615,10 @@ describe('historique des runs Jira (listJiraSyncRuns / undoJiraSyncRun)', () => 
 	it('undoJiraSyncRun : supprime les tickets vierges du lot, marque le run annulé, renvoie le compte supprimé', async () => {
 		const { workspaceId, userId } = await makeWs('undo-ok');
 		const runId = await makeRun(workspaceId, { ticketsCreated: 2 });
+		const perimeterId = await defaultPerimeterId(workspaceId);
 		await db.insert(ticket).values([
-			{ workspaceId, key: 'U-1', title: 'A', createdBySyncRunId: runId },
-			{ workspaceId, key: 'U-2', title: 'B', createdBySyncRunId: runId, comment: 'touché' } // conservé
+			{ workspaceId, perimeterId, key: 'U-1', title: 'A', createdBySyncRunId: runId },
+			{ workspaceId, perimeterId, key: 'U-2', title: 'B', createdBySyncRunId: runId, comment: 'touché' } // conservé
 		]);
 
 		const deleted = await undoJiraSyncRun(workspaceId, runId, userId);

@@ -221,6 +221,10 @@
 
 	<div class="grid">
 		{#if isAll}
+			<!-- Un seul périmètre : le panneau répéterait les KPI globaux, il n'apprend rien. -->
+			{#if d.byPerimeter.length > 1}
+				{@render groupPanel('Avancement par périmètre', d.byPerimeter)}
+			{/if}
 			{@render groupPanel('Avancement par projet', d.byProject)}
 			{@render groupPanel('Avancement par sprint', d.bySprint)}
 			{#if d.byVersion.some((g) => g.name !== 'Sans version')}

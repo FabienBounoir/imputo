@@ -8,6 +8,7 @@ import {
 	sprint,
 	project,
 	ssp,
+	perimeter,
 	activity,
 	category,
 	membership,
@@ -20,6 +21,14 @@ import {
 	type Role
 } from '$lib/server/db';
 import { isManagerOrAdmin } from './workspaces';
+import {
+	resolveDefaultPerimeterId,
+	assertPerimeterInWorkspace,
+	canLead,
+	canLeadArg,
+	type LeadScopeArg,
+	type PerimeterCtx
+} from './perimeters';
 import { logChange } from './changeLog';
 import type { AbsenceType } from '$lib/absenceTypes';
 import {
@@ -76,6 +85,19 @@ export type TicketRow = {
 	id: string;
 	key: string;
 	title: string;
+	/**
+	 * L'appelant pilote-t-il le périmètre de CE ticket (CP, backup, ou DP) ? Décide à la fois de la
+	 * visibilité des champs budget et de l'éditabilité du chiffrage — les deux suivent exactement la
+	 * même règle côté serveur (cf. updateTicketField), l'UI doit donc suivre la même, ticket par
+	 * ticket. Un drapeau global par page ne peut pas convenir : un CP pilote certains tickets et
+	 * pas d'autres dans la même liste.
+	 */
+	canLead: boolean;
+	/** Périmètre applicatif — toujours renseigné (ticket.perimeterId est NOT NULL). */
+	perimeterId: string;
+	perimeterName: string;
+	perimeterColor: string | null;
+	perimeterTransverse: boolean;
 	parentId: string | null;
 	stateId: string | null;
 	sprintId: string | null;
@@ -135,6 +157,10 @@ const TICKET_BASE_SELECT = {
 	id: ticket.id,
 	key: ticket.key,
 	title: ticket.title,
+	perimeterId: ticket.perimeterId,
+	perimeterName: perimeter.name,
+	perimeterColor: perimeter.color,
+	perimeterTransverse: perimeter.transverse,
 	parentId: ticket.parentId,
 	stateId: ticket.stateId,
 	sprintId: ticket.sprintId,
@@ -172,7 +198,9 @@ function baseTicketsQuery() {
 		.leftJoin(state, eq(ticket.stateId, state.id))
 		.leftJoin(sprint, eq(ticket.sprintId, sprint.id))
 		.leftJoin(project, eq(ticket.projectId, project.id))
-		.leftJoin(ssp, eq(ticket.sspId, ssp.id));
+		.leftJoin(ssp, eq(ticket.sspId, ssp.id))
+		// innerJoin et non leftJoin : ticket.perimeterId est NOT NULL, le périmètre existe toujours.
+		.innerJoin(perimeter, eq(ticket.perimeterId, perimeter.id));
 }
 async function fetchBaseTickets(where: ReturnType<typeof and>) {
 	return baseTicketsQuery().where(where);
@@ -193,7 +221,7 @@ async function fetchBaseTickets(where: ReturnType<typeof and>) {
 async function enrichTickets(
 	workspaceId: string,
 	testPhase: boolean,
-	isAdmin: boolean,
+	lead: LeadScopeArg,
 	tickets: BaseTicketRow[],
 	includeBreakdown = true
 ): Promise<TicketRow[]> {
@@ -328,11 +356,18 @@ async function enrichTickets(
 		const totalEst = round(estimationResolved + (testPhase ? num(t.estimationTest) : 0));
 		const rae = round(resolved.real + (testPhase ? resolved.test : 0));
 		const consumed = consumedMap.get(t.id) ?? 0;
-		const enveloppeTotale = !isAdmin || t.enveloppeTotale === null ? null : num(t.enveloppeTotale);
+		// Décision PAR TICKET : un CP voit le budget des tickets de ses périmètres, pas des autres.
+		const canSeeBudget = canLeadArg(lead, t.perimeterId);
+		const enveloppeTotale = !canSeeBudget || t.enveloppeTotale === null ? null : num(t.enveloppeTotale);
 		return {
 			id: t.id,
 			key: t.key,
 			title: t.title,
+			canLead: canSeeBudget,
+			perimeterId: t.perimeterId,
+			perimeterName: t.perimeterName,
+			perimeterColor: t.perimeterColor,
+			perimeterTransverse: t.perimeterTransverse,
 			parentId: t.parentId,
 			stateId: t.stateId,
 			sprintId: t.sprintId,
@@ -353,7 +388,7 @@ async function enrichTickets(
 			raeTest: resolved.test,
 			// estimationPrev/enveloppeTotale invisibles pour un USER ; ecartVsBudget en dérive
 			// (déductible via consumed/rae déjà visibles) donc masqué pareil.
-			estimationPrev: !isAdmin || t.estimationPrev === null ? null : num(t.estimationPrev),
+			estimationPrev: !canSeeBudget || t.estimationPrev === null ? null : num(t.estimationPrev),
 			enveloppeTotale,
 			sspId: t.sspId,
 			sspCode: t.sspCode,
@@ -376,13 +411,18 @@ async function enrichTickets(
 
 /**
  * Liste les tickets non archivés d'un espace, avec consommé + indicateurs calculés.
- * `isAdmin` : masque estimationPrev/enveloppeTotale/tnfBudget pour un USER standard (invisible,
- * pas juste lecture seule — cf. §7 du spec). Par défaut à `true` (non redacté) pour les appelants
- * système sans notion de rôle courant (cron de snapshot, jobs de notification).
+ * `lead` : masque estimationPrev/enveloppeTotale/tnfBudget des tickets dont l'appelant n'est pas
+ * lead (invisible, pas juste lecture seule — cf. §7 du spec). La décision est prise ticket par
+ * ticket sur SON périmètre : un CP voit le budget de ses périmètres et pas celui des autres, le DP
+ * voit tout. `'SYSTEM'` (défaut) = appelant sans rôle courant (cron snapshot, jobs de notification).
  */
-export async function listTickets(workspaceId: string, testPhase = true, isAdmin = true): Promise<TicketRow[]> {
+export async function listTickets(
+	workspaceId: string,
+	testPhase = true,
+	lead: LeadScopeArg = 'SYSTEM'
+): Promise<TicketRow[]> {
 	const tickets = await fetchBaseTickets(and(eq(ticket.workspaceId, workspaceId), isNull(ticket.archivedAt)));
-	return enrichTickets(workspaceId, testPhase, isAdmin, tickets);
+	return enrichTickets(workspaceId, testPhase, lead, tickets);
 }
 
 /** Un ticket enrichi (consommé, RAE, groupes...) — pour l'éditer depuis n'importe quelle page (ex. Mon imputation). */
@@ -390,11 +430,11 @@ export async function getTicketById(
 	workspaceId: string,
 	ticketId: string,
 	testPhase: boolean,
-	isAdmin: boolean
+	lead: LeadScopeArg
 ): Promise<TicketRow | null> {
 	const tickets = await fetchBaseTickets(and(eq(ticket.workspaceId, workspaceId), eq(ticket.id, ticketId)));
 	if (tickets.length === 0) return null;
-	const [row] = await enrichTickets(workspaceId, testPhase, isAdmin, tickets);
+	const [row] = await enrichTickets(workspaceId, testPhase, lead, tickets);
 	return row;
 }
 
@@ -473,9 +513,24 @@ export async function deleteUntouchedSyncedTickets(workspaceId: string, syncRunI
  * juste id/clé/titre/sprint/version, sans l'enrichissement consommé/RAE/contributeurs/groupes
  * (4 requêtes GROUP BY en plus, inutiles pour peupler un <select>).
  */
-export async function listTicketSummaries(
-	workspaceId: string
-): Promise<{ id: string; key: string; title: string; sprintId: string | null; versionId: string | null; sprintName: string | null }[]> {
+export async function listTicketSummaries(workspaceId: string): Promise<
+	{
+		id: string;
+		key: string;
+		title: string;
+		sprintId: string | null;
+		versionId: string | null;
+		sprintName: string | null;
+		perimeterId: string;
+		perimeterName: string;
+		perimeterColor: string | null;
+		perimeterTransverse: boolean;
+		perimeterSortOrder: number;
+	}[]
+> {
+	// Le périmètre sert ici à deux choses : filtrer le sélecteur « + Ajouter » de Mon imputation, et
+	// permettre à la page de reconstruire une ligne complète (épingle, objectif, ajout optimiste)
+	// sans attendre un rechargement — cf. buildRow dans imputation/+page.svelte.
 	return db
 		.select({
 			id: ticket.id,
@@ -483,10 +538,18 @@ export async function listTicketSummaries(
 			title: ticket.title,
 			sprintId: ticket.sprintId,
 			versionId: ticket.versionId,
-			sprintName: sprint.name
+			sprintName: sprint.name,
+			perimeterId: ticket.perimeterId,
+			perimeterName: perimeter.name,
+			perimeterColor: perimeter.color,
+			perimeterTransverse: perimeter.transverse,
+			perimeterSortOrder: perimeter.sortOrder
 		})
 		.from(ticket)
 		.leftJoin(sprint, eq(ticket.sprintId, sprint.id))
+		// innerJoin ici (contrairement à imputation.ts) : on part de `ticket`, dont perimeterId est
+		// NOT NULL — le périmètre existe forcément.
+		.innerJoin(perimeter, eq(ticket.perimeterId, perimeter.id))
 		.where(and(eq(ticket.workspaceId, workspaceId), isNull(ticket.archivedAt)));
 }
 
@@ -504,6 +567,9 @@ export type TicketFilters = {
 	/** Tickets sans code SSP. URL-only comme les deux ci-dessus (param ?ssp=none) : lien depuis la
 	 *  colonne « Sans code SSP » de la clôture mensuelle, pour aller les corriger. */
 	noSsp?: boolean;
+	/** Restreint à ces périmètres. Vide/absent = tous — ne JAMAIS s'en servir comme garde de
+	 *  droit : c'est un filtre d'affichage, la visibilité des champs budget se joue dans enrichTickets. */
+	perimeterIds?: string[];
 	/** Tickets créés dans cette session de navigation (param ?created=CLE1,CLE2,…), accumulé côté
 	 *  client à chaque création réussie — permet de retrouver et traiter à la suite un lot de
 	 *  tickets qu'on vient de saisir, sans devoir les rechercher un par un. URL-only comme les
@@ -518,6 +584,7 @@ export type TicketFiltersSnapshot = {
 	projectId: string | null;
 	sprintId: string | null;
 	versionId: string | null;
+	perimeterId: string | null;
 };
 
 /**
@@ -538,7 +605,8 @@ export function parseTicketFiltersSnapshot(raw: string | null): TicketFiltersSna
 			stateId: str(p.stateId),
 			projectId: str(p.projectId),
 			sprintId: str(p.sprintId),
-			versionId: str(p.versionId)
+			versionId: str(p.versionId),
+			perimeterId: str(p.perimeterId)
 		};
 	} catch {
 		return null;
@@ -554,6 +622,7 @@ function ticketFilterConditions(workspaceId: string, filters: TicketFilters) {
 	if (filters.exactKey) conditions.push(eq(ticket.key, filters.exactKey));
 	if (filters.syncRunId) conditions.push(eq(ticket.createdBySyncRunId, filters.syncRunId));
 	if (filters.noSsp) conditions.push(isNull(ticket.sspId));
+	if (filters.perimeterIds?.length) conditions.push(inArray(ticket.perimeterId, filters.perimeterIds));
 	if (filters.keys?.length) conditions.push(inArray(ticket.key, filters.keys));
 	if (filters.query?.trim()) {
 		const q = `%${filters.query.trim()}%`;
@@ -571,7 +640,7 @@ function ticketFilterConditions(workspaceId: string, filters: TicketFilters) {
 export async function listTicketsPage(
 	workspaceId: string,
 	testPhase: boolean,
-	isAdmin: boolean,
+	lead: LeadScopeArg,
 	filters: TicketFilters,
 	/** Omis = pas de pagination (vue Kanban : toutes les tickets filtrés, board complet). */
 	paging?: { pageSize: number; page: number },
@@ -608,7 +677,7 @@ export async function listTicketsPage(
 		db.select({ count: sql<number>`count(*)::int` }).from(ticket).where(where)
 	]);
 
-	const rows = await enrichTickets(workspaceId, testPhase, isAdmin, tickets, includeBreakdown);
+	const rows = await enrichTickets(workspaceId, testPhase, lead, tickets, includeBreakdown);
 	// isChild ne doit indenter que si le parent est visible plus haut sur cette même page :
 	// une famille coupée par la pagination affiche sinon une sous-tâche indentée sans son
 	// parent à l'écran, ce qui ne veut rien dire visuellement.
@@ -631,6 +700,7 @@ export type RefData = {
 	members: { id: string; displayName: string; factice: boolean }[];
 	ticketGroups: { id: string; label: string }[];
 	ssps: { id: string; code: string; label: string }[];
+	perimeters: { id: string; name: string; color: string | null; transverse: boolean }[];
 };
 
 /**
@@ -641,7 +711,7 @@ export type RefData = {
  */
 export async function getRefData(workspaceId: string, sortActivitiesAlpha = false): Promise<RefData> {
 	// prettier-ignore
-	const [states, sprints, versions, projects, activities, categories, members, ticketGroups, ssps] = await Promise.all([
+	const [states, sprints, versions, projects, activities, categories, members, ticketGroups, ssps, perimeters] = await Promise.all([
 		db
 			.select({ id: state.id, label: state.label, emoji: state.emoji, color: state.color })
 			.from(state)
@@ -685,10 +755,20 @@ export async function getRefData(workspaceId: string, sortActivitiesAlpha = fals
 			.select({ id: ssp.id, code: ssp.code, label: ssp.label })
 			.from(ssp)
 			.where(and(eq(ssp.workspaceId, workspaceId), isNull(ssp.archivedAt)))
-			.orderBy(ssp.label)
+			.orderBy(ssp.label),
+		db
+			.select({
+				id: perimeter.id,
+				name: perimeter.name,
+				color: perimeter.color,
+				transverse: perimeter.transverse
+			})
+			.from(perimeter)
+			.where(and(eq(perimeter.workspaceId, workspaceId), isNull(perimeter.archivedAt)))
+			.orderBy(perimeter.sortOrder, perimeter.name)
 	]);
 	if (sortActivitiesAlpha) activities.sort((a, b) => a.label.localeCompare(b.label));
-	return { states, sprints, versions, projects, activities, categories, members, ticketGroups, ssps };
+	return { states, sprints, versions, projects, activities, categories, members, ticketGroups, ssps, perimeters };
 }
 
 /** Descriptif du ticket — éditable par tout membre de l'espace. */
@@ -704,9 +784,11 @@ const EDITABLE_FIELDS = new Set([
 	'assigneeId'
 ]);
 /**
- * Chiffrage global du ticket — ADMIN/MANAGER seulement (retour utilisateur : un USER ne doit
- * toucher ni l'estimation globale ni le RAE des autres). Le RAE fin se saisit par activité, via
- * `upsertTicketActivityRae` + `canEditActivityRae`.
+ * Chiffrage global du ticket — réservé au LEAD DU PÉRIMÈTRE DU TICKET (CP, son backup, ou le DP)
+ * et non plus à un rôle d'espace : c'est le CP du périmètre qui pilote le chiffrage de SES
+ * applications, pas n'importe quel MANAGER de l'espace. Un USER ne doit toucher ni l'estimation
+ * globale ni le RAE des autres. Le RAE fin se saisit par activité, via `upsertTicketActivityRae`
+ * + `canEditActivityRae`.
  */
 export const MANAGER_ONLY_FIELDS = new Set([
 	'estimationReal',
@@ -716,8 +798,8 @@ export const MANAGER_ONLY_FIELDS = new Set([
 	'raeTest'
 ]);
 /**
- * Champs budget — même règle ADMIN/MANAGER que le chiffrage (cf. `isManagerOrAdmin`), mais aussi
- * masqués en lecture pour les autres rôles (redaction dans `listTicketsPage`).
+ * Champs budget — même règle « lead du périmètre » que le chiffrage, mais aussi masqués en LECTURE
+ * pour qui n'est pas lead de ce périmètre (redaction par ticket dans `enrichTickets`).
  */
 export const ADMIN_ONLY_FIELDS = new Set(['estimationPrev', 'enveloppeTotale']);
 const NUMERIC_FIELDS = new Set([...MANAGER_ONLY_FIELDS, ...ADMIN_ONLY_FIELDS]);
@@ -727,20 +809,44 @@ const NUMERIC_FIELDS = new Set([...MANAGER_ONLY_FIELDS, ...ADMIN_ONLY_FIELDS]);
  */
 const OWNER_ONLY_FIELDS = new Set(['key']);
 
-/** Met à jour un champ d'un ticket (édition inline). Scopé workspace + liste blanche par rôle. */
+/**
+ * Met à jour un champ d'un ticket (édition inline). Scopé workspace + liste blanche calculée sur le
+ * périmètre DU TICKET : `ctx` remplace l'ancien paramètre `role`, pour qu'il n'y ait qu'une seule
+ * source de vérité (il porte déjà le rôle d'espace via `ctx.role`/`ctx.isDp`).
+ */
 export async function updateTicketField(
 	workspaceId: string,
 	ticketId: string,
 	field: string,
 	rawValue: string,
-	role: Role | null = null,
+	ctx: PerimeterCtx,
 	actorId: string | null = null,
 	isOwner = false
 ) {
+	// Le périmètre est lu AVANT toute écriture, et dans le même espace : un ticket d'un autre espace
+	// ne remonte pas, donc aucun droit ne peut être accordé sur lui.
+	const [target] = await db
+		.select({ perimeterId: ticket.perimeterId })
+		.from(ticket)
+		.where(and(eq(ticket.id, ticketId), eq(ticket.workspaceId, workspaceId)))
+		.limit(1);
+	if (!target) throw new Error('Ticket introuvable dans cet espace.');
+
 	const allowedFields = new Set(EDITABLE_FIELDS);
-	if (isManagerOrAdmin(role))
+	if (canLead(ctx, target.perimeterId))
 		for (const f of [...MANAGER_ONLY_FIELDS, ...ADMIN_ONLY_FIELDS]) allowedFields.add(f);
-	if (isOwner || role === 'ADMIN') for (const f of OWNER_ONLY_FIELDS) allowedFields.add(f);
+	if (isOwner || ctx.isDp) for (const f of OWNER_ONLY_FIELDS) allowedFields.add(f);
+
+	// Déplacer un ticket d'un périmètre à l'autre demande d'être lead DES DEUX CÔTÉS : sinon un CP
+	// pourrait pousser ses tickets dans le périmètre d'un collègue (ou s'approprier les siens).
+	// La colonne étant NOT NULL, une valeur vide n'a pas de sens ici.
+	if (field === 'perimeterId') {
+		if (!rawValue) throw new Error('Périmètre requis.');
+		if (!canLead(ctx, target.perimeterId) || !canLead(ctx, rawValue))
+			throw new Error('Déplacement réservé au CP des deux périmètres (ou au DP).');
+		await assertPerimeterInWorkspace(workspaceId, rawValue);
+		allowedFields.add('perimeterId');
+	}
 	const numericFields = NUMERIC_FIELDS;
 	if (!allowedFields.has(field)) throw new Error('Champ non éditable.');
 	let value: string | null = rawValue === '' ? null : rawValue;
@@ -912,17 +1018,18 @@ export async function getTicketActivityBreakdown(
 }
 
 /**
- * Un USER standard n'édite le RAE que des activités où il a lui-même imputé du temps — il ne doit
- * pas toucher au RAE des autres. ADMIN/MANAGER gardent la main sur tout le chiffrage.
+ * Un membre n'édite le RAE que des activités où il a lui-même imputé du temps — il ne doit pas
+ * toucher au RAE des autres. Le lead du périmètre DU TICKET (CP, backup, DP) garde la main sur tout
+ * le chiffrage de ses applications.
  */
 export async function canEditActivityRae(
 	workspaceId: string,
 	userId: string,
-	role: Role | null,
+	ctx: PerimeterCtx,
 	ticketId: string,
 	activityId: string
 ): Promise<boolean> {
-	if (isManagerOrAdmin(role)) return true;
+	if (await isTicketLead(workspaceId, ctx, ticketId)) return true;
 	const rows = await db
 		.select({ id: timeEntry.id })
 		.from(timeEntry)
@@ -941,23 +1048,35 @@ export async function canEditActivityRae(
 
 export type TicketActivityField = 'raeReal' | 'raeTest' | 'estimation' | 'budget';
 
+/** Le demandeur pilote-t-il le périmètre de CE ticket ? Une requête, réutilisée par les deux gardes. */
+async function isTicketLead(workspaceId: string, ctx: PerimeterCtx, ticketId: string): Promise<boolean> {
+	if (ctx.isDp) return true; // le DP pilote tout, inutile d'interroger la base
+	const [row] = await db
+		.select({ perimeterId: ticket.perimeterId })
+		.from(ticket)
+		.where(and(eq(ticket.id, ticketId), eq(ticket.workspaceId, workspaceId)))
+		.limit(1);
+	return !!row && canLead(ctx, row.perimeterId);
+}
+
 /**
  * Permission par champ pour une valeur d'activité sur un ticket :
- * - RAE (réel/test) : cf. canEditActivityRae (contributeur ou manager/admin).
+ * - RAE (réel/test) : cf. canEditActivityRae (a imputé dessus, ou lead du périmètre).
  * - Estimé : tout membre de l'espace (déjà garanti par l'authentification de la route appelante).
- * - Budget : ADMIN strict — pas manager, contrairement au reste du chiffrage.
+ * - Budget : lead du périmètre DU TICKET uniquement — c'est de l'argent, et c'est le CP de cette
+ *   application (ou le DP) qui en répond, pas un MANAGER d'un autre périmètre.
  */
 export async function canEditActivityField(
 	workspaceId: string,
 	userId: string,
-	role: Role | null,
+	ctx: PerimeterCtx,
 	ticketId: string,
 	activityId: string,
 	field: TicketActivityField
 ): Promise<boolean> {
-	if (field === 'budget') return role === 'ADMIN';
+	if (field === 'budget') return isTicketLead(workspaceId, ctx, ticketId);
 	if (field === 'estimation') return true;
-	return canEditActivityRae(workspaceId, userId, role, ticketId, activityId);
+	return canEditActivityRae(workspaceId, userId, ctx, ticketId, activityId);
 }
 
 /** Upsert d'une valeur (RAE réel/test, Estimé ou Budget) d'une activité sur un ticket. */
@@ -1034,11 +1153,15 @@ export async function createTicket(
 		sspId?: string | null;
 		estimationPrev?: string | null;
 		enveloppeTotale?: string | null;
+		/** Omis = périmètre par défaut de l'espace (cf. resolveDefaultPerimeterId). */
+		perimeterId?: string;
 	}
 ) {
+	const perimeterId = data.perimeterId ?? (await resolveDefaultPerimeterId(workspaceId));
+	if (data.perimeterId) await assertPerimeterInWorkspace(workspaceId, data.perimeterId);
 	const [row] = await db
 		.insert(ticket)
-		.values({ workspaceId, ...data, raeUpdatedAt: new Date() })
+		.values({ workspaceId, ...data, perimeterId, raeUpdatedAt: new Date() })
 		.returning({ id: ticket.id });
 	return row;
 }

@@ -57,14 +57,28 @@
 			localStorage.setItem(COLLAPSE_STORAGE_KEY, JSON.stringify(collapsed));
 	}
 
+	// Colonnes groupées par périmètre (« Partagé » en dernier), pour lire la clôture application par
+	// application. Purement de l'ordre et de l'étiquetage : on ne filtre PAS les colonnes et on
+	// n'ajoute pas de sous-total par périmètre — le « Total » et le « À ventiler » d'une personne
+	// n'ont de sens que complets, et un total partiel sur un écran qui part en compta se lirait comme
+	// un total tout court. La lecture par périmètre chiffrée vit dans /dashboard/consolidation.
 	const cols = $derived([
-		...view.ssps.map((s) => ({
-			id: s.id,
-			label: s.label,
-			code: s.code,
-			archived: s.archived,
-			editable: true
-		})),
+		...[...view.ssps]
+			.sort(
+				(a, b) =>
+					(a.perimeterName ?? '\uffff').localeCompare(b.perimeterName ?? '\uffff') ||
+					a.code.localeCompare(b.code)
+			)
+			.map((s) => ({
+				id: s.id,
+				label: s.label,
+				code: s.code,
+				archived: s.archived,
+				perimeterId: s.perimeterId,
+				perimeterName: s.perimeterName,
+				perimeterColor: s.perimeterColor,
+				editable: true
+			})),
 		...(view.hasUnassigned
 			? [
 					{
@@ -72,11 +86,22 @@
 						label: 'Sans code SSP',
 						code: 'Sans code SSP',
 						archived: false,
+						perimeterId: null,
+						perimeterName: null,
+						perimeterColor: null,
 						editable: false
 					}
 				]
 			: [])
 	]);
+	/**
+	 * Nom du périmètre affiché au-dessus du code — seulement quand il y a plusieurs groupes à
+	 * distinguer, sinon la légende se répète sur toutes les colonnes sans rien apprendre.
+	 */
+	const perimeterGroups = $derived(new Set(view.ssps.map((s) => s.perimeterName ?? '—')));
+	const perimeterCaption = (c: { perimeterName: string | null }) =>
+		perimeterGroups.size > 1 ? (c.perimeterName ?? 'Partagé') : null;
+
 	/** L'en-tête montre un des deux, l'autre passe en title — jamais les deux, la colonne est étroite. */
 	const head = (c: { code: string; label: string }) => (showLabels ? c.label : c.code);
 	const headAlt = (c: { code: string; label: string }) => (showLabels ? c.code : c.label);
@@ -337,6 +362,11 @@
 										{head(c)} ↗
 									</a>
 								{:else}
+									{#if perimeterCaption(c)}
+										<span class="col-perim" style="--perim:{c.perimeterColor ?? 'var(--muted)'}" title="Périmètre du code">
+											{perimeterCaption(c)}
+										</span>
+									{/if}
 									{head(c)}{#if c.archived}<span class="tag-arch" title="Code archivé — colonne conservée car elle porte encore des jours">⌫</span>{/if}
 								{/if}
 							</th>{/each}
@@ -451,6 +481,11 @@
 										{head(c)} ↗
 									</a>
 								{:else}
+									{#if perimeterCaption(c)}
+										<span class="col-perim" style="--perim:{c.perimeterColor ?? 'var(--muted)'}" title="Périmètre du code">
+											{perimeterCaption(c)}
+										</span>
+									{/if}
 									{head(c)}{#if c.archived}<span class="tag-arch" title="Code archivé — colonne conservée car elle porte encore des jours">⌫</span>{/if}
 									{#if editable && isEmptyCol(c.id)}
 										<form method="POST" action="?/removeSsp" use:enhance class="col-rm">
@@ -558,6 +593,11 @@
 										{head(c)} ↗
 									</a>
 								{:else}
+									{#if perimeterCaption(c)}
+										<span class="col-perim" style="--perim:{c.perimeterColor ?? 'var(--muted)'}" title="Périmètre du code">
+											{perimeterCaption(c)}
+										</span>
+									{/if}
 									{head(c)}{#if c.archived}<span class="tag-arch" title="Code archivé — colonne conservée car elle porte encore des jours">⌫</span>{/if}
 								{/if}
 							</th>{/each}
@@ -608,6 +648,11 @@
 										{head(c)} ↗
 									</a>
 								{:else}
+									{#if perimeterCaption(c)}
+										<span class="col-perim" style="--perim:{c.perimeterColor ?? 'var(--muted)'}" title="Périmètre du code">
+											{perimeterCaption(c)}
+										</span>
+									{/if}
 									{head(c)}{#if c.archived}<span class="tag-arch" title="Code archivé — colonne conservée car elle porte encore des jours">⌫</span>{/if}
 								{/if}
 							</th>{/each}
@@ -891,5 +936,17 @@
 		background: var(--surface-2, var(--surface));
 		color: var(--text);
 		font-size: 13px;
+	}
+	/* Nom du périmètre au-dessus du code SSP : regroupe visuellement les colonnes sans les filtrer. */
+	.col-perim {
+		display: block;
+		font-size: 0.62rem;
+		font-weight: 600;
+		line-height: 1.3;
+		text-transform: uppercase;
+		letter-spacing: 0.02em;
+		color: color-mix(in srgb, var(--perim) 75%, var(--text));
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 </style>

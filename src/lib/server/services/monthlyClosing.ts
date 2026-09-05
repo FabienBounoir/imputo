@@ -6,6 +6,7 @@ import {
 	monthlyClosingMember,
 	monthlyClosingSsp,
 	ssp,
+	perimeter,
 	membership,
 	user,
 	timeEntry,
@@ -40,6 +41,17 @@ export type ClosingSsp = {
 	label: string;
 	/** Archivé depuis : la colonne reste tant qu'elle porte quelque chose, mais on la signale. */
 	archived: boolean;
+	/**
+	 * Périmètre du code, pour GROUPER les colonnes — purement de la présentation. La clôture reste
+	 * un acte de gouvernance à l'échelle de l'espace : le « prévu du mois » est une donnée PERSONNE
+	 * (ouvrés − congés − formation − hors-projet) et le « à ventiler » n'a de sens que si la
+	 * totalité des jours d'une personne est dans le même écran. La découper par périmètre ferait
+	 * apparaître un collaborateur multi-périmètres dans N clôtures, chacune avec un prévu partiel.
+	 * `null` = code sans périmètre (ou rattaché à un périmètre archivé) : colonnes « Partagé ».
+	 */
+	perimeterId: string | null;
+	perimeterName: string | null;
+	perimeterColor: string | null;
 };
 
 /** D'où vient le nombre de jours ouvrés du mois — affiché pour qu'on puisse le contester. */
@@ -157,8 +169,18 @@ export async function getClosingView(
 		// ses jours disparaissent de l'écran tout en restant en base — et le total reporté dans GPS
 		// devient faux sans que personne ne le voie.
 		db
-			.select({ id: ssp.id, code: ssp.code, label: ssp.label, archivedAt: ssp.archivedAt })
+			.select({
+				id: ssp.id,
+				code: ssp.code,
+				label: ssp.label,
+				archivedAt: ssp.archivedAt,
+				perimeterId: ssp.perimeterId,
+				perimeterName: perimeter.name,
+				perimeterColor: perimeter.color,
+				perimeterArchivedAt: perimeter.archivedAt
+			})
 			.from(ssp)
+			.leftJoin(perimeter, eq(ssp.perimeterId, perimeter.id))
 			// Tri par code : c'est l'en-tête affiché par défaut. Trier sur le libellé ferait sauter
 			// l'ordre des colonnes à chaque bascule de l'interrupteur codes/libellés.
 			.where(eq(ssp.workspaceId, workspaceId))
@@ -218,12 +240,20 @@ export async function getClosingView(
 		...lines.map((l) => l.sspId),
 		...addedSspRows.map((r) => r.sspId)
 	]);
-	const toClosingSsp = (r: (typeof allSsps)[number]): ClosingSsp => ({
-		id: r.id,
-		code: r.code,
-		label: r.label,
-		archived: r.archivedAt !== null
-	});
+	const toClosingSsp = (r: (typeof allSsps)[number]): ClosingSsp => {
+		// Un code rattaché à un périmètre archivé retombe en « Partagé » : son budget existe toujours,
+		// il doit rester lisible quelque part (même règle que la consolidation).
+		const live = r.perimeterId !== null && r.perimeterArchivedAt === null;
+		return {
+			id: r.id,
+			code: r.code,
+			label: r.label,
+			archived: r.archivedAt !== null,
+			perimeterId: live ? r.perimeterId : null,
+			perimeterName: live ? r.perimeterName : null,
+			perimeterColor: live ? r.perimeterColor : null
+		};
+	};
 	const ssps = allSsps.filter((s) => keptSspIds.has(s.id)).map(toClosingSsp);
 	// On ne propose à l'ajout que des codes actifs : ressusciter un archivé se fait aux référentiels.
 	const availableSsps = allSsps

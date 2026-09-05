@@ -23,7 +23,12 @@
 	import ImputationMobile from '$lib/components/ImputationMobile.svelte';
 	import UserAvatar from '$lib/components/UserAvatar.svelte';
 	import { ABSENCE_TYPE_COLORS, ABSENCE_TYPE_LABELS, ABSENCE_PERIOD_LABELS } from '$lib/absenceTypes';
-	import type { Row } from '$lib/imputationRow';
+	import {
+		compareRows,
+		NO_PERIMETER_ORDER,
+		NO_PERIMETER_LABEL,
+		type Row
+	} from '$lib/imputationRow';
 	import { jiraTicketUrl } from '$lib/jiraLink';
 	import { buildCycle, cycleNext } from '$lib/utils/imputationCycle';
 
@@ -103,7 +108,9 @@
 				next.push(buildRow(p.targetType, p.targetId, p.activityId, undefined, p.objectiveId, null));
 			}
 		}
-		return next;
+		// Le serveur trie déjà, mais objectifs et épingles sont ajoutés ici, en fin de tableau : sans
+		// ce retri ils se retrouveraient sous le mauvais en-tête de périmètre.
+		return next.sort(compareRows);
 	}
 
 	// (Re)synchronise les lignes quand la plage affichée — ou le membre consulté — change. Le
@@ -612,11 +619,33 @@
 		let emoji = '🎫';
 		let nonProductive = false;
 		let sprintName: string | null = null;
+		// Une catégorie ou un objectif libre n'a pas de périmètre : la ligne part en section « Catégories ».
+		let perimeter: {
+			perimeterId: string | null;
+			perimeterName: string | null;
+			perimeterColor: string | null;
+			perimeterTransverse: boolean;
+			perimeterSortOrder: number;
+		} = {
+			perimeterId: null,
+			perimeterName: null,
+			perimeterColor: null,
+			perimeterTransverse: false,
+			perimeterSortOrder: NO_PERIMETER_ORDER
+		};
 		if (targetType === 'TICKET') {
 			const t = data.tickets.find((x) => x.id === targetId);
 			label = t?.title ?? '—';
 			sublabel = t?.key ?? '';
 			sprintName = t?.sprintName ?? null;
+			if (t)
+				perimeter = {
+					perimeterId: t.perimeterId,
+					perimeterName: t.perimeterName,
+					perimeterColor: t.perimeterColor,
+					perimeterTransverse: t.perimeterTransverse,
+					perimeterSortOrder: t.perimeterSortOrder
+				};
 		} else if (targetType === 'CATEGORY') {
 			const c = data.categories.find((x) => x.id === targetId);
 			label = c?.label ?? '—';
@@ -644,12 +673,32 @@
 			nonProductive,
 			sprintName,
 			versionName: null,
+			...perimeter,
 			raeReal: targetType === 'TICKET' && activityId ? 0 : null,
 			estimation: targetType === 'TICKET' && activityId ? 0 : null,
 			amounts,
 			lockedDays: {},
 			absenceType: null
 		};
+	}
+
+	// Condition basée sur les LIGNES AFFICHÉES, et non sur le nombre de périmètres de l'espace :
+	// seedDefaults en crée toujours deux (le principal + Transverse), donc `perimeters.length > 1`
+	// aurait collé des sections à toutes les équipes qui n'utilisent pas les périmètres. Ici, tant
+	// que la feuille ne touche qu'une seule application, l'écran reste exactement comme avant.
+	const showPerimeters = $derived.by(() => {
+		const rowsToScan: Row[] = data.viewingTeam
+			? (data.team?.members ?? []).flatMap((m) => m.rows)
+			: rows;
+		return new Set(rowsToScan.map((r) => r.perimeterId).filter(Boolean)).size > 1;
+	});
+	/** Libellé de section d'une ligne — `null` si elle n'ouvre pas une nouvelle section. */
+	function perimeterHeadingAt(index: number): string | null {
+		if (!showPerimeters) return null;
+		const row = rows[index];
+		const prev = index > 0 ? rows[index - 1] : null;
+		if (prev && prev.perimeterId === row.perimeterId) return null;
+		return row.perimeterName ?? NO_PERIMETER_LABEL;
 	}
 
 	function activityLabel(row: Row) {
@@ -892,6 +941,11 @@
 										<span class="pill pill-ico">{@render rowIcon(row)}</span>
 										<div class="tt">
 											<b>{row.objectiveNote || row.label}</b>
+											<!-- La vue équipe est groupée par personne, pas par périmètre : la pastille est
+											     ici le seul repère (contrairement à la grille perso, qui a des sections). -->
+											{#if showPerimeters && row.perimeterName}
+												<span class="perim-chip" style="--perim:{row.perimeterColor ?? 'var(--muted)'}">{row.perimeterName}</span>
+											{/if}
 											{#if ticketJiraUrl(row)}
 												<a class="sub" href={ticketJiraUrl(row)} target="_blank" rel="noopener noreferrer" title="Ouvrir dans Jira" onclick={(e) => e.stopPropagation()}>{row.sublabel}</a>
 											{:else}
@@ -1007,6 +1061,7 @@
 			capacity={data.capacity}
 			absences={data.absences}
 			readOnly={data.readOnly}
+			{showPerimeters}
 			canManageObjectives={data.canManageObjectives}
 			onCycle={(row, day) => cycle(row, day)}
 			onSetAmount={setAmount}
@@ -1059,6 +1114,18 @@
 			</thead>
 			<tbody>
 				{#each rows as row, ri (row.rowKey)}
+					{@const heading = perimeterHeadingAt(ri)}
+					{#if heading}
+						<!-- Même mécanique que l'en-tête de semaine plus haut : une ligne à colspan sur toute
+						     la grille, pas un second tableau. -->
+						<tr class="perim-head-row">
+							<td colspan={days.length + (showRae ? 4 : 2)}>
+								<span class="perim-head" style="--perim:{row.perimeterColor ?? 'var(--muted)'}">
+									{heading}{#if row.perimeterTransverse}<span class="perim-head-tag">transverse</span>{/if}
+								</span>
+							</td>
+						</tr>
+					{/if}
 					<tr>
 						<td class="task">
 							<div class="task-cell">
@@ -1240,6 +1307,7 @@
 				categories={data.categories.filter((c) => !c.linkedAbsenceType)}
 				recentTicketIds={data.recentTicketIds}
 				versions={data.versions}
+				perimeters={data.perimeters}
 				objectives={data.weeklyObjectives.filter((o) => o.kind === 'TICKET')}
 				activities={data.activities}
 				onadd={(target, activityId) => {
@@ -1343,7 +1411,6 @@
 	ticketGroups={data.ticketGroups}
 	members={data.assignableMembers}
 	testPhase={data.testPhase}
-	canEditEstimation={data.canEditEstimation}
 	isAdmin={data.isAdmin}
 	isOwner={data.isOwner}
 	onClose={() => (editTicketId = null)}
@@ -2206,5 +2273,41 @@
 		.summary {
 			grid-template-columns: 1fr;
 		}
+	}
+	/* En-tête de section périmètre — même rôle que l'en-tête de semaine, en tête de groupe de lignes. */
+	.perim-head-row td {
+		padding: 0.5rem 0.6rem 0.2rem;
+		border: none;
+		background: none;
+	}
+	.perim-head {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		font-size: 0.72rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
+		padding-left: 0.5rem;
+		border-left: 3px solid var(--perim);
+		color: color-mix(in srgb, var(--perim) 70%, var(--text));
+	}
+	.perim-head-tag {
+		font-size: 0.65rem;
+		font-weight: 500;
+		text-transform: none;
+		letter-spacing: 0;
+		color: var(--muted);
+	}
+	/* Pastille de périmètre (vue équipe uniquement — la grille perso a ses sections). */
+	.perim-chip {
+		font-size: 0.68rem;
+		line-height: 1.5;
+		padding: 0 0.4rem;
+		border-radius: 999px;
+		white-space: nowrap;
+		color: var(--text);
+		background: color-mix(in srgb, var(--perim) 16%, transparent);
+		border: 1px solid color-mix(in srgb, var(--perim) 38%, transparent);
 	}
 </style>

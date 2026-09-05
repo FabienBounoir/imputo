@@ -286,8 +286,17 @@
 				<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg>
 				Par sprint
 			</a>
+			<!-- Consolidation charges + économie : n'a de sens que pour qui pilote au moins un
+			     périmètre (DP, ou CP sur les siens) — sinon la page ne montrerait que des lignes vides. -->
+			{#if data.isPerimeterLead}
+				<a class="nav-item" class:active={isActive('/dashboard/consolidation')} href="/dashboard/consolidation">
+					<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18"/><path d="M3 12h12"/><path d="M3 18h6"/></svg>
+					Consolidation
+				</a>
+			{/if}
 		</div>
-		{#if data.role === 'ADMIN' || data.role === 'MANAGER'}
+		<!-- Un CP (ou son backup) pilote les objectifs des collaborateurs de ses périmètres. -->
+		{#if data.role === 'ADMIN' || data.role === 'MANAGER' || data.isPerimeterLead}
 			<a class="nav-item" class:active={isActive('/admin/objectifs')} href="/admin/objectifs">
 				<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
 				Objectifs de la semaine

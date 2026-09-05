@@ -188,6 +188,16 @@ export async function addObjective(
 	});
 }
 
+/** À qui appartient cet objectif — pour vérifier qu'un CP ne pilote que sa propre population. */
+export async function getObjectiveOwner(workspaceId: string, id: string): Promise<string | null> {
+	const [row] = await db
+		.select({ userId: weeklyObjective.userId })
+		.from(weeklyObjective)
+		.where(and(eq(weeklyObjective.id, id), eq(weeklyObjective.workspaceId, workspaceId)))
+		.limit(1);
+	return row?.userId ?? null;
+}
+
 export async function removeObjective(workspaceId: string, id: string) {
 	await db.delete(weeklyObjective).where(and(eq(weeklyObjective.id, id), eq(weeklyObjective.workspaceId, workspaceId)));
 }

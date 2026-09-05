@@ -16,6 +16,11 @@ import { relations, sql } from 'drizzle-orm';
 
 // ---------- Enums ----------
 export const roleEnum = pgEnum('role', ['USER', 'ADMIN', 'MANAGER']);
+// Rôle au sein d'un périmètre applicatif. CP et CP_BACKUP ont exactement les mêmes pouvoirs
+// (cf. canLead dans services/perimeters.ts) — la distinction n'existe que pour l'affichage et,
+// plus tard, le ciblage des notifications. Un même user peut être CP d'un périmètre et
+// CP_BACKUP d'un autre : le « backup d'un autre CP » tombe du modèle, sans champ dédié.
+export const perimeterRoleEnum = pgEnum('perimeter_role', ['CONTRIBUTOR', 'CP', 'CP_BACKUP']);
 export const themePrefEnum = pgEnum('theme_pref', ['LIGHT', 'DARK', 'SYSTEM']);
 // Couleur d'accent personnelle : suit l'espace, ou forcée (fixe ou défilante) indépendamment de l'admin.
 export const accentModeEnum = pgEnum('accent_mode', ['WORKSPACE', 'CUSTOM', 'RGB', 'DISCO']);
@@ -259,6 +264,60 @@ export const setupToken = pgTable(
 );
 
 // ---------- Référentiels (scopés workspace) ----------
+// Périmètre applicatif : sous-scope DANS l'espace, pas un espace de plus. L'espace reste la
+// frontière d'isolation (toute requête filtre toujours workspaceId d'abord) ; le périmètre est une
+// dimension de rattachement ET de permission, qui permet à un collaborateur d'intervenir sur
+// plusieurs périmètres sans changer d'espace, donc sans éclater sa feuille d'imputation.
+export const perimeter = pgTable(
+	'perimeter',
+	{
+		id: id(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspace.id, { onDelete: 'cascade' }),
+		name: text('name').notNull(),
+		color: text('color'), // pastille, même esprit que state.color
+		// Chantier transverse : rattaché à un périmètre pour ne jamais laisser un ticket orphelin
+		// (ticket.perimeterId est NOT NULL), mais exclu par défaut des consolidations « par périmètre
+		// applicatif » — sinon le transverse écraserait la lecture par application.
+		transverse: boolean('transverse').notNull().default(false),
+		sortOrder: integer('sort_order').notNull().default(0),
+		archivedAt: archivedAt(),
+		createdAt: createdAt()
+	},
+	(t) => [
+		index('perimeter_ws_idx').on(t.workspaceId),
+		uniqueIndex('perimeter_ws_name_uq')
+			.on(t.workspaceId, sql`lower(${t.name})`)
+			.where(sql`${t.archivedAt} is null`)
+	]
+);
+
+// Rattachement d'un membre à un périmètre, avec son rôle dedans.
+export const perimeterMember = pgTable(
+	'perimeter_member',
+	{
+		id: id(),
+		// workspaceId dénormalisé (contrairement à ticket_activity_rae qui s'en passe) : hooks.server.ts
+		// interroge cette table par (workspaceId, userId) à CHAQUE requête authentifiée, sans jointure.
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspace.id, { onDelete: 'cascade' }),
+		perimeterId: uuid('perimeter_id')
+			.notNull()
+			.references(() => perimeter.id, { onDelete: 'cascade' }),
+		userId: uuid('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		role: perimeterRoleEnum('role').notNull().default('CONTRIBUTOR'),
+		createdAt: createdAt()
+	},
+	(t) => [
+		uniqueIndex('perimeter_member_uq').on(t.perimeterId, t.userId),
+		index('perimeter_member_ws_user_idx').on(t.workspaceId, t.userId)
+	]
+);
+
 export const project = pgTable(
 	'project',
 	{
@@ -267,6 +326,9 @@ export const project = pgTable(
 			.notNull()
 			.references(() => workspace.id, { onDelete: 'cascade' }),
 		name: text('name').notNull(),
+		// Rattachement optionnel à un périmètre : null = commun à tous les périmètres de l'espace
+		// (comportement historique). Sert à filtrer les pickers, jamais à restreindre un droit.
+		perimeterId: uuid('perimeter_id').references(() => perimeter.id, { onDelete: 'set null' }),
 		archivedAt: archivedAt(),
 		createdAt: createdAt()
 	},
@@ -293,6 +355,11 @@ export const ssp = pgTable(
 		// Budget alloué, en jours. Posé dès maintenant pour le suivi annuel (RAE mensuel), pas
 		// encore exploité par la clôture mensuelle.
 		budgetDays: numeric('budget_days', { precision: 8, scale: 2 }),
+		// Périmètre auquel imputer le BUDGET de ce code (budgetDays n'a aucun autre porteur possible).
+		// null = code partagé entre périmètres, agrégé sous une ligne « Partagé ».
+		// ⚠ La CONSO ne passe JAMAIS par ici : elle se ventile par ticket.perimeterId, qui reste exact
+		// même quand un code SSP est partagé (cf. services/perimeterConsolidation.ts).
+		perimeterId: uuid('perimeter_id').references(() => perimeter.id, { onDelete: 'set null' }),
 		archivedAt: archivedAt(),
 		createdAt: createdAt()
 	},
@@ -418,6 +485,9 @@ export const sprint = pgTable(
 		kind: sprintKindEnum('kind').notNull().default('SPRINT'),
 		sortOrder: integer('sort_order').notNull().default(0),
 		projectId: uuid('project_id').references(() => project.id, { onDelete: 'set null' }),
+		// Rattachement optionnel à un périmètre : null = commun à tous les périmètres de l'espace
+		// (comportement historique). Sert à filtrer les pickers, jamais à restreindre un droit.
+		perimeterId: uuid('perimeter_id').references(() => perimeter.id, { onDelete: 'set null' }),
 		archivedAt: archivedAt(),
 		createdAt: createdAt()
 	},
@@ -464,6 +534,17 @@ export const ticket = pgTable(
 			.references(() => workspace.id, { onDelete: 'cascade' }),
 		key: text('key').notNull(),
 		title: text('title').notNull(),
+		// NOT NULL : l'autorité du rattachement au périmètre, et la seule voie exacte pour ventiler la
+		// charge (conso/RAE/estimation). Non nullable pour qu'aucun agrégat n'ait à gérer une branche
+		// « sans périmètre » — les chantiers transverses vont dans un périmètre transverse dédié.
+		// Pas d'onDelete (donc NO ACTION) et non RESTRICT : NO ACTION est vérifié en FIN d'instruction,
+		// donc la suppression en cascade d'un espace (workspace -> perimeter ET workspace -> ticket)
+		// passe quel que soit l'ordre dans lequel Postgres traite les deux cascades. RESTRICT, vérifié
+		// immédiatement, en dépendrait. Un DELETE direct sur un périmètre encore peuplé échoue quand
+		// même — ce qu'on veut (l'appli n'archive de toute façon jamais un périmètre qui a des tickets).
+		perimeterId: uuid('perimeter_id')
+			.notNull()
+			.references(() => perimeter.id),
 		projectId: uuid('project_id').references(() => project.id, { onDelete: 'set null' }),
 		parentId: uuid('parent_id'),
 		sprintId: uuid('sprint_id').references(() => sprint.id, { onDelete: 'set null' }),
@@ -501,6 +582,7 @@ export const ticket = pgTable(
 	},
 	(t) => [
 		index('ticket_ws_idx').on(t.workspaceId),
+		index('ticket_ws_perimeter_idx').on(t.workspaceId, t.perimeterId),
 		uniqueIndex('ticket_ws_key_uq').on(t.workspaceId, t.key),
 		index('ticket_sync_run_idx').on(t.createdBySyncRunId)
 	]
@@ -1063,6 +1145,9 @@ export const timeEntryRelations = relations(timeEntry, ({ one }) => ({
 export type Workspace = typeof workspace.$inferSelect;
 export type User = typeof user.$inferSelect;
 export type Membership = typeof membership.$inferSelect;
+export type Perimeter = typeof perimeter.$inferSelect;
+export type PerimeterMember = typeof perimeterMember.$inferSelect;
+export type PerimeterRole = (typeof perimeterRoleEnum.enumValues)[number];
 export type Ticket = typeof ticket.$inferSelect;
 export type JiraSyncRun = typeof jiraSyncRun.$inferSelect;
 export type TicketActivityRae = typeof ticketActivityRae.$inferSelect;

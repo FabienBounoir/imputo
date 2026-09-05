@@ -456,6 +456,13 @@
       "when": 1788245435936,
       "tag": "0064_tranquil_flatman",
       "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1788539362348,
+      "tag": "0065_naive_black_bolt",
+      "breakpoints": true
     }
   ]
 }

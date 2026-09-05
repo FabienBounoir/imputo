@@ -20,7 +20,6 @@
 		ticketGroups,
 		members,
 		testPhase,
-		canEditEstimation,
 		isAdmin,
 		isOwner,
 		onClose,
@@ -37,7 +36,6 @@
 		/** Pour "Assigné à" — mêmes membres que le filtre `!m.factice` de Tickets & chiffrage. */
 		members: { id: string; displayName: string; factice: boolean }[];
 		testPhase: boolean;
-		canEditEstimation: boolean;
 		isAdmin: boolean;
 		/** Créateur de l'espace (super admin) ou ADMIN — seuls profils autorisés à éditer la clé / supprimer un ticket. */
 		isOwner: boolean;
@@ -53,6 +51,8 @@
 		id: string;
 		key: string;
 		title: string;
+		/** L'appelant pilote-t-il le périmètre de CE ticket ? Vient de l'API, cf. TicketRow.canLead. */
+		canLead: boolean;
 		stateId: string | null;
 		projectId: string | null;
 		sprintId: string | null;
@@ -114,7 +114,10 @@
 			.finally(() => (historyLoading = false));
 	});
 
-	const estTitle = $derived(canEditEstimation ? '' : 'Estimation réservée aux profils Manager et Admin.');
+	// Le droit se lit sur le ticket ouvert, pas sur un drapeau de page : la modale est ouverte depuis
+	// Mon imputation et les dashboards, qui n'ont aucun moyen de savoir quel périmètre sera affiché.
+	const canEditEstimation = $derived(ticket?.canLead ?? false);
+	const estTitle = $derived(canEditEstimation ? '' : 'Chiffrage réservé au CP de ce périmètre (ou au DP).');
 	const estRealTitle = $derived(
 		ticket?.hasActivityEstimation
 			? 'Estimé = compilation des Estimés par activité ci-dessous (non éditable ici)'
@@ -365,8 +368,8 @@
 					{/if}
 					<div class="dfield"><span>Code SSP</span><SspPicker {ssps} bind:value={() => ticket!.sspId ?? '', (v) => (ticket!.sspId = v || null)} onpick={(v) => save('sspId', v || null)} /></div>
 					{#if isAdmin}
-						<label class="dfield"><span>Estimation prévisionnel</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={ticket.estimationPrev} onchange={() => { const v = ticket!.estimationPrev; const snapshot = { id: ticket!.id, title: ticket!.title, sprintId: ticket!.sprintId, versionId: ticket!.versionId }; debouncedSave(`f-${ticket!.id}-estimationPrev`, () => save('estimationPrev', v, snapshot)); }} /></label>
-						<label class="dfield"><span>Enveloppe totale</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={ticket.enveloppeTotale} onchange={() => { const v = ticket!.enveloppeTotale; const snapshot = { id: ticket!.id, title: ticket!.title, sprintId: ticket!.sprintId, versionId: ticket!.versionId }; debouncedSave(`f-${ticket!.id}-enveloppeTotale`, () => save('enveloppeTotale', v, snapshot)); }} /></label>
+						<label class="dfield"><span>Estimation prévisionnel</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={ticket.estimationPrev} disabled={!canEditEstimation} title={estTitle} onchange={() => { const v = ticket!.estimationPrev; const snapshot = { id: ticket!.id, title: ticket!.title, sprintId: ticket!.sprintId, versionId: ticket!.versionId }; debouncedSave(`f-${ticket!.id}-estimationPrev`, () => save('estimationPrev', v, snapshot)); }} /></label>
+						<label class="dfield"><span>Enveloppe totale</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={ticket.enveloppeTotale} disabled={!canEditEstimation} title={estTitle} onchange={() => { const v = ticket!.enveloppeTotale; const snapshot = { id: ticket!.id, title: ticket!.title, sprintId: ticket!.sprintId, versionId: ticket!.versionId }; debouncedSave(`f-${ticket!.id}-enveloppeTotale`, () => save('enveloppeTotale', v, snapshot)); }} /></label>
 					{/if}
 					<label class="dfield wide"><span>Commentaire</span><input class="cell-input" placeholder="Note libre…" bind:value={ticket.comment} onchange={() => save('comment', ticket!.comment)} /></label>
 					{#if ticketGroups.length > 0}

@@ -3,6 +3,7 @@ import {
 	db,
 	workspace,
 	ssp,
+	perimeter,
 	ticket,
 	timeEntry,
 	sspAnnualProd,
@@ -45,6 +46,15 @@ export type AnnualTrackingSspRow = {
 	sspId: string;
 	code: string;
 	label: string;
+	/**
+	 * Périmètre du code, pour GROUPER les lignes — la chaîne `RAE(M) = RAE(M-1) − Prod(M)` est
+	 * amorcée par `ssp.budgetDays` et portée par le code : un code partagé entre deux périmètres a
+	 * un RAE non ventilable, il n'existe pas de clé de répartition. On groupe donc, on ne découpe
+	 * pas. `null` = code sans périmètre (ou périmètre archivé) : groupe « Partagé ».
+	 */
+	perimeterId: string | null;
+	perimeterName: string | null;
+	perimeterColor: string | null;
 	archived: boolean;
 	budgetDays: number | null;
 	cells: AnnualTrackingMonthCell[]; // 12, du plus ancien au plus récent, se termine au curseur
@@ -224,8 +234,19 @@ export async function getAnnualTrackingView(workspaceId: string): Promise<Annual
 
 	const [allSsps, consoRows, prodRows, overrideRows, allTimeTotals, integrationByMonth] = await Promise.all([
 		db
-			.select({ id: ssp.id, code: ssp.code, label: ssp.label, budgetDays: ssp.budgetDays, archivedAt: ssp.archivedAt })
+			.select({
+				id: ssp.id,
+				code: ssp.code,
+				label: ssp.label,
+				budgetDays: ssp.budgetDays,
+				archivedAt: ssp.archivedAt,
+				perimeterId: ssp.perimeterId,
+				perimeterName: perimeter.name,
+				perimeterColor: perimeter.color,
+				perimeterArchivedAt: perimeter.archivedAt
+			})
 			.from(ssp)
+			.leftJoin(perimeter, eq(ssp.perimeterId, perimeter.id))
 			.where(eq(ssp.workspaceId, workspaceId))
 			.orderBy(ssp.code),
 		getConsoBySspByMonth(workspaceId, { from, to }),
@@ -321,8 +342,14 @@ export async function getAnnualTrackingView(workspaceId: string): Promise<Annual
 			});
 			const totalConso = allTimeTotals.consoBySsp.get(s.id) ?? 0;
 			const totalProd = allTimeTotals.prodBySsp.get(s.id) ?? 0;
+			// Périmètre archivé : le code retombe en « Partagé », son budget doit rester lisible
+			// quelque part (même règle que la consolidation et la clôture).
+			const livePerimeter = s.perimeterId !== null && s.perimeterArchivedAt === null;
 			return {
 				sspId: s.id,
+				perimeterId: livePerimeter ? s.perimeterId : null,
+				perimeterName: livePerimeter ? s.perimeterName : null,
+				perimeterColor: livePerimeter ? s.perimeterColor : null,
 				code: s.code,
 				label: s.label,
 				archived: s.archivedAt !== null,

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { db, ssp, ticket, timeEntry, workspace, sspAnnualProd } from '$lib/server/db';
-import { makeWorkspace } from './test-helpers';
+import { makeWorkspace, defaultPerimeterId } from './test-helpers';
 import { computeRaeChain, getAnnualTrackingView, setProd, setRaeOverride, advanceCursor } from './sspAnnualTracking';
 import { openClosing, integrate } from './monthlyClosing';
 
@@ -67,7 +67,13 @@ beforeAll(async () => {
 	sspA = s.id;
 	const [t] = await db
 		.insert(ticket)
-		.values({ workspaceId: ws.workspaceId, key: 'ANN-1', title: 'Ticket suivi annuel', sspId: sspA })
+		.values({
+			workspaceId: ws.workspaceId,
+			perimeterId: await defaultPerimeterId(ws.workspaceId),
+			key: 'ANN-1',
+			title: 'Ticket suivi annuel',
+			sspId: sspA
+		})
 		.returning({ id: ticket.id });
 	ticketA = t.id;
 	// Curseur fixé loin dans le passé : les tests ne doivent pas dépendre du calendrier courant.
@@ -101,7 +107,13 @@ describe('sspAnnualTracking (intégration DB)', () => {
 			.returning();
 		const [t] = await db
 			.insert(ticket)
-			.values({ workspaceId: ws.workspaceId, key: 'ANN-2', title: 'Ticket suivi annuel intégration', sspId: s.id })
+			.values({
+				workspaceId: ws.workspaceId,
+				perimeterId: await defaultPerimeterId(ws.workspaceId),
+				key: 'ANN-2',
+				title: 'Ticket suivi annuel intégration',
+				sspId: s.id
+			})
 			.returning({ id: ticket.id });
 		await db.insert(timeEntry).values({
 			workspaceId: ws.workspaceId,

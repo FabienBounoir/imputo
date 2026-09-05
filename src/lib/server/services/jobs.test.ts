@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { db, session, setupToken, ticket, category, project } from '$lib/server/db';
-import { makeWorkspace } from './test-helpers';
+import { makeWorkspace, defaultPerimeterId } from './test-helpers';
 import { runCleanup } from './jobs';
 
 const DAY_MS = 86400000;
@@ -43,11 +43,11 @@ describe('runCleanup', () => {
 
 		const [oldTicket] = await db
 			.insert(ticket)
-			.values({ workspaceId: ws.workspaceId, key: `OLD-${ws.id}`, title: 'Ancien', archivedAt: new Date(Date.now() - 40 * DAY_MS) })
+			.values({ workspaceId: ws.workspaceId, perimeterId: await defaultPerimeterId(ws.workspaceId), key: `OLD-${ws.id}`, title: 'Ancien', archivedAt: new Date(Date.now() - 40 * DAY_MS) })
 			.returning({ id: ticket.id });
 		const [recentTicket] = await db
 			.insert(ticket)
-			.values({ workspaceId: ws.workspaceId, key: `RECENT-${ws.id}`, title: 'Récent', archivedAt: new Date(Date.now() - 10 * DAY_MS) })
+			.values({ workspaceId: ws.workspaceId, perimeterId: await defaultPerimeterId(ws.workspaceId), key: `RECENT-${ws.id}`, title: 'Récent', archivedAt: new Date(Date.now() - 10 * DAY_MS) })
 			.returning({ id: ticket.id });
 
 		const [oldCategory] = await db

@@ -35,6 +35,8 @@ import {
 	workspace,
 	user,
 	membership,
+	perimeter,
+	perimeterMember,
 	state,
 	activity,
 	category,
@@ -125,12 +127,39 @@ function buildPersonas(usersPerWorkspace: number, wsSuffix: string): Persona[] {
 // rotation. weeks=15 (défaut) reproduit exactement les 8 sprints historiques. ----------
 const VERSION_NAMES = ['V1.0', 'V1.1', 'V1.2', 'V1.3'];
 const PROJECT_NAMES = ['Mobile', 'Web', 'Backend'] as const;
-const SSP_DEFS = [
-	{ code: '8364BEB5354', label: 'Site Internet', budget: 350 },
-	{ code: '123DBS34842', label: 'Appli Mob', budget: 213.75 },
-	{ code: '774FCA9021', label: 'AMOE', budget: 100 },
-	{ code: '5182ECD7730', label: 'TNR', budget: 7 },
-	{ code: '6093AFB1146', label: 'Qualification', budget: 458 }
+// Deux périmètres applicatifs + un transverse : le bac à sable doit montrer le cas réel — un
+// collaborateur qui intervient sur plusieurs périmètres, et un CP backup d'un autre CP.
+const PERIMETER_DEFS = [
+	{ name: 'Applications mobiles', color: '#2563EB', transverse: false, projects: ['Mobile'] },
+	{ name: 'Portail web', color: '#7C3AED', transverse: false, projects: ['Web', 'Backend'] },
+	{ name: 'Transverse', color: '#64748B', transverse: true, projects: [] }
+] as const;
+/** Périmètre de chaque projet — sert aussi à rattacher les tickets (via leur projet). */
+const PERIMETER_BY_PROJECT: Record<string, string> = {
+	Mobile: 'Applications mobiles',
+	Web: 'Portail web',
+	Backend: 'Portail web'
+};
+/** Rôle de chaque persona dans chaque périmètre ; absent = non rattaché. */
+const PERIMETER_ROLES: Record<string, Record<string, 'CONTRIBUTOR' | 'CP' | 'CP_BACKUP'>> = {
+	// Alice est ADMIN donc DP : lead partout sans rattachement. On l'attache quand même au premier
+	// périmètre, pour que son écran ne soit pas vide au premier chargement.
+	alice: { 'Applications mobiles': 'CP' },
+	// Bob : CP du mobile ET backup du web — le cas « 1 CP backup d'un autre CP ».
+	bob: { 'Applications mobiles': 'CP', 'Portail web': 'CP_BACKUP' },
+	chloe: { 'Portail web': 'CP', Transverse: 'CP' },
+	// David : collaborateur sur les deux périmètres — le cas « 1 collaborateur, N périmètres ».
+	david: { 'Applications mobiles': 'CONTRIBUTOR', 'Portail web': 'CONTRIBUTOR' },
+	manon: { 'Portail web': 'CONTRIBUTOR' }
+};
+// `perimeter` : à qui imputer le BUDGET de ce code. `null` = code partagé entre périmètres — cas
+// volontairement représenté (TNR) pour que la consolidation montre sa ligne « Partagé ».
+const SSP_DEFS: { code: string; label: string; budget: number; perimeter: string | null }[] = [
+	{ code: '8364BEB5354', label: 'Site Internet', budget: 350, perimeter: 'Portail web' },
+	{ code: '123DBS34842', label: 'Appli Mob', budget: 213.75, perimeter: 'Applications mobiles' },
+	{ code: '774FCA9021', label: 'AMOE', budget: 100, perimeter: 'Transverse' },
+	{ code: '5182ECD7730', label: 'TNR', budget: 7, perimeter: null },
+	{ code: '6093AFB1146', label: 'Qualification', budget: 458, perimeter: 'Portail web' }
 ];
 
 function buildSprintDefs(weeks: number) {
@@ -262,6 +291,36 @@ async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, pe
 		}))
 	);
 
+	// ---------- Périmètres ----------
+	const insertedPerimeters = await db
+		.insert(perimeter)
+		.values(
+			PERIMETER_DEFS.map((d, i) => ({
+				workspaceId: ws.id,
+				name: d.name,
+				color: d.color,
+				transverse: d.transverse,
+				sortOrder: i
+			}))
+		)
+		.returning();
+	const perimeterByName = new Map(insertedPerimeters.map((p) => [p.name, p]));
+
+	const perimeterMemberRows = personas.flatMap((p) => {
+		// Les personas « extra » (montée en charge) n'ont pas d'entrée dédiée : on les répartit en
+		// contributeurs sur les périmètres applicatifs, en rotation.
+		const roles =
+			PERIMETER_ROLES[p.slot] ??
+			({ [PERIMETER_DEFS[personas.indexOf(p) % 2].name]: 'CONTRIBUTOR' } as Record<string, 'CONTRIBUTOR'>);
+		return Object.entries(roles).map(([name, role]) => ({
+			workspaceId: ws.id,
+			perimeterId: perimeterByName.get(name)!.id,
+			userId: userByEmail.get(p.email)!.id,
+			role
+		}));
+	});
+	await db.insert(perimeterMember).values(perimeterMemberRows);
+
 	// ---------- Référentiels ----------
 	const insertedStates = await db
 		.insert(state)
@@ -291,12 +350,26 @@ async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, pe
 	// qu'il s'agit d'un référentiel : la clôture mensuelle n'a rien à montrer sans eux.
 	const insertedSsps = await db
 		.insert(ssp)
-		.values(SSP_DEFS.map((d) => ({ workspaceId: ws.id, code: d.code, label: d.label, budgetDays: String(d.budget) })))
+		.values(
+			SSP_DEFS.map((d) => ({
+				workspaceId: ws.id,
+				code: d.code,
+				label: d.label,
+				budgetDays: String(d.budget),
+				perimeterId: d.perimeter ? perimeterByName.get(d.perimeter)!.id : null
+			}))
+		)
 		.returning();
 
 	const insertedProjects = await db
 		.insert(project)
-		.values(PROJECT_NAMES.map((name) => ({ workspaceId: ws.id, name })))
+		.values(
+			PROJECT_NAMES.map((name) => ({
+				workspaceId: ws.id,
+				name,
+				perimeterId: perimeterByName.get(PERIMETER_BY_PROJECT[name])!.id
+			}))
+		)
 		.returning();
 	const projectByName = new Map(insertedProjects.map((p) => [p.name, p]));
 
@@ -370,6 +443,10 @@ async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, pe
 		return t;
 	}
 
+	// Le périmètre d'un ticket suit celui de son projet — la seule voie exacte pour ventiler la
+	// charge (la conso ne passe jamais par le code SSP, qui peut être partagé).
+	const perimeterIdFor = (proj: string) => perimeterByName.get(PERIMETER_BY_PROJECT[proj])!.id;
+
 	let ticketNum = 1;
 	const drafts: TicketDraft[] = [];
 	const mostRecentAge = sprintWindows.length - 1;
@@ -411,6 +488,7 @@ async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, pe
 				key: t.key,
 				title: t.title,
 				projectId: projectByName.get(t.project)!.id,
+				perimeterId: perimeterIdFor(t.project),
 				sprintId: t.sprintName ? sprintByName.get(t.sprintName)!.id : null,
 				versionId: t.versionName ? versionByName.get(t.versionName)!.id : null,
 				stateId: stateByLabel.get(t.state)?.id ?? null,
@@ -463,7 +541,15 @@ async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, pe
 	];
 	const insertedRecentTickets = await db
 		.insert(ticket)
-		.values(recentTicketDefs.map((t) => ({ workspaceId: ws.id, key: t.key, title: t.title, projectId: projectByName.get(t.project)!.id })))
+		.values(
+			recentTicketDefs.map((t) => ({
+				workspaceId: ws.id,
+				key: t.key,
+				title: t.title,
+				projectId: projectByName.get(t.project)!.id,
+				perimeterId: perimeterIdFor(t.project)
+			}))
+		)
 		.returning({ id: ticket.id });
 	const [jiraRecentRun] = await db
 		.insert(jiraSyncRun)
@@ -501,6 +587,7 @@ async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, pe
 				key: `SBX-${ticketNum++}`,
 				title: `${nextTitle(proj)} #${i + 1}`,
 				projectId: projectByName.get(proj)!.id,
+				perimeterId: perimeterIdFor(proj),
 				sprintId: chance(0.7) ? sprintByName.get(sw.name)!.id : null,
 				versionId: chance(0.5) ? versionByName.get(sw.version)!.id : null,
 				stateId: stateByLabel.get(rand(bulkStates))?.id ?? null,
