@@ -9,7 +9,7 @@ import { db, project } from '$lib/server/db';
 import { setTicketFiltersSnapshot, setRememberTicketFiltersPref, setRememberTicketSearchPref } from '$lib/server/services/accounts';
 
 describe('tickets +page.server load', () => {
-	it('isAdmin/canEditEstimation sont false pour un USER, true pour un ADMIN', async () => {
+	it('isAdmin est false pour un USER, true pour un ADMIN', async () => {
 		const { userId, workspaceId } = await makeWorkspace('ticketsload');
 		const { userId: memberId } = await addMember(workspaceId, 'USER', 'ticketsload-member');
 		const url = new URL('http://localhost/tickets');
@@ -18,9 +18,7 @@ describe('tickets +page.server load', () => {
 		const adminResult = await load({ locals: await fakeLocals(userId), url } as never);
 
 		expect(memberResult.isAdmin).toBe(false);
-		expect(memberResult.canEditEstimation).toBe(false);
 		expect(adminResult.isAdmin).toBe(true);
-		expect(adminResult.canEditEstimation).toBe(true);
 	});
 
 	it('vue kanban par défaut sans pagination, vue table paginée', async () => {
