@@ -504,9 +504,24 @@ export async function deleteUntouchedSyncedTickets(workspaceId: string, syncRunI
  * juste id/clé/titre/sprint/version, sans l'enrichissement consommé/RAE/contributeurs/groupes
  * (4 requêtes GROUP BY en plus, inutiles pour peupler un <select>).
  */
-export async function listTicketSummaries(
-	workspaceId: string
-): Promise<{ id: string; key: string; title: string; sprintId: string | null; versionId: string | null; sprintName: string | null }[]> {
+export async function listTicketSummaries(workspaceId: string): Promise<
+	{
+		id: string;
+		key: string;
+		title: string;
+		sprintId: string | null;
+		versionId: string | null;
+		sprintName: string | null;
+		perimeterId: string;
+		perimeterName: string;
+		perimeterColor: string | null;
+		perimeterTransverse: boolean;
+		perimeterSortOrder: number;
+	}[]
+> {
+	// Le périmètre sert ici à deux choses : filtrer le sélecteur « + Ajouter » de Mon imputation, et
+	// permettre à la page de reconstruire une ligne complète (épingle, objectif, ajout optimiste)
+	// sans attendre un rechargement — cf. buildRow dans imputation/+page.svelte.
 	return db
 		.select({
 			id: ticket.id,
@@ -514,10 +529,18 @@ export async function listTicketSummaries(
 			title: ticket.title,
 			sprintId: ticket.sprintId,
 			versionId: ticket.versionId,
-			sprintName: sprint.name
+			sprintName: sprint.name,
+			perimeterId: ticket.perimeterId,
+			perimeterName: perimeter.name,
+			perimeterColor: perimeter.color,
+			perimeterTransverse: perimeter.transverse,
+			perimeterSortOrder: perimeter.sortOrder
 		})
 		.from(ticket)
 		.leftJoin(sprint, eq(ticket.sprintId, sprint.id))
+		// innerJoin ici (contrairement à imputation.ts) : on part de `ticket`, dont perimeterId est
+		// NOT NULL — le périmètre existe forcément.
+		.innerJoin(perimeter, eq(ticket.perimeterId, perimeter.id))
 		.where(and(eq(ticket.workspaceId, workspaceId), isNull(ticket.archivedAt)));
 }
 

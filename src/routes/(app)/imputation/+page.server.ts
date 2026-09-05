@@ -119,6 +119,9 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 		// Nécessaires pour la modal d'édition de ticket (même modal que Tickets & chiffrage,
 		// cf. TicketEditModal.svelte) : `ref` est déjà chargé ci-dessus, ceci n'ajoute aucune requête.
 		states: ref.states,
+		// Sert à savoir s'il y a plusieurs périmètres à distinguer (pastilles, sections, filtre de
+		// la palette d'ajout) — dans un espace mono-périmètre l'écran ne change pas.
+		perimeters: ref.perimeters,
 		projects: ref.projects,
 		sprints: ref.sprints,
 		ticketGroups: ref.ticketGroups,

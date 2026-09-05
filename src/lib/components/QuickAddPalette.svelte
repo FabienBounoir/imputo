@@ -10,7 +10,15 @@
 	// admin — sans étape activité, l'y greffer aurait complexifié un composant qui n'en a pas besoin),
 	// puis l'activité (« Aucune activité » toujours pré-surlignée en premier, jamais une activité au
 	// hasard), et Entrée ajoute la ligne et referme — on n'ajoute jamais plusieurs lignes d'une traite.
-	type Ticket = { id: string; key: string; title: string; versionId?: string | null };
+	type Ticket = {
+		id: string;
+		key: string;
+		title: string;
+		versionId?: string | null;
+		perimeterId?: string | null;
+		perimeterName?: string | null;
+	};
+	type Perimeter = { id: string; name: string; transverse: boolean };
 	type Category = { id: string; label: string };
 	type Version = { id: string; name: string };
 	type Objective = {
@@ -29,6 +37,7 @@
 		categories,
 		recentTicketIds,
 		versions = [],
+		perimeters = [],
 		objectives = [],
 		activities,
 		onadd
@@ -37,6 +46,8 @@
 		categories: Category[];
 		recentTicketIds: string[];
 		versions?: Version[];
+		/** Périmètres de l'espace — le filtre n'apparaît qu'à partir de deux (rien à trier sinon). */
+		perimeters?: Perimeter[];
 		objectives?: Objective[];
 		activities: Activity[];
 		/** `pickTarget` suit exactly l'encodage TargetPicker (`TICKET::id[::objectiveId]`, `CATEGORY::id`,
@@ -55,6 +66,11 @@
 	let stage = $state<'target' | 'activity'>('target');
 	let query = $state('');
 	let versionFilter = $state('');
+	let perimeterFilter = $state('');
+	// Basé sur les TICKETS et non sur `perimeters.length` : tout espace neuf a déjà deux périmètres
+	// (le principal + Transverse, cf. seedDefaults), le filtre serait donc affiché partout alors
+	// qu'il n'y aurait rien à trier.
+	const showPerimeterFilter = $derived(new Set(tickets.map((t) => t.perimeterId).filter(Boolean)).size > 1);
 	let activeIndex = $state(0);
 	let chosenTarget = $state<{ value: string; label: string } | null>(null);
 	let root: HTMLDivElement | null = $state(null);
@@ -68,13 +84,16 @@
 	// suggestions récentes, sinon le filtre semblerait ne rien faire tant qu'on n'a pas tapé de texte.
 	const filteredTickets = $derived.by(() => {
 		const q = query.trim().toLowerCase();
-		const base = versionFilter ? tickets.filter((t) => t.versionId === versionFilter) : tickets;
-		if (!q) return versionFilter ? base : suggested;
+		// Le filtre périmètre suit la même règle que le filtre version : actif, il montre tout le
+		// périmètre au lieu des suggestions récentes — sinon il semblerait ne rien faire.
+		const byPerimeter = perimeterFilter ? tickets.filter((t) => t.perimeterId === perimeterFilter) : tickets;
+		const base = versionFilter ? byPerimeter.filter((t) => t.versionId === versionFilter) : byPerimeter;
+		if (!q) return versionFilter || perimeterFilter ? base : suggested;
 		return base.filter((t) => t.key.toLowerCase().includes(q) || t.title.toLowerCase().includes(q));
 	});
 	// Catégories jamais filtrées par la recherche (comme TargetPicker) : une poignée de valeurs,
 	// toujours utile de les garder visibles pendant qu'on tape un ticket.
-	const showObjectives = $derived(objectives.length > 0 && !query.trim() && !versionFilter);
+	const showObjectives = $derived(objectives.length > 0 && !query.trim() && !versionFilter && !perimeterFilter);
 
 	const stage1Items = $derived.by((): FlatItem[] => {
 		const out: FlatItem[] = [];
@@ -226,6 +245,10 @@
 		versionFilter = (e.currentTarget as HTMLSelectElement).value;
 		activeIndex = 0;
 	}
+	function onPerimeterChange(e: Event) {
+		perimeterFilter = (e.currentTarget as HTMLSelectElement).value;
+		activeIndex = 0;
+	}
 	function onKeydown(e: KeyboardEvent) {
 		if (e.key === 'Backspace' && stage === 'activity' && query === '') {
 			e.preventDefault();
@@ -317,6 +340,12 @@
 						class:qa-input-pill={stage === 'activity'}
 						placeholder={stage === 'target' ? 'Rechercher un ticket ou une catégorie…' : 'Activité — Entrée pour valider sans'}
 					/>
+					{#if stage === 'target' && showPerimeterFilter}
+						<select class="qa-version" value={perimeterFilter} onchange={onPerimeterChange} aria-label="Filtrer par périmètre">
+							<option value="">Tous périmètres</option>
+							{#each perimeters as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
+						</select>
+					{/if}
 					{#if stage === 'target' && versions.length > 0}
 						<select class="qa-version" value={versionFilter} onchange={onVersionChange} aria-label="Filtrer par version">
 							<option value="">Toutes versions</option>
@@ -340,6 +369,11 @@
 							{:else if it.kind === 'ticket'}
 								<button type="button" class="qa-item" class:active={activeIndex === i} onclick={() => pick(i)}>
 									<span class="qa-key">{it.ticket.key}</span><span class="qa-title">{it.ticket.title}</span>
+									<!-- Distingue deux tickets de titre proche appartenant à des applications
+									     différentes ; inutile tant qu'il n'y a qu'un périmètre. -->
+									{#if showPerimeterFilter && it.ticket.perimeterName}
+										<span class="qa-perim">{it.ticket.perimeterName}</span>
+									{/if}
 								</button>
 							{:else if it.kind === 'create-ticket'}
 								<button type="button" class="qa-item qa-item-create" class:active={activeIndex === i} onclick={() => pick(i)}>
@@ -523,7 +557,10 @@
 	}
 	.qa-input {
 		flex: 1;
-		min-width: 80px;
+		/* Avec deux sélecteurs (périmètre + version) sur la même rangée, 80px laissaient un champ de
+		   recherche illisible : on lui garantit une largeur utile, quitte à faire passer les
+		   sélecteurs à la ligne (le conteneur est déjà en flex-wrap). */
+		min-width: 14rem;
 		border: none;
 		background: none;
 		outline: none;
@@ -548,8 +585,9 @@
 		box-shadow: 0 0 0 3px var(--accent-tint, transparent);
 	}
 	.qa-version {
-		flex: 0 0 auto;
+		flex: 0 1 auto;
 		max-width: 40%;
+		min-width: 0;
 		padding: 6px 8px;
 		border-radius: 8px;
 		border: 1px solid var(--border);
@@ -660,5 +698,12 @@
 	select:focus-visible {
 		outline: 2px solid var(--accent);
 		outline-offset: 1px;
+	}
+	.qa-perim {
+		margin-left: auto;
+		padding-left: 0.5rem;
+		font-size: 0.72rem;
+		color: var(--muted);
+		white-space: nowrap;
 	}
 </style>
