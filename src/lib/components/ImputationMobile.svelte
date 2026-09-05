@@ -17,6 +17,7 @@
 		capacity,
 		absences,
 		readOnly = false,
+		showPerimeters = false,
 		canManageObjectives = false,
 		onCycle,
 		onSetAmount,
@@ -32,6 +33,8 @@
 		capacity: number;
 		absences: Record<string, { type: AbsenceType; period: 'FULL' | 'AM' | 'PM' }>;
 		readOnly?: boolean;
+		/** L'espace a plusieurs périmètres : affiche la pastille sur les lignes de ticket. */
+		showPerimeters?: boolean;
 		/** Manager/admin uniquement : peut retirer un objectif depuis /admin/objectifs — change le
 		 * message du cadenas sur une ligne issue d'un objectif (cf. objectifs de la semaine). */
 		canManageObjectives?: boolean;
@@ -152,6 +155,11 @@
 					<b>{row.objectiveNote || row.label}</b>
 					<span class="sub">
 						<span class="ell">{row.sublabel}</span>
+						<!-- Pas de sections sur mobile (liste verticale déjà dense) : la pastille porte
+						     l'information de périmètre à elle seule. -->
+						{#if showPerimeters && row.perimeterName}
+							<span class="perim-chip" style="--perim:{row.perimeterColor ?? 'var(--muted)'}">{row.perimeterName}</span>
+						{/if}
 						{#if readOnly || row.objectiveId}
 							{#if activityLabel(row)}<span class="tag" title={row.objectiveId ? "Activité fixée par l'objectif de la semaine" : undefined}>{activityLabel(row)}</span>{/if}
 						{:else if activityLabel(row)}
@@ -478,5 +486,15 @@
 		color: var(--text-mute);
 		padding: 28px 16px;
 		font-size: 13.5px;
+	}
+	.perim-chip {
+		font-size: 0.66rem;
+		line-height: 1.5;
+		padding: 0 0.35rem;
+		border-radius: 999px;
+		white-space: nowrap;
+		color: var(--text);
+		background: color-mix(in srgb, var(--perim) 16%, transparent);
+		border: 1px solid color-mix(in srgb, var(--perim) 38%, transparent);
 	}
 </style>

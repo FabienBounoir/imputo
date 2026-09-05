@@ -533,6 +533,14 @@ export type TicketSummary = {
 	sprintId: string | null;
 	versionId: string | null;
 	sprintName: string | null;
+	// Le périmètre sert à filtrer le sélecteur « + Ajouter » de Mon imputation, et à reconstruire une
+	// ligne complète (épingle, objectif, ajout optimiste) sans rechargement — cf. buildRow dans
+	// imputation/+page.svelte.
+	perimeterId: string;
+	perimeterName: string;
+	perimeterColor: string | null;
+	perimeterTransverse: boolean;
+	perimeterSortOrder: number;
 };
 
 /** Colonnes communes à toutes les variantes de résumé ci-dessous — une seule définition à maintenir. */
@@ -542,9 +550,21 @@ const summarySelect = {
 	title: ticket.title,
 	sprintId: ticket.sprintId,
 	versionId: ticket.versionId,
-	sprintName: sprint.name
+	sprintName: sprint.name,
+	perimeterId: ticket.perimeterId,
+	perimeterName: perimeter.name,
+	perimeterColor: perimeter.color,
+	perimeterTransverse: perimeter.transverse,
+	perimeterSortOrder: perimeter.sortOrder
 };
-const summaryFrom = () => db.select(summarySelect).from(ticket).leftJoin(sprint, eq(ticket.sprintId, sprint.id));
+const summaryFrom = () =>
+	db
+		.select(summarySelect)
+		.from(ticket)
+		.leftJoin(sprint, eq(ticket.sprintId, sprint.id))
+		// innerJoin ici (contrairement à imputation.ts) : on part de `ticket`, dont perimeterId est
+		// NOT NULL — le périmètre existe forcément.
+		.innerJoin(perimeter, eq(ticket.perimeterId, perimeter.id));
 
 export async function listTicketSummaries(workspaceId: string): Promise<TicketSummary[]> {
 	return summaryFrom().where(and(eq(ticket.workspaceId, workspaceId), isNull(ticket.archivedAt)));
@@ -569,12 +589,13 @@ export async function listTicketSummariesByIds(workspaceId: string, ids: string[
  */
 export async function searchTicketSummaries(
 	workspaceId: string,
-	opts: { query?: string; versionId?: string; limit?: number } = {}
+	opts: { query?: string; versionId?: string; perimeterId?: string; limit?: number } = {}
 ): Promise<TicketSummary[]> {
 	const q = opts.query?.trim();
 	const conds = [eq(ticket.workspaceId, workspaceId), isNull(ticket.archivedAt)];
 	if (q) conds.push(or(ilike(ticket.key, `%${q}%`), ilike(ticket.title, `%${q}%`))!);
 	if (opts.versionId) conds.push(eq(ticket.versionId, opts.versionId));
+	if (opts.perimeterId) conds.push(eq(ticket.perimeterId, opts.perimeterId));
 	return summaryFrom()
 		.where(and(...conds))
 		// `id` en tie-breaker : createdAt n'est pas unique sur une insertion en masse, sans lui

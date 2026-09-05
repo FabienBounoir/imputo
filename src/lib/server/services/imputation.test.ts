@@ -9,7 +9,8 @@ import {
 	listPinnedRows,
 	getRecentTicketIds
 } from './imputation';
-import { createTicket } from './tickets';
+import { createTicket, listTicketSummaries } from './tickets';
+import { createPerimeter } from './perimeters';
 import { listCategories, createActivity, listActivities } from './params';
 import { createAbsenceFor } from './absences';
 import { addObjective, listObjectivesForUser } from './weeklyObjectives';
@@ -565,5 +566,86 @@ describe('objectiveId sur une ligne TICKET (deux objectifs sur le même ticket, 
 				objectiveId: 'ffffffff-ffff-ffff-ffff-ffffffffffff'
 			})
 		).rejects.toThrow();
+	});
+});
+
+describe('périmètre sur la feuille d’imputation', () => {
+	/** Un espace avec deux périmètres, un ticket dans chacun, et une catégorie (sans périmètre). */
+	async function fixture(tag: string) {
+		const ws = await makeWorkspace(`imp-perim-${tag}`);
+		const web = await createPerimeter(ws.workspaceId, `Web ${tag}`, '#111111', false);
+		const mobile = await createPerimeter(ws.workspaceId, `Mobile ${tag}`, '#222222', false);
+		// Le périmètre par défaut de l'espace vient en premier (sortOrder 0) ; les deux nôtres suivent
+		// dans leur ordre de création — c'est cet ordre que le tri doit respecter.
+		const tWeb = await createTicket(ws.workspaceId, { key: `PW-${tag}`, title: 'Zeta web', perimeterId: web });
+		const tMobile = await createTicket(ws.workspaceId, { key: `PM-${tag}`, title: 'Alpha mobile', perimeterId: mobile });
+		// MCO et non « Congé » : les catégories liées à un type d'absence ne sont pas imputables
+		// directement (elles sont alimentées depuis la page Absences).
+		const [mco] = (await listCategories(ws.workspaceId)).filter((c) => c.label === 'MCO');
+		return { ws, web, mobile, tWeb, tMobile, mco };
+	}
+
+	it('une ligne de ticket porte son périmètre, une catégorie n’en a pas et reste présente', async () => {
+		const f = await fixture('base');
+		await setCell(f.ws.workspaceId, f.ws.userId, {
+			targetType: 'TICKET',
+			targetId: f.tWeb.id,
+			activityId: null,
+			day: MONDAY,
+			amount: 1
+		});
+		// Le cas que le leftJoin protège : une catégorie n'a pas de ticket, donc pas de périmètre.
+		// Avec un innerJoin, cette ligne disparaîtrait purement et simplement de la feuille.
+		await setCell(f.ws.workspaceId, f.ws.userId, {
+			targetType: 'CATEGORY',
+			targetId: f.mco.id,
+			activityId: null,
+			day: MONDAY,
+			amount: 1
+		});
+
+		const week = await getWeek(f.ws.workspaceId, f.ws.userId, MONDAY);
+		const ticketRow = week.rows.find((r) => r.targetId === f.tWeb.id)!;
+		const categoryRow = week.rows.find((r) => r.targetId === f.mco.id)!;
+
+		expect(ticketRow.perimeterId).toBe(f.web);
+		expect(ticketRow.perimeterName).toBe(`Web base`);
+		expect(ticketRow.perimeterColor).toBe('#111111');
+		expect(categoryRow).toBeDefined();
+		expect(categoryRow.perimeterId).toBeNull();
+	});
+
+	it('les lignes sont groupées par périmètre, les catégories en dernier, dans un ordre stable', async () => {
+		const f = await fixture('ordre');
+		for (const [type, id] of [
+			['CATEGORY', f.mco.id],
+			['TICKET', f.tMobile.id],
+			['TICKET', f.tWeb.id]
+		] as const) {
+			await setCell(f.ws.workspaceId, f.ws.userId, {
+				targetType: type,
+				targetId: id,
+				activityId: null,
+				day: MONDAY,
+				amount: 1
+			});
+		}
+
+		const week = await getWeek(f.ws.workspaceId, f.ws.userId, MONDAY);
+		// Web a été créé avant Mobile : il passe donc devant, quel que soit l'ordre de saisie.
+		expect(week.rows.map((r) => r.perimeterName)).toEqual(['Web ordre', 'Mobile ordre', null]);
+
+		// Stable : sans le tri, l'ordre venait de la base et changeait d'un appel à l'autre.
+		const again = await getWeek(f.ws.workspaceId, f.ws.userId, MONDAY);
+		expect(again.rows.map((r) => r.rowKey)).toEqual(week.rows.map((r) => r.rowKey));
+	});
+
+	it('listTicketSummaries remonte le périmètre (palette d’ajout + lignes construites côté client)', async () => {
+		const f = await fixture('summ');
+		const summaries = await listTicketSummaries(f.ws.workspaceId);
+		const web = summaries.find((t) => t.id === f.tWeb.id)!;
+		expect(web.perimeterId).toBe(f.web);
+		expect(web.perimeterName).toBe('Web summ');
+		expect(web.perimeterTransverse).toBe(false);
 	});
 });
