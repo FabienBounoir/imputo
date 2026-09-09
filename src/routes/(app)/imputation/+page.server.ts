@@ -13,7 +13,7 @@ import {
 } from '$lib/server/services/imputation';
 import { getRefData, listTicketSummaries } from '$lib/server/services/tickets';
 import { getMembership, isManagerOrAdmin } from '$lib/server/services/workspaces';
-import { listObjectivesForUserWeeks, vacationWeeks, setObjectiveDone } from '$lib/server/services/weeklyObjectives';
+import { listObjectivesForUserWeeks, vacationWeeks } from '$lib/server/services/weeklyObjectives';
 import { listAbsencesForRange, buildAbsenceGrid } from '$lib/server/services/absences';
 import { resolvePeriodPrefs } from '$lib/server/services/imputationPrefs';
 import { num } from '$lib/server/services/calc';
@@ -155,23 +155,6 @@ async function resolveSubjectId(
 }
 
 export const actions: Actions = {
-	// Cocher un objectif depuis le bandeau de rappel, sans quitter Mon imputation — même service et
-	// mêmes règles que sur la page Objectifs (chacun les siennes, un manager pour tout le monde).
-	toggleObjectiveDone: async ({ request, locals }) => {
-		if (!locals.workspace?.objectivesEnabled) return fail(403, { error: 'Objectifs désactivés sur cet espace.' });
-		const f = await request.formData();
-		const id = String(f.get('id') ?? '');
-		const done = f.get('done') === 'true';
-		if (!id) return fail(400, { error: 'Données invalides.' });
-		const ok = await setObjectiveDone(
-			locals.workspace.workspaceId,
-			id,
-			{ userId: locals.user!.id, isManager: isManagerOrAdmin(locals.role) },
-			done
-		);
-		if (!ok) return fail(403, { error: "Cet objectif n'est pas le vôtre." });
-		return { doneOk: true };
-	},
 
 	setCell: async ({ request, locals }) => {
 		const ws = locals.workspace;

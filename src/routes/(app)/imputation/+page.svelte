@@ -14,7 +14,6 @@
 	import { tick } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import { goto, afterNavigate, invalidateAll, replaceState } from '$app/navigation';
-	import { enhance } from '$app/forms';
 	import { beep } from '$lib/sound';
 	import { Confetti } from 'svelte-confetti';
 	import { navigating, page } from '$app/state';
@@ -658,7 +657,8 @@
 	}
 
 	// Message du cadenas sur une ligne issue d'un objectif : seuls manager/admin peuvent la retirer
-	// (depuis /admin/objectifs) — un simple membre n'a pas ce lien, il doit passer par eux.
+	// (depuis /admin/objectifs). Un membre a bien accès à cette page depuis que la vue globale est
+	// ouverte à toute l'équipe, mais en lecture seule — il doit donc passer par eux pour la retirer.
 	function objectiveLockMessage(): string {
 		return data.canManageObjectives
 			? "Cette ligne vient d'un objectif de la semaine — retirez l'objectif depuis Objectifs de la semaine pour la faire disparaître."
@@ -702,24 +702,11 @@
 		await fetch('?/pinRow', { method: 'POST', body });
 	}
 
-	// Ajout en un clic depuis le bandeau de rappel (contourne le picker) — TICKET uniquement, cf.
-	// syncedRows : un CUSTOM n'a rien à ajouter, il reste une information dans le bandeau.
-	function quickAddObjective(o: (typeof data.weeklyObjectives)[number]) {
-		if (o.kind !== 'TICKET' || !o.ticketId || rows.some((r) => r.rowKey === objectiveRowKey(o))) return;
-		rows = [...rows, buildRow('TICKET', o.ticketId, o.activityId ?? null, undefined, o.id, o.label)];
-	}
-
-	// Le bandeau liste TOUS les objectifs de la période, pas seulement ceux absents du tableau : c'est
-	// lui qui porte les cases à cocher, il doit donc continuer d'afficher un objectif une fois sa ligne
-	// d'imputation ajoutée. Seul le bouton "+ Ajouter" dépend encore de la présence dans le tableau.
-	const objectiveInSheet = (o: (typeof data.weeklyObjectives)[number]) =>
-		rows.some((r) => r.rowKey === objectiveRowKey(o));
-
-	// Cochage optimiste (même mécanique que la page Objectifs) : l'entrée est retirée dès que la
-	// donnée serveur est revenue, pour ne pas masquer un cochage fait ailleurs.
-	let doneOverride = $state<Record<string, boolean>>({});
-	const isObjectiveDone = (o: (typeof data.weeklyObjectives)[number]) => doneOverride[o.id] ?? !!o.doneAt;
-	const objectivesDone = $derived(data.weeklyObjectives.filter((o) => isObjectiveDone(o)).length);
+	// Seuls les objectifs SANS ticket sont rappelés ici : ceux qui en ont un sont déjà épinglés comme
+	// lignes du tableau ci-dessous (cf. syncedRows), les répéter au-dessus ne dit rien de neuf. Un
+	// CUSTOM n'a ni ticket ni SSP, il n'est donc jamais imputable — ce bandeau est le seul endroit où
+	// il peut apparaître. Cocher se fait sur la page Objectifs, pas ici.
+	const customObjectives = $derived(data.weeklyObjectives.filter((o) => o.kind === 'CUSTOM'));
 </script>
 
 {#snippet ticketIcon()}
@@ -975,69 +962,23 @@
 		</div>
 	{/if}
 
-	{#if !data.readOnly && data.weeklyObjectives.length > 0}
+	{#if !data.readOnly && customObjectives.length > 0}
 		<div class="card reminder-card">
-			<div class="reminder-head">
-				<span>🎯 Attribué sur cette période</span>
-				<span class="reminder-progress">
-					{objectivesDone} / {data.weeklyObjectives.length} fait{objectivesDone > 1 ? 's' : ''}
-					<span class="reminder-bar"><span style="width:{(objectivesDone / data.weeklyObjectives.length) * 100}%"></span></span>
-				</span>
-			</div>
+			<div class="reminder-head">🎯 Attribué sur cette période</div>
 			<div class="reminder-list">
-				{#each data.weeklyObjectives as o, i (o.id)}
-					{#if multiWeek && o.weekMonday !== data.weeklyObjectives[i - 1]?.weekMonday}
+				{#each customObjectives as o, i (o.id)}
+					{#if multiWeek && o.weekMonday !== customObjectives[i - 1]?.weekMonday}
 						<div class="reminder-week">S{isoWeek(parseISODate(o.weekMonday))}</div>
 					{/if}
-					{@const done = isObjectiveDone(o)}
-					<div class="reminder-item" class:done>
-						<!-- <button role="checkbox"> et pas <input> : c'est un vrai submit, la case marche donc
-						     aussi sans JavaScript, comme le reste de la page. -->
-						<form
-							method="POST"
-							action="?/toggleObjectiveDone"
-							use:enhance={() => {
-								doneOverride[o.id] = !done;
-								return async ({ result, update }) => {
-									if (result.type === 'failure') delete doneOverride[o.id];
-									await update({ reset: false });
-									delete doneOverride[o.id];
-								};
-							}}
-						>
-							<input type="hidden" name="id" value={o.id} />
-							<input type="hidden" name="done" value={String(!done)} />
-							<button
-								class="reminder-check"
-								type="submit"
-								role="checkbox"
-								aria-checked={done}
-								title={done ? 'Marquer comme non fait' : 'Marquer comme fait'}
-								aria-label="{done ? 'Marquer comme non fait' : 'Marquer comme fait'} : {o.kind === 'TICKET' ? o.ticketKey : o.label}"
-							>
-								{#if done}
-									<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6" /></svg>
-								{/if}
-							</button>
-						</form>
+					<div class="reminder-item">
 						<span class="reminder-label">
-							<span class="reminder-ico">
-								{#if o.kind === 'TICKET'}{@render ticketIcon()}{:else}{@render taskIcon()}{/if}
-							</span>
-							<!-- Note d'objectif à la place du titre du ticket, jamais accolée derrière : même règle
-							     que les lignes du tableau (`row.objectiveNote || row.label`) et que l'export PNG. -->
-							{o.kind === 'TICKET' ? `${o.ticketKey} — ${o.label || o.ticketTitle}` : o.label}
+							<span class="reminder-ico">{@render taskIcon()}</span>
+							{o.label}
 							{#if o.activityLabel}<span class="tag-activity">{o.activityLabel}</span>{/if}
 						</span>
-						{#if o.kind === 'TICKET' && !objectiveInSheet(o)}
-							<button class="btn btn-ghost reminder-add" onclick={() => quickAddObjective(o)}>+ Ajouter</button>
-						{:else if o.kind === 'TICKET'}
-							<span class="reminder-info" title="Une ligne du tableau ci-dessous porte déjà cet objectif.">Dans le tableau</span>
-						{:else}
-							<!-- CUSTOM : pas de ticket donc pas de SSP, jamais imputable — pure information sur
-							     ce qui est attendu cette semaine (cf. syncedRows/quickAddObjective). -->
-							<span class="reminder-info" title="Tâche sans ticket associé — non imputable directement, impute tes heures sur le ticket concerné.">Info seule</span>
-						{/if}
+						<!-- Pas de ticket donc pas de SSP, jamais imputable directement — pure information sur
+						     ce qui est attendu cette semaine (cf. syncedRows). -->
+						<span class="reminder-info" title="Tâche sans ticket associé — non imputable directement, impute tes heures sur le ticket concerné.">Info seule</span>
 					</div>
 				{/each}
 			</div>
@@ -1514,78 +1455,12 @@
 		margin-bottom: 16px;
 	}
 	.reminder-head {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 12px;
-		flex-wrap: wrap;
 		font-size: 12px;
 		font-weight: 600;
 		color: var(--text-mute);
 		text-transform: uppercase;
 		letter-spacing: 0.04em;
 		margin-bottom: 10px;
-	}
-	.reminder-progress {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		text-transform: none;
-		letter-spacing: 0;
-		font-variant-numeric: tabular-nums;
-		white-space: nowrap;
-	}
-	.reminder-bar {
-		width: 90px;
-		height: 5px;
-		border-radius: 20px;
-		background: var(--surface-sunk);
-		overflow: hidden;
-	}
-	.reminder-bar span {
-		display: block;
-		height: 100%;
-		background: var(--accent);
-		border-radius: 20px;
-		transition: width 0.25s;
-	}
-	/* Case à cocher : même objet visuel que sur la page Objectifs, l'état "fait" est partagé. */
-	.reminder-check {
-		width: 16px;
-		height: 16px;
-		border: 1.6px solid var(--border-strong);
-		border-radius: 4px;
-		background: var(--surface);
-		display: grid;
-		place-items: center;
-		flex-shrink: 0;
-		color: #fff;
-		transition: background 0.12s, border-color 0.12s;
-	}
-	.reminder-check svg {
-		width: 10px;
-		height: 10px;
-	}
-	.reminder-check[aria-checked='true'] {
-		background: var(--accent);
-		border-color: var(--accent);
-	}
-	.reminder-check:hover {
-		border-color: var(--accent);
-	}
-	.reminder-check:focus-visible {
-		outline: 2px solid var(--accent);
-		outline-offset: 2px;
-	}
-	/* L'état "fait" ne repose jamais sur la seule couleur (un membre de l'équipe est daltonien) :
-	   la coche dessinée et le texte barré le disent aussi. */
-	.reminder-item.done .reminder-label {
-		color: var(--text-mute);
-		text-decoration: line-through;
-		text-decoration-color: color-mix(in srgb, var(--text-mute) 60%, transparent);
-	}
-	.reminder-item.done .reminder-ico {
-		color: var(--text-mute);
 	}
 	.reminder-list {
 		display: flex;
@@ -1670,11 +1545,6 @@
 	.activity-option.sel {
 		background: var(--accent-tint-2, color-mix(in srgb, var(--accent) 14%, transparent));
 		color: var(--accent-ink);
-	}
-	.reminder-add {
-		flex-shrink: 0;
-		padding: 5px 11px;
-		font-size: 12px;
 	}
 	.reminder-info {
 		flex-shrink: 0;

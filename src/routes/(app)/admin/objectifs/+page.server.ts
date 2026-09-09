@@ -1,7 +1,7 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { logger } from '$lib/server/logger';
-import { getRefData, listTickets } from '$lib/server/services/tickets';
+import { getRefData, listRecentTicketSummaries } from '$lib/server/services/tickets';
 import { isManagerOrAdmin } from '$lib/server/services/workspaces';
 import {
 	listObjectivesForWorkspace,
@@ -28,9 +28,14 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	const monday = wParam ? mondayOf(parseISODate(wParam)) : currentMonday;
 	const mondayISO = toISODate(monday);
 
+	const canManage = isManagerOrAdmin(locals.role);
 	const [ref, tickets, objectives, vacations] = await Promise.all([
 		getRefData(ws.workspaceId),
-		listTickets(ws.workspaceId),
+		// Liste d'AMORCE seulement : les 20 tickets les plus récents, pas tout le catalogue. Dès qu'on
+		// tape, la palette interroge /api/command/tickets côté serveur (cf. ObjectivePalette) — sans
+		// quoi la page grossirait indéfiniment avec le backlog. La garde `canManage` reste : seule la
+		// palette d'attribution s'en sert, et un membre n'y a pas accès.
+		canManage ? listRecentTicketSummaries(ws.workspaceId) : Promise.resolve([]),
 		listObjectivesForWorkspace(ws.workspaceId, mondayISO),
 		listVacationsForWeek(ws.workspaceId, mondayISO)
 	]);
@@ -39,25 +44,28 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	// d'ici uniquement pour l'instant, cf. schema.ts membership.factice — ils restent normalement
 	// imputables et visibles partout ailleurs.
 	const members = ref.members.filter((m) => !m.factice);
-	const nextMonday = addDays(monday, 7);
+	// "La semaine à préparer" est toujours la suivante par rapport à AUJOURD'HUI, pas par rapport à
+	// la semaine affichée : depuis une semaine passée, le raccourci doit ramener à celle qu'on a
+	// réellement à remplir, pas à la suivante de celle qu'on consulte.
+	const prepMonday = addDays(currentMonday, 7);
 
 	return {
 		members,
-		tickets: tickets.map((t) => ({ id: t.id, key: t.key, title: t.title })),
+		tickets,
 		activities: ref.activities,
 		objectives,
 		vacations: [...vacations],
-		canManage: isManagerOrAdmin(locals.role),
+		canManage,
 		selfId: locals.user!.id,
 		weekNumber: isoWeek(monday),
 		weekLabel: formatRange(monday),
 		weekMondayISO: mondayISO,
 		prevWeek: toISODate(addDays(monday, -7)),
-		nextWeek: toISODate(nextMonday),
-		nextWeekNumber: isoWeek(nextMonday),
-		// Sert au bouton "Préparer S+1" (inutile quand on y est déjà) et au bandeau de semaine passée.
-		currentWeekMondayISO: toISODate(currentMonday),
-		isPastWeek: mondayISO < toISODate(currentMonday)
+		nextWeek: toISODate(addDays(monday, 7)),
+		// Cible du bouton "Préparer S+1" : affiché tant qu'on est avant cette semaine-là (donc sur la
+		// courante et sur toutes les passées), masqué une fois qu'on y est ou au-delà.
+		prepWeekMondayISO: toISODate(prepMonday),
+		prepWeekNumber: isoWeek(prepMonday)
 	};
 };
 

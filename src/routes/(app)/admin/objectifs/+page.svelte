@@ -23,6 +23,8 @@
 
 	const isNavigating = $derived(!!navigating.to);
 	const onVacation = $derived(new Set(data.vacations));
+	// Comparaison de dates ISO en chaîne : l'ordre lexicographique y est l'ordre chronologique.
+	const beforePrepWeek = $derived(data.weekMondayISO < data.prepWeekMondayISO);
 
 	/** Chacun coche les siennes ; un admin/manager coche pour tout le monde (revérifié serveur). */
 	const canCheck = (userId: string) => data.canManage || userId === data.selfId;
@@ -30,12 +32,24 @@
 	const withObjectives = $derived(
 		data.members.map((m) => ({ ...m, objectives: data.objectives.filter((o) => o.userId === m.id) }))
 	);
+	// L'ordre des cartes est FIGÉ tant qu'on reste sur la même semaine avec les mêmes membres.
+	// Sans ça : le tri dépend du nombre d'objectifs, donc chaque ajout/suppression le rejoue, les
+	// cartes glissent, et le clic suivant tombe sur la carte de quelqu'un d'autre — on retire alors
+	// un objectif à la mauvaise personne (le formulaire posté est bien celui qu'on a cliqué, mais ce
+	// n'est plus celui qu'on visait). Retarder le tri ne ferait que rétrécir cette fenêtre ; le figer
+	// la supprime. Il se recalcule au changement de semaine ou de composition de l'équipe, jamais
+	// pendant qu'on travaille dessus.
+	const orderSeed = $derived(`${data.weekMondayISO}|${data.members.map((m) => m.id).join(',')}`);
+	// Mémo volontairement non réactif (pas de $state) : le lire/écrire depuis un $derived ne doit
+	// surtout pas redéclencher ce $derived, sinon on retombe sur un recalcul en boucle.
+	let rankCache: { seed: string; rank: Map<string, number> } = { seed: '', rank: new Map() };
+
 	// Les personnes en congés n'ont rien à montrer : leur donner une carte pleine taille gâche de la
 	// place, elles passent dans une bande compacte en bas.
-	const activeMembers = $derived(
-		withObjectives
-			.filter((m) => !onVacation.has(m.id))
-			.sort((a, b) => {
+	const activeMembers = $derived.by(() => {
+		const live = withObjectives.filter((m) => !onVacation.has(m.id));
+		if (rankCache.seed !== orderSeed) {
+			const ordered = [...live].sort((a, b) => {
 				// Un membre vient d'abord voir ce qu'on attend de LUI : sa carte passe en tête. Pour un
 				// manager, qui lit la semaine de toute l'équipe, l'ordre reste le plus chargé d'abord.
 				if (!data.canManage) {
@@ -43,8 +57,14 @@
 					if (b.id === data.selfId) return 1;
 				}
 				return b.objectives.length - a.objectives.length;
-			})
-	);
+			});
+			rankCache = { seed: orderSeed, rank: new Map(ordered.map((m, i) => [m.id, i])) };
+		}
+		// Quelqu'un qui revient de congés en cours de semaine n'est pas dans le classement figé :
+		// il prend la fin plutôt que de tout réordonner.
+		const rankOf = (id: string) => rankCache.rank.get(id) ?? Number.MAX_SAFE_INTEGER;
+		return [...live].sort((a, b) => rankOf(a.id) - rankOf(b.id));
+	});
 	const vacationMembers = $derived(data.members.filter((m) => onVacation.has(m.id)));
 	/** Personnes attribuables dans la palette — jamais quelqu'un en congés, addObjective le refuse. */
 	const assignable = $derived(activeMembers.map((m) => ({ id: m.id, displayName: m.displayName })));
@@ -54,7 +74,6 @@
 	const tracked = $derived(data.canManage ? data.objectives : data.objectives.filter((o) => o.userId === data.selfId));
 	const doneCount = $derived(tracked.filter((o) => isDone(o)).length);
 
-	const isCurrentWeek = $derived(data.weekMondayISO === data.currentWeekMondayISO);
 
 	async function downloadObjectivesPng() {
 		imgBusy = true;
@@ -118,6 +137,13 @@
 	<h1>Objectifs de la semaine<small>Semaine {data.weekNumber} · {data.weekLabel}</small></h1>
 	<div class="spacer"></div>
 	{#if isNavigating}<span class="loading-hint">Chargement…</span>{/if}
+	<!-- Raccourci vers la semaine à préparer (routine du vendredi) : un bouton, pas le défaut de la
+	     page, qui coûtait un aller-retour les quatre autres jours. Visible depuis la semaine courante
+	     ET depuis n'importe quelle semaine passée — c'est justement en revenant en arrière qu'on a
+	     besoin d'un retour direct. À gauche des flèches, pour qu'elles restent en bout de bandeau. -->
+	{#if data.canManage && beforePrepWeek}
+		<a class="next-week" href="?w={data.prepWeekMondayISO}">Préparer <b>S{data.prepWeekNumber}</b></a>
+	{/if}
 	<div class="wknav" class:disabled={isNavigating}>
 		<a class="wkbtn" href="?w={data.prevWeek}" aria-label="Semaine précédente" aria-disabled={isNavigating} onclick={(e) => { if (isNavigating) e.preventDefault(); }}>
 			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m15 18-6-6 6-6"/></svg>
@@ -127,26 +153,9 @@
 			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m9 18 6-6-6-6"/></svg>
 		</a>
 	</div>
-	<!-- La préparation de la semaine suivante ne concerne que le vendredi : un bouton, pas le défaut
-	     de la page (qui coûtait un aller-retour les quatre autres jours). -->
-	{#if data.canManage && isCurrentWeek}
-		<a class="next-week" href="?w={data.nextWeek}">Préparer <b>S{data.nextWeekNumber}</b></a>
-	{/if}
 </div>
 
-<div class="content admin">
-	{#if data.isPastWeek}
-		<div class="page-banner past">
-			<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-			Semaine {data.weekNumber}, terminée — {doneCount} / {tracked.length} objectif{tracked.length > 1 ? 's' : ''} fait{doneCount > 1 ? 's' : ''}.
-		</div>
-	{:else if !data.canManage}
-		<div class="page-banner">
-			<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 16v-5M12 8h.01"/></svg>
-			Coche tes objectifs au fil de la semaine. L'attribution est faite par ton manager.
-		</div>
-	{/if}
-
+<div class="content">
 	{#if data.members.length === 0}
 		<section class="card block"><p class="hint" style="margin:0;">Aucun membre actif dans cet espace.</p></section>
 	{:else}
@@ -202,36 +211,41 @@
 								{#each mine as o, i (o.id)}
 									{@const done = isDone(o)}
 									<li class="task-row" class:done>
-										<!-- Un <button role="checkbox"> et pas un <input> : la case est un vrai submit, donc
-										     elle fonctionne aussi sans JavaScript, comme le reste de la page. -->
-										<form
-											method="POST"
-											action="?/toggleDone"
-											use:enhance={() => {
-												doneOverride[o.id] = !done;
-												return async ({ result, update }) => {
-													if (result.type === 'failure') delete doneOverride[o.id];
-													await update({ reset: false });
-													delete doneOverride[o.id];
-												};
-											}}
-										>
-											<input type="hidden" name="id" value={o.id} />
-											<input type="hidden" name="done" value={String(!done)} />
-											<button
-												class="obj-check"
-												type="submit"
-												role="checkbox"
-												aria-checked={done}
-												disabled={!canCheck(m.id)}
-												title={canCheck(m.id) ? (done ? 'Marquer comme non fait' : 'Marquer comme fait') : `Seul·e ${m.displayName} peut cocher cet objectif.`}
-												aria-label="{done ? 'Marquer comme non fait' : 'Marquer comme fait'} : {o.kind === 'TICKET' ? o.ticketKey : o.label}"
+										<!-- Case affichée uniquement là où elle est actionnable (sa propre carte, ou
+										     n'importe laquelle pour un manager). Sur les cartes des autres, une case
+										     inerte ne serait que du bruit : l'état "fait" y est déjà porté par le texte
+										     barré, rien n'est perdu à la retirer.
+										     Un <button role="checkbox"> et pas un <input> : la case est un vrai submit,
+										     donc elle fonctionne aussi sans JavaScript, comme le reste de la page. -->
+										{#if canCheck(m.id)}
+											<form
+												method="POST"
+												action="?/toggleDone"
+												use:enhance={() => {
+													doneOverride[o.id] = !done;
+													return async ({ result, update }) => {
+														if (result.type === 'failure') delete doneOverride[o.id];
+														await update({ reset: false });
+														delete doneOverride[o.id];
+													};
+												}}
 											>
-												{#if done}
-													<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6" /></svg>
-												{/if}
-											</button>
-										</form>
+												<input type="hidden" name="id" value={o.id} />
+												<input type="hidden" name="done" value={String(!done)} />
+												<button
+													class="obj-check"
+													type="submit"
+													role="checkbox"
+													aria-checked={done}
+													title={done ? 'Marquer comme non fait' : 'Marquer comme fait'}
+													aria-label="{done ? 'Marquer comme non fait' : 'Marquer comme fait'} : {o.kind === 'TICKET' ? o.ticketKey : o.label}"
+												>
+													{#if done}
+														<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6" /></svg>
+													{/if}
+												</button>
+											</form>
+										{/if}
 										<span class="task-text">{@render objectiveLabel(o)}</span>
 										{#if data.canManage}
 											<span class="row-ctl">
@@ -320,9 +334,6 @@
 {/if}
 
 <style>
-	.admin {
-		max-width: 1180px;
-	}
 	.block {
 		padding: 22px;
 		margin-bottom: 18px;
@@ -367,17 +378,10 @@
 		opacity: 0.6;
 		pointer-events: none;
 	}
-	.loading-hint {
-		font-size: 12.5px;
-		color: var(--text-mute);
-	}
-	.cur {
-		padding: 0 12px;
-		font-weight: 600;
-		font-size: 13.5px;
-		font-variant-numeric: tabular-nums;
-	}
 	.next-week {
+		/* `a` global ne réinitialise que la couleur (app.css) : le soulignement du navigateur reste,
+		   et il n'a rien à faire sur ce qui se lit comme un bouton. */
+		text-decoration: none;
 		font-size: 12.5px;
 		font-weight: 600;
 		color: var(--text-soft);
@@ -395,28 +399,16 @@
 	.next-week b {
 		color: var(--accent-ink);
 	}
-
-	.page-banner {
-		display: flex;
-		align-items: center;
-		gap: 9px;
-		font-size: 13px;
-		color: var(--accent-ink);
-		background: var(--accent-tint-2);
-		border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
-		border-radius: var(--r-md);
-		padding: 10px 14px;
-		margin-bottom: 16px;
+	.loading-hint {
+		font-size: 12.5px;
+		color: var(--text-mute);
 	}
-	.page-banner svg {
-		flex-shrink: 0;
+	.cur {
+		padding: 0 12px;
+		font-weight: 600;
+		font-size: 13.5px;
+		font-variant-numeric: tabular-nums;
 	}
-	.page-banner.past {
-		color: var(--text-soft);
-		background: var(--surface-sunk);
-		border-color: var(--border);
-	}
-
 	.block-head {
 		display: flex;
 		align-items: flex-start;
@@ -460,7 +452,10 @@
 
 	.ref-grid {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+		/* 360 et pas 300 : à 300, auto-fit casait 4 colonnes sur un écran large et chaque libellé de
+		   ticket repassait sur 3 lignes. Une carte large et peu de colonnes lit mieux qu'une rangée
+		   dense — la hauteur gagnée par une colonne de plus est reperdue en retours à la ligne. */
+		grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
 		gap: 18px;
 	}
 	.ref-grid .block {
@@ -587,12 +582,8 @@
 		background: var(--accent);
 		border-color: var(--accent);
 	}
-	.obj-check:hover:not(:disabled) {
+	.obj-check:hover {
 		border-color: var(--accent);
-	}
-	.obj-check:disabled {
-		cursor: default;
-		opacity: 0.75;
 	}
 	.obj-check:focus-visible {
 		outline: 2px solid var(--accent);

@@ -7,7 +7,7 @@ import { makeWorkspace, addMember } from '$lib/server/services/test-helpers';
 import { fakeLocals, formRequest } from '$lib/server/test-helpers/http';
 import { setMemberFactice } from '$lib/server/services/accounts';
 import { setObjectivesEnabled, listObjectivesForUser } from '$lib/server/services/weeklyObjectives';
-import { mondayOf, parseISODate, toISODate, todayInParis } from '$lib/utils/date';
+import { mondayOf, parseISODate, toISODate, todayInParis, addDays } from '$lib/utils/date';
 
 /**
  * Les objectifs sont désactivés par défaut sur un espace neuf (cf. workspace.objectivesEnabled) :
@@ -201,7 +201,36 @@ describe('admin/objectifs load', () => {
 		const { userId } = await makeWorkspaceWithObjectives('obj-week');
 		const result = await load({ locals: await fakeLocals(userId), url: pageUrl() } as never);
 		expect(result.weekMondayISO).toBe(toISODate(mondayOf(parseISODate(todayInParis()))));
-		expect(result.isPastWeek).toBe(false);
+	});
+
+	it("depuis une semaine passée, le raccourci « Préparer » vise toujours la semaine suivant AUJOURD'HUI", async () => {
+		const { userId } = await makeWorkspaceWithObjectives('obj-prep');
+		const locals = await fakeLocals(userId);
+		const attendu = toISODate(addDays(mondayOf(parseISODate(todayInParis())), 7));
+
+		// Semaine courante et semaine très ancienne : même cible, c'est tout l'intérêt du raccourci.
+		for (const search of ['', '?w=2026-01-05']) {
+			const result = await load({ locals, url: pageUrl(search) } as never);
+			expect(result.prepWeekMondayISO).toBe(attendu);
+			expect(result.weekMondayISO < result.prepWeekMondayISO).toBe(true);
+		}
+
+		// Une fois sur la semaine à préparer, le bouton n'a plus rien à proposer.
+		const surPrep = await load({ locals, url: pageUrl(`?w=${attendu}`) } as never);
+		expect(surPrep.weekMondayISO < surPrep.prepWeekMondayISO).toBe(false);
+	});
+
+	it("la liste d'amorce de la palette : id/clé/titre, la plus récente d'abord, bornée à 20", async () => {
+		const { workspaceId, userId: adminId } = await makeWorkspaceWithObjectives('obj-tickets');
+		const { createTicket } = await import('$lib/server/services/tickets');
+		// 21 tickets : de quoi vérifier que la page n'embarque pas tout le catalogue.
+		for (let i = 1; i <= 21; i++) await createTicket(workspaceId, { key: `PAL-${i}`, title: `Ticket ${i}` });
+
+		const result = await load({ locals: await fakeLocals(adminId), url: pageUrl() } as never);
+		expect(result.tickets).toHaveLength(20);
+		// Le plus récemment créé en tête, le tout premier hors liste.
+		expect(result.tickets[0]).toEqual({ id: expect.any(String), key: 'PAL-21', title: 'Ticket 21' });
+		expect(result.tickets.some((t: { key: string }) => t.key === 'PAL-1')).toBe(false);
 	});
 
 	it('un simple membre accède à la page, en lecture seule', async () => {
@@ -210,6 +239,9 @@ describe('admin/objectifs load', () => {
 		const result = await load({ locals: await fakeLocals(memberId), url: pageUrl() } as never);
 		expect(result.canManage).toBe(false);
 		expect(result.selfId).toBe(memberId);
+		// Le catalogue de tickets ne sert qu'à la palette d'attribution : il ne doit pas partir dans
+		// la charge utile d'un membre qui ne peut pas attribuer.
+		expect(result.tickets).toEqual([]);
 	});
 
 	it('objectifs désactivés sur l’espace : la page redirige vers /imputation', async () => {

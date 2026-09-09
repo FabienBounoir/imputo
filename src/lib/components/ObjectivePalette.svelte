@@ -44,9 +44,12 @@
 		onremove: (objectiveId: string) => void;
 	} = $props();
 
-	// Nombre de tickets listés quand la recherche est vide : de quoi amorcer sans dérouler tout le
-	// backlog (la liste complète n'a aucun intérêt tant qu'on n'a pas tapé).
-	const IDLE_TICKETS = 8;
+	// La recherche part au serveur : `tickets` n'est qu'une liste d'amorce (les 20 plus récents,
+	// cf. listRecentTicketSummaries) affichée tant qu'on n'a rien tapé. Dès 2 caractères, on
+	// interroge /api/command/tickets — le même endpoint que la palette de commandes, qui filtre et
+	// borne côté SQL. Sans ça, tout le backlog devrait transiter dans la page à chaque affichage.
+	const MIN_QUERY = 2;
+	const SEARCH_DEBOUNCE_MS = 200;
 
 	type Stage = 'target' | 'activity' | 'note';
 	type Item =
@@ -68,13 +71,43 @@
 	const person = $derived(members.find((m) => m.id === userId) ?? null);
 	const mine = $derived(objectives.filter((o) => o.userId === userId));
 
+	let remoteTickets = $state<Ticket[]>([]);
+	let searching = $state(false);
+	let searchTimer: ReturnType<typeof setTimeout> | undefined;
+	// Jeton de course : deux frappes rapprochées lancent deux requêtes, et rien ne garantit qu'elles
+	// reviennent dans l'ordre. Seule la dernière lancée a le droit d'écrire le résultat.
+	let searchToken = 0;
+
+	$effect(() => {
+		const q = query.trim();
+		clearTimeout(searchTimer);
+		if (stage !== 'target' || q.length < MIN_QUERY) {
+			remoteTickets = [];
+			searching = false;
+			return;
+		}
+		searching = true;
+		const token = ++searchToken;
+		searchTimer = setTimeout(async () => {
+			try {
+				const res = await fetch(`/api/command/tickets?q=${encodeURIComponent(q)}`);
+				const found = res.ok ? ((await res.json()).tickets as Ticket[]) : [];
+				if (token === searchToken) remoteTickets = found;
+			} catch {
+				if (token === searchToken) remoteTickets = [];
+			} finally {
+				if (token === searchToken) searching = false;
+			}
+		}, SEARCH_DEBOUNCE_MS);
+		return () => clearTimeout(searchTimer);
+	});
+
 	const targetItems = $derived.by((): Item[] => {
 		const q = query.trim();
-		const lower = q.toLowerCase();
-		const matches = q
-			? tickets.filter((t) => t.key.toLowerCase().includes(lower) || t.title.toLowerCase().includes(lower))
-			: tickets.slice(0, IDLE_TICKETS);
-		const out: Item[] = matches.map((t) => ({ kind: 'ticket', ticket: t }) as Item);
+		// Vide -> amorce ; 1 caractère -> rien (le serveur ne répond qu'à partir de 2), mais la tâche
+		// libre reste proposée ; 2+ -> résultats du serveur.
+		const base = q.length >= MIN_QUERY ? remoteTickets : q ? [] : tickets;
+		const out: Item[] = base.map((t) => ({ kind: 'ticket', ticket: t }) as Item);
 		// Contrairement à Mon imputation, une recherche sans résultat ne renvoie pas vers /tickets :
 		// un objectif sans ticket est un cas normal, la tâche libre se crée ici même.
 		if (q) out.push({ kind: 'custom', query: q });
@@ -323,7 +356,7 @@
 					{#if stage === 'target'}
 						{#each targetItems as it, i (it.kind === 'ticket' ? 't:' + it.ticket.id : 'c')}
 							{#if i === 0 || (targetItems[i - 1].kind === 'ticket') !== (it.kind === 'ticket')}
-								<div class="op-section">{it.kind === 'ticket' ? (query.trim() ? 'Tickets' : 'Tickets récents') : 'Tâche sans ticket'}</div>
+								<div class="op-section">{it.kind === 'ticket' ? (query.trim() ? 'Tickets trouvés' : 'Tickets récents') : 'Tâche sans ticket'}</div>
 							{/if}
 							<button type="button" class="op-item" class:active={activeIndex === i} class:create={it.kind === 'custom'} onclick={() => pick(i)}>
 								{#if it.kind === 'ticket'}
@@ -333,7 +366,11 @@
 								{/if}
 							</button>
 						{/each}
-						{#if targetItems.length === 0}<div class="op-empty">Aucun ticket dans cet espace.</div>{/if}
+						{#if searching}
+							<div class="op-empty">Recherche…</div>
+						{:else if targetItems.length === 0}
+							<div class="op-empty">{query.trim() ? 'Aucun ticket ne correspond.' : 'Aucun ticket dans cet espace.'}</div>
+						{/if}
 					{:else}
 						{#each activityItems as it, i (it.id || 'none')}
 							<button type="button" class="op-item op-activity" class:active={activeIndex === i} onclick={() => pick(i)}>
@@ -350,7 +387,9 @@
 					{#if stage === 'note'}Entrée pour ajouter · vide = pas de note
 					{:else}↑↓ naviguer · Entrée choisir{/if}
 				</span>
-				<span>{members.length > 1 ? 'Tab personne suivante · ' : ''}Échap {stage === 'target' ? 'fermer' : 'revenir'}</span>
+				<span>
+					{#if stage === 'target' && !query.trim()}20 plus récents · tape pour chercher · {/if}{members.length > 1 ? 'Tab personne suivante · ' : ''}Échap {stage === 'target' ? 'fermer' : 'revenir'}
+				</span>
 			</div>
 		</div>
 	</div>
