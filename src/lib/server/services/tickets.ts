@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, notExists, or, ilike, sql, count } from 'drizzle-orm';
+import { and, eq, inArray, isNull, notExists, or, ilike, sql, count, desc } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import {
 	db,
@@ -488,6 +488,26 @@ export async function listTicketSummaries(
 		.from(ticket)
 		.leftJoin(sprint, eq(ticket.sprintId, sprint.id))
 		.where(and(eq(ticket.workspaceId, workspaceId), isNull(ticket.archivedAt)));
+}
+
+/**
+ * Les N tickets les plus récents, en id/clé/titre — liste d'amorce d'un sélecteur, affichée tant
+ * qu'aucune recherche n'est tapée (cf. ObjectivePalette). Volontairement bornée : contrairement à
+ * listTickets/listTicketSummaries, elle ne grossit pas avec le backlog, et la recherche réelle se
+ * fait ensuite côté serveur via /api/command/tickets.
+ * Tri par date de création décroissante, `id` en tie-breaker (createdAt n'est pas unique sur une
+ * insertion en masse, cf. le même correctif dans listTicketsPage).
+ */
+export async function listRecentTicketSummaries(
+	workspaceId: string,
+	limit = 20
+): Promise<{ id: string; key: string; title: string }[]> {
+	return db
+		.select({ id: ticket.id, key: ticket.key, title: ticket.title })
+		.from(ticket)
+		.where(and(eq(ticket.workspaceId, workspaceId), isNull(ticket.archivedAt)))
+		.orderBy(desc(ticket.createdAt), desc(ticket.id))
+		.limit(limit);
 }
 
 export type TicketFilters = {

@@ -67,7 +67,11 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 			listTicketSummaries(ws.workspaceId),
 			getMembership(ws.workspaceId, viewedId),
 			getRecentTicketIds(ws.workspaceId, viewedId),
-			listObjectivesForUserWeeks(ws.workspaceId, viewedId, weekMondays),
+			// Espace qui n'utilise pas les objectifs : rien à charger, et surtout rien à afficher —
+			// ni bandeau de rappel, ni lignes auto-épinglées dans le tableau (cf. syncedRows).
+			ws.objectivesEnabled
+				? listObjectivesForUserWeeks(ws.workspaceId, viewedId, weekMondays)
+				: Promise.resolve([]),
 			vacationWeeks(ws.workspaceId, viewedId, weekMondays),
 			listAbsencesForRange(ws.workspaceId, period.firstDay, period.lastDay),
 			viewingTeam ? getTeamTimesheet(ws.workspaceId, period.days) : Promise.resolve(null),
@@ -109,6 +113,7 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 		// seuls manager/admin peuvent retirer un objectif depuis /admin/objectifs, un simple membre doit
 		// leur demander plutôt que de tenter de le faire lui-même.
 		canManageObjectives: isManagerOrAdmin(locals.role),
+		objectivesEnabled: ws.objectivesEnabled,
 		tickets,
 		recentTicketIds,
 		pinnedRows,
@@ -150,6 +155,7 @@ async function resolveSubjectId(
 }
 
 export const actions: Actions = {
+
 	setCell: async ({ request, locals }) => {
 		const ws = locals.workspace;
 		if (!ws || !locals.user) return fail(401, { error: 'Non authentifié.' });

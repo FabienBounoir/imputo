@@ -895,29 +895,38 @@ async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, pe
 		)
 	);
 
-	// ---------- Objectifs de la semaine : pour tester la vue globale (/admin/objectifs) et la règle
-	// "personne en vacances -> pas d'objectif attribuable" — David est volontairement en vacances la
-	// semaine prochaine (vue par défaut de la page) et n'a donc aucun objectif ce jour-là.
+	// ---------- Objectifs de la semaine : pour tester la vue globale (/admin/objectifs), les cases
+	// à cocher et la règle "personne en vacances -> pas d'objectif attribuable". Le gros du jeu de
+	// données est sur la SEMAINE COURANTE, qui est la vue par défaut de la page ; la semaine suivante
+	// n'en garde que deux, de quoi vérifier le bouton "Préparer S+1" et la navigation.
+	// David est volontairement en vacances cette semaine : il n'a donc aucun objectif et apparaît
+	// dans la bande du bas plutôt que dans la grille.
+	await db.update(workspace).set({ objectivesEnabled: true }).where(eq(workspace.id, ws.id));
+
 	const nextMondayISO = toISODate(mondayWeeksAgo(-1));
 	const thisMondayISO = toISODate(currentMonday);
 	const assignerId = bySlot('manon').id;
 	const ticketPick = (n: number) => insertedTickets[n % insertedTickets.length];
 
 	await db.insert(weeklyObjective).values([
-		// Semaine prochaine (vue par défaut de la page).
+		// Semaine courante (vue par défaut de la page).
 		{
 			workspaceId: ws.id,
 			userId: bySlot('bob').id,
-			weekMonday: nextMondayISO,
+			weekMonday: thisMondayISO,
 			kind: 'TICKET',
 			ticketId: ticketPick(0).id,
+			// Note d'objectif : elle remplace le titre du ticket à l'affichage (page, bandeau de Mon
+			// imputation, export PNG) — de quoi vérifier ce rendu-là.
+			label: 'Boucler la revue avec le client avant jeudi',
 			activityId: activityByLabel.get('Dev')!.id,
-			createdByUserId: assignerId
+			createdByUserId: assignerId,
+			doneAt: new Date()
 		},
 		{
 			workspaceId: ws.id,
 			userId: bySlot('bob').id,
-			weekMonday: nextMondayISO,
+			weekMonday: thisMondayISO,
 			kind: 'CUSTOM',
 			// Libellé volontairement long pour vérifier le rendu (page + export SVG) sur une tâche qui déborde.
 			label: 'Finaliser la migration complète de la base clients avec vérification post-déploiement',
@@ -926,27 +935,19 @@ async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, pe
 		{
 			workspaceId: ws.id,
 			userId: bySlot('chloe').id,
-			weekMonday: nextMondayISO,
+			weekMonday: thisMondayISO,
 			kind: 'TICKET',
 			ticketId: ticketPick(1).id,
 			activityId: activityByLabel.get('TU')!.id,
-			createdByUserId: assignerId
+			createdByUserId: assignerId,
+			doneAt: new Date()
 		},
 		{
 			workspaceId: ws.id,
 			userId: bySlot('alice').id,
-			weekMonday: nextMondayISO,
+			weekMonday: thisMondayISO,
 			kind: 'CUSTOM',
 			label: "Revue de code de l'équipe",
-			createdByUserId: assignerId
-		},
-		// Semaine courante (pour tester la navigation "précédent").
-		{
-			workspaceId: ws.id,
-			userId: bySlot('bob').id,
-			weekMonday: thisMondayISO,
-			kind: 'TICKET',
-			ticketId: ticketPick(2).id,
 			createdByUserId: assignerId
 		},
 		{
@@ -956,9 +957,26 @@ async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, pe
 			kind: 'CUSTOM',
 			label: 'Point budget mensuel',
 			createdByUserId: assignerId
+		},
+		// Semaine suivante (pour tester "Préparer S+1" et la navigation).
+		{
+			workspaceId: ws.id,
+			userId: bySlot('bob').id,
+			weekMonday: nextMondayISO,
+			kind: 'TICKET',
+			ticketId: ticketPick(2).id,
+			createdByUserId: assignerId
+		},
+		{
+			workspaceId: ws.id,
+			userId: bySlot('alice').id,
+			weekMonday: nextMondayISO,
+			kind: 'CUSTOM',
+			label: 'Préparer la démo de fin de sprint',
+			createdByUserId: assignerId
 		}
 	]);
-	await db.insert(weeklyVacation).values({ workspaceId: ws.id, userId: bySlot('david').id, weekMonday: nextMondayISO });
+	await db.insert(weeklyVacation).values({ workspaceId: ws.id, userId: bySlot('david').id, weekMonday: thisMondayISO });
 
 	// ---------- Historique des modifications (change_log) : révisions d'estimation ticket, RAE par
 	// activité et absences, + les suppressions ci-dessus — dans les 30 derniers jours (fenêtre
@@ -1164,7 +1182,7 @@ async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, pe
 	const totalAbsences = insertedAbsences.length + clientAbsenceRows.length;
 	console.log(
 		`✓ "${wsName}" créé — ${totalTickets} tickets sur ${sprintDefs.length} sprints / ${VERSION_NAMES.length} versions, ` +
-			`${entryDrafts.length} imputations (${allDays.length} jours ouvrés, du ${allDays[0]} au ${allDays[allDays.length - 1]}), ${snapshotRows.length} snapshots, ${moodVoteRows.length} votes team mood sur 7 semaines, ${totalAbsences} absences (dont 1 membre externe), ${changeLogRows.length} entrées d'historique, 6 objectifs de semaine (dont David en vacances la semaine prochaine, sans objectif), 3 runs de sync Jira (import initial de ${insertedTickets.length} tickets, run récent de ${insertedRecentTickets.length} tickets encore annulables, 1 en échec), perm support activée (${rotationUserIds.length} personnes en rotation, 1 override sur la période courante), ${supportTimeRows.length} saisies de temps support, ${monthKeys.length} clôtures mensuelles (${monthKeys.length - 1} intégrées + 1 en brouillon sur ${currentMonthKey}), wrapped ${wrappedYear} figé pour ${personas.length} personnes (voir /wrapped?preview=1 en ADMIN).`
+			`${entryDrafts.length} imputations (${allDays.length} jours ouvrés, du ${allDays[0]} au ${allDays[allDays.length - 1]}), ${snapshotRows.length} snapshots, ${moodVoteRows.length} votes team mood sur 7 semaines, ${totalAbsences} absences (dont 1 membre externe), ${changeLogRows.length} entrées d'historique, 7 objectifs de semaine (5 sur la semaine courante dont 2 cochés, 2 sur la suivante ; David en congés cette semaine, donc sans carte), 3 runs de sync Jira (import initial de ${insertedTickets.length} tickets, run récent de ${insertedRecentTickets.length} tickets encore annulables, 1 en échec), perm support activée (${rotationUserIds.length} personnes en rotation, 1 override sur la période courante), ${supportTimeRows.length} saisies de temps support, ${monthKeys.length} clôtures mensuelles (${monthKeys.length - 1} intégrées + 1 en brouillon sur ${currentMonthKey}), wrapped ${wrappedYear} figé pour ${personas.length} personnes (voir /wrapped?preview=1 en ADMIN).`
 	);
 	for (const p of personas) console.log(`  ${p.email.padEnd(32)} ${p.password.padEnd(14)} (${p.role})`);
 }

@@ -657,7 +657,8 @@
 	}
 
 	// Message du cadenas sur une ligne issue d'un objectif : seuls manager/admin peuvent la retirer
-	// (depuis /admin/objectifs) — un simple membre n'a pas ce lien, il doit passer par eux.
+	// (depuis /admin/objectifs). Un membre a bien accès à cette page depuis que la vue globale est
+	// ouverte à toute l'équipe, mais en lecture seule — il doit donc passer par eux pour la retirer.
 	function objectiveLockMessage(): string {
 		return data.canManageObjectives
 			? "Cette ligne vient d'un objectif de la semaine — retirez l'objectif depuis Objectifs de la semaine pour la faire disparaître."
@@ -701,18 +702,11 @@
 		await fetch('?/pinRow', { method: 'POST', body });
 	}
 
-	// Ajout en un clic depuis le bandeau de rappel (contourne le picker) — TICKET uniquement, cf.
-	// syncedRows : un CUSTOM n'a rien à ajouter, il reste une information dans le bandeau.
-	function quickAddObjective(o: (typeof data.weeklyObjectives)[number]) {
-		if (o.kind !== 'TICKET' || !o.ticketId || rows.some((r) => r.rowKey === objectiveRowKey(o))) return;
-		rows = [...rows, buildRow('TICKET', o.ticketId, o.activityId ?? null, undefined, o.id, o.label)];
-	}
-
-	// Objectifs TICKET auto-ajoutés au chargement mais absents du tableau (supprimés depuis) + tous
-	// les objectifs CUSTOM (jamais ajoutés, cf. syncedRows) : c'est ce que le bandeau de rappel remonte.
-	let missingObjectives = $derived(
-		data.weeklyObjectives.filter((o) => !rows.some((r) => r.rowKey === objectiveRowKey(o)))
-	);
+	// Seuls les objectifs SANS ticket sont rappelés ici : ceux qui en ont un sont déjà épinglés comme
+	// lignes du tableau ci-dessous (cf. syncedRows), les répéter au-dessus ne dit rien de neuf. Un
+	// CUSTOM n'a ni ticket ni SSP, il n'est donc jamais imputable — ce bandeau est le seul endroit où
+	// il peut apparaître. Cocher se fait sur la page Objectifs, pas ici.
+	const customObjectives = $derived(data.weeklyObjectives.filter((o) => o.kind === 'CUSTOM'));
 </script>
 
 {#snippet ticketIcon()}
@@ -968,30 +962,23 @@
 		</div>
 	{/if}
 
-	{#if !data.readOnly && missingObjectives.length > 0}
+	{#if !data.readOnly && customObjectives.length > 0}
 		<div class="card reminder-card">
 			<div class="reminder-head">🎯 Attribué sur cette période</div>
 			<div class="reminder-list">
-				{#each missingObjectives as o, i (o.id)}
-					{#if multiWeek && o.weekMonday !== missingObjectives[i - 1]?.weekMonday}
+				{#each customObjectives as o, i (o.id)}
+					{#if multiWeek && o.weekMonday !== customObjectives[i - 1]?.weekMonday}
 						<div class="reminder-week">S{isoWeek(parseISODate(o.weekMonday))}</div>
 					{/if}
 					<div class="reminder-item">
 						<span class="reminder-label">
-							<span class="reminder-ico">
-								{#if o.kind === 'TICKET'}{@render ticketIcon()}{:else}{@render taskIcon()}{/if}
-							</span>
-							{o.kind === 'TICKET' ? `${o.ticketKey} — ${o.ticketTitle}` : o.label}
-							{#if o.kind === 'TICKET' && o.label} — {o.label}{/if}
+							<span class="reminder-ico">{@render taskIcon()}</span>
+							{o.label}
 							{#if o.activityLabel}<span class="tag-activity">{o.activityLabel}</span>{/if}
 						</span>
-						{#if o.kind === 'TICKET'}
-							<button class="btn btn-ghost reminder-add" onclick={() => quickAddObjective(o)}>+ Ajouter</button>
-						{:else}
-							<!-- CUSTOM : pas de ticket donc pas de SSP, jamais imputable — pure information sur
-							     ce qui est attendu cette semaine (cf. syncedRows/quickAddObjective). -->
-							<span class="reminder-info" title="Tâche sans ticket associé — non imputable directement, impute tes heures sur le ticket concerné.">Info seule</span>
-						{/if}
+						<!-- Pas de ticket donc pas de SSP, jamais imputable directement — pure information sur
+						     ce qui est attendu cette semaine (cf. syncedRows). -->
+						<span class="reminder-info" title="Tâche sans ticket associé — non imputable directement, impute tes heures sur le ticket concerné.">Info seule</span>
 					</div>
 				{/each}
 			</div>
@@ -1488,6 +1475,8 @@
 		padding: 6px 4px;
 	}
 	.reminder-label {
+		flex: 1;
+		min-width: 0;
 		font-size: 13.5px;
 		display: flex;
 		align-items: baseline;
@@ -1556,11 +1545,6 @@
 	.activity-option.sel {
 		background: var(--accent-tint-2, color-mix(in srgb, var(--accent) 14%, transparent));
 		color: var(--accent-ink);
-	}
-	.reminder-add {
-		flex-shrink: 0;
-		padding: 5px 11px;
-		font-size: 12px;
 	}
 	.reminder-info {
 		flex-shrink: 0;

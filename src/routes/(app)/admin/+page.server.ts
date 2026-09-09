@@ -68,6 +68,7 @@ import {
 	reorderTicketGroups
 } from '$lib/server/services/ticketGroups';
 import { getMoodConfig, setMoodEnabled, setMoodPeriodConfig, type MoodPeriodKind } from '$lib/server/services/mood';
+import { setObjectivesEnabled } from '$lib/server/services/weeklyObjectives';
 import {
 	getSupportConfig,
 	setSupportEnabled,
@@ -193,6 +194,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		mood,
 		support,
 		supportTimeTrackingEnabled: ws.supportTimeTrackingEnabled,
+		objectivesEnabled: ws.objectivesEnabled,
 		supportMembers,
 		jira,
 		jiraSyncRuns,
@@ -281,6 +283,14 @@ export const actions: Actions = {
 		const enabled = (await request.formData()).get('enabled') === 'true';
 		await setSupportEnabled(ws.workspaceId, enabled);
 		return { supportOk: true };
+	},
+
+	objectivesEnabled: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const enabled = (await request.formData()).get('enabled') === 'true';
+		await setObjectivesEnabled(ws.workspaceId, enabled);
+		return { objectivesOk: true };
 	},
 
 	supportCadence: async ({ request, locals }) => {

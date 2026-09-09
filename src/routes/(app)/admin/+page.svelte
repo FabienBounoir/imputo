@@ -46,6 +46,8 @@
 		else if (form.testPhaseOk)
 			toast.success('Réglage mis à jour ✓', { description: 'Rechargez les autres onglets pour voir le changement.' });
 		else if (form.moodOk) toast.success('Réglage mis à jour ✓');
+		else if (form.objectivesOk)
+			toast.success('Réglage mis à jour ✓', { description: 'Rechargez les autres onglets pour voir le changement.' });
 		else if (form.pprRatioOk || form.imputationStepOk) toast.success('Réglage mis à jour ✓');
 		else if (form.invite) {
 			inviteCopyFailed = false;
@@ -1514,6 +1516,26 @@
 						<span>Phase Test actuellement <b>{data.testPhase ? 'activée' : 'désactivée'}</b></span>
 						<button class="btn {data.testPhase ? 'btn-ghost' : 'btn-primary'}" type="submit">
 							{data.testPhase ? 'Désactiver' : 'Activer'}
+						</button>
+					</div>
+				</form>
+			</section>
+
+			<section class="card block">
+				<h3>Objectifs de la semaine</h3>
+				<p class="hint">
+					Les managers attribuent à chacun quelques tickets ou tâches pour la semaine, sur
+					<a href="/admin/objectifs">la page dédiée</a>, visible par toute l'équipe. Chacun coche les siennes au fil
+					de l'eau et les retrouve rappelées dans Mon imputation. Désactiver masque la page et le rappel sans
+					supprimer aucun objectif déjà attribué.
+				</p>
+
+				<form method="POST" action="?/objectivesEnabled" use:enhance>
+					<input type="hidden" name="enabled" value={String(!data.objectivesEnabled)} />
+					<div style="display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:6px;">
+						<span>Objectifs de la semaine actuellement <b>{data.objectivesEnabled ? 'activés' : 'désactivés'}</b></span>
+						<button class="btn {data.objectivesEnabled ? 'btn-ghost' : 'btn-primary'}" type="submit">
+							{data.objectivesEnabled ? 'Désactiver' : 'Activer'}
 						</button>
 					</div>
 				</form>

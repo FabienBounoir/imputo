@@ -96,6 +96,12 @@ export const workspace = pgTable('workspace', {
 	// Suivi du temps passé sur les tickets de support (cf. supportTimeEntry) : désactivé par défaut,
 	// activable par l'admin — donnée que l'entreprise ne trace nulle part ailleurs aujourd'hui.
 	supportTimeTrackingEnabled: boolean('support_time_tracking_enabled').notNull().default(false),
+	// Objectifs de la semaine : désactivés par défaut (comme moodEnabled/supportEnabled) pour qu'un
+	// nouvel espace ne démarre pas avec un écran et un bandeau dont il n'a rien à faire. La migration
+	// qui ajoute la colonne les active sur les espaces qui en ont déjà en base — personne ne perd la
+	// feature en cours de route. Désactiver ne supprime jamais aucun objectif : ça masque seulement
+	// la page, le lien de nav, les entrées de palette et le bandeau de Mon imputation.
+	objectivesEnabled: boolean('objectives_enabled').notNull().default(false),
 
 	// Curseur du "mois en cours" du Suivi annuel — indépendant du calendrier et de monthlyClosing,
 	// avancé uniquement via le bouton "Mois suivant". NULL = pas encore initialisé, bootstrap sur le
@@ -611,6 +617,10 @@ export const weeklyObjective = pgTable(
 		// Ordre d'affichage au sein d'une (personne, semaine) — modifiable via Admin > Objectifs,
 		// même mécanique swap-voisin que state.sortOrder (cf. moveState/moveObjective).
 		sortOrder: integer('sort_order').notNull().default(0),
+		// Coché "fait" — timestamp plutôt que booléen : "coché mercredi" est une information qu'un
+		// bool jette, et elle ne coûte rien à garder. NULL = pas fait. Cochable par la personne
+		// concernée et par un admin/manager (cf. setObjectiveDone).
+		doneAt: timestamp('done_at', { withTimezone: true }),
 		createdByUserId: uuid('created_by_user_id')
 			.notNull()
 			.references(() => user.id),
