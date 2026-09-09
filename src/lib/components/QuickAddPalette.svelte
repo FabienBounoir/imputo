@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { tick } from 'svelte';
+	import { visualViewportFit } from '$lib/visualViewport';
 	import { goto } from '$app/navigation';
 
 	// Palette d'ajout rapide (Mon imputation) — remplace TargetPicker + <select> activité + bouton
@@ -345,7 +346,7 @@
 	{#if open}
 		<!-- svelte-ignore a11y_click_events_have_key_events -->
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="qa-veil" onclick={closePalette}>
+		<div class="qa-veil" onclick={closePalette} use:visualViewportFit>
 			<div class="qa-palette" onclick={(e) => e.stopPropagation()}>
 				<div class="qa-input-row">
 					{#if chosenTarget}
@@ -707,8 +708,9 @@
 		color: var(--text-mute);
 		flex-shrink: 0;
 	}
-	@media (max-width: 480px) {
-		/* Repères clavier inutiles au doigt. */
+	/* Repères clavier inutiles au doigt. La largeur n'est qu'une approximation du tactile — on garde
+	   le seuil historique, et on ajoute la vraie condition : pas de dispositif de pointage fin. */
+	@media (max-width: 480px), (pointer: coarse) {
 		.qa-footer {
 			display: none;
 		}
@@ -718,5 +720,51 @@
 	select:focus-visible {
 		outline: 2px solid var(--accent);
 		outline-offset: 1px;
+	}
+
+	/* ---------- Mobile : feuille du bas plutôt que fenêtre centrée ----------
+	   Trois problèmes traités ensemble :
+	   1. le clavier virtuel cachait le bas de la modale — le voile suit maintenant le viewport
+	      VISIBLE (cf. visualViewportFit), donc la feuille reste toujours entièrement au-dessus ;
+	   2. une fenêtre centrée à 14vh du haut gâchait la place et laissait la liste loin du pouce —
+	      ancrée en bas, elle démarre là où la main se trouve ;
+	   3. les cibles tactiles étaient calibrées à la souris (cf. pointer: coarse plus bas). */
+	@media (max-width: 640px) {
+		.qa-veil {
+			align-items: flex-end;
+			padding: 0;
+			/* Repli 100dvh quand visualViewport manque : on retrouve le comportement d'avant. */
+			top: var(--vv-top, 0);
+			bottom: auto;
+			height: var(--vv-height, 100dvh);
+		}
+		.qa-palette {
+			max-width: none;
+			max-height: 100%;
+			border-radius: var(--r-lg, 16px) var(--r-lg, 16px) 0 0;
+			/* Barre gestuelle iOS : sans ça le dernier élément est sous le trait. */
+			padding-bottom: env(safe-area-inset-bottom, 0px);
+		}
+	}
+	@media (pointer: coarse) {
+		/* 16px : en dessous, iOS zoome sur le champ au focus et décale toute la mise en page. */
+		.qa-input {
+			font-size: 16px;
+		}
+		.qa-item,
+		.activity-option {
+			min-height: 44px;
+			padding-top: 12px;
+			padding-bottom: 12px;
+		}
+		/* Bouton rond : on agrandit la cible, pas la boîte. */
+		.qa-chip-remove {
+			width: 40px;
+			height: 40px;
+		}
+		.qa-launcher {
+			padding-top: 14px;
+			padding-bottom: 14px;
+		}
 	}
 </style>

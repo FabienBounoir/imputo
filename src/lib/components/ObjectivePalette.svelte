@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { tick } from 'svelte';
+	import { visualViewportFit } from '$lib/visualViewport';
 	import UserAvatar from '$lib/components/UserAvatar.svelte';
 
 	// Palette d'attribution des objectifs de la semaine — jumelle de QuickAddPalette (Mon imputation),
@@ -274,7 +275,7 @@
 {#if open && person}
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div class="op-veil" onclick={close}>
+	<div class="op-veil" onclick={close} use:visualViewportFit>
 		<div class="op-palette" onclick={(e) => e.stopPropagation()}>
 			<div class="op-head">
 				<UserAvatar userId={person.id} name={person.displayName} size={22} />
@@ -657,5 +658,61 @@
 		font-size: 11px;
 		color: var(--text-mute);
 		flex-shrink: 0;
+	}
+
+	/* ---------- Mobile : feuille du bas plutôt que fenêtre centrée ----------
+	   Trois problèmes traités ensemble :
+	   1. le clavier virtuel cachait le bas de la modale — le voile suit maintenant le viewport
+	      VISIBLE (cf. visualViewportFit), donc la feuille reste toujours entièrement au-dessus ;
+	   2. une fenêtre centrée à 14vh du haut gâchait la place et laissait la liste loin du pouce —
+	      ancrée en bas, elle démarre là où la main se trouve ;
+	   3. les cibles tactiles étaient calibrées à la souris (cf. pointer: coarse plus bas). */
+	@media (max-width: 640px) {
+		.op-veil {
+			align-items: flex-end;
+			padding: 0;
+			/* Repli 100dvh quand visualViewport manque : on retrouve le comportement d'avant. */
+			top: var(--vv-top, 0);
+			bottom: auto;
+			height: var(--vv-height, 100dvh);
+		}
+		.op-palette {
+			max-width: none;
+			max-height: 100%;
+			border-radius: var(--r-lg, 16px) var(--r-lg, 16px) 0 0;
+			/* Barre gestuelle iOS : sans ça le dernier élément est sous le trait. */
+			padding-bottom: env(safe-area-inset-bottom, 0px);
+		}
+	}
+	@media (pointer: coarse) {
+		/* Repères clavier (↑↓, Tab, Échap) inutiles au doigt. */
+		.op-footer {
+			display: none;
+		}
+		/* 16px : en dessous, iOS zoome sur le champ au focus et décale toute la mise en page. */
+		.op-input {
+			font-size: 16px;
+		}
+		.op-item {
+			min-height: 44px;
+			padding-top: 12px;
+			padding-bottom: 12px;
+		}
+		/* Boutons ronds : on agrandit la cible, pas la boîte — un padding vertical les déformerait. */
+		.op-shift,
+		.op-rm,
+		.op-chip-x {
+			width: 40px;
+			height: 40px;
+		}
+		.op-line {
+			gap: 4px;
+		}
+		/* Le rappel de l'existant cède la place avant la liste de résultats : en hauteur fixe (160px)
+		   il occupait la moitié d'une feuille de téléphone et coupait une ligne en deux. En part de
+		   la feuille, il suit sa taille — clavier ouvert compris. */
+		.op-existing {
+			max-height: 25%;
+		}
 	}
 </style>
