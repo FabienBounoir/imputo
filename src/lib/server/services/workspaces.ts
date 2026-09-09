@@ -111,6 +111,7 @@ export type MembershipInfo = {
 	moodEnabled: boolean;
 	supportEnabled: boolean;
 	supportTimeTrackingEnabled: boolean;
+	objectivesEnabled: boolean;
 	jiraLinkEnabled: boolean;
 	jiraLinkKeyRegexPattern: string | null;
 	jiraLinkKeyRegexReplacement: string | null;
@@ -136,6 +137,7 @@ export async function listMembershipsForUser(userId: string): Promise<Membership
 			moodEnabled: workspace.moodEnabled,
 			supportEnabled: workspace.supportEnabled,
 			supportTimeTrackingEnabled: workspace.supportTimeTrackingEnabled,
+			objectivesEnabled: workspace.objectivesEnabled,
 			jiraLinkEnabled: workspace.jiraLinkEnabled,
 			jiraLinkKeyRegexPattern: workspace.jiraLinkKeyRegexPattern,
 			jiraLinkKeyRegexReplacement: workspace.jiraLinkKeyRegexReplacement,

@@ -1,9 +1,8 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
-	import { goto } from '$app/navigation';
 	import { navigating } from '$app/state';
 	import { toast } from 'svelte-sonner';
-	import TargetPicker from '$lib/components/TargetPicker.svelte';
+	import ObjectivePalette from '$lib/components/ObjectivePalette.svelte';
 	import UserAvatar from '$lib/components/UserAvatar.svelte';
 	import { downloadSvgAsPng } from '$lib/utils/svgToPng';
 
@@ -13,36 +12,49 @@
 		else if (form?.objOk) toast.success('Mis à jour ✓');
 	});
 
-	// Un seul champ pour "assigner un ticket" ou "créer une tâche personnalisée" : la recherche qui
-	// ne trouve aucun ticket propose de créer une tâche avec le texte tapé (cf. TargetPicker,
-	// prop allowCustom) — évite deux formulaires séparés pour ce qui est le même geste.
-	let pickTarget = $state('');
-	let pickTicketActivity = $state('');
-	// Note propre à l'objectif TICKET (ex: "ce qu'on attend réellement sur ce ticket cette semaine")
-	// — distincte du commentaire partagé du ticket, propre à cette personne/semaine. Sans objet pour
-	// CUSTOM : le libellé de la tâche vient déjà du texte tapé dans le picker.
-	let noteText = $state('');
 	let imgBusy = $state(false);
+	let palette: ObjectivePalette | undefined = $state();
 
-	const pickedKind = $derived(pickTarget.startsWith('CUSTOM::') ? 'CUSTOM' : 'TICKET');
-	const pickedTicketId = $derived(pickTarget.startsWith('TICKET::') ? pickTarget.slice(8) : '');
-	const pickedLabel = $derived(pickTarget.startsWith('CUSTOM::') ? pickTarget.slice(8) : '');
+	// Cochage optimiste : la case doit répondre au clic, pas au retour du serveur. L'entrée est
+	// retirée dès que `update()` a rapatrié la vérité (ou tout de suite en cas d'échec), pour ne pas
+	// masquer indéfiniment ce que dit la base — notamment quand quelqu'un d'autre coche la même ligne.
+	let doneOverride = $state<Record<string, boolean>>({});
+	const isDone = (o: { id: string; doneAt: Date | null }) => doneOverride[o.id] ?? !!o.doneAt;
 
-	function selectUser(id: string) {
-		goto(`?w=${data.weekMondayISO}&u=${id}`);
-	}
 	const isNavigating = $derived(!!navigating.to);
+	const onVacation = $derived(new Set(data.vacations));
 
-	// Les personnes en vacances n'ont rien à montrer (pas d'objectifs) — leur donner une carte
-	// pleine taille dans la grille gâche de la place ; elles passent dans une bande compacte en bas.
-	// Celles avec le plus d'objectifs en premier, celles sans objectif en dernier.
-	const activeMembers = $derived(
-		data.members
-			.filter((m) => !data.vacations.includes(m.id))
-			.map((m) => ({ ...m, objectives: data.globalObjectives.filter((o) => o.userId === m.id) }))
-			.sort((a, b) => b.objectives.length - a.objectives.length)
+	/** Chacun coche les siennes ; un admin/manager coche pour tout le monde (revérifié serveur). */
+	const canCheck = (userId: string) => data.canManage || userId === data.selfId;
+
+	const withObjectives = $derived(
+		data.members.map((m) => ({ ...m, objectives: data.objectives.filter((o) => o.userId === m.id) }))
 	);
-	const vacationMembers = $derived(data.members.filter((m) => data.vacations.includes(m.id)));
+	// Les personnes en congés n'ont rien à montrer : leur donner une carte pleine taille gâche de la
+	// place, elles passent dans une bande compacte en bas.
+	const activeMembers = $derived(
+		withObjectives
+			.filter((m) => !onVacation.has(m.id))
+			.sort((a, b) => {
+				// Un membre vient d'abord voir ce qu'on attend de LUI : sa carte passe en tête. Pour un
+				// manager, qui lit la semaine de toute l'équipe, l'ordre reste le plus chargé d'abord.
+				if (!data.canManage) {
+					if (a.id === data.selfId) return -1;
+					if (b.id === data.selfId) return 1;
+				}
+				return b.objectives.length - a.objectives.length;
+			})
+	);
+	const vacationMembers = $derived(data.members.filter((m) => onVacation.has(m.id)));
+	/** Personnes attribuables dans la palette — jamais quelqu'un en congés, addObjective le refuse. */
+	const assignable = $derived(activeMembers.map((m) => ({ id: m.id, displayName: m.displayName })));
+
+	// Un manager suit l'avancement de l'équipe entière, un membre le sien : c'est la seule part sur
+	// laquelle il peut agir.
+	const tracked = $derived(data.canManage ? data.objectives : data.objectives.filter((o) => o.userId === data.selfId));
+	const doneCount = $derived(tracked.filter((o) => isDone(o)).length);
+
+	const isCurrentWeek = $derived(data.weekMondayISO === data.currentWeekMondayISO);
 
 	async function downloadObjectivesPng() {
 		imgBusy = true;
@@ -54,6 +66,17 @@
 		} finally {
 			imgBusy = false;
 		}
+	}
+
+	// La palette envoie ses ajouts/retraits en POST direct (pas de <form> à elle) puis on recharge —
+	// elle reste ouverte, seule la grille derrière et sa propre liste doivent suivre.
+	async function post(action: string, body: Record<string, string>) {
+		const fd = new FormData();
+		for (const [k, v] of Object.entries(body)) fd.set(k, v);
+		const res = await fetch(`?/${action}`, { method: 'POST', body: fd });
+		const { invalidateAll } = await import('$app/navigation');
+		await invalidateAll();
+		if (!res.ok) toast.error('Erreur lors de la mise à jour.');
 	}
 </script>
 
@@ -78,180 +101,223 @@
 	</svg>
 {/snippet}
 
+{#snippet objectiveLabel(o: (typeof data.objectives)[number])}
+	{#if o.kind === 'TICKET'}
+		<!-- Même règle que l'export PNG (objectivesSvg.objectiveLine) et Mon imputation
+		     (`row.objectiveNote || row.label`) : une note posée sur un objectif TICKET remplace le titre
+		     du ticket, la clé reste toujours visible. Elle dit ce qu'on attend cette semaine — plus
+		     précis que le titre, donc c'est elle qu'on lit, pas une bulle accrochée derrière. -->
+		<span class="task-ico">{@render ticketIcon()}</span> <b>{o.ticketKey}</b> — {o.label || o.ticketTitle}
+	{:else}
+		<span class="task-ico">{@render taskIcon()}</span> {o.label}
+	{/if}
+	{#if o.activityLabel}<span class="tag-activity">{o.activityLabel}</span>{/if}
+{/snippet}
+
 <div class="topbar">
 	<h1>Objectifs de la semaine<small>Semaine {data.weekNumber} · {data.weekLabel}</small></h1>
 	<div class="spacer"></div>
 	{#if isNavigating}<span class="loading-hint">Chargement…</span>{/if}
 	<div class="wknav" class:disabled={isNavigating}>
-		<a class="wkbtn" href="?w={data.prevWeek}&u={data.selectedUserId}" aria-label="Semaine précédente" aria-disabled={isNavigating} onclick={(e) => { if (isNavigating) e.preventDefault(); }}>
+		<a class="wkbtn" href="?w={data.prevWeek}" aria-label="Semaine précédente" aria-disabled={isNavigating} onclick={(e) => { if (isNavigating) e.preventDefault(); }}>
 			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m15 18-6-6 6-6"/></svg>
 		</a>
 		<span class="cur">S{data.weekNumber}</span>
-		<a class="wkbtn" href="?w={data.nextWeek}&u={data.selectedUserId}" aria-label="Semaine suivante" aria-disabled={isNavigating} onclick={(e) => { if (isNavigating) e.preventDefault(); }}>
+		<a class="wkbtn" href="?w={data.nextWeek}" aria-label="Semaine suivante" aria-disabled={isNavigating} onclick={(e) => { if (isNavigating) e.preventDefault(); }}>
 			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m9 18 6-6-6-6"/></svg>
 		</a>
 	</div>
+	<!-- La préparation de la semaine suivante ne concerne que le vendredi : un bouton, pas le défaut
+	     de la page (qui coûtait un aller-retour les quatre autres jours). -->
+	{#if data.canManage && isCurrentWeek}
+		<a class="next-week" href="?w={data.nextWeek}">Préparer <b>S{data.nextWeekNumber}</b></a>
+	{/if}
 </div>
 
 <div class="content admin">
+	{#if data.isPastWeek}
+		<div class="page-banner past">
+			<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+			Semaine {data.weekNumber}, terminée — {doneCount} / {tracked.length} objectif{tracked.length > 1 ? 's' : ''} fait{doneCount > 1 ? 's' : ''}.
+		</div>
+	{:else if !data.canManage}
+		<div class="page-banner">
+			<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 16v-5M12 8h.01"/></svg>
+			Coche tes objectifs au fil de la semaine. L'attribution est faite par ton manager.
+		</div>
+	{/if}
+
 	{#if data.members.length === 0}
 		<section class="card block"><p class="hint" style="margin:0;">Aucun membre actif dans cet espace.</p></section>
 	{:else}
 		<section class="card block">
-			<h3>Attribuer pour la semaine</h3>
-			<p class="hint">Choisis une personne, puis cherche un ticket à assigner — si la recherche ne trouve rien, tu peux créer une tâche personnalisée avec le texte tapé.</p>
-
-			<div class="person-row">
-				<select class="member-pick" value={data.selectedUserId} disabled={isNavigating} onchange={(e) => selectUser(e.currentTarget.value)} aria-label="Personne">
-					{#each data.members as m (m.id)}
-						<option value={m.id}>{m.displayName}</option>
-					{/each}
-				</select>
-				<form method="POST" action="?/toggleVacation" use:enhance>
-					<input type="hidden" name="userId" value={data.selectedUserId} />
-					<input type="hidden" name="weekMondayISO" value={data.weekMondayISO} />
-					<input type="hidden" name="onVacation" value={String(!data.selectedOnVacation)} />
-					<button class="btn {data.selectedOnVacation ? 'btn-primary' : 'btn-ghost'}" type="submit">
-						{@render vacationIcon()}
-						{data.selectedOnVacation ? 'En vacances — retirer' : 'Marquer en vacances'}
-					</button>
-				</form>
+			<div class="block-head">
+				<div>
+					<h3>Vue globale — Semaine {data.weekNumber}</h3>
+					<p class="hint">Ce que chaque membre a comme objectif cette semaine.</p>
+				</div>
+				<div class="head-tools">
+					{#if tracked.length > 0}
+						<span class="progress" title={data.canManage ? "Avancement de l'équipe" : 'Ton avancement'}>
+							{doneCount} / {tracked.length} fait{doneCount > 1 ? 's' : ''}
+							<span class="bar"><span style="width:{(doneCount / tracked.length) * 100}%"></span></span>
+						</span>
+					{/if}
+					{#if data.canManage}
+						<button class="btn btn-ghost" type="button" disabled={imgBusy} onclick={downloadObjectivesPng}>
+							{imgBusy ? 'Génération…' : '⬇ Exporter en image (PNG)'}
+						</button>
+					{/if}
+				</div>
 			</div>
 
-			<div class="ref-list">
-				{#each data.objectives as o, i (o.id)}
-					<div class="ref-item">
-						<span class="obj-order">
-							<form method="POST" action="?/moveObjective" use:enhance>
-								<input type="hidden" name="id" value={o.id} />
-								<input type="hidden" name="dir" value="up" />
-								<button class="obj-order-btn" type="submit" disabled={i === 0} aria-label="Monter">↑</button>
-							</form>
-							<span class="obj-order-num">{i + 1}</span>
-							<form method="POST" action="?/moveObjective" use:enhance>
-								<input type="hidden" name="id" value={o.id} />
-								<input type="hidden" name="dir" value="down" />
-								<button class="obj-order-btn" type="submit" disabled={i === data.objectives.length - 1} aria-label="Descendre">↓</button>
-							</form>
-						</span>
-						<span class="obj-label">
-							{#if o.kind === 'TICKET'}
-								<span class="pill-ico">{@render ticketIcon()}</span><b>{o.ticketKey}</b> {o.ticketTitle}
-							{:else}
-								<span class="pill-ico">{@render taskIcon()}</span>{o.label}
+			<div class="ref-grid">
+				{#each activeMembers as m (m.id)}
+					{@const mine = m.objectives}
+					{@const allDone = mine.length > 0 && mine.every((o) => isDone(o))}
+					<section class="card block person-card" class:me={m.id === data.selfId} class:all-done={allDone}>
+						<div class="person-card-head">
+							<UserAvatar userId={m.id} name={m.displayName} size={26} />
+							<h3>{m.displayName}</h3>
+							{#if m.id === data.selfId}<span class="you">Vous</span>{/if}
+							{#if data.canManage}
+								<form method="POST" action="?/toggleVacation" use:enhance>
+									<input type="hidden" name="userId" value={m.id} />
+									<input type="hidden" name="weekMondayISO" value={data.weekMondayISO} />
+									<input type="hidden" name="onVacation" value="true" />
+									<button class="icon-btn" type="submit" title="Marquer en congés cette semaine" aria-label="Marquer {m.displayName} en congés">
+										{@render vacationIcon()}
+									</button>
+								</form>
 							{/if}
-							{#if o.activityLabel}<span class="tag-activity">{o.activityLabel}</span>{/if}
-							{#if o.kind === 'TICKET' && o.label}<span class="tag-activity">📝 {o.label}</span>{/if}
-						</span>
-						<form method="POST" action="?/removeObjective" use:enhance>
-							<input type="hidden" name="id" value={o.id} />
-							<button class="ref-btn ref-btn-danger" type="submit">🗑 Retirer</button>
-						</form>
-					</div>
+							{#if mine.length > 0}
+								<span class="obj-count" class:full={allDone}>{allDone ? `${mine.length} / ${mine.length}` : mine.length}</span>
+							{/if}
+						</div>
+
+						{#if mine.length === 0}
+							<p class="hint" style="margin:0;">Aucun objectif cette semaine.</p>
+						{:else}
+							<ul class="person-tasks">
+								{#each mine as o, i (o.id)}
+									{@const done = isDone(o)}
+									<li class="task-row" class:done>
+										<!-- Un <button role="checkbox"> et pas un <input> : la case est un vrai submit, donc
+										     elle fonctionne aussi sans JavaScript, comme le reste de la page. -->
+										<form
+											method="POST"
+											action="?/toggleDone"
+											use:enhance={() => {
+												doneOverride[o.id] = !done;
+												return async ({ result, update }) => {
+													if (result.type === 'failure') delete doneOverride[o.id];
+													await update({ reset: false });
+													delete doneOverride[o.id];
+												};
+											}}
+										>
+											<input type="hidden" name="id" value={o.id} />
+											<input type="hidden" name="done" value={String(!done)} />
+											<button
+												class="obj-check"
+												type="submit"
+												role="checkbox"
+												aria-checked={done}
+												disabled={!canCheck(m.id)}
+												title={canCheck(m.id) ? (done ? 'Marquer comme non fait' : 'Marquer comme fait') : `Seul·e ${m.displayName} peut cocher cet objectif.`}
+												aria-label="{done ? 'Marquer comme non fait' : 'Marquer comme fait'} : {o.kind === 'TICKET' ? o.ticketKey : o.label}"
+											>
+												{#if done}
+													<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6" /></svg>
+												{/if}
+											</button>
+										</form>
+										<span class="task-text">{@render objectiveLabel(o)}</span>
+										{#if data.canManage}
+											<span class="row-ctl">
+												<form method="POST" action="?/moveObjective" use:enhance>
+													<input type="hidden" name="id" value={o.id} />
+													<input type="hidden" name="dir" value="up" />
+													<button class="ctl-btn" type="submit" disabled={i === 0} aria-label="Monter">↑</button>
+												</form>
+												<form method="POST" action="?/moveObjective" use:enhance>
+													<input type="hidden" name="id" value={o.id} />
+													<input type="hidden" name="dir" value="down" />
+													<button class="ctl-btn" type="submit" disabled={i === mine.length - 1} aria-label="Descendre">↓</button>
+												</form>
+												<form method="POST" action="?/removeObjective" use:enhance>
+													<input type="hidden" name="id" value={o.id} />
+													<button class="ctl-btn ctl-danger" type="submit" aria-label="Retirer cet objectif">✕</button>
+												</form>
+											</span>
+										{/if}
+									</li>
+								{/each}
+							</ul>
+						{/if}
+
+						{#if data.canManage}
+							<button class="add-row" type="button" onclick={() => palette?.show(m.id)}>
+								<!-- Croix dessinée, pas le caractère "+" : le glyphe s'assoit sur l'axe mathématique de
+								     la police, plus haut que le centre optique de sa pastille, et aucun centrage CSS ne
+								     rattrape ça. Un SVG a la géométrie exacte. -->
+								<span class="plus" aria-hidden="true">
+									<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
+								</span>
+								Ajouter un objectif
+							</button>
+						{/if}
+					</section>
 				{/each}
-				{#if data.objectives.length === 0}<p class="hint" style="margin:0;">Aucun objectif pour cette personne cette semaine.</p>{/if}
 			</div>
 
-			{#if data.selectedOnVacation}
-				<p class="hint vac-hint">{@render vacationIcon()} Cette personne est marquée en vacances cette semaine — aucun objectif ne peut lui être attribué tant que ce n'est pas retiré ci-dessus.</p>
-			{:else}
-				<div class="add-objective">
-					<form
-						method="POST"
-						action="?/addObjective"
-						use:enhance={() => async ({ update }) => { pickTarget = ''; pickTicketActivity = ''; noteText = ''; await update(); }}
-						class="add-ticket"
-					>
-						<input type="hidden" name="userId" value={data.selectedUserId} />
-						<input type="hidden" name="weekMondayISO" value={data.weekMondayISO} />
-						<input type="hidden" name="kind" value={pickedKind} />
-						<input type="hidden" name="ticketId" value={pickedTicketId} />
-						<input type="hidden" name="label" value={pickedKind === 'CUSTOM' ? pickedLabel : noteText} />
-						<TargetPicker
-							bind:value={pickTarget}
-							tickets={data.tickets}
-							categories={[]}
-							recentTicketIds={[]}
-							allowCustom
-							placeholder="Rechercher un ticket, ou taper un nom pour créer une tâche…"
-						/>
-						<select class="activity-pick" name="activityId" bind:value={pickTicketActivity} aria-label="Type d'activité (optionnel)">
-							<option value="">Type d'activité (option)</option>
-							{#each data.activities as a (a.id)}<option value={a.id}>{a.label}</option>{/each}
-						</select>
-						{#if pickedKind === 'TICKET' && pickTarget}
-							<input class="note-pick" type="text" bind:value={noteText} placeholder="Note (optionnel)" maxlength="500" aria-label="Note pour cet objectif" />
+			{#if vacationMembers.length > 0}
+				<div class="vac-strip">
+					{#each vacationMembers as m (m.id)}
+						{#if data.canManage}
+							<form method="POST" action="?/toggleVacation" use:enhance>
+								<input type="hidden" name="userId" value={m.id} />
+								<input type="hidden" name="weekMondayISO" value={data.weekMondayISO} />
+								<input type="hidden" name="onVacation" value="false" />
+								<button type="submit" class="vac-chip" title="Remettre {m.displayName} dans la grille">
+									<UserAvatar userId={m.id} name={m.displayName} size={16} />
+									{@render vacationIcon()} {m.displayName}
+								</button>
+							</form>
+						{:else}
+							<span class="vac-chip">
+								<UserAvatar userId={m.id} name={m.displayName} size={16} />
+								{@render vacationIcon()} {m.displayName}
+							</span>
 						{/if}
-						<button class="btn btn-ghost" type="submit" disabled={!pickTarget}>+ {pickedKind === 'CUSTOM' ? 'Créer' : 'Assigner'}</button>
-					</form>
+					{/each}
+					<span class="hint" style="margin:0 0 0 4px;">en congés cette semaine</span>
 				</div>
 			{/if}
 		</section>
 	{/if}
-
-	<section class="card block">
-		<div class="block-head">
-			<div>
-				<h3>Vue globale — Semaine {data.weekNumber}</h3>
-				<p class="hint">Ce que chaque membre a comme objectif cette semaine.</p>
-			</div>
-			<button class="btn btn-ghost" type="button" disabled={imgBusy} onclick={downloadObjectivesPng}>
-				{imgBusy ? 'Génération…' : '⬇ Exporter en image (PNG)'}
-			</button>
-		</div>
-		<div class="ref-grid">
-			{#each activeMembers as m (m.id)}
-				{@const mine = m.objectives}
-				<section
-					class="card block person-card"
-					class:selected={m.id === data.selectedUserId}
-					role="button"
-					tabindex="0"
-					title="Sélectionner {m.displayName} dans « Attribuer pour la semaine »"
-					onclick={() => selectUser(m.id)}
-					onkeydown={(e) => {
-						if (e.key === 'Enter' || e.key === ' ') {
-							e.preventDefault();
-							selectUser(m.id);
-						}
-					}}
-				>
-					<div class="person-card-head">
-						<UserAvatar userId={m.id} name={m.displayName} size={26} />
-						<h3>{m.displayName}</h3>
-						{#if mine.length > 0}<span class="obj-count">{mine.length}</span>{/if}
-					</div>
-					{#if mine.length === 0}
-						<p class="hint" style="margin:0;">Aucun objectif.</p>
-					{:else}
-						<ul class="person-tasks">
-							{#each mine as o (o.id)}
-								<li>
-									<span class="task-text">
-										{#if o.kind === 'TICKET'}<span class="task-ico">{@render ticketIcon()}</span> <b>{o.ticketKey}</b> — {o.ticketTitle}{:else}<span class="task-ico">{@render taskIcon()}</span> {o.label}{/if}
-									</span>
-									{#if o.activityLabel}<span class="tag-activity">{o.activityLabel}</span>{/if}
-									{#if o.kind === 'TICKET' && o.label}<span class="tag-activity">📝 {o.label}</span>{/if}
-								</li>
-							{/each}
-						</ul>
-					{/if}
-				</section>
-			{/each}
-		</div>
-
-		{#if vacationMembers.length > 0}
-			<div class="vac-strip">
-				{#each vacationMembers as m (m.id)}
-					<button type="button" class="vac-chip" class:selected={m.id === data.selectedUserId} onclick={() => selectUser(m.id)}>
-						<UserAvatar userId={m.id} name={m.displayName} size={16} />
-						{@render vacationIcon()} {m.displayName}
-					</button>
-				{/each}
-			</div>
-		{/if}
-	</section>
 </div>
+
+{#if data.canManage}
+	<ObjectivePalette
+		bind:this={palette}
+		tickets={data.tickets}
+		activities={data.activities}
+		members={assignable}
+		objectives={data.objectives}
+		weekNumber={data.weekNumber}
+		onadd={(input) =>
+			post('addObjective', {
+				userId: input.userId,
+				weekMondayISO: data.weekMondayISO,
+				kind: input.kind,
+				ticketId: input.ticketId,
+				label: input.label,
+				activityId: input.activityId
+			})}
+		onremove={(id) => post('removeObjective', { id })}
+	/>
+{/if}
 
 <style>
 	.admin {
@@ -271,13 +337,6 @@
 		color: var(--text-mute);
 		font-size: 13px;
 		margin-bottom: 16px;
-	}
-	.vac-hint {
-		background: var(--accent-tint);
-		color: var(--accent-ink);
-		padding: 10px 12px;
-		border-radius: var(--r-md);
-		margin-bottom: 0;
 	}
 	.spacer {
 		flex: 1;
@@ -316,166 +375,148 @@
 		padding: 0 12px;
 		font-weight: 600;
 		font-size: 13.5px;
+		font-variant-numeric: tabular-nums;
 	}
-	.person-row {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		margin-bottom: 16px;
-	}
-	.member-pick {
-		padding: 8px 12px;
-		border-radius: var(--r-md);
-		border: 1px solid var(--border);
-		background: var(--surface);
-		color: var(--text);
-		font-size: 13px;
-		box-shadow: var(--shadow-sm);
-		max-width: 260px;
-	}
-	.member-pick:focus {
-		outline: none;
-		border-color: var(--accent);
-	}
-	.ref-list {
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
-		margin-bottom: 14px;
-	}
-	.ref-item {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-	}
-	.obj-order {
-		display: flex;
-		flex-direction: column;
-		flex-shrink: 0;
-	}
-	.obj-order-btn {
-		width: 20px;
-		height: 16px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		border-radius: 4px;
-		color: var(--text-mute);
-		font-size: 11px;
-		line-height: 1;
-	}
-	.obj-order-btn:hover:not(:disabled) {
-		background: var(--surface-sunk);
-		color: var(--text);
-	}
-	.obj-order-btn:disabled {
-		opacity: 0.25;
-		cursor: default;
-	}
-	.obj-order-num {
-		text-align: center;
-		font-size: 10.5px;
-		font-weight: 700;
-		color: var(--text-mute);
-		line-height: 1;
-	}
-	.obj-label {
-		flex: 1;
-		min-width: 0;
-		font-size: 13.5px;
-		display: flex;
-		align-items: center;
-		gap: 6px;
-	}
-	.pill-ico {
-		display: inline-flex;
-		flex-shrink: 0;
-		color: var(--text-mute);
-	}
-	.ic-inline {
-		width: 1em;
-		height: 1em;
-		flex-shrink: 0;
-		vertical-align: -0.15em;
-	}
-	.ref-btn {
-		font-size: 12px;
+	.next-week {
+		font-size: 12.5px;
 		font-weight: 600;
 		color: var(--text-soft);
+		background: var(--surface);
 		border: 1px solid var(--border);
-		border-radius: 8px;
-		padding: 6px 10px;
+		border-radius: var(--r-md);
+		padding: 8px 12px;
+		box-shadow: var(--shadow-sm);
 		white-space: nowrap;
-		transition: border-color 0.15s, color 0.15s;
+		transition: border-color 0.15s;
 	}
-	.ref-btn-danger:hover {
-		border-color: #c0392b;
-		color: #c0392b;
+	.next-week:hover {
+		border-color: var(--border-strong);
 	}
-	.add-objective {
+	.next-week b {
+		color: var(--accent-ink);
+	}
+
+	.page-banner {
 		display: flex;
-		flex-direction: column;
-		gap: 10px;
+		align-items: center;
+		gap: 9px;
+		font-size: 13px;
+		color: var(--accent-ink);
+		background: var(--accent-tint-2);
+		border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+		border-radius: var(--r-md);
+		padding: 10px 14px;
+		margin-bottom: 16px;
 	}
-	.add-ticket {
-		display: flex;
-		gap: 8px;
-	}
-	.add-ticket .btn {
-		white-space: nowrap;
+	.page-banner svg {
 		flex-shrink: 0;
 	}
+	.page-banner.past {
+		color: var(--text-soft);
+		background: var(--surface-sunk);
+		border-color: var(--border);
+	}
+
 	.block-head {
 		display: flex;
 		align-items: flex-start;
 		justify-content: space-between;
 		gap: 12px;
+		flex-wrap: wrap;
 	}
-	.block-head .btn {
+	.head-tools {
+		display: flex;
+		align-items: center;
+		gap: 14px;
+		flex-wrap: wrap;
+	}
+	.head-tools .btn {
 		white-space: nowrap;
 		flex-shrink: 0;
 	}
+	.progress {
+		display: flex;
+		align-items: center;
+		gap: 9px;
+		font-size: 12.5px;
+		color: var(--text-soft);
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+	}
+	.progress .bar {
+		width: 110px;
+		height: 6px;
+		border-radius: 20px;
+		background: var(--surface-sunk);
+		overflow: hidden;
+	}
+	.progress .bar span {
+		display: block;
+		height: 100%;
+		background: var(--accent);
+		border-radius: 20px;
+		transition: width 0.25s;
+	}
+
 	.ref-grid {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+		grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
 		gap: 18px;
 	}
 	.ref-grid .block {
 		margin-bottom: 0;
 	}
+	.person-card {
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+		text-align: left;
+	}
 	.person-card h3 {
 		font-size: 14px;
 		margin-bottom: 0;
-	}
-	.person-card {
-		cursor: pointer;
-		text-align: left;
-		width: 100%;
-		transition: border-color 0.15s, background 0.15s;
-	}
-	.person-card:hover {
-		border-color: var(--border-strong);
-	}
-	.person-card:focus-visible {
-		outline: 2px solid var(--accent);
-		outline-offset: 2px;
-	}
-	.person-card.selected {
-		border-color: var(--accent);
-		box-shadow: 0 0 0 1px var(--accent);
-	}
-	.person-card-head {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		margin-bottom: 10px;
-	}
-	.person-card-head h3 {
 		flex: 1;
 		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+	.person-card.me {
+		background: var(--accent-tint-2);
+		border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+	}
+	.person-card.all-done {
+		border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+	}
+	.person-card-head {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+	}
+	.you {
+		font-size: 10px;
+		font-weight: 700;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--accent-ink);
+		background: var(--accent-tint);
+		padding: 2px 7px;
+		border-radius: 20px;
+		flex-shrink: 0;
+	}
+	.icon-btn {
+		width: 22px;
+		height: 22px;
+		border-radius: 6px;
+		display: grid;
+		place-items: center;
+		color: var(--text-mute);
+		flex-shrink: 0;
+		transition: background 0.15s, color 0.15s;
+	}
+	.icon-btn:hover {
+		background: var(--surface-sunk);
+		color: var(--text-soft);
 	}
 	.obj-count {
 		font-size: 11px;
@@ -485,12 +526,159 @@
 		padding: 2px 8px;
 		border-radius: 20px;
 		flex-shrink: 0;
+		font-variant-numeric: tabular-nums;
 	}
+	.obj-count.full {
+		background: var(--accent-tint);
+		color: var(--accent-ink);
+	}
+
+	.person-tasks {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		font-size: 12.5px;
+		list-style: none;
+		color: var(--text-soft);
+	}
+	.task-row {
+		display: flex;
+		align-items: flex-start;
+		gap: 8px;
+	}
+	.task-text {
+		flex: 1;
+		min-width: 0;
+		word-break: break-word;
+	}
+	.task-row.done .task-text {
+		color: var(--text-mute);
+		/* L'état "fait" ne repose jamais sur la seule couleur (un membre de l'équipe est daltonien) :
+		   le texte barré et la coche dessinée le disent aussi. */
+		text-decoration: line-through;
+		text-decoration-color: color-mix(in srgb, var(--text-mute) 60%, transparent);
+	}
+	.task-row.done .task-text :global(b) {
+		font-weight: 600;
+		color: inherit;
+	}
+	.task-row.done .task-ico {
+		color: var(--text-mute);
+	}
+
+	.obj-check {
+		width: 16px;
+		height: 16px;
+		margin-top: 2px;
+		border: 1.6px solid var(--border-strong);
+		border-radius: 4px;
+		background: var(--surface);
+		display: grid;
+		place-items: center;
+		flex-shrink: 0;
+		color: #fff;
+		transition: background 0.12s, border-color 0.12s;
+	}
+	.obj-check svg {
+		width: 10px;
+		height: 10px;
+	}
+	.obj-check[aria-checked='true'] {
+		background: var(--accent);
+		border-color: var(--accent);
+	}
+	.obj-check:hover:not(:disabled) {
+		border-color: var(--accent);
+	}
+	.obj-check:disabled {
+		cursor: default;
+		opacity: 0.75;
+	}
+	.obj-check:focus-visible {
+		outline: 2px solid var(--accent);
+		outline-offset: 2px;
+	}
+
+	/* Ordre et suppression au survol seulement — ils encombreraient trois lignes sur quatre. Rendus
+	   permanents au focus clavier et sur écran tactile, où il n'y a pas de survol. */
+	.row-ctl {
+		display: flex;
+		gap: 1px;
+		flex-shrink: 0;
+		opacity: 0;
+		transition: opacity 0.12s;
+	}
+	.task-row:hover .row-ctl,
+	.task-row:focus-within .row-ctl {
+		opacity: 1;
+	}
+	@media (pointer: coarse) {
+		.row-ctl {
+			opacity: 1;
+		}
+	}
+	.ctl-btn {
+		width: 20px;
+		height: 20px;
+		display: grid;
+		place-items: center;
+		border-radius: 5px;
+		color: var(--text-mute);
+		font-size: 11px;
+		line-height: 1;
+	}
+	.ctl-btn:hover:not(:disabled) {
+		background: var(--surface-sunk);
+		color: var(--text);
+	}
+	.ctl-btn:disabled {
+		opacity: 0.25;
+		cursor: default;
+	}
+	.ctl-danger:hover:not(:disabled) {
+		color: #c0392b;
+	}
+
+	.add-row {
+		display: flex;
+		align-items: center;
+		gap: 7px;
+		width: 100%;
+		border-top: 1px dashed var(--border-strong);
+		padding-top: 10px;
+		margin-top: auto;
+		font-size: 12.5px;
+		font-weight: 600;
+		color: var(--text-mute);
+		text-align: left;
+		transition: color 0.15s;
+	}
+	.add-row:hover {
+		color: var(--accent-ink);
+	}
+	.add-row .plus {
+		width: 17px;
+		height: 17px;
+		flex-shrink: 0;
+		border-radius: 5px;
+		background: var(--surface-sunk);
+		display: grid;
+		place-items: center;
+		color: var(--text-soft);
+	}
+	/* display:block : sans lui le svg reste en ligne et l'espace sous la ligne de base le décale. */
+	.add-row .plus svg {
+		display: block;
+		width: 11px;
+		height: 11px;
+	}
+
 	.vac-strip {
 		display: flex;
 		flex-wrap: wrap;
+		align-items: center;
 		gap: 6px;
-		margin-top: 14px;
+		margin-top: 16px;
 	}
 	.vac-chip {
 		display: inline-flex;
@@ -505,35 +693,21 @@
 		border-radius: 20px;
 		transition: border-color 0.15s, color 0.15s;
 	}
-	.vac-chip:hover {
+	button.vac-chip:hover {
 		color: var(--text-soft);
 		border-color: var(--border-strong);
 	}
-	.vac-chip.selected {
-		color: var(--accent-ink);
-		background: var(--accent-tint);
-	}
-	:global([data-theme='dark']) .vac-chip.selected {
-		color: color-mix(in srgb, var(--accent) 78%, #fff);
-	}
-	.person-tasks {
-		display: flex;
-		flex-direction: column;
-		gap: 7px;
-		font-size: 12.5px;
-		list-style: none;
-		color: var(--text-soft);
-	}
-	.person-tasks li {
-		word-break: break-word;
-	}
-	.task-text {
-		word-break: break-word;
-	}
+
 	.task-ico {
 		display: inline-flex;
 		color: var(--accent);
 		vertical-align: -0.2em;
+	}
+	.ic-inline {
+		width: 1em;
+		height: 1em;
+		flex-shrink: 0;
+		vertical-align: -0.15em;
 	}
 	.task-ico .ic-inline {
 		width: 1.3em;
@@ -549,50 +723,10 @@
 		border-radius: 20px;
 		white-space: nowrap;
 	}
-	.activity-pick {
-		padding: 9px 11px;
-		border-radius: var(--r-md);
-		border: 1px solid var(--border);
-		background: var(--surface-2);
-		color: var(--text);
-		font-size: 13px;
-		flex-shrink: 0;
-		max-width: 190px;
-	}
-	.note-pick {
-		padding: 9px 11px;
-		border-radius: var(--r-md);
-		border: 1px solid var(--border);
-		background: var(--surface-2);
-		color: var(--text);
-		font-size: 13px;
-		flex: 1;
-		min-width: 140px;
-	}
+
 	@media (max-width: 860px) {
 		.ref-grid {
 			grid-template-columns: 1fr;
-		}
-	}
-
-	/* < 640px : le sélecteur de personne + le bouton vacances, et la recherche de ticket + le
-	   select d'activité + le bouton, ne rentrent plus sur une ligne sans wrap -> ça débordait. */
-	@media (max-width: 640px) {
-		.person-row {
-			flex-wrap: wrap;
-		}
-		.add-ticket {
-			flex-wrap: wrap;
-		}
-		.add-ticket :global(.tp-root) {
-			flex-basis: 100%;
-		}
-		.activity-pick {
-			flex: 1;
-			max-width: none;
-		}
-		.note-pick {
-			flex-basis: 100%;
 		}
 	}
 </style>

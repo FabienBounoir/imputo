@@ -6,7 +6,7 @@ export type TourStep = {
 	/** Rôles concernés par cette étape. Absent = tout le monde. */
 	roles?: TourRole[];
 	/** N'affiche l'étape que si ce flag (issu du load du layout) est vrai. */
-	visibleIf?: 'moodEnabled' | 'wrappedAvailable';
+	visibleIf?: 'moodEnabled' | 'wrappedAvailable' | 'objectivesEnabled';
 	/** Sélecteur CSS de l'élément mis en évidence. Absent = popover centré (présentation de page). */
 	element?: string;
 	title: string;
@@ -77,18 +77,17 @@ export const TOUR_STEPS: TourStep[] = [
 		title: 'Team mood',
 		description: "Un vote anonyme, à intervalle régulier, pour donner la météo de l'équipe."
 	},
+	{
+		id: 'objectifs',
+		path: '/admin/objectifs',
+		visibleIf: 'objectivesEnabled',
+		title: 'Objectifs de la semaine',
+		description: "Ce que chacun doit faire avancer cette semaine — à cocher au fil de l'eau."
+	},
 
 	// Palier MANAGER (+ ADMIN). Un manager n'a pas plus de droits qu'un membre lambda sur les
 	// absences des vrais membres (ni validation, ni congé validé direct) et pas d'accès au mood —
 	// cf. absences/+page.server.ts et admin/mood/+page.server.ts. Il ne gère que les membres externes.
-	{
-		id: 'objectifs',
-		path: '/admin/objectifs',
-		roles: ['MANAGER', 'ADMIN'],
-		title: 'Objectifs de la semaine',
-		description: "Fixe les priorités de la semaine pour l'équipe."
-	},
-
 	// Palier ADMIN.
 	{
 		id: 'admin',
@@ -130,12 +129,13 @@ export const TOUR_STEPS: TourStep[] = [
 
 export function tourStepsFor(
 	role: TourRole | null,
-	flags: { moodEnabled: boolean; wrappedAvailable: boolean }
+	flags: { moodEnabled: boolean; wrappedAvailable: boolean; objectivesEnabled: boolean }
 ): TourStep[] {
 	return TOUR_STEPS.filter((s) => {
 		if (s.roles && (!role || !s.roles.includes(role))) return false;
 		if (s.visibleIf === 'moodEnabled' && !flags.moodEnabled) return false;
 		if (s.visibleIf === 'wrappedAvailable' && !flags.wrappedAvailable) return false;
+		if (s.visibleIf === 'objectivesEnabled' && !flags.objectivesEnabled) return false;
 		return true;
 	});
 }

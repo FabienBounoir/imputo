@@ -1,5 +1,5 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import { db, weeklyObjective, weeklyVacation, ticket, user, activity } from '$lib/server/db';
+import { db, weeklyObjective, weeklyVacation, ticket, user, activity, workspace } from '$lib/server/db';
 
 export type ObjectiveKind = 'TICKET' | 'CUSTOM';
 
@@ -13,6 +13,8 @@ export type WeeklyObjectiveRow = {
 	label: string | null;
 	activityId: string | null;
 	activityLabel: string | null;
+	/** Date de cochage, NULL tant que ce n'est pas fait (cf. setObjectiveDone). */
+	doneAt: Date | null;
 	/** Lundi de la semaine d'attribution — sert à regrouper quand la période couvre plusieurs semaines. */
 	weekMonday: string;
 };
@@ -29,6 +31,7 @@ const objectiveSelect = {
 	label: weeklyObjective.label,
 	activityId: weeklyObjective.activityId,
 	activityLabel: activity.label,
+	doneAt: weeklyObjective.doneAt,
 	weekMonday: weeklyObjective.weekMonday
 };
 
@@ -240,4 +243,34 @@ export async function setVacation(workspaceId: string, userId: string, weekMonda
 				)
 			);
 	}
+}
+
+/**
+ * Coche / décoche un objectif. Autorisé à la personne concernée et aux admin/manager — vérifié ici
+ * et pas seulement dans l'UI, la case étant visible sur les objectifs de toute l'équipe.
+ * Dernière écriture gagnante, aucun verrou : deux personnes qui cochent la même ligne veulent la
+ * même chose. Renvoie false si l'objectif n'existe pas ou n'appartient pas à l'appelant.
+ */
+export async function setObjectiveDone(
+	workspaceId: string,
+	objectiveId: string,
+	actor: { userId: string; isManager: boolean },
+	done: boolean
+): Promise<boolean> {
+	const [row] = await db
+		.select({ userId: weeklyObjective.userId })
+		.from(weeklyObjective)
+		.where(and(eq(weeklyObjective.id, objectiveId), eq(weeklyObjective.workspaceId, workspaceId)));
+	if (!row) return false;
+	if (!actor.isManager && row.userId !== actor.userId) return false;
+	await db
+		.update(weeklyObjective)
+		.set({ doneAt: done ? new Date() : null })
+		.where(and(eq(weeklyObjective.id, objectiveId), eq(weeklyObjective.workspaceId, workspaceId)));
+	return true;
+}
+
+/** Active/désactive les objectifs de la semaine sur l'espace — ne supprime jamais de données. */
+export async function setObjectivesEnabled(workspaceId: string, enabled: boolean) {
+	await db.update(workspace).set({ objectivesEnabled: enabled }).where(eq(workspace.id, workspaceId));
 }

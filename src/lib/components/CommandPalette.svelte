@@ -7,7 +7,7 @@
 
 	type LayoutData = {
 		role: 'ADMIN' | 'MANAGER' | 'USER' | null;
-		workspace: { workspaceId: string; moodEnabled: boolean; supportEnabled: boolean } | null;
+		workspace: { workspaceId: string; moodEnabled: boolean; supportEnabled: boolean; objectivesEnabled: boolean } | null;
 		memberships: { workspaceId: string; workspaceName: string }[];
 	};
 	let { data }: { data: LayoutData } = $props();
@@ -193,7 +193,7 @@
 		nav('Synthèse', '/dashboard', '📊');
 		nav('Synthèse par version', '/dashboard/version', '📦');
 		nav('Synthèse par sprint', '/dashboard/sprint', '🏃');
-		if (data.role === 'ADMIN' || data.role === 'MANAGER') nav('Objectifs de la semaine', '/admin/objectifs', '🎯');
+		if (data.workspace?.objectivesEnabled) nav('Objectifs de la semaine', '/admin/objectifs', '🎯');
 		if (data.role === 'ADMIN' && data.workspace?.moodEnabled) nav('Résultats Team mood', '/admin/mood', '🙂');
 		if (data.role === 'ADMIN') {
 			nav('Paramètres & membres', '/admin', '⚙️');

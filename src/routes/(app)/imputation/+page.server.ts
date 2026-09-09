@@ -13,7 +13,7 @@ import {
 } from '$lib/server/services/imputation';
 import { getRefData, listTicketSummaries } from '$lib/server/services/tickets';
 import { getMembership, isManagerOrAdmin } from '$lib/server/services/workspaces';
-import { listObjectivesForUserWeeks, vacationWeeks } from '$lib/server/services/weeklyObjectives';
+import { listObjectivesForUserWeeks, vacationWeeks, setObjectiveDone } from '$lib/server/services/weeklyObjectives';
 import { listAbsencesForRange, buildAbsenceGrid } from '$lib/server/services/absences';
 import { resolvePeriodPrefs } from '$lib/server/services/imputationPrefs';
 import { num } from '$lib/server/services/calc';
@@ -67,7 +67,11 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 			listTicketSummaries(ws.workspaceId),
 			getMembership(ws.workspaceId, viewedId),
 			getRecentTicketIds(ws.workspaceId, viewedId),
-			listObjectivesForUserWeeks(ws.workspaceId, viewedId, weekMondays),
+			// Espace qui n'utilise pas les objectifs : rien à charger, et surtout rien à afficher —
+			// ni bandeau de rappel, ni lignes auto-épinglées dans le tableau (cf. syncedRows).
+			ws.objectivesEnabled
+				? listObjectivesForUserWeeks(ws.workspaceId, viewedId, weekMondays)
+				: Promise.resolve([]),
 			vacationWeeks(ws.workspaceId, viewedId, weekMondays),
 			listAbsencesForRange(ws.workspaceId, period.firstDay, period.lastDay),
 			viewingTeam ? getTeamTimesheet(ws.workspaceId, period.days) : Promise.resolve(null),
@@ -109,6 +113,7 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 		// seuls manager/admin peuvent retirer un objectif depuis /admin/objectifs, un simple membre doit
 		// leur demander plutôt que de tenter de le faire lui-même.
 		canManageObjectives: isManagerOrAdmin(locals.role),
+		objectivesEnabled: ws.objectivesEnabled,
 		tickets,
 		recentTicketIds,
 		pinnedRows,
@@ -150,6 +155,24 @@ async function resolveSubjectId(
 }
 
 export const actions: Actions = {
+	// Cocher un objectif depuis le bandeau de rappel, sans quitter Mon imputation — même service et
+	// mêmes règles que sur la page Objectifs (chacun les siennes, un manager pour tout le monde).
+	toggleObjectiveDone: async ({ request, locals }) => {
+		if (!locals.workspace?.objectivesEnabled) return fail(403, { error: 'Objectifs désactivés sur cet espace.' });
+		const f = await request.formData();
+		const id = String(f.get('id') ?? '');
+		const done = f.get('done') === 'true';
+		if (!id) return fail(400, { error: 'Données invalides.' });
+		const ok = await setObjectiveDone(
+			locals.workspace.workspaceId,
+			id,
+			{ userId: locals.user!.id, isManager: isManagerOrAdmin(locals.role) },
+			done
+		);
+		if (!ok) return fail(403, { error: "Cet objectif n'est pas le vôtre." });
+		return { doneOk: true };
+	},
+
 	setCell: async ({ request, locals }) => {
 		const ws = locals.workspace;
 		if (!ws || !locals.user) return fail(401, { error: 'Non authentifié.' });

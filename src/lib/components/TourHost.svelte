@@ -11,11 +11,13 @@
 	let {
 		role,
 		moodEnabled,
+		objectivesEnabled,
 		wrappedAvailable,
 		tutorialSeenAt
 	}: {
 		role: TourRole | null;
 		moodEnabled: boolean;
+		objectivesEnabled: boolean;
 		wrappedAvailable: boolean;
 		tutorialSeenAt: Date | null;
 	} = $props();
@@ -76,7 +78,7 @@
 	}
 
 	function replay() {
-		const ids = tourStepsFor(role, { moodEnabled, wrappedAvailable }).map((s) => s.id);
+		const ids = tourStepsFor(role, { moodEnabled, objectivesEnabled, wrappedAvailable }).map((s) => s.id);
 		if (ids.length === 0) return;
 		startTour(ids);
 		showStep();

@@ -2,19 +2,20 @@ import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { buildObjectivesSvg } from '$lib/server/excel/objectivesSvg';
 import { isManagerOrAdmin } from '$lib/server/services/workspaces';
-import { mondayOf, addDays, parseISODate, toISODate, todayInParis } from '$lib/utils/date';
+import { mondayOf, parseISODate, toISODate, todayInParis } from '$lib/utils/date';
 
 const isISODate = (s: string | null): s is string => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s);
 
 export const GET: RequestHandler = async ({ locals, url }) => {
 	const ws = locals.workspace;
 	if (!locals.user || !ws) error(401, 'Non authentifié.');
+	if (!ws.objectivesEnabled) error(404, 'Objectifs désactivés sur cet espace.');
 	if (!isManagerOrAdmin(locals.role)) error(403, 'Réservé aux admins.');
 
 	const wParam = url.searchParams.get('w');
 	const weekMondayISO = isISODate(wParam)
 		? toISODate(mondayOf(parseISODate(wParam)))
-		: toISODate(mondayOf(addDays(parseISODate(todayInParis()), 7)));
+		: toISODate(mondayOf(parseISODate(todayInParis())));
 
 	const { svg } = await buildObjectivesSvg(ws.workspaceId, weekMondayISO);
 
