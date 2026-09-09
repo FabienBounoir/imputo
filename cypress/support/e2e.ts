@@ -78,6 +78,33 @@ Cypress.Commands.add('registerAndLogin', (overrides = {}) => {
 	return cy.wrap(account, { log: false });
 });
 
+/**
+ * Génère une invitation et renvoie le lien.
+ *
+ * Le lien n'est PLUS dans le DOM en temps normal : depuis « update invite message to include a
+ * link », il part directement dans le presse-papier, et le bloc `.invite-msg` n'apparaît qu'en
+ * repli, si la copie automatique échoue. Lire le DOM ne marche donc plus — on intercepte
+ * `clipboard.writeText` pour récupérer l'argument, ce qui teste au passage le vrai chemin nominal
+ * plutôt que son repli.
+ *
+ * À appeler une fois le formulaire d'invitation rempli (#dn, #em, éventuellement #ro).
+ */
+Cypress.Commands.add('generateInviteLink', () => {
+	cy.window().then((win) => {
+		cy.stub(win.navigator.clipboard, 'writeText').as('inviteCopy').resolves();
+	});
+	cy.contains('button', "Générer l'invitation").click();
+	return cy
+		.get('@inviteCopy')
+		.should('have.been.called')
+		.then((stub) => {
+			const copied = String((stub as unknown as sinon.SinonStub).args[0][0]);
+			const match = copied.match(/\/invite\/\S+/);
+			expect(match, "lien d'invitation présent dans le presse-papier").to.not.be.null;
+			return cy.wrap(match![0], { log: false });
+		});
+});
+
 export type RegisteredAccount = {
 	email: string;
 	password: string;
@@ -95,6 +122,8 @@ declare global {
 			openRefAddForm(expectSelector: string): Chainable<void>;
 			dismissOnboardingTour(): Chainable<void>;
 			registerAndLogin(overrides?: Partial<RegisteredAccount>): Chainable<RegisteredAccount>;
+			/** Clique « Générer l'invitation » et renvoie le chemin /invite/… récupéré du presse-papier. */
+			generateInviteLink(): Chainable<string>;
 		}
 	}
 }

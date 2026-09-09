@@ -73,98 +73,90 @@ describe('support : rotation à deux, remplacement ponctuel, passer son tour, vu
 			cy.clickReliably(() => cy.contains('.tabs button', 'Membres'), '#dn');
 			cy.get('#dn').type(memberName);
 			cy.get('#em').type(memberEmail);
-			cy.contains('button', "Générer l'invitation").click();
+			cy.generateInviteLink().then((path) => {
+				cy.visit(path);
+				cy.contains('Bienvenue').should('be.visible');
+				cy.get('#pw').type(memberPassword);
+				cy.get('#cf').type(memberPassword);
+				cy.contains('button', 'Activer mon compte').click();
+				// L'activation connecte directement le nouveau membre : il faut redevenir admin.
+				cy.location('pathname').should('eq', '/imputation');
+				cy.dismissOnboardingTour();
 
-			cy.get('.invite-msg pre')
-				.invoke('text')
-				.then((body) => {
-					const match = body.match(/\/invite\/\S+/);
-					expect(match, "lien d'invitation trouvé dans le message").to.not.be.null;
-					const path = match![0];
+				cy.get('form[action="/logout"] button').click();
+				cy.location('pathname').should('eq', '/login');
+				cy.typeReliably('#em', admin.email);
+				cy.typeReliably('#pw', admin.password);
+				cy.get('button[type=submit]').click();
+				cy.location('pathname').should('eq', '/imputation');
 
-					cy.visit(path);
-					cy.contains('Bienvenue').should('be.visible');
-					cy.get('#pw').type(memberPassword);
-					cy.get('#cf').type(memberPassword);
-					cy.contains('button', 'Activer mon compte').click();
-					// L'activation connecte directement le nouveau membre : il faut redevenir admin.
-					cy.location('pathname').should('eq', '/imputation');
-					cy.dismissOnboardingTour();
+				cy.visit('/admin');
+				cy.clickReliably(() => cy.contains('.tabs button', 'Support'), '#support-cadence');
+				cy.contains('button', /^Activer$/).click();
 
-					cy.get('form[action="/logout"] button').click();
-					cy.location('pathname').should('eq', '/login');
-					cy.typeReliably('#em', admin.email);
-					cy.typeReliably('#pw', admin.password);
-					cy.get('button[type=submit]').click();
-					cy.location('pathname').should('eq', '/imputation');
+				cy.get('.state-add select').select(admin.displayName);
+				cy.contains('.state-add button', '+ Ajouter').click();
+				cy.get('.state-add select').select(memberName);
+				cy.contains('.state-add button', '+ Ajouter').click();
+				cy.get('.state-row').should('have.length', 2);
 
-					cy.visit('/admin');
-					cy.clickReliably(() => cy.contains('.tabs button', 'Support'), '#support-cadence');
-					cy.contains('button', /^Activer$/).click();
-
-					cy.get('.state-add select').select(admin.displayName);
-					cy.contains('.state-add button', '+ Ajouter').click();
-					cy.get('.state-add select').select(memberName);
-					cy.contains('.state-add button', '+ Ajouter').click();
-					cy.get('.state-row').should('have.length', 2);
-
-					// Réordonnancement : la première ligne descend d'un cran, l'ordre doit s'inverser.
-					cy.get('.state-row .ref-name')
-						.then(($els) => [...$els].map((el) => el.textContent?.trim()))
-						.then((before) => {
-							cy.get('.state-row').first().find('button[aria-label="Descendre"]').click();
-							cy.get('.state-row .ref-name').should(($els) => {
-								const after = [...$els].map((el) => el.textContent?.trim());
-								expect(after).to.deep.equal([...before].reverse());
-							});
+				// Réordonnancement : la première ligne descend d'un cran, l'ordre doit s'inverser.
+				cy.get('.state-row .ref-name')
+					.then(($els) => [...$els].map((el) => el.textContent?.trim()))
+					.then((before) => {
+						cy.get('.state-row').first().find('button[aria-label="Descendre"]').click();
+						cy.get('.state-row .ref-name').should(($els) => {
+							const after = [...$els].map((el) => el.textContent?.trim());
+							expect(after).to.deep.equal([...before].reverse());
 						});
+					});
 
-					cy.visit('/support');
-					cy.get('.header-person h2')
-						.invoke('text')
-						.then((currentText) => {
-							const originalName = currentText.trim();
-							const otherName = originalName === admin.displayName ? memberName : admin.displayName;
+				cy.visit('/support');
+				cy.get('.header-person h2')
+					.invoke('text')
+					.then((currentText) => {
+						const originalName = currentText.trim();
+						const otherName = originalName === admin.displayName ? memberName : admin.displayName;
 
-							// Remplacement ponctuel vers l'autre personne de la rotation.
-							cy.clickReliably(() => cy.contains('button', "Quelqu'un est absent"), '.modal');
-							cy.get('.candidate-row.sel').should('be.disabled').and('contain.text', 'actuel');
-							cy.get('.candidate-row:not(.sel)').click();
-							cy.get('.modal').should('not.exist');
-							cy.contains('.pill.current', 'remplacement ponctuel').should('be.visible');
-							cy.get('.header-person h2').should('have.text', otherName);
+						// Remplacement ponctuel vers l'autre personne de la rotation.
+						cy.clickReliably(() => cy.contains('button', "Quelqu'un est absent"), '.modal');
+						cy.get('.candidate-row.sel').should('be.disabled').and('contain.text', 'actuel');
+						cy.get('.candidate-row:not(.sel)').click();
+						cy.get('.modal').should('not.exist');
+						cy.contains('.pill.current', 'remplacement ponctuel').should('be.visible');
+						cy.get('.header-person h2').should('have.text', otherName);
 
-							// Retour à la normale : la personne calculée par la chaîne revient.
-							cy.contains('button', 'Revenir à la rotation').click();
-							cy.contains('.pill.current', 'remplacement ponctuel').should('not.exist');
-							cy.get('.header-person h2').should('have.text', originalName);
+						// Retour à la normale : la personne calculée par la chaîne revient.
+						cy.contains('button', 'Revenir à la rotation').click();
+						cy.contains('.pill.current', 'remplacement ponctuel').should('not.exist');
+						cy.get('.header-person h2').should('have.text', originalName);
 
-							// Passer son tour : décale la rotation d'un cran, définitivement — avec
-							// exactement 2 membres, la personne de perm bascule forcément sur l'autre.
-							cy.clickReliably(() => cy.contains('button', "Quelqu'un est absent"), '.modal');
-							cy.contains('.skip-btn', 'Passer son tour').click();
-							cy.get('.cd-modal').should('be.visible');
-							cy.contains('.cd-modal button', 'Passer au suivant').click();
-							cy.get('.modal').should('not.exist');
-							cy.get('.header-person h2').should('have.text', otherName);
-							cy.contains('.pill.current', 'remplacement ponctuel').should('not.exist');
-						});
+						// Passer son tour : décale la rotation d'un cran, définitivement — avec
+						// exactement 2 membres, la personne de perm bascule forcément sur l'autre.
+						cy.clickReliably(() => cy.contains('button', "Quelqu'un est absent"), '.modal');
+						cy.contains('.skip-btn', 'Passer son tour').click();
+						cy.get('.cd-modal').should('be.visible');
+						cy.contains('.cd-modal button', 'Passer au suivant').click();
+						cy.get('.modal').should('not.exist');
+						cy.get('.header-person h2').should('have.text', otherName);
+						cy.contains('.pill.current', 'remplacement ponctuel').should('not.exist');
+					});
 
-					// Vue d'un membre simple (rôle par défaut USER) : consultation seule, sans les
-					// actions réservées aux admins/managers.
-					cy.get('form[action="/logout"] button').click();
-					cy.location('pathname').should('eq', '/login');
-					cy.typeReliably('#em', memberEmail);
-					cy.typeReliably('#pw', memberPassword);
-					cy.get('button[type=submit]').click();
-					cy.location('pathname').should('eq', '/imputation');
+				// Vue d'un membre simple (rôle par défaut USER) : consultation seule, sans les
+				// actions réservées aux admins/managers.
+				cy.get('form[action="/logout"] button').click();
+				cy.location('pathname').should('eq', '/login');
+				cy.typeReliably('#em', memberEmail);
+				cy.typeReliably('#pw', memberPassword);
+				cy.get('button[type=submit]').click();
+				cy.location('pathname').should('eq', '/imputation');
 
-					cy.visit('/support');
-					cy.location('pathname').should('eq', '/support');
-					cy.get('.header-person h2').should('be.visible');
-					cy.get('.calendar-card').should('be.visible');
-					cy.get('.header-actions').should('not.exist');
-				});
+				cy.visit('/support');
+				cy.location('pathname').should('eq', '/support');
+				cy.get('.header-person h2').should('be.visible');
+				cy.get('.calendar-card').should('be.visible');
+				cy.get('.header-actions').should('not.exist');
+			});
 		});
 	});
 });

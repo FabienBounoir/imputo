@@ -1729,15 +1729,6 @@
 		font-size: 13px;
 		border-top: 1px solid var(--border);
 	}
-	.invite-msg pre {
-		padding: 14px;
-		font-family: var(--font-ui);
-		font-size: 13px;
-		white-space: pre-wrap;
-		color: var(--text-soft);
-		border-top: 1px solid var(--border);
-		background: var(--surface-2);
-	}
 	/* `clip` (pas de scroll ici) pour ne rogner qu'au rayon de la card ; le scroll horizontal reste
 	   local à .members-scroll, comme .tk-card/.tk-scroll dans tickets/+page.svelte. */
 	.members-wrap {
