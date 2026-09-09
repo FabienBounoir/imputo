@@ -80,6 +80,33 @@
 		return computeRowKey(targetType, targetId, o.activityId ?? null, o.kind === 'TICKET' ? o.id : null);
 	}
 
+	// Déclaré AVANT syncedRows/buildRow, qui lisent ticketById dès l'initialisation de `rows` :
+	// en `const` plus bas, on tombait en zone morte temporelle — et seulement quand la feuille
+	// contenait des objectifs ou des lignes épinglées, donc invisible sur un espace vide.
+	// `data.tickets` n'est plus tout le catalogue mais une graine bornée (cf. +page.server.ts) : les
+	// tickets trouvés par la recherche serveur des sélecteurs s'y ajoutent au fil de l'eau, sinon on
+	// ne saurait pas résoudre le titre/sprint d'un ticket qu'on vient de choisir.
+	let fetchedTickets = $state<typeof data.tickets>([]);
+	const ticketById = $derived(new Map([...data.tickets, ...fetchedTickets].map((t) => [t.id, t])));
+	// Le sélecteur type ses tickets au plus juste de ce qu'il affiche (sprint/version optionnels) ;
+	// la table de correspondance, elle, veut la forme complète — d'où la normalisation ici.
+	function mergeFetchedTickets(
+		found: { id: string; key: string; title: string; sprintId?: string | null; versionId?: string | null; sprintName?: string | null }[]
+	) {
+		const known = new Set([...data.tickets, ...fetchedTickets].map((t) => t.id));
+		const additions = found
+			.filter((t) => !known.has(t.id))
+			.map((t) => ({
+				id: t.id,
+				key: t.key,
+				title: t.title,
+				sprintId: t.sprintId ?? null,
+				versionId: t.versionId ?? null,
+				sprintName: t.sprintName ?? null
+			}));
+		if (additions.length > 0) fetchedTickets = [...fetchedTickets, ...additions];
+	}
+
 	// Lignes de la feuille + objectifs TICKET attribués absents du tableau, fusionnées : appelée dès
 	// l'état initial (pas seulement dans l'$effect) pour que le premier rendu ait déjà les lignes
 	// attribuées et que le bandeau de rappel ne clignote pas avant de disparaître.
@@ -127,7 +154,7 @@
 	// Clic sur le sprint/version d'une ligne ticket : va sur Tickets & chiffrage filtré sur ce
 	// sprint/version, avec le ticket d'origine mis en surbrillance dans la liste.
 	function goToTicketFilter(row: Row, kind: 'sprint' | 'version') {
-		const t = data.tickets.find((x) => x.id === row.targetId);
+		const t = ticketById.get(row.targetId);
 		if (!t) return;
 		const id = kind === 'sprint' ? t.sprintId : t.versionId;
 		if (!id) return;
@@ -613,7 +640,7 @@
 		let nonProductive = false;
 		let sprintName: string | null = null;
 		if (targetType === 'TICKET') {
-			const t = data.tickets.find((x) => x.id === targetId);
+			const t = ticketById.get(targetId);
 			label = t?.title ?? '—';
 			sublabel = t?.key ?? '';
 			sprintName = t?.sprintName ?? null;
@@ -1229,6 +1256,7 @@
 				versions={data.versions}
 				objectives={data.weeklyObjectives.filter((o) => o.kind === 'TICKET')}
 				activities={data.activities}
+				onfetched={mergeFetchedTickets}
 				onadd={(target, activityId) => {
 					pickTarget = target;
 					pickActivity = activityId ?? '';

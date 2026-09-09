@@ -10,7 +10,16 @@
 	// admin — sans étape activité, l'y greffer aurait complexifié un composant qui n'en a pas besoin),
 	// puis l'activité (« Aucune activité » toujours pré-surlignée en premier, jamais une activité au
 	// hasard), et Entrée ajoute la ligne et referme — on n'ajoute jamais plusieurs lignes d'une traite.
-	type Ticket = { id: string; key: string; title: string; versionId?: string | null };
+	// sprintId/sprintName voyagent depuis la recherche serveur jusqu'au parent (via onfetched), qui
+	// en a besoin pour construire la ligne : la palette ne les affiche pas mais ne doit pas les perdre.
+	type Ticket = {
+		id: string;
+		key: string;
+		title: string;
+		versionId?: string | null;
+		sprintId?: string | null;
+		sprintName?: string | null;
+	};
 	type Category = { id: string; label: string };
 	type Version = { id: string; name: string };
 	type Objective = {
@@ -31,7 +40,10 @@
 		versions = [],
 		objectives = [],
 		activities,
-		onadd
+		onadd,
+		/** Voir TargetPicker : remonte au parent les tickets ramenés par la recherche serveur, dont il
+		 *  a besoin pour résoudre le ticket choisi (titre, sprint) au moment de créer la ligne. */
+		onfetched
 	}: {
 		tickets: Ticket[];
 		categories: Category[];
@@ -42,6 +54,7 @@
 		/** `pickTarget` suit exactly l'encodage TargetPicker (`TICKET::id[::objectiveId]`, `CATEGORY::id`,
 		 * `OBJECTIVE::id`) — le parent le passe tel quel à sa logique addRow() existante. */
 		onadd: (pickTarget: string, activityId: string | null) => void;
+		onfetched?: (tickets: Ticket[]) => void;
 	} = $props();
 
 	type FlatItem =
@@ -64,13 +77,52 @@
 	const suggested = $derived(
 		recentTicketIds.map((id) => tickets.find((t) => t.id === id)).filter((t): t is Ticket => !!t)
 	);
+	// Recherche serveur, comme TargetPicker : `tickets` n'est plus qu'une graine bornée (cf.
+	// imputation/+page.server.ts), filtrer en local ne trouverait rien au-delà.
+	const MIN_QUERY = 2;
+	let remote = $state<Ticket[]>([]);
+	let searching = $state(false);
+	let searchTimer: ReturnType<typeof setTimeout> | undefined;
+	let searchToken = 0;
+
+	$effect(() => {
+		const q = query.trim();
+		const version = versionFilter;
+		clearTimeout(searchTimer);
+		// Étape activité : `query` sert alors à filtrer les activités, pas les tickets.
+		if (stage !== 'target' || (q.length < MIN_QUERY && !version)) {
+			remote = [];
+			searching = false;
+			return;
+		}
+		searching = true;
+		const token = ++searchToken;
+		searchTimer = setTimeout(async () => {
+			try {
+				const params = new URLSearchParams();
+				if (q) params.set('q', q);
+				if (version) params.set('version', version);
+				const res = await fetch(`/api/tickets/search?${params}`);
+				const found = res.ok ? ((await res.json()).tickets as Ticket[]) : [];
+				if (token !== searchToken) return;
+				remote = found;
+				if (found.length > 0) onfetched?.(found);
+			} catch {
+				if (token === searchToken) remote = [];
+			} finally {
+				if (token === searchToken) searching = false;
+			}
+		}, 200);
+		return () => clearTimeout(searchTimer);
+	});
+
 	// Même règle que TargetPicker : un filtre version actif montre toute la version plutôt que les
 	// suggestions récentes, sinon le filtre semblerait ne rien faire tant qu'on n'a pas tapé de texte.
 	const filteredTickets = $derived.by(() => {
-		const q = query.trim().toLowerCase();
-		const base = versionFilter ? tickets.filter((t) => t.versionId === versionFilter) : tickets;
-		if (!q) return versionFilter ? base : suggested;
-		return base.filter((t) => t.key.toLowerCase().includes(q) || t.title.toLowerCase().includes(q));
+		const q = query.trim();
+		if (q.length >= MIN_QUERY || versionFilter) return remote;
+		if (q) return [];
+		return suggested;
 	});
 	// Catégories jamais filtrées par la recherche (comme TargetPicker) : une poignée de valeurs,
 	// toujours utile de les garder visibles pendant qu'on tape un ticket.
@@ -97,7 +149,9 @@
 		// Aucun ticket trouvé sur une recherche non vide : proposer d'aller le créer plutôt que de
 		// laisser une section "Tickets" vide (les catégories restent affichées en dessous, elles).
 		const q = query.trim();
-		if (filteredTickets.length === 0 && q) {
+		// `!searching` : pendant le debounce + l'aller-retour, la liste est momentanément vide — sans
+		// cette garde, "Créer le ticket …" clignoterait avant l'arrivée des résultats.
+		if (filteredTickets.length === 0 && q && !searching) {
 			out.push({ kind: 'create-ticket', query: q });
 		} else {
 			for (const t of filteredTickets) out.push({ kind: 'ticket', ticket: t });
@@ -351,7 +405,11 @@
 								</button>
 							{/if}
 						{/each}
-						{#if stage1Items.length === 0}<div class="qa-empty">Aucun résultat.</div>{/if}
+						{#if searching}
+							<div class="qa-empty">Recherche…</div>
+						{:else if stage1Items.length === 0}
+							<div class="qa-empty">Aucun résultat.</div>
+						{/if}
 					{:else}
 						<div class="activity-options">
 							{#each stage2Items as it, i (it.id ?? 'none')}

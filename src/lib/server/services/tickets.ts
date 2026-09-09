@@ -473,21 +473,61 @@ export async function deleteUntouchedSyncedTickets(workspaceId: string, syncRunI
  * juste id/clé/titre/sprint/version, sans l'enrichissement consommé/RAE/contributeurs/groupes
  * (4 requêtes GROUP BY en plus, inutiles pour peupler un <select>).
  */
-export async function listTicketSummaries(
-	workspaceId: string
-): Promise<{ id: string; key: string; title: string; sprintId: string | null; versionId: string | null; sprintName: string | null }[]> {
-	return db
-		.select({
-			id: ticket.id,
-			key: ticket.key,
-			title: ticket.title,
-			sprintId: ticket.sprintId,
-			versionId: ticket.versionId,
-			sprintName: sprint.name
-		})
-		.from(ticket)
-		.leftJoin(sprint, eq(ticket.sprintId, sprint.id))
-		.where(and(eq(ticket.workspaceId, workspaceId), isNull(ticket.archivedAt)));
+export type TicketSummary = {
+	id: string;
+	key: string;
+	title: string;
+	sprintId: string | null;
+	versionId: string | null;
+	sprintName: string | null;
+};
+
+/** Colonnes communes à toutes les variantes de résumé ci-dessous — une seule définition à maintenir. */
+const summarySelect = {
+	id: ticket.id,
+	key: ticket.key,
+	title: ticket.title,
+	sprintId: ticket.sprintId,
+	versionId: ticket.versionId,
+	sprintName: sprint.name
+};
+const summaryFrom = () => db.select(summarySelect).from(ticket).leftJoin(sprint, eq(ticket.sprintId, sprint.id));
+
+export async function listTicketSummaries(workspaceId: string): Promise<TicketSummary[]> {
+	return summaryFrom().where(and(eq(ticket.workspaceId, workspaceId), isNull(ticket.archivedAt)));
+}
+
+/**
+ * Résumés d'une liste d'ids précis. Sert à réhydrater les tickets déjà à l'écran (lignes de la
+ * feuille, objectifs attribués, lignes épinglées) quand on ne charge plus tout le catalogue : ces
+ * tickets-là DOIVENT être résolvables côté client, quel que soit leur âge, sinon leur ligne
+ * s'afficherait sans titre ni sprint. Volontairement sans filtre `archivedAt` : un ticket archivé
+ * après coup garde des imputations, et sa ligne doit rester lisible.
+ */
+export async function listTicketSummariesByIds(workspaceId: string, ids: string[]): Promise<TicketSummary[]> {
+	if (ids.length === 0) return [];
+	return summaryFrom().where(and(eq(ticket.workspaceId, workspaceId), inArray(ticket.id, ids)));
+}
+
+/**
+ * Recherche serveur pour les sélecteurs (clé ou titre), optionnellement bornée à une version.
+ * Contrairement à listTicketsPage, aucune agrégation (consommé, RAE, contributeurs, groupes) : un
+ * sélecteur n'affiche que clé + titre, et ces jointures coûtent cher pour rien.
+ */
+export async function searchTicketSummaries(
+	workspaceId: string,
+	opts: { query?: string; versionId?: string; limit?: number } = {}
+): Promise<TicketSummary[]> {
+	const q = opts.query?.trim();
+	const conds = [eq(ticket.workspaceId, workspaceId), isNull(ticket.archivedAt)];
+	if (q) conds.push(or(ilike(ticket.key, `%${q}%`), ilike(ticket.title, `%${q}%`))!);
+	if (opts.versionId) conds.push(eq(ticket.versionId, opts.versionId));
+	return summaryFrom()
+		.where(and(...conds))
+		// `id` en tie-breaker : createdAt n'est pas unique sur une insertion en masse, sans lui
+		// l'ordre (et donc le LIMIT) devient non déterministe entre deux appels identiques.
+		.orderBy(desc(ticket.createdAt), desc(ticket.id))
+		.limit(opts.limit ?? 30);
 }
 
 /**
@@ -498,16 +538,8 @@ export async function listTicketSummaries(
  * Tri par date de création décroissante, `id` en tie-breaker (createdAt n'est pas unique sur une
  * insertion en masse, cf. le même correctif dans listTicketsPage).
  */
-export async function listRecentTicketSummaries(
-	workspaceId: string,
-	limit = 20
-): Promise<{ id: string; key: string; title: string }[]> {
-	return db
-		.select({ id: ticket.id, key: ticket.key, title: ticket.title })
-		.from(ticket)
-		.where(and(eq(ticket.workspaceId, workspaceId), isNull(ticket.archivedAt)))
-		.orderBy(desc(ticket.createdAt), desc(ticket.id))
-		.limit(limit);
+export async function listRecentTicketSummaries(workspaceId: string, limit = 20): Promise<TicketSummary[]> {
+	return searchTicketSummaries(workspaceId, { limit });
 }
 
 export type TicketFilters = {

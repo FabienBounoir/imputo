@@ -15,7 +15,57 @@
 	}
 
 	// Célébration ponctuelle : seulement pour la plage en cours, une fois au chargement de la page.
-	const currentPeriod = $derived(data.periods.find((p) => p.periodStart === data.currentPeriodStart));
+	// Liste paginée : `data.periods` n'est que la première page (les 20 plages les plus récentes AVEC
+	// leurs messages, la partie lourde) ; le scroll va chercher les suivantes. Les statistiques du
+	// haut de page, elles, viennent de `data.stats` et couvrent tout l'historique — c'est pour ça
+	// qu'elles ne bougent pas quand on déroule.
+	// Les pages ramenées par le scroll sont gardées à part, étiquetées par la première page du load.
+	// Quand celui-ci change (réinitialisation d'une plage, changement d'espace), l'étiquette ne
+	// correspond plus et le supplément est ignoré : pas d'$effect de resynchronisation à écrire, et
+	// aucune lecture de `data` dans un initialiseur de $state.
+	let extra = $state<{ key: string; periods: typeof data.periods; hasMore: boolean } | null>(null);
+	let loadingMore = $state(false);
+
+	const pageKey = $derived(data.periods[0]?.periodStart ?? '');
+	const fresh = $derived(extra?.key === pageKey ? extra : null);
+	const periods = $derived(fresh ? [...data.periods, ...fresh.periods] : data.periods);
+	const hasMore = $derived(fresh ? fresh.hasMore : data.hasMore);
+
+	async function loadMore() {
+		if (loadingMore || !hasMore || periods.length === 0) return;
+		loadingMore = true;
+		try {
+			const before = periods[periods.length - 1].periodStart;
+			const res = await fetch(`/api/mood/periods?before=${encodeURIComponent(before)}`);
+			if (!res.ok) {
+				// On coupe le scroll infini plutôt que de retenter en boucle sur une erreur persistante.
+				extra = { key: pageKey, periods: fresh?.periods ?? [], hasMore: false };
+				return;
+			}
+			const next = (await res.json()) as { periods: typeof data.periods; hasMore: boolean };
+			// Garde anti-doublon : deux déclenchements concurrents de l'observer réinséreraient la
+			// même page, et `{#each … (p.periodStart)}` planterait sur une clé dupliquée.
+			const known = new Set(periods.map((p) => p.periodStart));
+			extra = {
+				key: pageKey,
+				periods: [...(fresh?.periods ?? []), ...next.periods.filter((p) => !known.has(p.periodStart))],
+				hasMore: next.hasMore
+			};
+		} finally {
+			loadingMore = false;
+		}
+	}
+
+	/** Sentinelle de bas de liste : charge la page suivante quand elle entre dans le viewport. */
+	function infiniteScroll(node: HTMLElement) {
+		const io = new IntersectionObserver((entries) => {
+			if (entries.some((e) => e.isIntersecting)) loadMore();
+		});
+		io.observe(node);
+		return { destroy: () => io.disconnect() };
+	}
+
+	const currentPeriod = $derived(periods.find((p) => p.periodStart === data.currentPeriodStart));
 	let celebrate = $state(false);
 	$effect(() => {
 		if (currentPeriod && isUnanimous(currentPeriod)) celebrate = true;
@@ -58,7 +108,7 @@
 	}
 
 	// ---------- Tendance : moyenne par semaine, chronologique (plus ancien → plus récent) ----------
-	const chrono = $derived([...data.periods].reverse());
+	const chrono = $derived([...data.stats].reverse());
 	const SPARK_W = 640;
 	const SPARK_H = 180; // = hauteur CSS du <svg> (1:1) : un mismatch entre les deux écrase la courbe verticalement
 	const SPARK_PAD_LEFT = 30; // réserve la place des labels d'axe (émojis)
@@ -77,17 +127,17 @@
 	const overallAvg = $derived.by(() => {
 		let sum = 0;
 		let n = 0;
-		for (const p of data.periods) for (const s of SCORES) { sum += s * p.distribution[s]; n += p.distribution[s]; }
+		for (const p of data.stats) for (const s of SCORES) { sum += s * p.distribution[s]; n += p.distribution[s]; }
 		return n > 0 ? Math.round((sum / n) * 100) / 100 : 0;
 	});
 
 	// ---------- Répartition globale (donut) : toutes semaines confondues ----------
 	const globalDistribution = $derived.by(() => {
 		const d: Record<1 | 2 | 3 | 4 | 5, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-		for (const p of data.periods) for (const s of SCORES) d[s] += p.distribution[s];
+		for (const p of data.stats) for (const s of SCORES) d[s] += p.distribution[s];
 		return d;
 	});
-	const totalVotes = $derived(data.periods.reduce((sum, p) => sum + p.voteCount, 0));
+	const totalVotes = $derived(data.stats.reduce((sum, p) => sum + p.voteCount, 0));
 	const DONUT_R = 26;
 	const DONUT_C = 2 * Math.PI * DONUT_R;
 	// Segments empilés dans l'ordre 5→1 (le plus positif en premier) : cumul du dash-offset au fil
@@ -107,10 +157,10 @@
 
 	// ---------- Meilleure / moins bonne semaine (par moyenne) ----------
 	const bestWeek = $derived.by(() =>
-		data.periods.reduce((best, p) => (p.avgScore > best.avgScore ? p : best), data.periods[0])
+		data.stats.reduce((best, p) => (p.avgScore > best.avgScore ? p : best), data.stats[0])
 	);
 	const worstWeek = $derived.by(() =>
-		data.periods.reduce((worst, p) => (p.avgScore < worst.avgScore ? p : worst), data.periods[0])
+		data.stats.reduce((worst, p) => (p.avgScore < worst.avgScore ? p : worst), data.stats[0])
 	);
 
 	// ---------- Export CSV : une ligne par semaine, résultats agrégés (jamais de message —
@@ -151,7 +201,7 @@
 
 <div class="page-grid">
 <div class="content">
-	{#if data.periods.length === 0}
+	{#if data.stats.length === 0}
 		<section class="card block">
 			<p class="hint" style="margin:0;">Aucun vote enregistré pour l'instant.</p>
 		</section>
@@ -184,7 +234,7 @@
 		{/if}
 
 		<div class="periods">
-			{#each data.periods as p (p.periodStart)}
+			{#each periods as p (p.periodStart)}
 				{@const isCurrent = p.periodStart === data.currentPeriodStart}
 				{@const isOpen = expanded.has(p.periodStart)}
 				<section class="prow card" class:current={isCurrent}>
@@ -250,11 +300,23 @@
 					{/if}
 				</section>
 			{/each}
+
+			{#if hasMore}
+				<!-- Sentinelle : dès qu'elle entre dans le viewport, la page suivante se charge. Elle
+				     porte aussi le repli sans JavaScript — un vrai lien vers la suite. -->
+				<div class="load-more" use:infiniteScroll>
+					{#if loadingMore}
+						<span class="hint">Chargement des plages précédentes…</span>
+					{:else}
+						<button type="button" class="btn btn-ghost" onclick={loadMore}>Afficher les plages précédentes</button>
+					{/if}
+				</div>
+			{/if}
 		</div>
 	{/if}
 </div>
 
-{#if data.periods.length > 0}
+{#if data.stats.length > 0}
 	<aside class="side">
 		<section class="card block side-card">
 			<h3>Répartition globale</h3>
@@ -479,6 +541,11 @@
 	}
 
 	/* ---------- Lignes semaine ---------- */
+	.load-more {
+		display: flex;
+		justify-content: center;
+		padding: 14px 0 4px;
+	}
 	.periods {
 		display: flex;
 		flex-direction: column;
