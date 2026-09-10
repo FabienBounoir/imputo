@@ -337,6 +337,41 @@ export async function getAnnualTrackingView(workspaceId: string): Promise<Annual
 	return { cursorMonth, windowMonths, rows };
 }
 
+/**
+ * Totaux Prod/TNF d'un mois, tous SSP confondus — cartes « Produit (mois) » / « TNF (mois) » de la
+ * Synthèse. Même source que les cellules du Suivi annuel (somme de leurs `prod`/`tnf` non nulles) :
+ * seuls les SSP dont la prod du mois est saisie comptent, conso figée si le mois est intégré GPS.
+ * `null` = aucune prod saisie ce mois-ci, pas 0 (« pas encore travaillé » ≠ « rien produit »).
+ */
+export async function getMonthProdTnf(
+	workspaceId: string,
+	month: string
+): Promise<{ prod: number; tnf: number; sspCount: number } | null> {
+	const prodRows = await db
+		.select({ sspId: sspAnnualProd.sspId, value: sspAnnualProd.value })
+		.from(sspAnnualProd)
+		.where(and(eq(sspAnnualProd.workspaceId, workspaceId), eq(sspAnnualProd.month, month)));
+	if (prodRows.length === 0) return null;
+
+	const integration = (await getLatestIntegratedClosingByMonth(workspaceId, [month])).get(month);
+	const consoRows = integration
+		? await getSnapshotConsoBySspByMonth(new Map([[month, integration.id]]))
+		: await getConsoBySspByMonth(workspaceId, { from: month, to: monthBounds(month).end });
+	const consoBySsp = new Map<string, number>();
+	for (const r of consoRows) {
+		if (r.sspId !== null) consoBySsp.set(r.sspId, round((consoBySsp.get(r.sspId) ?? 0) + r.total));
+	}
+
+	let prod = 0;
+	let tnfTotal = 0;
+	for (const r of prodRows) {
+		const p = num(r.value);
+		prod += p;
+		tnfTotal += tnf(consoBySsp.get(r.sspId) ?? 0, p);
+	}
+	return { prod: round(prod), tnf: round(tnfTotal), sspCount: prodRows.length };
+}
+
 async function assertSspBelongsToWorkspace(workspaceId: string, sspId: string) {
 	const [row] = await db.select({ id: ssp.id }).from(ssp).where(and(eq(ssp.id, sspId), eq(ssp.workspaceId, workspaceId)));
 	if (!row) throw new Error('Code SSP introuvable dans cet espace.');

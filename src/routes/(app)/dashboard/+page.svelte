@@ -157,21 +157,25 @@
 				</svg>
 			</div>
 		{:else}
-			<!-- TNF/Produit (mois) : cartes vides pour l'instant, le calcul mensuel reste à définir
-			     (contrairement à enveloppeTotale/TNF déjà suivi par ticket, jamais borné à une période). -->
-			<div class="card kpi">
-				<div class="k">TNF (mois)</div>
-				<div class="v tabnum">—</div>
-				<div class="sub">Calcul à définir</div>
-			</div>
-			<div class="card kpi">
-				<div class="k">Produit (mois)</div>
-				<div class="v tabnum">—</div>
-				<div class="sub">Calcul à définir</div>
-			</div>
+			<!-- TNF/Produit (mois) : sommes des cellules du Suivi annuel sur ce mois (SSP dont la prod est
+			     saisie), réservées aux admins comme /admin/suivi-annuel. TNF = conso − prod, positif = dérapage. -->
+			{#if data.isAdmin}
+				{@const m = data.monthProdTnf}
+				<div class="card kpi">
+					<div class="k">TNF (mois)</div>
+					<div class="v tabnum">{#if m}{m.tnf}<small>j</small>{:else}—{/if}</div>
+					<div class="sub">{m ? `Conso − prod · ${m.sspCount} SSP` : 'Prod non saisie'}</div>
+				</div>
+				<div class="card kpi">
+					<div class="k">Produit (mois)</div>
+					<div class="v tabnum">{#if m}{m.prod}<small>j</small>{:else}—{/if}</div>
+					<div class="sub"><a href="/admin/suivi-annuel">Suivi annuel</a></div>
+				</div>
+			{/if}
 			<!-- Productif vs non productif : déplacé ici depuis .grid (même contenu, juste un autre
-			     conteneur parent) pour rejoindre la ligne de KPIs mensuels. -->
-			<div class="card kpi panel">
+			     conteneur parent) pour rejoindre la ligne de KPIs mensuels. Sans les cartes admin, il
+			     prend le reste de la ligne plutôt que laisser deux colonnes vides. -->
+			<div class="card kpi panel" class:span-rest={!data.isAdmin}>
 				<h3>Productif vs non productif</h3>
 				{#if prodTotal === 0}
 					<p class="empty">Aucune imputation.</p>
@@ -517,7 +521,11 @@
 		justify-content: space-between;
 		gap: 12px;
 	}
-	.ring-card .sub {
+	/* Productif vs non productif sans les cartes admin : colonne 2 → fin, en 4 comme en 2 colonnes (mobile). */
+	.span-rest {
+		grid-column: 2 / -1;
+	}
+	.kpi .sub {
 		font-size: 12px;
 		color: var(--text-mute);
 		margin-top: 4px;
