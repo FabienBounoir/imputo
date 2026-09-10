@@ -79,6 +79,33 @@ Cypress.Commands.add('registerAndLogin', (overrides = {}) => {
 });
 
 /**
+ * Change la valeur d'un <select> et déclenche le gestionnaire Svelte.
+ *
+ * `cy.get(sel).select(v)` ne suffit pas ici : Svelte 5 écoute `change` par délégation depuis la
+ * racine de l'app, et l'événement produit par Cypress ne réveille pas ce gestionnaire — la valeur
+ * se pose bien dans le DOM (l'assertion `have.value` passe) mais rien ne se passe ensuite, ce qui
+ * donne un échec très trompeur. Idem si l'on construit l'événement soi-même dans un `.then()` :
+ * `new Event(...)` y utilise le realm du runner, pas celui de la page.
+ *
+ * On passe donc par `cy.window()` pour émettre un événement du BON realm, celui de l'application.
+ */
+Cypress.Commands.add('selectReliably', (selector: string, value: string) => {
+	cy.get(selector).should('exist');
+	// Cypress réessaie les ASSERTIONS, jamais les INTERACTIONS : un changement émis avant que Svelte
+	// n'ait attaché ses gestionnaires part une fois dans le vide et n'est jamais rejoué — l'assertion
+	// qui suit échoue alors jusqu'au bout de son timeout, quel qu'il soit. D'où cette attente, même
+	// principe que clickReliably.
+	cy.wait(1500);
+	cy.window().then((win) => {
+		const el = win.document.querySelector(selector) as HTMLSelectElement | null;
+		if (!el) throw new Error(`selectReliably: aucun élément pour « ${selector} »`);
+		el.value = value;
+		el.dispatchEvent(new win.Event('change', { bubbles: true }));
+	});
+	cy.get(selector).should('have.value', value);
+});
+
+/**
  * Génère une invitation et renvoie le lien.
  *
  * Le lien n'est PLUS dans le DOM en temps normal : depuis « update invite message to include a
@@ -124,6 +151,8 @@ declare global {
 			registerAndLogin(overrides?: Partial<RegisteredAccount>): Chainable<RegisteredAccount>;
 			/** Clique « Générer l'invitation » et renvoie le chemin /invite/… récupéré du presse-papier. */
 			generateInviteLink(): Chainable<string>;
+			/** Change un <select> en émettant un `change` du realm de la page (cf. la commande). */
+			selectReliably(selector: string, value: string): Chainable<void>;
 		}
 	}
 }

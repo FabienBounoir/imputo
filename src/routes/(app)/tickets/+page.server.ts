@@ -10,6 +10,7 @@ import {
 	setTicketFlag,
 	deleteTicket,
 	parseTicketFiltersSnapshot,
+	parseTicketSort,
 	type TicketFilters
 } from '$lib/server/services/tickets';
 import { setTicketInGroup } from '$lib/server/services/ticketGroups';
@@ -75,13 +76,17 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 			if (snapshot.projectId && ref.projects.some((p) => p.id === snapshot.projectId)) target.set('project', snapshot.projectId);
 			if (snapshot.sprintId && ref.sprints.some((s) => s.id === snapshot.sprintId)) target.set('sprint', snapshot.sprintId);
 			if (snapshot.versionId && ref.versions.some((v) => v.id === snapshot.versionId)) target.set('version', snapshot.versionId);
+			// `created` est le défaut de la page : ne poser le paramètre que pour les autres valeurs,
+			// sinon une simple arrivée à blanc déclencherait une redirection qui n'affiche rien de
+			// différent.
+			if (snapshot.sort !== 'created') target.set('sort', snapshot.sort);
 			if ([...target.keys()].length > 0) redirect(303, `/tickets?${target}`);
 		}
 	}
 
 	const view = url.searchParams.get('view') === 'kanban' ? 'kanban' : 'table';
 	const page = Math.max(1, Number(url.searchParams.get('page')) || 1);
-	const sort = url.searchParams.get('sort') === 'priority' ? 'priority' : 'created';
+	const sort = parseTicketSort(url.searchParams.get('sort'));
 	const filters: TicketFilters = {
 		query: url.searchParams.get('q') ?? undefined,
 		stateId: url.searchParams.get('state') ?? undefined,
@@ -295,7 +300,8 @@ export const actions: Actions = {
 			stateId: (f.get('state') as string) || null,
 			projectId: (f.get('project') as string) || null,
 			sprintId: (f.get('sprint') as string) || null,
-			versionId: (f.get('version') as string) || null
+			versionId: (f.get('version') as string) || null,
+			sort: parseTicketSort(f.get('sort'))
 		});
 		return { ok: true };
 	},

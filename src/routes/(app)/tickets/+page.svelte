@@ -85,7 +85,7 @@
 		// Mémorisation (préférence de compte, § réglages) : même forme que ci-dessus, `page` exclue
 		// (jamais "remembered") — fire-and-forget comme ?/groupReorder plus haut dans ce fichier.
 		const body = new FormData();
-		for (const k of ['q', 'state', 'project', 'sprint', 'version', 'view'] as const) {
+		for (const k of ['q', 'state', 'project', 'sprint', 'version', 'view', 'sort'] as const) {
 			if (merged[k]) body.set(k, merged[k]);
 		}
 		fetch('?/rememberFilters', { method: 'POST', body });
@@ -870,8 +870,10 @@
 				{#each data.ref.versions as v (v.id)}<option value={v.id}>{v.name}</option>{/each}
 			</select>
 			<select class="filter-sel" value={data.sort} onchange={(e) => navigateWith({ sort: e.currentTarget.value })} aria-label="Trier par">
-				<option value="created">Trier : création</option>
-				<option value="priority">Trier : priorité</option>
+				<option value="created">Trier : plus ancien</option>
+				<option value="created_desc">Trier : plus récent</option>
+				<option value="priority">Trier : plus prioritaire</option>
+				<option value="priority_desc">Trier : moins prioritaire</option>
 			</select>
 			{#if hasFilters}
 				<button class="reset-btn" onclick={resetFilters}>

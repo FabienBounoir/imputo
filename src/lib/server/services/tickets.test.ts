@@ -11,12 +11,77 @@ import {
 	getTicketActivityBreakdown,
 	deleteUntouchedSyncedTickets,
 	listTicketsPage,
+	searchTicketSummaries,
+	listTicketSummariesByIds,
+	listRecentTicketSummaries,
+	parseTicketSort,
 	NO_ACTIVITY_ID
 } from './tickets';
 import { makeWorkspace, addMember } from './test-helpers';
 import { createActivity, listActivities } from './params';
 import { setCell } from './imputation';
 import { todayInParis } from '$lib/utils/date';
+
+describe('résumés de tickets bornés (recherche serveur des sélecteurs)', () => {
+	it('searchTicketSummaries trouve sur la clé comme sur le titre, sans casse', async () => {
+		const { workspaceId } = await makeWorkspace();
+		await createTicket(workspaceId, { key: 'SRCH-1', title: 'Refonte du tunnel' });
+		await createTicket(workspaceId, { key: 'AUTRE-9', title: 'Rien à voir' });
+
+		expect((await searchTicketSummaries(workspaceId, { query: 'srch' })).map((t) => t.key)).toEqual(['SRCH-1']);
+		expect((await searchTicketSummaries(workspaceId, { query: 'TUNNEL' })).map((t) => t.key)).toEqual(['SRCH-1']);
+		expect(await searchTicketSummaries(workspaceId, { query: 'introuvable' })).toEqual([]);
+	});
+
+	it('searchTicketSummaries borne le nombre de résultats', async () => {
+		const { workspaceId } = await makeWorkspace();
+		for (let i = 0; i < 12; i++) await createTicket(workspaceId, { key: `LIM-${i}`, title: 'Borné' });
+		expect(await searchTicketSummaries(workspaceId, { query: 'LIM', limit: 5 })).toHaveLength(5);
+	});
+
+	it('searchTicketSummaries ne franchit pas la frontière d’espace', async () => {
+		const a = await makeWorkspace('srch-a');
+		const b = await makeWorkspace('srch-b');
+		await createTicket(a.workspaceId, { key: 'ISO-A', title: 'Chez A' });
+		expect(await searchTicketSummaries(b.workspaceId, { query: 'ISO' })).toEqual([]);
+	});
+
+	it('listTicketSummariesByIds résout les ids demandés, y compris archivés', async () => {
+		const { workspaceId } = await makeWorkspace();
+		const vivant = await createTicket(workspaceId, { key: 'BYID-1', title: 'Vivant' });
+		const archive = await createTicket(workspaceId, { key: 'BYID-2', title: 'Archivé' });
+		await db.update(ticket).set({ archivedAt: new Date() }).where(eq(ticket.id, archive.id));
+
+		// Volontairement sans filtre archivedAt : un ticket archivé après coup garde des imputations,
+		// et sa ligne doit rester lisible dans Mon imputation.
+		const rows = await listTicketSummariesByIds(workspaceId, [vivant.id, archive.id]);
+		expect(rows.map((r) => r.key).sort()).toEqual(['BYID-1', 'BYID-2']);
+		// La recherche, elle, continue de les exclure.
+		expect(await searchTicketSummaries(workspaceId, { query: 'BYID-2' })).toEqual([]);
+	});
+
+	it('listTicketSummariesByIds : liste vide → aucun résultat', async () => {
+		const { workspaceId } = await makeWorkspace();
+		await createTicket(workspaceId, { key: 'BYID-3', title: 'x' });
+		expect(await listTicketSummariesByIds(workspaceId, [])).toEqual([]);
+	});
+
+	it('listRecentTicketSummaries rend les plus récents d’abord, bornés', async () => {
+		const { workspaceId } = await makeWorkspace();
+		for (let i = 1; i <= 5; i++) await createTicket(workspaceId, { key: `REC-${i}`, title: `T${i}` });
+		const rows = await listRecentTicketSummaries(workspaceId, 3);
+		expect(rows).toHaveLength(3);
+		expect(rows[0].key).toBe('REC-5');
+	});
+
+	it('parseTicketSort ramène toute valeur inconnue sur le défaut', () => {
+		expect(parseTicketSort('priority_desc')).toBe('priority_desc');
+		expect(parseTicketSort('created_desc')).toBe('created_desc');
+		for (const bidon of [null, undefined, '', 'PRIORITY', 'nimporte', 42, {}]) {
+			expect(parseTicketSort(bidon), String(bidon)).toBe('created');
+		}
+	});
+});
 
 describe('parseFlags', () => {
 	it('renvoie les clés par défaut vides sur une valeur nulle ou corrompue', () => {
@@ -364,5 +429,58 @@ describe('deleteUntouchedSyncedTickets', () => {
 
 		const byPriority = await listTicketsPage(workspaceId, true, true, {}, undefined, true, 'priority');
 		expect(byPriority.rows.map((r) => r.key)).toEqual(['PRIO-HIGH', 'PRIO-MID', 'PRIO-LOW']);
+
+		// Sens inverse : le moins prioritaire d'abord.
+		const inverse = await listTicketsPage(workspaceId, true, true, {}, undefined, true, 'priority_desc');
+		expect(inverse.rows.map((r) => r.key)).toEqual(['PRIO-LOW', 'PRIO-MID', 'PRIO-HIGH']);
+	});
+
+	it('listTicketsPage: priority_desc n’inverse QUE la priorité, pas l’ordre chronologique', async () => {
+		const { workspaceId } = await makeWorkspace();
+		// Priorité identique partout : seul le départage par date décide, et il ne doit pas basculer
+		// juste parce qu'on a inversé le sens de la priorité.
+		await db.insert(ticket).values([
+			{ workspaceId, key: 'EQ-OLD', title: 'Ancien', priority: 3, createdAt: new Date('2026-01-01T00:00:00Z') },
+			{ workspaceId, key: 'EQ-NEW', title: 'Récent', priority: 3, createdAt: new Date('2026-06-01T00:00:00Z') }
+		]);
+
+		for (const sort of ['priority', 'priority_desc'] as const) {
+			const res = await listTicketsPage(workspaceId, true, true, {}, undefined, true, sort);
+			expect(res.rows.map((r) => r.key), sort).toEqual(['EQ-OLD', 'EQ-NEW']);
+		}
+	});
+
+	it('listTicketsPage: created / created_desc inversent bien l’ordre chronologique', async () => {
+		const { workspaceId } = await makeWorkspace();
+		// createdAt explicites : l'insertion en masse partage le même timestamp par défaut, ce qui
+		// rendrait l'assertion dépendante du tie-breaker `id` plutôt que de la date.
+		await db.insert(ticket).values([
+			{ workspaceId, key: 'OLD-1', title: 'Ancien', createdAt: new Date('2026-01-01T00:00:00Z') },
+			{ workspaceId, key: 'MID-1', title: 'Milieu', createdAt: new Date('2026-02-01T00:00:00Z') },
+			{ workspaceId, key: 'NEW-1', title: 'Récent', createdAt: new Date('2026-03-01T00:00:00Z') }
+		]);
+
+		const asc = await listTicketsPage(workspaceId, true, true, {}, undefined, true, 'created');
+		expect(asc.rows.map((r) => r.key)).toEqual(['OLD-1', 'MID-1', 'NEW-1']);
+
+		const desc = await listTicketsPage(workspaceId, true, true, {}, undefined, true, 'created_desc');
+		expect(desc.rows.map((r) => r.key)).toEqual(['NEW-1', 'MID-1', 'OLD-1']);
+	});
+
+	it('listTicketsPage: en ordre décroissant, une sous-tâche reste sous son parent', async () => {
+		const { workspaceId } = await makeWorkspace();
+		const [parent] = await db
+			.insert(ticket)
+			.values({ workspaceId, key: 'FAM-P', title: 'Parent', createdAt: new Date('2026-01-01T00:00:00Z') })
+			.returning({ id: ticket.id });
+		await db.insert(ticket).values([
+			{ workspaceId, key: 'FAM-C', title: 'Enfant', parentId: parent.id, createdAt: new Date('2026-01-02T00:00:00Z') },
+			{ workspaceId, key: 'AUTRE', title: 'Autre', createdAt: new Date('2026-05-01T00:00:00Z') }
+		]);
+
+		// La famille est classée sur la date du parent, mais l'enfant ne remonte jamais au-dessus
+		// de lui : la hiérarchie ne s'inverse pas avec le sens du tri.
+		const desc = await listTicketsPage(workspaceId, true, true, {}, undefined, true, 'created_desc');
+		expect(desc.rows.map((r) => r.key)).toEqual(['AUTRE', 'FAM-P', 'FAM-C']);
 	});
 });

@@ -120,6 +120,10 @@
 	// Même règle que TargetPicker : un filtre version actif montre toute la version plutôt que les
 	// suggestions récentes, sinon le filtre semblerait ne rien faire tant qu'on n'a pas tapé de texte.
 	const filteredTickets = $derived.by(() => {
+		// Recherche en cours : on n'affiche PAS les résultats de la frappe précédente — le squelette
+		// prend leur place dans le rendu. Sinon les barres s'ajoutaient sous une liste périmée et se
+		// lisaient comme des lignes supplémentaires plutôt que comme une recherche en cours.
+		if (searching) return [];
 		const q = query.trim();
 		if (q.length >= MIN_QUERY || versionFilter) return remote;
 		if (q) return [];
@@ -298,6 +302,10 @@
 			scrollActiveIntoView();
 		} else if (e.key === 'Enter') {
 			e.preventDefault();
+			// Recherche en vol : la section tickets est un squelette, seules les catégories restent à
+			// l'écran — et `activeIndex` a été remis à 0, donc valider ajouterait une catégorie à la
+			// place du ticket qu'on cherchait.
+			if (stage === 'target' && searching) return;
 			pickActive();
 		}
 	}
@@ -331,6 +339,18 @@
 		}
 	}
 </script>
+
+{#snippet searchSkeleton()}
+	<!-- Squelette plutôt qu'un simple "Recherche…" : la liste se remplit au même endroit et à la même
+	     forme que les résultats à venir, donc rien ne saute quand ils arrivent. Largeurs volontairement
+	     inégales pour que ça se lise comme des lignes de contenu, pas comme un tableau vide. -->
+	{#each [64, 58, 70, 54] as w, i (i)}
+		<div class="qa-skel">
+			<span class="qa-skel-bar" style="width:{w}px;flex-shrink:0;"></span>
+			<span class="qa-skel-bar" style="width:{100 - i * 12}%;"></span>
+		</div>
+	{/each}
+{/snippet}
 
 <svelte:window onkeydown={onWindowKeydown} />
 
@@ -382,6 +402,12 @@
 
 				<div class="qa-list" bind:this={listEl}>
 					{#if stage === 'target'}
+						{#if searching}
+							<!-- Les catégories restent, elles : locales, jamais filtrées par la recherche
+							     (cf. showObjectives). Seule la section tickets passe en squelette. -->
+							<div class="qa-section-label">Tickets</div>
+							{@render searchSkeleton()}
+						{/if}
 						{#each stage1Items as it, i (itemKey(it))}
 							{#if isFirstOfSection(i)}<div class="qa-section-label">{sectionLabel(it)}</div>{/if}
 							{#if it.kind === 'objective-ticket'}
@@ -406,9 +432,7 @@
 								</button>
 							{/if}
 						{/each}
-						{#if searching}
-							<div class="qa-empty">Recherche…</div>
-						{:else if stage1Items.length === 0}
+						{#if !searching && stage1Items.length === 0}
 							<div class="qa-empty">Aucun résultat.</div>
 						{/if}
 					{:else}
@@ -765,6 +789,42 @@
 		.qa-launcher {
 			padding-top: 14px;
 			padding-bottom: 14px;
+		}
+	}
+
+	/* Squelette de recherche — reprend l'apparence de .skeleton-bar de tickets/+page.svelte (même
+	   dégradé mélangé à --text pour rester visible dans les deux thèmes, même animation). Dupliqué
+	   plutôt que partagé : le repo garde ses styles locaux aux composants, et il n'y a pas de
+	   feuille commune pour ça. */
+	.qa-skel {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 10px;
+	}
+	.qa-skel-bar {
+		height: 13px;
+		border-radius: 5px;
+		background: linear-gradient(
+			90deg,
+			color-mix(in srgb, var(--text) 12%, var(--surface-2)) 25%,
+			color-mix(in srgb, var(--text) 26%, var(--surface-2)) 50%,
+			color-mix(in srgb, var(--text) 12%, var(--surface-2)) 75%
+		);
+		background-size: 200% 100%;
+		animation: qa-skel-shimmer 1.4s ease-in-out infinite;
+	}
+	@keyframes qa-skel-shimmer {
+		0% {
+			background-position: 200% 0;
+		}
+		100% {
+			background-position: -200% 0;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.qa-skel-bar {
+			animation: none;
 		}
 	}
 </style>

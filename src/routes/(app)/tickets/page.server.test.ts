@@ -47,7 +47,8 @@ describe('tickets +page.server load — mémorisation des filtres (arrivée à b
 			stateId: null,
 			projectId: p.id,
 			sprintId: null,
-			versionId: null
+			versionId: null,
+			sort: 'created'
 		});
 
 		await expect(load({ locals: await fakeLocals(userId), url: new URL('http://localhost/tickets') } as never)).rejects.toMatchObject({
@@ -56,10 +57,52 @@ describe('tickets +page.server load — mémorisation des filtres (arrivée à b
 		});
 	});
 
+	it('le tri "priorité" est mémorisé et réappliqué à une arrivée à blanc', async () => {
+		const { userId } = await makeWorkspace('ticketssort');
+		await setTicketFiltersSnapshot(userId, {
+			view: 'table',
+			query: null,
+			stateId: null,
+			projectId: null,
+			sprintId: null,
+			versionId: null,
+			sort: 'priority'
+		});
+
+		// Seul le tri est mémorisé : la redirection doit quand même avoir lieu, c'est un choix
+		// d'affichage à part entière.
+		await expect(load({ locals: await fakeLocals(userId), url: new URL('http://localhost/tickets') } as never)).rejects.toMatchObject({
+			status: 303,
+			location: expect.stringContaining('sort=priority')
+		});
+	});
+
+	it('le tri par défaut (création) ne provoque aucune redirection à lui seul', async () => {
+		const { userId } = await makeWorkspace('ticketssortdef');
+		await setTicketFiltersSnapshot(userId, {
+			view: 'table',
+			query: null,
+			stateId: null,
+			projectId: null,
+			sprintId: null,
+			versionId: null,
+			sort: 'created'
+		});
+
+		const result = await load({ locals: await fakeLocals(userId), url: new URL('http://localhost/tickets') } as never);
+		expect(result.sort).toBe('created');
+	});
+
+	it('un instantané enregistré avant l’ajout du tri reste valide (sort absent → création)', async () => {
+		const { parseTicketFiltersSnapshot } = await import('$lib/server/services/tickets');
+		const ancien = JSON.stringify({ view: 'table', query: null, stateId: null, projectId: null, sprintId: null, versionId: null });
+		expect(parseTicketFiltersSnapshot(ancien)).toMatchObject({ sort: 'created' });
+	});
+
 	it('remember=false → aucune redirection même avec un snapshot valide', async () => {
 		const { userId, workspaceId } = await makeWorkspace('ticketsremember');
 		const [p] = await db.insert(project).values({ workspaceId, name: 'Projet A' }).returning({ id: project.id });
-		await setTicketFiltersSnapshot(userId, { view: 'table', query: null, stateId: null, projectId: p.id, sprintId: null, versionId: null });
+		await setTicketFiltersSnapshot(userId, { view: 'table', query: null, stateId: null, projectId: p.id, sprintId: null, versionId: null, sort: 'created' });
 		await setRememberTicketFiltersPref(userId, false);
 
 		const result = await load({ locals: await fakeLocals(userId), url: new URL('http://localhost/tickets') } as never);
@@ -69,7 +112,7 @@ describe('tickets +page.server load — mémorisation des filtres (arrivée à b
 	it('rememberSearch=false → la recherche du snapshot est ignorée à la redirection, mais les autres filtres restent', async () => {
 		const { userId, workspaceId } = await makeWorkspace('ticketsremember');
 		const [p] = await db.insert(project).values({ workspaceId, name: 'Projet A' }).returning({ id: project.id });
-		await setTicketFiltersSnapshot(userId, { view: 'table', query: 'US-42', stateId: null, projectId: p.id, sprintId: null, versionId: null });
+		await setTicketFiltersSnapshot(userId, { view: 'table', query: 'US-42', stateId: null, projectId: p.id, sprintId: null, versionId: null, sort: 'created' });
 		await setRememberTicketSearchPref(userId, false);
 
 		await expect(load({ locals: await fakeLocals(userId), url: new URL('http://localhost/tickets') } as never)).rejects.toMatchObject({
@@ -93,7 +136,8 @@ describe('tickets +page.server load — mémorisation des filtres (arrivée à b
 			stateId: null,
 			projectId: foreignProject.id,
 			sprintId: null,
-			versionId: null
+			versionId: null,
+			sort: 'created'
 		});
 
 		// query, elle, n'est pas validable contre ref (texte libre) — elle survit donc à la redirection.
@@ -111,10 +155,34 @@ describe('tickets +page.server load — mémorisation des filtres (arrivée à b
 	it('URL déjà paramétrée → jamais de redirection, même avec un snapshot valide', async () => {
 		const { userId, workspaceId } = await makeWorkspace('ticketsremember');
 		const [p] = await db.insert(project).values({ workspaceId, name: 'Projet A' }).returning({ id: project.id });
-		await setTicketFiltersSnapshot(userId, { view: 'table', query: null, stateId: null, projectId: p.id, sprintId: null, versionId: null });
+		await setTicketFiltersSnapshot(userId, { view: 'table', query: null, stateId: null, projectId: p.id, sprintId: null, versionId: null, sort: 'created' });
 
 		const result = await load({ locals: await fakeLocals(userId), url: new URL('http://localhost/tickets?page=2') } as never);
 		expect(result.filters.projectId).toBeUndefined();
+	});
+
+	it('actions.rememberFilters mémorise le tri, et pas seulement les filtres', async () => {
+		const { userId } = await makeWorkspace('ticketsortremember');
+		const locals = await fakeLocals(userId);
+
+		// Le bug d'origine : le POST du client n'envoyait pas `sort`, donc le tri repartait au défaut
+		// à chaque arrivée à blanc alors que les autres filtres tenaient.
+		await actions.rememberFilters({ locals, request: formRequest({ view: 'table', sort: 'priority_desc' }) } as never);
+
+		await expect(load({ locals, url: new URL('http://localhost/tickets') } as never)).rejects.toMatchObject({
+			status: 303,
+			location: expect.stringContaining('sort=priority_desc')
+		});
+	});
+
+	it('actions.rememberFilters ramène un tri inconnu sur le défaut (pas d’URL bricolée mémorisée)', async () => {
+		const { userId } = await makeWorkspace('ticketsortbogus');
+		const locals = await fakeLocals(userId);
+		await actions.rememberFilters({ locals, request: formRequest({ view: 'table', sort: 'nimporte-quoi' }) } as never);
+
+		// Rien d'autre de mémorisé et tri au défaut : aucune redirection à faire.
+		const result = await load({ locals, url: new URL('http://localhost/tickets') } as never);
+		expect(result.sort).toBe('created');
 	});
 
 	it("actions.rememberFilters puis arrivée à blanc → redirige vers ce qui vient d'être posté", async () => {

@@ -231,6 +231,10 @@
 			scrollActiveIntoView();
 		} else if (e.key === 'Enter') {
 			e.preventDefault();
+			// Recherche en vol : la liste affichée est un squelette, et `targetItems` contient encore
+			// les résultats de la frappe précédente (ou l'entrée « créer la tâche »). Valider ici
+			// choisirait quelque chose que l'utilisateur ne voit pas.
+			if (stage === 'target' && searching) return;
 			if (stage === 'note') commit();
 			else pick(activeIndex);
 		} else if (e.key === 'Backspace' && !query && stage !== 'target') {
@@ -269,6 +273,18 @@
 				: 'Note (facultatif) — Entrée pour ajouter'
 	);
 </script>
+
+{#snippet searchSkeleton()}
+	<!-- Squelette plutôt qu'un simple "Recherche…" : la liste se remplit au même endroit et à la même
+	     forme que les résultats à venir, donc rien ne saute quand ils arrivent. Largeurs volontairement
+	     inégales pour que ça se lise comme des lignes de contenu, pas comme un tableau vide. -->
+	{#each [64, 58, 70, 54] as w, i (i)}
+		<div class="op-skel">
+			<span class="op-skel-bar" style="width:{w}px;flex-shrink:0;"></span>
+			<span class="op-skel-bar" style="width:{100 - i * 12}%;"></span>
+		</div>
+	{/each}
+{/snippet}
 
 <svelte:window onkeydown={onWindowKeydown} />
 
@@ -354,7 +370,12 @@
 
 			{#if stage !== 'note'}
 				<div class="op-list" bind:this={listEl}>
-					{#if stage === 'target'}
+					{#if stage === 'target' && searching}
+						<!-- Le squelette REMPLACE la liste au lieu de s'y ajouter : sinon les résultats de la
+						     frappe précédente restaient affichés au-dessus, et les barres en dessous se
+						     lisaient comme des lignes supplémentaires plutôt que comme une recherche en cours. -->
+						{@render searchSkeleton()}
+					{:else if stage === 'target'}
 						{#each targetItems as it, i (it.kind === 'ticket' ? 't:' + it.ticket.id : 'c')}
 							{#if i === 0 || (targetItems[i - 1].kind === 'ticket') !== (it.kind === 'ticket')}
 								<div class="op-section">{it.kind === 'ticket' ? (query.trim() ? 'Tickets trouvés' : 'Tickets récents') : 'Tâche sans ticket'}</div>
@@ -367,9 +388,7 @@
 								{/if}
 							</button>
 						{/each}
-						{#if searching}
-							<div class="op-empty">Recherche…</div>
-						{:else if targetItems.length === 0}
+						{#if targetItems.length === 0}
 							<div class="op-empty">{query.trim() ? 'Aucun ticket ne correspond.' : 'Aucun ticket dans cet espace.'}</div>
 						{/if}
 					{:else}
@@ -713,6 +732,42 @@
 		   la feuille, il suit sa taille — clavier ouvert compris. */
 		.op-existing {
 			max-height: 25%;
+		}
+	}
+
+	/* Squelette de recherche — reprend l'apparence de .skeleton-bar de tickets/+page.svelte (même
+	   dégradé mélangé à --text pour rester visible dans les deux thèmes, même animation). Dupliqué
+	   plutôt que partagé : le repo garde ses styles locaux aux composants, et il n'y a pas de
+	   feuille commune pour ça. */
+	.op-skel {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 10px;
+	}
+	.op-skel-bar {
+		height: 13px;
+		border-radius: 5px;
+		background: linear-gradient(
+			90deg,
+			color-mix(in srgb, var(--text) 12%, var(--surface-2)) 25%,
+			color-mix(in srgb, var(--text) 26%, var(--surface-2)) 50%,
+			color-mix(in srgb, var(--text) 12%, var(--surface-2)) 75%
+		);
+		background-size: 200% 100%;
+		animation: op-skel-shimmer 1.4s ease-in-out infinite;
+	}
+	@keyframes op-skel-shimmer {
+		0% {
+			background-position: 200% 0;
+		}
+		100% {
+			background-position: -200% 0;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.op-skel-bar {
+			animation: none;
 		}
 	}
 </style>
