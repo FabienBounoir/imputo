@@ -20,6 +20,9 @@
 		id: string;
 		userId: string;
 		kind: 'TICKET' | 'CUSTOM';
+		ticketId: string | null;
+		activityId: string | null;
+		activityLabel: string | null;
 		ticketKey: string | null;
 		ticketTitle: string | null;
 		label: string | null;
@@ -31,7 +34,9 @@
 		activities,
 		members,
 		objectives,
+		carryover,
 		weekNumber,
+		prevWeekNumber,
 		onadd,
 		onremove
 	}: {
@@ -41,7 +46,10 @@
 		members: Member[];
 		/** Tous les objectifs de la semaine — la palette filtre sur la personne courante. */
 		objectives: Objective[];
+		/** Objectifs non faits la semaine précédente, toute l'équipe — proposés en tête pour être reportés. */
+		carryover: Objective[];
 		weekNumber: number;
+		prevWeekNumber: number;
 		onadd: (input: { userId: string; kind: 'TICKET' | 'CUSTOM'; ticketId: string; label: string; activityId: string }) => void;
 		onremove: (objectiveId: string) => void;
 	} = $props();
@@ -55,6 +63,7 @@
 
 	type Stage = 'target' | 'activity' | 'note';
 	type Item =
+		| { kind: 'carry'; objective: Objective }
 		| { kind: 'ticket'; ticket: Ticket }
 		| { kind: 'custom'; query: string };
 
@@ -72,6 +81,23 @@
 
 	const person = $derived(members.find((m) => m.id === userId) ?? null);
 	const mine = $derived(objectives.filter((o) => o.userId === userId));
+	// Reportés pas encore visibles dans `objectives` (POST + rechargement en cours) : sans ça la ligne
+	// reste en tête de liste et un double Entrée l'ajoute deux fois. Vidé à chaque rechargement.
+	let carried = $state<string[]>([]);
+	$effect(() => {
+		objectives;
+		carried = [];
+	});
+	// Non faits en S-1 pour cette personne, moins ce qui est déjà repris cette semaine (même ticket, ou
+	// même libellé de tâche) : reporté, il disparaît de la liste ; retiré de la semaine, il revient.
+	const toCarry = $derived(
+		carryover.filter(
+			(o) =>
+				o.userId === userId &&
+				!carried.includes(o.id) &&
+				!mine.some((m) => (o.kind === 'TICKET' ? m.ticketId === o.ticketId : m.kind === 'CUSTOM' && m.label === o.label))
+		)
+	);
 	// Maj enfoncée : le pied de palette annonce Maj+Tab (personne précédente) au lieu de Tab.
 	let shiftHeld = $state(false);
 	// Nommée dans le pied de palette : « Tab Passer à Chloé » se comprend, « Tab personne suivante » non.
@@ -119,7 +145,11 @@
 		// Vide -> amorce ; 1 caractère -> rien (le serveur ne répond qu'à partir de 2), mais la tâche
 		// libre reste proposée ; 2+ -> résultats du serveur.
 		const base = q.length >= MIN_QUERY ? remoteTickets : q ? [] : tickets;
-		const out: Item[] = base.map((t) => ({ kind: 'ticket', ticket: t }) as Item);
+		// Reports seulement sur champ vide, avant l'amorce : dès qu'on tape, on cherche autre chose.
+		const out: Item[] = [
+			...(q ? [] : toCarry.map((o) => ({ kind: 'carry', objective: o }) as Item)),
+			...base.map((t) => ({ kind: 'ticket', ticket: t }) as Item)
+		];
 		// Contrairement à Mon imputation, une recherche sans résultat ne renvoie pas vers /tickets :
 		// un objectif sans ticket est un cas normal, la tâche libre se crée ici même.
 		if (q) out.push({ kind: 'custom', query: q });
@@ -168,6 +198,16 @@
 		if (stage === 'target') {
 			const it = targetItems[i];
 			if (!it) return;
+			if (it.kind === 'carry') {
+				// Reporté tel quel en une touche (ticket ou tâche, note, activité) : pas d'étapes activité/note,
+				// qui ne feraient que redemander ce qui est déjà connu. Pour changer, chercher le ticket.
+				const o = it.objective;
+				onadd({ userId, kind: o.kind, ticketId: o.ticketId ?? '', label: o.label ?? '', activityId: o.activityId ?? '' });
+				carried = [...carried, o.id];
+				lastAdded = o.label || o.ticketTitle || '';
+				resetToSearch();
+				return;
+			}
 			chosen =
 				it.kind === 'ticket'
 					? { kind: 'TICKET', ticketId: it.ticket.id, label: `${it.ticket.key} — ${it.ticket.title}` }
@@ -248,7 +288,9 @@
 			if (stage === 'target' && searching) return;
 			if (stage === 'note') commit();
 			else pick(activeIndex);
-		} else if (e.key === 'Backspace' && !query && stage !== 'target') {
+		} else if (e.key === 'Backspace' && !(stage === 'note' ? note : query) && stage !== 'target') {
+			// À l'étape note le champ est lié à `note`, pas à `query` (vidé en y entrant) : tester `query`
+			// ramenait en arrière à chaque Retour, en effaçant l'activité au lieu d'un caractère.
 			e.preventDefault();
 			back();
 		} else if (e.key === 'Tab') {
@@ -395,12 +437,19 @@
 						     lisaient comme des lignes supplémentaires plutôt que comme une recherche en cours. -->
 						{@render searchSkeleton()}
 					{:else if stage === 'target'}
-						{#each targetItems as it, i (it.kind === 'ticket' ? 't:' + it.ticket.id : 'c')}
-							{#if i === 0 || (targetItems[i - 1].kind === 'ticket') !== (it.kind === 'ticket')}
-								<div class="op-section">{it.kind === 'ticket' ? (query.trim() ? 'Tickets trouvés' : recentLabel) : 'Tâche sans ticket'}</div>
+						{#each targetItems as it, i (it.kind === 'ticket' ? 't:' + it.ticket.id : it.kind === 'carry' ? 'o:' + it.objective.id : 'c')}
+							{#if i === 0 || targetItems[i - 1].kind !== it.kind}
+								<div class="op-section">
+									{it.kind === 'carry' ? `Non faits en S${prevWeekNumber}` : it.kind === 'ticket' ? (query.trim() ? 'Tickets trouvés' : recentLabel) : 'Tâche sans ticket'}
+								</div>
 							{/if}
 							<button type="button" class="op-item" class:active={activeIndex === i} class:create={it.kind === 'custom'} onclick={() => pick(i)}>
-								{#if it.kind === 'ticket'}
+								{#if it.kind === 'carry'}
+									<!-- Note à la place du titre, comme la liste des objectifs au-dessus. -->
+									{#if it.objective.ticketKey}<span class="op-key">{it.objective.ticketKey}</span>{/if}<span class="op-title">{it.objective.label || it.objective.ticketTitle}</span>
+									<!-- Reprise telle quelle au report : on la montre pour qu'elle ne surprenne pas. -->
+									{#if it.objective.activityLabel}<span class="op-tag">{it.objective.activityLabel}</span>{/if}
+								{:else if it.kind === 'ticket'}
 									<span class="op-key">{it.ticket.key}</span><span class="op-title">{it.ticket.title}</span>
 								{:else}
 									<span class="op-title">+ Créer la tâche « {it.query} »</span>
@@ -427,7 +476,7 @@
 			<div class="op-footer">
 				{#if stage === 'target'}
 					<span class="op-hint">{@render key(['up', 'down'])} Parcourir</span>
-					<span class="op-hint">{@render key(['enter'])} Choisir</span>
+					<span class="op-hint">{@render key(['enter'])} {targetItems[activeIndex]?.kind === 'carry' ? 'Reporter' : 'Choisir'}</span>
 					{#if tabTarget}<span class="op-hint op-hint-person">{@render key(shiftHeld ? ['shift', 'tabBack'] : ['tab'])} <span class="op-hint-name">Passer à {tabTarget.displayName}</span></span>{/if}
 					<span class="op-hint"><kbd class="op-kbd">Échap</kbd> Fermer</span>
 				{:else if stage === 'activity'}
@@ -689,6 +738,19 @@
 		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	/* Même pastille que .tag-activity (admin/objectifs, imputation), calée à droite : c'est le titre
+	   qui rétrécit en ellipsis, jamais l'activité. */
+	.op-tag {
+		margin-left: auto;
+		flex-shrink: 0;
+		font-size: 11px;
+		font-weight: 600;
+		color: var(--text-soft);
+		background: var(--surface-sunk);
+		padding: 2px 8px;
+		border-radius: 20px;
 		white-space: nowrap;
 	}
 	.op-empty {
