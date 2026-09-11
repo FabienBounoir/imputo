@@ -2,6 +2,7 @@ import type { PageServerLoad } from './$types';
 import { getDashboard } from '$lib/server/services/dashboard';
 import { getWeeklySynthesis } from '$lib/server/services/weeklySynthesis';
 import { listFacticeMemberIds } from '$lib/server/services/accounts';
+import { getMonthProdTnf } from '$lib/server/services/sspAnnualTracking';
 import { toISODate, addDays, monthOptions, monthRange } from '$lib/utils/date';
 
 export const load: PageServerLoad = async ({ locals, url }) => {
@@ -18,9 +19,11 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	// Membres "factice" (arrangements entre projets en clôture, pas de vraies personnes) : exclus de
 	// toute la synthèse pour un rôle non-ADMIN — cf. accounts.ts listFacticeMemberIds.
 	const excludeUserIds = isAdmin ? undefined : await listFacticeMemberIds(ws.workspaceId);
-	const [dashboard, weeklySynthesis] = await Promise.all([
+	const [dashboard, weeklySynthesis, monthProdTnf] = await Promise.all([
 		getDashboard(ws.workspaceId, period, ws.testPhase, excludeUserIds),
-		getWeeklySynthesis(ws.workspaceId, weekRange.from, weekRange.to, excludeUserIds)
+		getWeeklySynthesis(ws.workspaceId, weekRange.from, weekRange.to, excludeUserIds),
+		// TNF/Produit (mois) : chiffres du Suivi annuel, réservés aux admins comme la page elle-même.
+		isAdmin && period ? getMonthProdTnf(ws.workspaceId, period.from) : null
 	]);
-	return { dashboard, weeklySynthesis, weekRange, scope, months, isAdmin };
+	return { dashboard, weeklySynthesis, weekRange, scope, months, isAdmin, monthProdTnf };
 };

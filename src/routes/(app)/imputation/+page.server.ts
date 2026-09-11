@@ -11,7 +11,7 @@ import {
 	listPinnedRows,
 	getRecentTicketIds
 } from '$lib/server/services/imputation';
-import { getRefData, listTicketSummaries } from '$lib/server/services/tickets';
+import { getRefData, listTicketSummariesByIds } from '$lib/server/services/tickets';
 import { getMembership, isManagerOrAdmin } from '$lib/server/services/workspaces';
 import { listObjectivesForUserWeeks, vacationWeeks } from '$lib/server/services/weeklyObjectives';
 import { listAbsencesForRange, buildAbsenceGrid } from '$lib/server/services/absences';
@@ -61,10 +61,9 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 	const viewingOther = !viewingTeam && viewedId !== user.id;
 	const readOnly = viewingOther && !isAdmin;
 
-	const [sheet, tickets, membership, recentTicketIds, weeklyObjectives, vacations, periodAbsences, team, pinnedRows] =
+	const [sheet, membership, recentTicketIds, weeklyObjectives, vacations, periodAbsences, team, pinnedRows] =
 		await Promise.all([
 			getTimesheet(ws.workspaceId, viewedId, period.days),
-			listTicketSummaries(ws.workspaceId),
 			getMembership(ws.workspaceId, viewedId),
 			getRecentTicketIds(ws.workspaceId, viewedId),
 			// Espace qui n'utilise pas les objectifs : rien à charger, et surtout rien à afficher —
@@ -77,6 +76,19 @@ export const load: PageServerLoad = async ({ locals, url, cookies }) => {
 			viewingTeam ? getTeamTimesheet(ws.workspaceId, period.days) : Promise.resolve(null),
 			listPinnedRows(ws.workspaceId, viewedId, period.firstDay, period.lastDay)
 		]);
+
+	// `tickets` n'est plus tout le catalogue mais une GRAINE bornée par ce qui est réellement à
+	// l'écran : les lignes de la feuille, les objectifs attribués, les lignes épinglées et les
+	// 4 tickets récemment imputés (getRecentTicketIds). Tout le reste s'obtient à la frappe via
+	// /api/tickets/search — sans quoi la page embarquait chaque ticket non archivé de l'espace, à
+	// chaque affichage ET à chaque changement de période.
+	// Ces ids-là doivent rester résolvables quoi qu'il arrive : sans leur résumé, une ligne déjà
+	// saisie s'afficherait sans titre ni sprint.
+	const seedIds = new Set<string>(recentTicketIds);
+	for (const r of sheet.rows) if (r.targetType === 'TICKET') seedIds.add(r.targetId);
+	for (const o of weeklyObjectives) if (o.ticketId) seedIds.add(o.ticketId);
+	for (const p of pinnedRows) if (p.targetType === 'TICKET') seedIds.add(p.targetId);
+	const tickets = await listTicketSummariesByIds(ws.workspaceId, [...seedIds]);
 	// Congés/formation/hors-projet du membre affiché sur la période — remonté depuis la page Absences
 	// pour voir d'un coup d'œil, sans y aller, pourquoi une case n'a pas d'imputation attendue.
 	const absences = buildAbsenceGrid(

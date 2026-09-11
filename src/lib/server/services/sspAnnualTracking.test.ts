@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { db, ssp, ticket, timeEntry, workspace, sspAnnualProd } from '$lib/server/db';
 import { makeWorkspace } from './test-helpers';
-import { computeRaeChain, getAnnualTrackingView, setProd, setRaeOverride, advanceCursor } from './sspAnnualTracking';
+import { computeRaeChain, getAnnualTrackingView, getMonthProdTnf, setProd, setRaeOverride, advanceCursor } from './sspAnnualTracking';
 import { openClosing, integrate } from './monthlyClosing';
 
 describe('computeRaeChain (pur)', () => {
@@ -199,5 +199,35 @@ describe('sspAnnualTracking (intégration DB)', () => {
 		// L'override de juin 2024 casse toujours la chaîne, et juillet repart de lui.
 		expect(cells.find((c) => c.month === '2024-06-01')!.rae).toBe(42);
 		expect(cells.find((c) => c.month === '2024-07-01')!.rae).toBe(42);
+	});
+});
+
+describe('getMonthProdTnf (cartes TNF/Produit du mois de la Synthèse)', () => {
+	it("somme prod et TNF sur les seuls SSP dont la prod du mois est saisie, null tant qu'aucune ne l'est", async () => {
+		const w = await makeWorkspace('annual-month');
+		const [withProd, withoutProd] = await db
+			.insert(ssp)
+			.values([
+				{ workspaceId: w.workspaceId, code: 'AM-1', label: 'Avec prod' },
+				{ workspaceId: w.workspaceId, code: 'AM-2', label: 'Sans prod' }
+			])
+			.returning();
+		const [t1, t2] = await db
+			.insert(ticket)
+			.values([
+				{ workspaceId: w.workspaceId, key: `AM1-${w.workspaceId.slice(0, 8)}`, title: 'T1', sspId: withProd.id },
+				{ workspaceId: w.workspaceId, key: `AM2-${w.workspaceId.slice(0, 8)}`, title: 'T2', sspId: withoutProd.id }
+			])
+			.returning({ id: ticket.id });
+		await db.insert(timeEntry).values([
+			{ workspaceId: w.workspaceId, userId: w.userId, targetType: 'TICKET', ticketId: t1.id, day: '2024-03-04', amount: '6' },
+			{ workspaceId: w.workspaceId, userId: w.userId, targetType: 'TICKET', ticketId: t2.id, day: '2024-03-05', amount: '9' }
+		]);
+
+		expect(await getMonthProdTnf(w.workspaceId, '2024-03-01')).toBeNull();
+
+		await db.insert(sspAnnualProd).values({ workspaceId: w.workspaceId, sspId: withProd.id, month: '2024-03-01', value: '4' });
+		// AM-2 (9 j de conso, aucune prod) reste hors TNF : même règle que sa cellule, vide tant que la prod l'est.
+		expect(await getMonthProdTnf(w.workspaceId, '2024-03-01')).toEqual({ prod: 4, tnf: 2, sspCount: 1 });
 	});
 });

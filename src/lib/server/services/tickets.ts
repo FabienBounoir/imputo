@@ -473,21 +473,61 @@ export async function deleteUntouchedSyncedTickets(workspaceId: string, syncRunI
  * juste id/clé/titre/sprint/version, sans l'enrichissement consommé/RAE/contributeurs/groupes
  * (4 requêtes GROUP BY en plus, inutiles pour peupler un <select>).
  */
-export async function listTicketSummaries(
-	workspaceId: string
-): Promise<{ id: string; key: string; title: string; sprintId: string | null; versionId: string | null; sprintName: string | null }[]> {
-	return db
-		.select({
-			id: ticket.id,
-			key: ticket.key,
-			title: ticket.title,
-			sprintId: ticket.sprintId,
-			versionId: ticket.versionId,
-			sprintName: sprint.name
-		})
-		.from(ticket)
-		.leftJoin(sprint, eq(ticket.sprintId, sprint.id))
-		.where(and(eq(ticket.workspaceId, workspaceId), isNull(ticket.archivedAt)));
+export type TicketSummary = {
+	id: string;
+	key: string;
+	title: string;
+	sprintId: string | null;
+	versionId: string | null;
+	sprintName: string | null;
+};
+
+/** Colonnes communes à toutes les variantes de résumé ci-dessous — une seule définition à maintenir. */
+const summarySelect = {
+	id: ticket.id,
+	key: ticket.key,
+	title: ticket.title,
+	sprintId: ticket.sprintId,
+	versionId: ticket.versionId,
+	sprintName: sprint.name
+};
+const summaryFrom = () => db.select(summarySelect).from(ticket).leftJoin(sprint, eq(ticket.sprintId, sprint.id));
+
+export async function listTicketSummaries(workspaceId: string): Promise<TicketSummary[]> {
+	return summaryFrom().where(and(eq(ticket.workspaceId, workspaceId), isNull(ticket.archivedAt)));
+}
+
+/**
+ * Résumés d'une liste d'ids précis. Sert à réhydrater les tickets déjà à l'écran (lignes de la
+ * feuille, objectifs attribués, lignes épinglées) quand on ne charge plus tout le catalogue : ces
+ * tickets-là DOIVENT être résolvables côté client, quel que soit leur âge, sinon leur ligne
+ * s'afficherait sans titre ni sprint. Volontairement sans filtre `archivedAt` : un ticket archivé
+ * après coup garde des imputations, et sa ligne doit rester lisible.
+ */
+export async function listTicketSummariesByIds(workspaceId: string, ids: string[]): Promise<TicketSummary[]> {
+	if (ids.length === 0) return [];
+	return summaryFrom().where(and(eq(ticket.workspaceId, workspaceId), inArray(ticket.id, ids)));
+}
+
+/**
+ * Recherche serveur pour les sélecteurs (clé ou titre), optionnellement bornée à une version.
+ * Contrairement à listTicketsPage, aucune agrégation (consommé, RAE, contributeurs, groupes) : un
+ * sélecteur n'affiche que clé + titre, et ces jointures coûtent cher pour rien.
+ */
+export async function searchTicketSummaries(
+	workspaceId: string,
+	opts: { query?: string; versionId?: string; limit?: number } = {}
+): Promise<TicketSummary[]> {
+	const q = opts.query?.trim();
+	const conds = [eq(ticket.workspaceId, workspaceId), isNull(ticket.archivedAt)];
+	if (q) conds.push(or(ilike(ticket.key, `%${q}%`), ilike(ticket.title, `%${q}%`))!);
+	if (opts.versionId) conds.push(eq(ticket.versionId, opts.versionId));
+	return summaryFrom()
+		.where(and(...conds))
+		// `id` en tie-breaker : createdAt n'est pas unique sur une insertion en masse, sans lui
+		// l'ordre (et donc le LIMIT) devient non déterministe entre deux appels identiques.
+		.orderBy(desc(ticket.createdAt), desc(ticket.id))
+		.limit(opts.limit ?? 30);
 }
 
 /**
@@ -498,16 +538,8 @@ export async function listTicketSummaries(
  * Tri par date de création décroissante, `id` en tie-breaker (createdAt n'est pas unique sur une
  * insertion en masse, cf. le même correctif dans listTicketsPage).
  */
-export async function listRecentTicketSummaries(
-	workspaceId: string,
-	limit = 20
-): Promise<{ id: string; key: string; title: string }[]> {
-	return db
-		.select({ id: ticket.id, key: ticket.key, title: ticket.title })
-		.from(ticket)
-		.where(and(eq(ticket.workspaceId, workspaceId), isNull(ticket.archivedAt)))
-		.orderBy(desc(ticket.createdAt), desc(ticket.id))
-		.limit(limit);
+export async function listRecentTicketSummaries(workspaceId: string, limit = 20): Promise<TicketSummary[]> {
+	return searchTicketSummaries(workspaceId, { limit });
 }
 
 export type TicketFilters = {
@@ -531,6 +563,21 @@ export type TicketFilters = {
 	keys?: string[];
 };
 
+/**
+ * Tri de la liste des tickets. Les deux valeurs historiques (`created`, `priority`) gardent
+ * exactement leur sens d'origine — plus ancien d'abord, plus prioritaire d'abord — pour que les
+ * favoris et les instantanés déjà enregistrés continuent d'afficher la même chose ; les deux
+ * variantes `_desc` sont purement additives.
+ */
+export type TicketSort = 'created' | 'created_desc' | 'priority' | 'priority_desc';
+
+export const TICKET_SORTS: TicketSort[] = ['created', 'created_desc', 'priority', 'priority_desc'];
+
+/** Normalise une valeur venue d'une URL, d'un formulaire ou d'un instantané. */
+export function parseTicketSort(raw: unknown): TicketSort {
+	return TICKET_SORTS.includes(raw as TicketSort) ? (raw as TicketSort) : 'created';
+}
+
 export type TicketFiltersSnapshot = {
 	view: 'table' | 'kanban';
 	query: string | null;
@@ -538,6 +585,10 @@ export type TicketFiltersSnapshot = {
 	projectId: string | null;
 	sprintId: string | null;
 	versionId: string | null;
+	/** Tri de la barre de filtres ("Trier par"). Mémorisé comme le reste : c'est un choix d'affichage
+	 *  persistant au même titre qu'un filtre, et l'oublier revenait à le réinitialiser à chaque
+	 *  arrivée à blanc sur la page. */
+	sort: TicketSort;
 };
 
 /**
@@ -558,7 +609,10 @@ export function parseTicketFiltersSnapshot(raw: string | null): TicketFiltersSna
 			stateId: str(p.stateId),
 			projectId: str(p.projectId),
 			sprintId: str(p.sprintId),
-			versionId: str(p.versionId)
+			versionId: str(p.versionId),
+			// Instantané enregistré avant l'ajout du tri : `sort` absent, on retombe sur le défaut
+			// de la page plutôt que d'invalider tout l'instantané.
+			sort: parseTicketSort(p.sort)
 		};
 	} catch {
 		return null;
@@ -598,13 +652,20 @@ export async function listTicketsPage(
 	/** Le kanban et la recherche de la palette de commandes n'affichent jamais le détail par
 	 *  activité (cf. commentaire sur enrichTickets) — passer `false` pour l'appelant l'économiser. */
 	includeBreakdown = true,
-	/** 'created' (défaut) = ordre historique par date de création. 'priority' = plus urgent d'abord
-	 *  (P0 en tête, l'entier croît avec l'échelle — voir schema.ts), mêmes tie-breakers ensuite (le
-	 *  groupement parent/enfant n'est donc plus garanti). */
-	sort: 'created' | 'priority' = 'created'
+	/** 'created' (défaut) = du plus ancien au plus récent. 'priority' = plus urgent d'abord (P0 en
+	 *  tête, l'entier croît avec l'échelle — voir schema.ts). Les variantes `_desc` inversent le
+	 *  sens. Mêmes tie-breakers ensuite (le groupement parent/enfant n'est donc pas garanti sur un
+	 *  tri par priorité). */
+	sort: TicketSort = 'created'
 ): Promise<{ rows: (TicketRow & { isChild: boolean })[]; total: number }> {
 	const where = ticketFilterConditions(workspaceId, filters);
 	const parentTicket = alias(ticket, 'parent_ticket');
+	// Le sens ne s'applique qu'au critère CHOISI. Sur `priority_desc`, seule la priorité s'inverse :
+	// à priorité égale, on garde l'ordre chronologique naturel (plus ancien d'abord). L'inverser
+	// aussi reviendrait à changer deux choses pour un seul réglage, et rendait d'ailleurs
+	// `priority_desc` indistinguable de `created_desc` sur un lot à priorité uniforme.
+	// Le tie-breaker `id` suit les dates, pour rester cohérent avec elles.
+	const dateOrder = <T>(col: T) => (sort === 'created_desc' ? desc(col as never) : col);
 	// Kanban (paging omis) : board complet, pas de LIMIT — ponytail: sentinelle plutôt qu'un
 	// query builder conditionnel ($dynamic indisponible sur cette version de drizzle).
 	const { pageSize, page } = paging ?? { pageSize: 1_000_000, page: 1 };
@@ -614,14 +675,18 @@ export async function listTicketsPage(
 			.leftJoin(parentTicket, eq(ticket.parentId, parentTicket.id))
 			.where(where)
 			.orderBy(
-				...(sort === 'priority' ? [ticket.priority] : []),
-				sql`coalesce(${parentTicket.createdAt}, ${ticket.createdAt})`,
+				...(sort === 'priority' ? [ticket.priority] : sort === 'priority_desc' ? [desc(ticket.priority)] : []),
+				// Date d'ancrage de la famille (le parent s'il existe) : c'est elle qui porte le sens
+				// du tri, pour qu'une sous-tâche voyage avec son parent au lieu d'être classée seule.
+				dateOrder(sql`coalesce(${parentTicket.createdAt}, ${ticket.createdAt})`),
+				// Jamais inversé, même en ordre décroissant : à l'intérieur d'une famille, le parent
+				// doit rester au-dessus de ses enfants — c'est une hiérarchie, pas une date.
 				sql`(${ticket.parentId} is not null)`,
-				ticket.createdAt,
+				dateOrder(ticket.createdAt),
 				// Tie-breaker : createdAt seul n'est pas unique (insertion en masse, cf. seed), donc
 				// LIMIT/OFFSET devient non déterministe entre deux appels sans lui — un ticket peut
 				// réapparaître sur la page suivante (visible en scroll infini : les deux pages coexistent).
-				ticket.id
+				dateOrder(ticket.id)
 			)
 			.limit(pageSize)
 			.offset((page - 1) * pageSize),

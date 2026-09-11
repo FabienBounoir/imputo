@@ -17,6 +17,7 @@
 	import { SCHOOL_ZONES, SCHOOL_ZONE_LABELS, SCHOOL_ZONE_COLORS, isSchoolHoliday } from '$lib/schoolZones';
 	import { downloadSvgAsPng } from '$lib/utils/svgToPng';
 	import { beep } from '$lib/sound';
+	import { pickFoodType, teleportedBody, type FoodType, type Point } from '$lib/utils/snakeGame';
 
 	let { data, form } = $props();
 	$effect(() => {
@@ -42,13 +43,12 @@
 
 	// Easter egg : ↑↓←→ dans cet ordre transforme la grille des absences en plateau de Snake
 	// (une case = un jour × un membre), couleurs reprises de ABSENCE_TYPE_COLORS.
-	type Point = { x: number; y: number };
 	const SNAKE_SEQUENCE = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
 	const SNAKE_COLOR = ABSENCE_TYPE_COLORS.HORS_PROJET;
 	// Pouvoirs de la nourriture, un par couleur d'absence (bleu réservé au serpent lui-même) :
 	// congé validé = allonge (classique), formation = accélère (on "monte en compétence"),
 	// congé prévisionnel = téléporte ailleurs sur le plateau (rien n'est encore confirmé, ça bouge).
-	const FOOD_TYPES = ['CONGE_VALIDE', 'FORMATION', 'CONGE_PREVISIONNEL'] as const;
+
 	const SNAKE_MIN_SPEED_MS = 90;
 	const SNAKE_START_SPEED_MS = 180;
 	let snakeSeqProgress = 0;
@@ -56,7 +56,7 @@
 	let snakeOver = $state(false);
 	let snakeScore = $state(0);
 	let snake = $state<Point[]>([]);
-	let snakeFood = $state<Point & { type: (typeof FOOD_TYPES)[number] }>({ x: 0, y: 0, type: 'CONGE_VALIDE' });
+	let snakeFood = $state<Point & { type: FoodType }>({ x: 0, y: 0, type: 'CONGE_VALIDE' });
 	const snakeSet = $derived(new Set(snake.map((p) => `${p.x},${p.y}`)));
 	let snakeDir: Point = { x: 1, y: 0 };
 	// File d'attente de directions (2 max) : un tick lent (250ms au départ) ne doit pas avaler un
@@ -71,17 +71,14 @@
 		do {
 			p = { x: Math.floor(Math.random() * cols), y: Math.floor(Math.random() * rows) };
 		} while (snake.some((s) => s.x === p.x && s.y === p.y));
-		return { ...p, type: FOOD_TYPES[Math.floor(Math.random() * FOOD_TYPES.length)] };
+		return { ...p, type: pickFoodType() };
 	}
 
-	// Téléporte tout le serpent (même forme, translatée) sur une nouvelle case au hasard — les
-	// segments qui débordent du plateau réapparaissent de l'autre côté (comme Pac-Man).
+	// Téléporte tout le serpent (même forme, translatée) ailleurs sur le plateau. `null` = aucun
+	// atterrissage jouable trouvé : on ne bouge pas, plutôt que de le replacer dans une mort certaine.
 	function snakeTeleport(cols: number, rows: number) {
-		const newHead = { x: Math.floor(Math.random() * cols), y: Math.floor(Math.random() * rows) };
-		snake = snake.map((_, i) => ({
-			x: (((newHead.x - i * snakeDir.x) % cols) + cols) % cols,
-			y: (((newHead.y - i * snakeDir.y) % rows) + rows) % rows
-		}));
+		const body = teleportedBody(snake, snakeDir, cols, rows, snakeFood);
+		if (body) snake = body;
 	}
 
 	function startSnakeGame() {
@@ -471,6 +468,9 @@
 									{@const isFoodCell = showSnakeGame && snakeFood.x === dayIdx && snakeFood.y === rowIdx}
 									<!-- svelte-ignore a11y_click_events_have_key_events -->
 									<!-- svelte-ignore a11y_no_static_element_interactions -->
+									<!-- Pendant la partie, les vraies absences ne sont plus peintes : elles utilisent les
+									     mêmes couleurs que la nourriture, si bien que le plateau était semé de fausses
+									     cibles impossibles à manger. Seuls le serpent et sa nourriture portent une couleur. -->
 									<td
 										class:weekend={isWeekend(d)}
 										class:today={d === data.todayISO}
@@ -480,7 +480,9 @@
 											? `background:${SNAKE_COLOR};`
 											: isFoodCell
 												? `background:${ABSENCE_TYPE_COLORS[snakeFood.type]};`
-												: cellStyle(cell)}
+												: showSnakeGame
+													? ''
+													: cellStyle(cell)}
 										title={showSnakeGame
 											? ''
 											: cell

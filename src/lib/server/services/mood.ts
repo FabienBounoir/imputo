@@ -1,4 +1,4 @@
-import { and, count, eq, isNotNull } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, isNotNull, lt, sql } from 'drizzle-orm';
 import { db, workspace, moodVote, membership, user, type MoodPeriodKind } from '$lib/server/db';
 import { previousMoodPeriodStart } from '$lib/utils/date';
 
@@ -136,16 +136,85 @@ export type MoodPeriodResult = {
 	messages: string[];
 };
 
+/** Même chose sans les messages : c'est eux qui pèsent, le reste tient en quelques nombres. */
+export type MoodPeriodStats = Omit<MoodPeriodResult, 'messages'>;
+
+/** Nombre de plages ramenées par page de liste, et par appel de scroll infini. */
+export const MOOD_PAGE_SIZE = 20;
+
 /**
- * Résultats agrégés par plage — réservé admin. Ne sélectionne JAMAIS userId : le vote reste
- * anonyme y compris côté admin, seuls les scores et messages agrégés par plage sont exposés.
+ * Agrégat par plage sur TOUT l'historique, sans les messages — une seule requête GROUP BY, au lieu
+ * de rapatrier chaque vote pour le réduire en JS.
+ * Sert aux statistiques qui doivent porter sur tout : courbe de tendance, camembert global,
+ * meilleure/moins bonne plage, export CSV. Elles seraient fausses si on les calculait sur la seule
+ * page affichée — d'où leur séparation d'avec listMoodResultsPage ci-dessous.
+ * Comme partout ici, userId n'est jamais sélectionné : le vote reste anonyme, même pour un admin.
  */
-export async function listMoodResults(workspaceId: string): Promise<MoodPeriodResult[]> {
+export async function listMoodPeriodStats(workspaceId: string): Promise<MoodPeriodStats[]> {
+	const rows = await db
+		.select({
+			periodStart: moodVote.periodStart,
+			periodEnd: moodVote.periodEnd,
+			voteCount: count(),
+			sumScore: sql<number>`sum(${moodVote.score})::int`,
+			s1: sql<number>`count(*) filter (where ${moodVote.score} = 1)::int`,
+			s2: sql<number>`count(*) filter (where ${moodVote.score} = 2)::int`,
+			s3: sql<number>`count(*) filter (where ${moodVote.score} = 3)::int`,
+			s4: sql<number>`count(*) filter (where ${moodVote.score} = 4)::int`,
+			s5: sql<number>`count(*) filter (where ${moodVote.score} = 5)::int`
+		})
+		.from(moodVote)
+		.where(eq(moodVote.workspaceId, workspaceId))
+		.groupBy(moodVote.periodStart, moodVote.periodEnd)
+		.orderBy(desc(moodVote.periodStart));
+
+	return rows.map((r) => ({
+		periodStart: r.periodStart,
+		periodEnd: r.periodEnd,
+		voteCount: r.voteCount,
+		avgScore: r.voteCount > 0 ? Math.round((r.sumScore / r.voteCount) * 100) / 100 : 0,
+		distribution: { 1: r.s1, 2: r.s2, 3: r.s3, 4: r.s4, 5: r.s5 }
+	}));
+}
+
+/**
+ * Une page de plages AVEC leurs messages, de la plus récente à la plus ancienne. `before` = curseur
+ * (periodStart strictement antérieur), fourni par la page précédente — plutôt qu'un OFFSET, qui
+ * décalerait la pagination si un vote arrivait entre deux appels.
+ */
+export async function listMoodResultsPage(
+	workspaceId: string,
+	opts: { limit?: number; before?: string } = {}
+): Promise<{ periods: MoodPeriodResult[]; hasMore: boolean }> {
+	const limit = opts.limit ?? MOOD_PAGE_SIZE;
+	// +1 pour savoir s'il reste quelque chose après, sans faire un COUNT séparé.
+	const starts = await db
+		.selectDistinct({ periodStart: moodVote.periodStart })
+		.from(moodVote)
+		.where(
+			opts.before
+				? and(eq(moodVote.workspaceId, workspaceId), lt(moodVote.periodStart, opts.before))
+				: eq(moodVote.workspaceId, workspaceId)
+		)
+		.orderBy(desc(moodVote.periodStart))
+		.limit(limit + 1);
+
+	const hasMore = starts.length > limit;
+	const pageStarts = starts.slice(0, limit).map((r) => r.periodStart);
+	if (pageStarts.length === 0) return { periods: [], hasMore: false };
+
 	const rows = await db
 		.select({ periodStart: moodVote.periodStart, periodEnd: moodVote.periodEnd, score: moodVote.score, message: moodVote.message })
 		.from(moodVote)
-		.where(eq(moodVote.workspaceId, workspaceId));
+		.where(and(eq(moodVote.workspaceId, workspaceId), inArray(moodVote.periodStart, pageStarts)));
 
+	return { periods: aggregatePeriods(rows), hasMore };
+}
+
+/** Réduction en mémoire d'un lot de votes déjà borné (une page de plages), cf. listMoodResultsPage. */
+function aggregatePeriods(
+	rows: { periodStart: string; periodEnd: string; score: number; message: string | null }[]
+): MoodPeriodResult[] {
 	const byPeriod = new Map<string, MoodPeriodResult>();
 	for (const r of rows) {
 		let period = byPeriod.get(r.periodStart);

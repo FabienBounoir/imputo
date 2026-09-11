@@ -229,7 +229,7 @@ describe('admin/objectifs load', () => {
 		const result = await load({ locals: await fakeLocals(adminId), url: pageUrl() } as never);
 		expect(result.tickets).toHaveLength(20);
 		// Le plus récemment créé en tête, le tout premier hors liste.
-		expect(result.tickets[0]).toEqual({ id: expect.any(String), key: 'PAL-21', title: 'Ticket 21' });
+		expect(result.tickets[0]).toMatchObject({ id: expect.any(String), key: 'PAL-21', title: 'Ticket 21' });
 		expect(result.tickets.some((t: { key: string }) => t.key === 'PAL-1')).toBe(false);
 	});
 

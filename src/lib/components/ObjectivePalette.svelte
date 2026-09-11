@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { tick } from 'svelte';
+	import { visualViewportFit } from '$lib/visualViewport';
 	import UserAvatar from '$lib/components/UserAvatar.svelte';
 
 	// Palette d'attribution des objectifs de la semaine — jumelle de QuickAddPalette (Mon imputation),
@@ -230,6 +231,10 @@
 			scrollActiveIntoView();
 		} else if (e.key === 'Enter') {
 			e.preventDefault();
+			// Recherche en vol : la liste affichée est un squelette, et `targetItems` contient encore
+			// les résultats de la frappe précédente (ou l'entrée « créer la tâche »). Valider ici
+			// choisirait quelque chose que l'utilisateur ne voit pas.
+			if (stage === 'target' && searching) return;
 			if (stage === 'note') commit();
 			else pick(activeIndex);
 		} else if (e.key === 'Backspace' && !query && stage !== 'target') {
@@ -269,12 +274,24 @@
 	);
 </script>
 
+{#snippet searchSkeleton()}
+	<!-- Squelette plutôt qu'un simple "Recherche…" : la liste se remplit au même endroit et à la même
+	     forme que les résultats à venir, donc rien ne saute quand ils arrivent. Largeurs volontairement
+	     inégales pour que ça se lise comme des lignes de contenu, pas comme un tableau vide. -->
+	{#each [64, 58, 70, 54] as w, i (i)}
+		<div class="op-skel">
+			<span class="op-skel-bar" style="width:{w}px;flex-shrink:0;"></span>
+			<span class="op-skel-bar" style="width:{100 - i * 12}%;"></span>
+		</div>
+	{/each}
+{/snippet}
+
 <svelte:window onkeydown={onWindowKeydown} />
 
 {#if open && person}
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div class="op-veil" onclick={close}>
+	<div class="op-veil" onclick={close} use:visualViewportFit>
 		<div class="op-palette" onclick={(e) => e.stopPropagation()}>
 			<div class="op-head">
 				<UserAvatar userId={person.id} name={person.displayName} size={22} />
@@ -353,7 +370,12 @@
 
 			{#if stage !== 'note'}
 				<div class="op-list" bind:this={listEl}>
-					{#if stage === 'target'}
+					{#if stage === 'target' && searching}
+						<!-- Le squelette REMPLACE la liste au lieu de s'y ajouter : sinon les résultats de la
+						     frappe précédente restaient affichés au-dessus, et les barres en dessous se
+						     lisaient comme des lignes supplémentaires plutôt que comme une recherche en cours. -->
+						{@render searchSkeleton()}
+					{:else if stage === 'target'}
 						{#each targetItems as it, i (it.kind === 'ticket' ? 't:' + it.ticket.id : 'c')}
 							{#if i === 0 || (targetItems[i - 1].kind === 'ticket') !== (it.kind === 'ticket')}
 								<div class="op-section">{it.kind === 'ticket' ? (query.trim() ? 'Tickets trouvés' : 'Tickets récents') : 'Tâche sans ticket'}</div>
@@ -366,9 +388,7 @@
 								{/if}
 							</button>
 						{/each}
-						{#if searching}
-							<div class="op-empty">Recherche…</div>
-						{:else if targetItems.length === 0}
+						{#if targetItems.length === 0}
 							<div class="op-empty">{query.trim() ? 'Aucun ticket ne correspond.' : 'Aucun ticket dans cet espace.'}</div>
 						{/if}
 					{:else}
@@ -657,5 +677,97 @@
 		font-size: 11px;
 		color: var(--text-mute);
 		flex-shrink: 0;
+	}
+
+	/* ---------- Mobile : feuille du bas plutôt que fenêtre centrée ----------
+	   Trois problèmes traités ensemble :
+	   1. le clavier virtuel cachait le bas de la modale — le voile suit maintenant le viewport
+	      VISIBLE (cf. visualViewportFit), donc la feuille reste toujours entièrement au-dessus ;
+	   2. une fenêtre centrée à 14vh du haut gâchait la place et laissait la liste loin du pouce —
+	      ancrée en bas, elle démarre là où la main se trouve ;
+	   3. les cibles tactiles étaient calibrées à la souris (cf. pointer: coarse plus bas). */
+	@media (max-width: 640px) {
+		.op-veil {
+			align-items: flex-end;
+			padding: 0;
+			/* Repli 100dvh quand visualViewport manque : on retrouve le comportement d'avant. */
+			top: var(--vv-top, 0);
+			bottom: auto;
+			height: var(--vv-height, 100dvh);
+		}
+		.op-palette {
+			max-width: none;
+			max-height: 100%;
+			border-radius: var(--r-lg, 16px) var(--r-lg, 16px) 0 0;
+			/* Barre gestuelle iOS : sans ça le dernier élément est sous le trait. */
+			padding-bottom: env(safe-area-inset-bottom, 0px);
+		}
+	}
+	@media (pointer: coarse) {
+		/* Repères clavier (↑↓, Tab, Échap) inutiles au doigt. */
+		.op-footer {
+			display: none;
+		}
+		/* 16px : en dessous, iOS zoome sur le champ au focus et décale toute la mise en page. */
+		.op-input {
+			font-size: 16px;
+		}
+		.op-item {
+			min-height: 44px;
+			padding-top: 12px;
+			padding-bottom: 12px;
+		}
+		/* Boutons ronds : on agrandit la cible, pas la boîte — un padding vertical les déformerait. */
+		.op-shift,
+		.op-rm,
+		.op-chip-x {
+			width: 40px;
+			height: 40px;
+		}
+		.op-line {
+			gap: 4px;
+		}
+		/* Le rappel de l'existant cède la place avant la liste de résultats : en hauteur fixe (160px)
+		   il occupait la moitié d'une feuille de téléphone et coupait une ligne en deux. En part de
+		   la feuille, il suit sa taille — clavier ouvert compris. */
+		.op-existing {
+			max-height: 25%;
+		}
+	}
+
+	/* Squelette de recherche — reprend l'apparence de .skeleton-bar de tickets/+page.svelte (même
+	   dégradé mélangé à --text pour rester visible dans les deux thèmes, même animation). Dupliqué
+	   plutôt que partagé : le repo garde ses styles locaux aux composants, et il n'y a pas de
+	   feuille commune pour ça. */
+	.op-skel {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 10px;
+	}
+	.op-skel-bar {
+		height: 13px;
+		border-radius: 5px;
+		background: linear-gradient(
+			90deg,
+			color-mix(in srgb, var(--text) 12%, var(--surface-2)) 25%,
+			color-mix(in srgb, var(--text) 26%, var(--surface-2)) 50%,
+			color-mix(in srgb, var(--text) 12%, var(--surface-2)) 75%
+		);
+		background-size: 200% 100%;
+		animation: op-skel-shimmer 1.4s ease-in-out infinite;
+	}
+	@keyframes op-skel-shimmer {
+		0% {
+			background-position: 200% 0;
+		}
+		100% {
+			background-position: -200% 0;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.op-skel-bar {
+			animation: none;
+		}
 	}
 </style>

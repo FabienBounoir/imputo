@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { tick } from 'svelte';
+	import { visualViewportFit } from '$lib/visualViewport';
 	import { goto } from '$app/navigation';
 
 	// Palette d'ajout rapide (Mon imputation) — remplace TargetPicker + <select> activité + bouton
@@ -10,7 +11,16 @@
 	// admin — sans étape activité, l'y greffer aurait complexifié un composant qui n'en a pas besoin),
 	// puis l'activité (« Aucune activité » toujours pré-surlignée en premier, jamais une activité au
 	// hasard), et Entrée ajoute la ligne et referme — on n'ajoute jamais plusieurs lignes d'une traite.
-	type Ticket = { id: string; key: string; title: string; versionId?: string | null };
+	// sprintId/sprintName voyagent depuis la recherche serveur jusqu'au parent (via onfetched), qui
+	// en a besoin pour construire la ligne : la palette ne les affiche pas mais ne doit pas les perdre.
+	type Ticket = {
+		id: string;
+		key: string;
+		title: string;
+		versionId?: string | null;
+		sprintId?: string | null;
+		sprintName?: string | null;
+	};
 	type Category = { id: string; label: string };
 	type Version = { id: string; name: string };
 	type Objective = {
@@ -31,7 +41,10 @@
 		versions = [],
 		objectives = [],
 		activities,
-		onadd
+		onadd,
+		/** Voir TargetPicker : remonte au parent les tickets ramenés par la recherche serveur, dont il
+		 *  a besoin pour résoudre le ticket choisi (titre, sprint) au moment de créer la ligne. */
+		onfetched
 	}: {
 		tickets: Ticket[];
 		categories: Category[];
@@ -42,6 +55,7 @@
 		/** `pickTarget` suit exactly l'encodage TargetPicker (`TICKET::id[::objectiveId]`, `CATEGORY::id`,
 		 * `OBJECTIVE::id`) — le parent le passe tel quel à sa logique addRow() existante. */
 		onadd: (pickTarget: string, activityId: string | null) => void;
+		onfetched?: (tickets: Ticket[]) => void;
 	} = $props();
 
 	type FlatItem =
@@ -64,13 +78,56 @@
 	const suggested = $derived(
 		recentTicketIds.map((id) => tickets.find((t) => t.id === id)).filter((t): t is Ticket => !!t)
 	);
+	// Recherche serveur, comme TargetPicker : `tickets` n'est plus qu'une graine bornée (cf.
+	// imputation/+page.server.ts), filtrer en local ne trouverait rien au-delà.
+	const MIN_QUERY = 2;
+	let remote = $state<Ticket[]>([]);
+	let searching = $state(false);
+	let searchTimer: ReturnType<typeof setTimeout> | undefined;
+	let searchToken = 0;
+
+	$effect(() => {
+		const q = query.trim();
+		const version = versionFilter;
+		clearTimeout(searchTimer);
+		// Étape activité : `query` sert alors à filtrer les activités, pas les tickets.
+		if (stage !== 'target' || (q.length < MIN_QUERY && !version)) {
+			remote = [];
+			searching = false;
+			return;
+		}
+		searching = true;
+		const token = ++searchToken;
+		searchTimer = setTimeout(async () => {
+			try {
+				const params = new URLSearchParams();
+				if (q) params.set('q', q);
+				if (version) params.set('version', version);
+				const res = await fetch(`/api/tickets/search?${params}`);
+				const found = res.ok ? ((await res.json()).tickets as Ticket[]) : [];
+				if (token !== searchToken) return;
+				remote = found;
+				if (found.length > 0) onfetched?.(found);
+			} catch {
+				if (token === searchToken) remote = [];
+			} finally {
+				if (token === searchToken) searching = false;
+			}
+		}, 200);
+		return () => clearTimeout(searchTimer);
+	});
+
 	// Même règle que TargetPicker : un filtre version actif montre toute la version plutôt que les
 	// suggestions récentes, sinon le filtre semblerait ne rien faire tant qu'on n'a pas tapé de texte.
 	const filteredTickets = $derived.by(() => {
-		const q = query.trim().toLowerCase();
-		const base = versionFilter ? tickets.filter((t) => t.versionId === versionFilter) : tickets;
-		if (!q) return versionFilter ? base : suggested;
-		return base.filter((t) => t.key.toLowerCase().includes(q) || t.title.toLowerCase().includes(q));
+		// Recherche en cours : on n'affiche PAS les résultats de la frappe précédente — le squelette
+		// prend leur place dans le rendu. Sinon les barres s'ajoutaient sous une liste périmée et se
+		// lisaient comme des lignes supplémentaires plutôt que comme une recherche en cours.
+		if (searching) return [];
+		const q = query.trim();
+		if (q.length >= MIN_QUERY || versionFilter) return remote;
+		if (q) return [];
+		return suggested;
 	});
 	// Catégories jamais filtrées par la recherche (comme TargetPicker) : une poignée de valeurs,
 	// toujours utile de les garder visibles pendant qu'on tape un ticket.
@@ -97,7 +154,9 @@
 		// Aucun ticket trouvé sur une recherche non vide : proposer d'aller le créer plutôt que de
 		// laisser une section "Tickets" vide (les catégories restent affichées en dessous, elles).
 		const q = query.trim();
-		if (filteredTickets.length === 0 && q) {
+		// `!searching` : pendant le debounce + l'aller-retour, la liste est momentanément vide — sans
+		// cette garde, "Créer le ticket …" clignoterait avant l'arrivée des résultats.
+		if (filteredTickets.length === 0 && q && !searching) {
 			out.push({ kind: 'create-ticket', query: q });
 		} else {
 			for (const t of filteredTickets) out.push({ kind: 'ticket', ticket: t });
@@ -243,6 +302,10 @@
 			scrollActiveIntoView();
 		} else if (e.key === 'Enter') {
 			e.preventDefault();
+			// Recherche en vol : la section tickets est un squelette, seules les catégories restent à
+			// l'écran — et `activeIndex` a été remis à 0, donc valider ajouterait une catégorie à la
+			// place du ticket qu'on cherchait.
+			if (stage === 'target' && searching) return;
 			pickActive();
 		}
 	}
@@ -277,6 +340,18 @@
 	}
 </script>
 
+{#snippet searchSkeleton()}
+	<!-- Squelette plutôt qu'un simple "Recherche…" : la liste se remplit au même endroit et à la même
+	     forme que les résultats à venir, donc rien ne saute quand ils arrivent. Largeurs volontairement
+	     inégales pour que ça se lise comme des lignes de contenu, pas comme un tableau vide. -->
+	{#each [64, 58, 70, 54] as w, i (i)}
+		<div class="qa-skel">
+			<span class="qa-skel-bar" style="width:{w}px;flex-shrink:0;"></span>
+			<span class="qa-skel-bar" style="width:{100 - i * 12}%;"></span>
+		</div>
+	{/each}
+{/snippet}
+
 <svelte:window onkeydown={onWindowKeydown} />
 
 <div class="qa-root" bind:this={root}>
@@ -291,7 +366,7 @@
 	{#if open}
 		<!-- svelte-ignore a11y_click_events_have_key_events -->
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="qa-veil" onclick={closePalette}>
+		<div class="qa-veil" onclick={closePalette} use:visualViewportFit>
 			<div class="qa-palette" onclick={(e) => e.stopPropagation()}>
 				<div class="qa-input-row">
 					{#if chosenTarget}
@@ -327,6 +402,12 @@
 
 				<div class="qa-list" bind:this={listEl}>
 					{#if stage === 'target'}
+						{#if searching}
+							<!-- Les catégories restent, elles : locales, jamais filtrées par la recherche
+							     (cf. showObjectives). Seule la section tickets passe en squelette. -->
+							<div class="qa-section-label">Tickets</div>
+							{@render searchSkeleton()}
+						{/if}
 						{#each stage1Items as it, i (itemKey(it))}
 							{#if isFirstOfSection(i)}<div class="qa-section-label">{sectionLabel(it)}</div>{/if}
 							{#if it.kind === 'objective-ticket'}
@@ -351,7 +432,9 @@
 								</button>
 							{/if}
 						{/each}
-						{#if stage1Items.length === 0}<div class="qa-empty">Aucun résultat.</div>{/if}
+						{#if !searching && stage1Items.length === 0}
+							<div class="qa-empty">Aucun résultat.</div>
+						{/if}
 					{:else}
 						<div class="activity-options">
 							{#each stage2Items as it, i (it.id ?? 'none')}
@@ -649,8 +732,9 @@
 		color: var(--text-mute);
 		flex-shrink: 0;
 	}
-	@media (max-width: 480px) {
-		/* Repères clavier inutiles au doigt. */
+	/* Repères clavier inutiles au doigt. La largeur n'est qu'une approximation du tactile — on garde
+	   le seuil historique, et on ajoute la vraie condition : pas de dispositif de pointage fin. */
+	@media (max-width: 480px), (pointer: coarse) {
 		.qa-footer {
 			display: none;
 		}
@@ -660,5 +744,87 @@
 	select:focus-visible {
 		outline: 2px solid var(--accent);
 		outline-offset: 1px;
+	}
+
+	/* ---------- Mobile : feuille du bas plutôt que fenêtre centrée ----------
+	   Trois problèmes traités ensemble :
+	   1. le clavier virtuel cachait le bas de la modale — le voile suit maintenant le viewport
+	      VISIBLE (cf. visualViewportFit), donc la feuille reste toujours entièrement au-dessus ;
+	   2. une fenêtre centrée à 14vh du haut gâchait la place et laissait la liste loin du pouce —
+	      ancrée en bas, elle démarre là où la main se trouve ;
+	   3. les cibles tactiles étaient calibrées à la souris (cf. pointer: coarse plus bas). */
+	@media (max-width: 640px) {
+		.qa-veil {
+			align-items: flex-end;
+			padding: 0;
+			/* Repli 100dvh quand visualViewport manque : on retrouve le comportement d'avant. */
+			top: var(--vv-top, 0);
+			bottom: auto;
+			height: var(--vv-height, 100dvh);
+		}
+		.qa-palette {
+			max-width: none;
+			max-height: 100%;
+			border-radius: var(--r-lg, 16px) var(--r-lg, 16px) 0 0;
+			/* Barre gestuelle iOS : sans ça le dernier élément est sous le trait. */
+			padding-bottom: env(safe-area-inset-bottom, 0px);
+		}
+	}
+	@media (pointer: coarse) {
+		/* 16px : en dessous, iOS zoome sur le champ au focus et décale toute la mise en page. */
+		.qa-input {
+			font-size: 16px;
+		}
+		.qa-item,
+		.activity-option {
+			min-height: 44px;
+			padding-top: 12px;
+			padding-bottom: 12px;
+		}
+		/* Bouton rond : on agrandit la cible, pas la boîte. */
+		.qa-chip-remove {
+			width: 40px;
+			height: 40px;
+		}
+		.qa-launcher {
+			padding-top: 14px;
+			padding-bottom: 14px;
+		}
+	}
+
+	/* Squelette de recherche — reprend l'apparence de .skeleton-bar de tickets/+page.svelte (même
+	   dégradé mélangé à --text pour rester visible dans les deux thèmes, même animation). Dupliqué
+	   plutôt que partagé : le repo garde ses styles locaux aux composants, et il n'y a pas de
+	   feuille commune pour ça. */
+	.qa-skel {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 10px;
+	}
+	.qa-skel-bar {
+		height: 13px;
+		border-radius: 5px;
+		background: linear-gradient(
+			90deg,
+			color-mix(in srgb, var(--text) 12%, var(--surface-2)) 25%,
+			color-mix(in srgb, var(--text) 26%, var(--surface-2)) 50%,
+			color-mix(in srgb, var(--text) 12%, var(--surface-2)) 75%
+		);
+		background-size: 200% 100%;
+		animation: qa-skel-shimmer 1.4s ease-in-out infinite;
+	}
+	@keyframes qa-skel-shimmer {
+		0% {
+			background-position: 200% 0;
+		}
+		100% {
+			background-position: -200% 0;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.qa-skel-bar {
+			animation: none;
+		}
 	}
 </style>

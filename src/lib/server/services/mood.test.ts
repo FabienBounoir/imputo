@@ -9,7 +9,8 @@ import {
 	getMoodConfig,
 	setMoodEnabled,
 	setMoodPeriodConfig,
-	listMoodResults,
+	listMoodResultsPage,
+	listMoodPeriodStats,
 	getPeriodParticipation
 } from './mood';
 import { makeWorkspace, addMember } from './test-helpers';
@@ -89,7 +90,7 @@ describe('resetPeriodVotes', () => {
 	});
 });
 
-describe('listMoodResults / getPeriodParticipation', () => {
+describe('listMoodResultsPage / listMoodPeriodStats / getPeriodParticipation', () => {
 	it('agrège les votes par plage sans jamais exposer userId', async () => {
 		const { workspaceId, userId: u1 } = await makeWorkspace();
 		const { userId: u2 } = await addMember(workspaceId, 'USER', 'voter2');
@@ -102,13 +103,54 @@ describe('listMoodResults / getPeriodParticipation', () => {
 
 		expect(await getPeriodParticipation(workspaceId, PERIOD)).toEqual({ voted: 2, total: 2 });
 
-		const results = await listMoodResults(workspaceId);
-		const period = results.find((r) => r.periodStart === PERIOD);
+		const { periods } = await listMoodResultsPage(workspaceId);
+		const period = periods.find((r) => r.periodStart === PERIOD);
 		expect(period?.voteCount).toBe(2);
 		expect(period?.avgScore).toBe(3);
 		expect(period?.distribution).toEqual({ 1: 0, 2: 1, 3: 0, 4: 1, 5: 0 });
 		expect(period?.messages).toEqual(['top']);
 		expect(Object.keys(period ?? {})).not.toContain('userId');
+
+		// L'agrégat SQL de listMoodPeriodStats doit donner exactement les mêmes chiffres que la
+		// réduction en mémoire de la page — sinon la courbe et le camembert contrediraient la liste.
+		const stats = (await listMoodPeriodStats(workspaceId)).find((r) => r.periodStart === PERIOD);
+		expect(stats?.voteCount).toBe(2);
+		expect(stats?.avgScore).toBe(3);
+		expect(stats?.distribution).toEqual({ 1: 0, 2: 1, 3: 0, 4: 1, 5: 0 });
+		// Les messages sont volontairement absents de l'agrégat : c'est eux qui pèsent.
+		expect(Object.keys(stats ?? {})).not.toContain('messages');
+		expect(Object.keys(stats ?? {})).not.toContain('userId');
+	});
+
+	it('pagine par plage : 20 puis le reste, curseur `before`, sans recouvrement', async () => {
+		const { workspaceId, userId } = await makeWorkspace();
+		// 25 plages hebdomadaires distinctes, une voix chacune.
+		const starts: string[] = [];
+		for (let i = 0; i < 25; i++) {
+			const d = new Date(Date.UTC(2026, 0, 5 + i * 7));
+			const start = d.toISOString().slice(0, 10);
+			const end = new Date(d.getTime() + 4 * 86400000).toISOString().slice(0, 10);
+			starts.push(start);
+			await submitVote(workspaceId, userId, start, end, 3, null);
+		}
+		const attenduDesc = [...starts].sort().reverse();
+
+		const p1 = await listMoodResultsPage(workspaceId);
+		expect(p1.periods).toHaveLength(20);
+		expect(p1.hasMore).toBe(true);
+		expect(p1.periods.map((p) => p.periodStart)).toEqual(attenduDesc.slice(0, 20));
+
+		const p2 = await listMoodResultsPage(workspaceId, { before: p1.periods[19].periodStart });
+		expect(p2.periods).toHaveLength(5);
+		expect(p2.hasMore).toBe(false);
+		expect(p2.periods.map((p) => p.periodStart)).toEqual(attenduDesc.slice(20));
+
+		// Aucune plage servie deux fois : c'est ce que garantit le curseur strict (`<`).
+		const vues = new Set([...p1.periods, ...p2.periods].map((p) => p.periodStart));
+		expect(vues.size).toBe(25);
+
+		// Les statistiques, elles, couvrent tout l'historique — pas seulement la première page.
+		expect(await listMoodPeriodStats(workspaceId)).toHaveLength(25);
 	});
 
 	it('exclut les membres en attente (invitation non finalisée) du total', async () => {
