@@ -23,6 +23,8 @@ import {
 	moveState,
 	deleteState
 } from './params';
+import { createTicket } from './tickets';
+import { listEntityHistory } from './changeLog';
 
 describe('params — catégories', () => {
 	it('crée, renomme, change de nature et archive une catégorie', async () => {
@@ -173,6 +175,19 @@ describe('params — états', () => {
 		const [s] = await listStates(workspaceId);
 		await deleteState(workspaceId, s.id);
 		expect((await listStates(workspaceId)).find((x) => x.id === s.id)).toBeUndefined();
+	});
+
+	it('deleteState trace le passage « Sans état » de chaque ticket qui était dans cet état', async () => {
+		const { workspaceId, userId } = await makeWorkspace('state-del-hist');
+		await createState(workspaceId, 'État jetable', '', '#123123');
+		const s = (await listStates(workspaceId)).find((x) => x.label === 'État jetable')!;
+		const t = await createTicket(workspaceId, { key: 'SD-1', title: 'x', stateId: s.id });
+
+		await deleteState(workspaceId, s.id, userId);
+
+		const history = await listEntityHistory(workspaceId, 'TICKET', t.id);
+		expect(history).toHaveLength(1);
+		expect(history[0]).toMatchObject({ field: 'stateId', oldValue: 'État jetable (état supprimé)', newValue: null });
 	});
 
 	it('createSsp: le libellé vide retombe sur le code', async () => {

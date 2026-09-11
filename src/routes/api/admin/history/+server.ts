@@ -8,7 +8,7 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 
 	const entityTypeRaw = url.searchParams.get('entityType');
 	const entityType: ChangeLogEntity | undefined =
-		entityTypeRaw === 'TICKET' || entityTypeRaw === 'ABSENCE' || entityTypeRaw === 'WORKSPACE'
+		entityTypeRaw === 'TICKET' || entityTypeRaw === 'ABSENCE' || entityTypeRaw === 'WORKSPACE' || entityTypeRaw === 'MEMBER'
 			? entityTypeRaw
 			: undefined;
 	const query = url.searchParams.get('q') ?? undefined;

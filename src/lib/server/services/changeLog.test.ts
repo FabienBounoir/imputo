@@ -104,4 +104,22 @@ describe('changeLog', () => {
 		const firstIds = new Set(firstPage.entries.map((e) => e.id));
 		expect(secondPage.entries.every((e) => !firstIds.has(e.id))).toBe(true);
 	});
+
+	it('listWorkspaceHistoryPage : nomme la personne concernée par une ligne membre (subjectName)', async () => {
+		const ws = await makeWorkspace('cl-subject');
+		await logChange({
+			workspaceId: ws.workspaceId,
+			entityType: 'MEMBER',
+			entityId: ws.userId,
+			field: 'role',
+			action: 'UPDATE',
+			oldValue: 'USER',
+			newValue: 'ADMIN',
+			changedById: ws.userId
+		});
+
+		const page = await listWorkspaceHistoryPage(ws.workspaceId, { entityType: 'MEMBER' });
+		expect(page.entries).toHaveLength(1);
+		expect(page.entries[0]).toMatchObject({ subjectName: 'cl-subject owner', ticketKey: null });
+	});
 });

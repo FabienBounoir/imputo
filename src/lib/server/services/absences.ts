@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, gte, isNotNull, isNull, lte, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { db, absence, user, externalMember, category, timeEntry } from '$lib/server/db';
-import type { AbsenceType, AbsencePeriod } from '$lib/absenceTypes';
+import { ABSENCE_TYPE_LABELS, type AbsenceType, type AbsencePeriod } from '$lib/absenceTypes';
 import { parseISODate, toISODate, addDays, workdaysBetween, isPublicHolidayFR } from '$lib/utils/date';
 import { logChange } from './changeLog';
 
@@ -322,10 +322,18 @@ export async function deleteAbsence(
 		);
 	}
 
-	// Capturée avant suppression : la ligne source disparaît, mais la trace doit rester lisible.
+	// Capturée avant suppression : la ligne source disparaît, mais la trace doit rester lisible —
+	// titulaire compris, la page Historique n'a plus d'autre moyen de savoir de qui était l'absence.
 	const [existing] = await db
-		.select({ startDate: absence.startDate, endDate: absence.endDate, type: absence.type })
+		.select({
+			startDate: absence.startDate,
+			endDate: absence.endDate,
+			type: absence.type,
+			subjectName: sql<string | null>`coalesce(${user.displayName}, ${externalMember.displayName})`
+		})
 		.from(absence)
+		.leftJoin(user, eq(absence.userId, user.id))
+		.leftJoin(externalMember, eq(absence.externalMemberId, externalMember.id))
 		.where(and(...conditions));
 
 	await db.delete(absence).where(and(...conditions));
@@ -336,7 +344,7 @@ export async function deleteAbsence(
 			entityType: 'ABSENCE',
 			entityId: id,
 			action: 'DELETE',
-			oldValue: `${existing.startDate} → ${existing.endDate} (${existing.type})`,
+			oldValue: `${existing.subjectName ?? '?'} · ${existing.startDate} → ${existing.endDate} (${ABSENCE_TYPE_LABELS[existing.type]})`,
 			newValue: null,
 			changedById: requesterId
 		});

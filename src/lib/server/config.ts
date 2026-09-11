@@ -4,6 +4,9 @@ import { parseDuration } from './auth/tokens';
 export const config = {
 	magicLinkTtlMs: parseDuration(env.MAGIC_LINK_TTL ?? '7d', 7 * 86400000),
 	archiveRetentionMs: parseDuration(env.ARCHIVE_RETENTION ?? '30d', 30 * 86400000),
+	// Historique des modifications (/admin/history, modal ticket) — séparé des archives : un ticket vit
+	// souvent plusieurs mois, 30 jours ne suffisent pas à retrouver l'évolution de son chiffrage.
+	changeLogRetentionMs: parseDuration(env.CHANGE_LOG_RETENTION ?? '365d', 365 * 86400000),
 	publicBaseUrl: env.BASE_URL ?? 'http://localhost:5173',
 	cronSecret: env.CRON_SECRET ?? '',
 	// Web Push (VAPID). La clé publique est transmise au client via le load de /settings.

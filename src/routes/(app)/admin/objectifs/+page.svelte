@@ -319,7 +319,9 @@
 		activities={data.activities}
 		members={assignable}
 		objectives={data.objectives}
+		carryover={data.carryover}
 		weekNumber={data.weekNumber}
+		prevWeekNumber={data.prevWeekNumber}
 		onadd={(input) =>
 			post('addObjective', {
 				userId: input.userId,

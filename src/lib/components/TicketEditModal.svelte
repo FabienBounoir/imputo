@@ -1,10 +1,10 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import { enhance, deserialize } from '$app/forms';
-	import { formatDateTime } from '$lib/utils/date';
-	import { TICKET_FIELD_LABELS } from '$lib/changeLogLabels';
 	import { confirmDialog } from '$lib/confirm.svelte';
 	import { toast } from 'svelte-sonner';
 	import SspPicker from './SspPicker.svelte';
+	import TicketHistory from './TicketHistory.svelte';
 
 	// Même modal d'édition que Tickets & chiffrage (tickets/+page.svelte), rendue utilisable depuis
 	// n'importe quelle page (ex. Mon imputation) : elle se charge elle-même par id plutôt que de
@@ -75,15 +75,6 @@
 		priority: number;
 		assigneeId: string | null;
 	};
-	type HistoryEntry = {
-		field: string | null;
-		action: 'UPDATE' | 'DELETE';
-		oldValue: string | null;
-		newValue: string | null;
-		changedByName: string | null;
-		createdAt: string;
-	};
-
 	const FLAG_VALUES = ['Oui', 'Non', 'N/A', 'À MAJ', 'MAJ', 'OK'];
 	const FLAG_FIELDS = [
 		{ key: 'cypress', label: 'Cypress' },
@@ -93,13 +84,22 @@
 
 	let ticket = $state<Ticket | null>(null);
 	let loading = $state(false);
-	let historyEntries = $state<HistoryEntry[]>([]);
-	let historyLoading = $state(false);
+	// Vue « historique » à la place de la fiche (bouton en bas de modal). Derived réassignable : le
+	// bouton le passe à true, et tout changement de ticket ou fermeture de la modal revient sur la fiche.
+	let showHistory = $derived.by(() => {
+		void ticketId;
+		return false;
+	});
+	let historyBtn: HTMLButtonElement | undefined = $state();
+	async function closeHistory() {
+		showHistory = false;
+		await tick();
+		historyBtn?.focus(); // rend le focus au bouton qui a ouvert la vue, sinon il repart sur <body>
+	}
 	$effect(() => {
 		const id = ticketId;
 		if (!id) {
 			ticket = null;
-			historyEntries = [];
 			return;
 		}
 		loading = true;
@@ -107,11 +107,6 @@
 			.then((r) => (r.ok ? r.json() : null))
 			.then((t) => (ticket = t))
 			.finally(() => (loading = false));
-		historyLoading = true;
-		fetch(`/api/tickets/${id}/history`)
-			.then((r) => (r.ok ? r.json() : { entries: [] }))
-			.then((d) => (historyEntries = d.entries))
-			.finally(() => (historyLoading = false));
 	});
 
 	const estTitle = $derived(canEditEstimation ? '' : 'Estimation réservée aux profils Manager et Admin.');
@@ -276,13 +271,20 @@
 	}
 </script>
 
-<svelte:window onkeydown={(e) => ticketId && e.key === 'Escape' && onClose()} />
+<svelte:window
+	onkeydown={(e) => {
+		if (!ticketId || e.key !== 'Escape') return;
+		// Depuis la vue historique, Échap revient d'abord sur la fiche plutôt que de fermer la modal.
+		if (showHistory) closeHistory();
+		else onClose();
+	}}
+/>
 
 {#if ticketId}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<div class="tk-backdrop" onclick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-		<div class="tk-modal">
+		<div class="tk-modal" class:history={showHistory}>
 			{#if !ticket}
 				<p class="hint">{loading ? 'Chargement…' : 'Ticket introuvable.'}</p>
 			{:else}
@@ -294,6 +296,9 @@
 					{/if}
 					<button class="tk-x" onclick={onClose} aria-label="Fermer">✕</button>
 				</div>
+				{#if showHistory}
+					<TicketHistory ticketId={ticket.id} onback={closeHistory} />
+				{/if}
 				<input class="tk-title" bind:value={ticket.title} onchange={() => save('title', ticket!.title)} aria-label="Titre" />
 				<div class="tk-grid">
 					<label class="dfield"><span>État</span>
@@ -393,32 +398,15 @@
 					{/if}
 					<span>Avancement <b class="tabnum">{pct(avancement)}%</b></span>
 				</div>
-				<div class="tk-history">
-					<h4>Historique</h4>
-					{#if historyLoading}
-						<p class="hint">Chargement…</p>
-					{:else if historyEntries.length === 0}
-						<p class="hint">Aucune modification tracée pour l'instant.</p>
-					{:else}
-						<ul>
-							{#each historyEntries as h, i (i)}
-								<li>
-									<span class="hf">{TICKET_FIELD_LABELS[h.field ?? ''] ?? h.field}</span>
-									<span class="hv">{h.oldValue ?? '—'} → {h.newValue ?? '—'}</span>
-									<span class="hm hint">{h.changedByName ?? 'Quelqu’un'} · {formatDateTime(new Date(h.createdAt))}</span>
-								</li>
-							{/each}
-						</ul>
-					{/if}
-				</div>
-				{#if isOwner}
-					<div class="tk-danger">
+				<div class="tk-danger">
+					<button type="button" class="tk-history-link" bind:this={historyBtn} onclick={() => (showHistory = true)}>🕘 Historique</button>
+					{#if isOwner}
 						<form method="POST" action="/tickets?/delete" use:enhance={confirmDelete}>
 							<input type="hidden" name="ticketId" value={ticket.id} />
 							<button class="tk-delete-link" type="submit">🗑 Supprimer ce ticket</button>
 						</form>
-					</div>
-				{/if}
+					{/if}
+				</div>
 			{/if}
 		</div>
 	</div>
@@ -462,8 +450,10 @@
 		border-top: 1px solid var(--border);
 		display: flex;
 		justify-content: flex-end;
+		gap: 8px;
 	}
-	.tk-delete-link {
+	.tk-delete-link,
+	.tk-history-link {
 		font-size: 12.5px;
 		font-weight: 600;
 		color: var(--text-mute);
@@ -473,6 +463,18 @@
 	.tk-delete-link:hover {
 		color: var(--warn);
 		background: var(--warn-tint);
+	}
+	.tk-history-link:hover {
+		color: var(--text);
+		background: var(--surface-sunk);
+	}
+	/* Vue historique (TicketHistory) à la place de la fiche : la fiche reste montée — saisie en cours
+	   préservée au retour — mais masquée. */
+	.tk-modal.history > .tk-title,
+	.tk-modal.history > .tk-grid,
+	.tk-modal.history > .tk-foot,
+	.tk-modal.history > .tk-danger {
+		display: none;
 	}
 	.tk-key {
 		font-size: 12px;
@@ -622,45 +624,6 @@
 	.gap-neg {
 		color: var(--success) !important;
 		font-weight: 700;
-	}
-	.tk-history {
-		margin-top: 14px;
-		padding-top: 14px;
-		border-top: 1px solid var(--border);
-	}
-	.tk-history h4 {
-		margin: 0 0 8px;
-		font-size: 13px;
-		font-weight: 600;
-		color: var(--text-soft);
-	}
-	.tk-history ul {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
-		max-height: 160px;
-		overflow-y: auto;
-	}
-	.tk-history li {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: baseline;
-		gap: 8px;
-		font-size: 12.5px;
-	}
-	.tk-history .hf {
-		font-weight: 600;
-		color: var(--text-soft);
-	}
-	.tk-history .hv {
-		color: var(--text);
-	}
-	.tk-history .hm {
-		margin-left: auto;
-		white-space: nowrap;
 	}
 	@media (max-width: 560px) {
 		.tk-grid {

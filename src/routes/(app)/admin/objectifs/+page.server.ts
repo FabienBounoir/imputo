@@ -29,7 +29,8 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	const mondayISO = toISODate(monday);
 
 	const canManage = isManagerOrAdmin(locals.role);
-	const [ref, tickets, objectives, vacations] = await Promise.all([
+	const prevMonday = addDays(monday, -7);
+	const [ref, tickets, objectives, vacations, carryover] = await Promise.all([
 		getRefData(ws.workspaceId),
 		// Liste d'AMORCE seulement : les 20 tickets les plus récents, pas tout le catalogue. Dès qu'on
 		// tape, la palette interroge /api/command/tickets côté serveur (cf. ObjectivePalette) — sans
@@ -37,7 +38,12 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		// palette d'attribution s'en sert, et un membre n'y a pas accès.
 		canManage ? listRecentTicketSummaries(ws.workspaceId) : Promise.resolve([]),
 		listObjectivesForWorkspace(ws.workspaceId, mondayISO),
-		listVacationsForWeek(ws.workspaceId, mondayISO)
+		listVacationsForWeek(ws.workspaceId, mondayISO),
+		// Non cochés la semaine d'avant (celle affichée moins 7 j) : proposés en tête de palette pour
+		// être reportés d'une touche. Même garde que `tickets`, seule la palette s'en sert.
+		canManage
+			? listObjectivesForWorkspace(ws.workspaceId, toISODate(prevMonday)).then((rows) => rows.filter((o) => !o.doneAt))
+			: Promise.resolve([])
 	]);
 
 	// Membres "factice" (arrangements entre projets en clôture, pas de vraies personnes) : exclus
@@ -54,13 +60,15 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		tickets,
 		activities: ref.activities,
 		objectives,
+		carryover,
 		vacations: [...vacations],
 		canManage,
 		selfId: locals.user!.id,
 		weekNumber: isoWeek(monday),
 		weekLabel: formatRange(monday),
 		weekMondayISO: mondayISO,
-		prevWeek: toISODate(addDays(monday, -7)),
+		prevWeek: toISODate(prevMonday),
+		prevWeekNumber: isoWeek(prevMonday),
 		nextWeek: toISODate(addDays(monday, 7)),
 		// Cible du bouton "Préparer S+1" : affiché tant qu'on est avant cette semaine-là (donc sur la
 		// courante et sur toutes les passées), masqué une fois qu'on y est ou au-delà.

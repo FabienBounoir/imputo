@@ -15,10 +15,12 @@ import {
 	listTicketSummariesByIds,
 	listRecentTicketSummaries,
 	parseTicketSort,
+	deleteTicket,
 	NO_ACTIVITY_ID
 } from './tickets';
 import { makeWorkspace, addMember } from './test-helpers';
-import { createActivity, listActivities } from './params';
+import { createActivity, listActivities, listStates } from './params';
+import { listEntityHistory } from './changeLog';
 import { setCell } from './imputation';
 import { todayInParis } from '$lib/utils/date';
 
@@ -226,6 +228,31 @@ describe('updateTicketField — permissions par rôle', () => {
 		await expect(updateTicketField(workspaceId, t.id, 'key', 'T-9-BIS', 'MANAGER', managerId)).rejects.toThrow(
 			'Champ non éditable.'
 		);
+	});
+});
+
+describe('historique du descriptif ticket (changeLog)', () => {
+	it('un changement d’état trace les libellés (pas les uuid), rien si la valeur ne change pas', async () => {
+		const { workspaceId, userId } = await makeWorkspace();
+		const [s1, s2] = await listStates(workspaceId);
+		const t = await createTicket(workspaceId, { key: 'T-HIST-STATE', title: 'x', stateId: s1.id });
+
+		await updateTicketField(workspaceId, t.id, 'stateId', s2.id, 'USER', userId);
+		await updateTicketField(workspaceId, t.id, 'stateId', s2.id, 'USER', userId);
+
+		const history = await listEntityHistory(workspaceId, 'TICKET', t.id);
+		expect(history).toHaveLength(1);
+		expect(history[0]).toMatchObject({ field: 'stateId', oldValue: s1.label, newValue: s2.label });
+	});
+
+	it('deleteTicket trace la clé et le titre du ticket supprimé', async () => {
+		const { workspaceId, userId } = await makeWorkspace();
+		const t = await createTicket(workspaceId, { key: 'T-HIST-DEL', title: 'Doublon' });
+
+		await deleteTicket(workspaceId, t.id, userId);
+
+		const [h] = await listEntityHistory(workspaceId, 'TICKET', t.id);
+		expect(h).toMatchObject({ action: 'DELETE', oldValue: 'T-HIST-DEL — Doublon', changedByName: 'ws owner' });
 	});
 });
 

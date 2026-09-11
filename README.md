@@ -120,7 +120,8 @@ Jobs planifiés, tous protégés par `CRON_SECRET` (header `Authorization: Beare
 ## Variables d'environnement
 
 Voir [`.env.example`](./.env.example). Principales : `DATABASE_URL`, `SESSION_SECRET`,
-`MAGIC_LINK_TTL` (7d), `ARCHIVE_RETENTION` (30d), `BASE_URL`, `CRON_SECRET`, `BUILD_ADAPTER`,
+`MAGIC_LINK_TTL` (7d), `ARCHIVE_RETENTION` (30d), `CHANGE_LOG_RETENTION` (365d, historique des
+modifications), `BASE_URL`, `CRON_SECRET`, `BUILD_ADAPTER`,
 `WRAPPED_FORCE_OPEN` (démo/QA uniquement — ouvre le wrapped toute l'année, jamais en préprod/prod).
 
 ## État (Lot 1 livré)

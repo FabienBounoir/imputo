@@ -463,6 +463,13 @@
       "when": 1788944793308,
       "tag": "0065_objectives_done_and_toggle",
       "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1789129199334,
+      "tag": "0066_change_log_member_entity",
+      "breakpoints": true
     }
   ]
 }

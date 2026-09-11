@@ -3,11 +3,11 @@
 	import { enhance, deserialize } from '$app/forms';
 	import { goto } from '$app/navigation';
 	import { page, navigating } from '$app/state';
-	import { formatDateTime } from '$lib/utils/date';
-	import { TICKET_FIELD_LABELS } from '$lib/changeLogLabels';
 	import { confirmDialog } from '$lib/confirm.svelte';
 	import { toast } from 'svelte-sonner';
 	import SspPicker from '$lib/components/SspPicker.svelte';
+	import TicketHistory from '$lib/components/TicketHistory.svelte';
+	import KeyIcon from '$lib/components/KeyIcon.svelte';
 	import UserAvatar from '$lib/components/UserAvatar.svelte';
 	import Tooltip from '$lib/components/Tooltip.svelte';
 	import { jiraTicketUrl } from '$lib/jiraLink';
@@ -382,6 +382,18 @@
 	// Modal d'édition (ouverte au clic sur une carte Kanban).
 	let editId = $state<string | null>(null);
 	const editRow = $derived(rows.find((r) => r.id === editId) ?? null);
+	// Vue « historique » à la place de la fiche (bouton en bas de modal). Derived réassignable : le
+	// bouton le passe à true, et tout changement de ticket ou fermeture de la modal revient sur la fiche.
+	let showHistory = $derived.by(() => {
+		void editId;
+		return false;
+	});
+	let historyBtn: HTMLButtonElement | undefined = $state();
+	async function closeHistory() {
+		showHistory = false;
+		await tick();
+		historyBtn?.focus(); // rend le focus au bouton qui a ouvert la vue, sinon il repart sur <body>
+	}
 
 	// Suppression réservée au créateur de l'espace (super admin) ou ADMIN (cf. data.isOwner). `rows` n'a pas le
 	// nombre d'imputations liées (pas ajouté à listTicketsPage pour ne pas alourdir le chargement de
@@ -520,29 +532,6 @@
 		}
 	}
 
-	// Historique (champs budget/estimation) — chargé à la demande à l'ouverture de la modal, pas
-	// avec la liste des tickets (rarement consulté, autant ne pas alourdir le chargement initial).
-	type HistoryEntry = {
-		field: string | null;
-		action: 'UPDATE' | 'DELETE';
-		oldValue: string | null;
-		newValue: string | null;
-		changedByName: string | null;
-		createdAt: string;
-	};
-	let historyEntries = $state<HistoryEntry[]>([]);
-	let historyLoading = $state(false);
-	$effect(() => {
-		if (!editId) {
-			historyEntries = [];
-			return;
-		}
-		historyLoading = true;
-		fetch(`/api/tickets/${editId}/history`)
-			.then((r) => (r.ok ? r.json() : { entries: [] }))
-			.then((d) => (historyEntries = d.entries))
-			.finally(() => (historyLoading = false));
-	});
 	const kanbanCols = $derived([
 		...data.ref.states.map((s) => ({
 			id: s.id as string | null,
@@ -702,6 +691,11 @@
 	}
 	function onGlobalKeydown(e: KeyboardEvent) {
 		if (e.key === 'Escape') {
+			// Depuis la vue historique, Échap revient d'abord sur la fiche plutôt que de fermer la modal.
+			if (showHistory) {
+				closeHistory();
+				return;
+			}
 			editId = null;
 			showCreate = false;
 			closeContextMenu();
@@ -730,7 +724,7 @@
 		<button class="btn btn-primary" data-tour="tickets-new" title="Nouveau ticket (Shift+N)" onclick={() => (showCreate = !showCreate)}>
 			<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg>
 			Nouveau ticket
-			<kbd class="shortcut-kbd"><span class="shortcut-shift">⇧</span>N</kbd>
+			<kbd class="shortcut-kbd"><KeyIcon name="shift" />N</kbd>
 		</button>
 		{#if showCreate}
 			<!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -1305,7 +1299,7 @@
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<div class="tk-backdrop" onclick={(e) => { if (e.target === e.currentTarget) editId = null; }}>
-		<div class="tk-modal">
+		<div class="tk-modal" class:history={showHistory}>
 			<div class="tk-modal-head">
 				{#if data.isOwner}
 					<input class="tk-key-input tabnum" bind:value={editRow.key} onchange={() => save(editRow!, 'key', editRow!.key)} aria-label="Clé du ticket" />
@@ -1325,6 +1319,9 @@
 					<button class="tk-x" onclick={() => (editId = null)} aria-label="Fermer">✕</button>
 				</div>
 			</div>
+			{#if showHistory}
+				<TicketHistory ticketId={editRow.id} onback={closeHistory} />
+			{/if}
 			<input class="tk-title" bind:value={editRow.title} onchange={() => save(editRow!, 'title', editRow!.title)} aria-label="Titre" />
 			<div class="tk-grid">
 				<label class="dfield"><span>État</span>
@@ -1433,32 +1430,15 @@
 				{/if}
 				<span>Avancement <b class="tabnum">{pct(avancement(editRow))}%</b></span>
 			</div>
-			<div class="tk-history">
-				<h4>Historique</h4>
-				{#if historyLoading}
-					<p class="hint">Chargement…</p>
-				{:else if historyEntries.length === 0}
-					<p class="hint">Aucune modification tracée pour l'instant.</p>
-				{:else}
-					<ul>
-						{#each historyEntries as h, i (i)}
-							<li>
-								<span class="hf">{TICKET_FIELD_LABELS[h.field ?? ''] ?? h.field}</span>
-								<span class="hv">{h.oldValue ?? '—'} → {h.newValue ?? '—'}</span>
-								<span class="hm hint">{h.changedByName ?? 'Quelqu’un'} · {formatDateTime(new Date(h.createdAt))}</span>
-							</li>
-						{/each}
-					</ul>
-				{/if}
-			</div>
-			{#if data.isOwner}
-				<div class="tk-danger">
+			<div class="tk-danger">
+				<button type="button" class="tk-history-link" bind:this={historyBtn} onclick={() => (showHistory = true)}>🕘 Historique</button>
+				{#if data.isOwner}
 					<form method="POST" action="?/delete" use:enhance={(opts) => confirmDeleteTicket(editRow!, opts)}>
 						<input type="hidden" name="ticketId" value={editRow.id} />
 						<button class="tk-delete-link" type="submit">🗑 Supprimer ce ticket</button>
 					</form>
-				</div>
-			{/if}
+				{/if}
+			</div>
 		</div>
 	</div>
 {/if}
@@ -1478,15 +1458,7 @@
 		border-radius: 4px;
 		padding: 2px 5px;
 		margin-left: 2px;
-	}
-	/* Le glyphe ⇧ n'existe pas dans les polices monospace (cf. .shortcut-kbd) : le navigateur
-	   retombe sur une police système/emoji, plus fine et mal alignée à côté du "N". On le sort du
-	   monospace et on le regrossit pour qu'il porte le même poids visuel que la lettre. */
-	.shortcut-shift {
-		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-		font-size: 1.3em;
-		line-height: 1;
-		margin-right: 1px;
+		gap: 2px; /* entre l'icône Maj (KeyIcon) et la lettre */
 	}
 	.qc-catch {
 		position: fixed;
@@ -2514,8 +2486,10 @@
 		border-top: 1px solid var(--border);
 		display: flex;
 		justify-content: flex-end;
+		gap: 8px;
 	}
-	.tk-delete-link {
+	.tk-delete-link,
+	.tk-history-link {
 		font-size: 12.5px;
 		font-weight: 600;
 		color: var(--text-mute);
@@ -2525,6 +2499,18 @@
 	.tk-delete-link:hover {
 		color: var(--warn);
 		background: var(--warn-tint);
+	}
+	.tk-history-link:hover {
+		color: var(--text);
+		background: var(--surface-sunk);
+	}
+	/* Vue historique (TicketHistory) à la place de la fiche : la fiche reste montée — saisie en cours
+	   préservée au retour — mais masquée. */
+	.tk-modal.history > .tk-title,
+	.tk-modal.history > .tk-grid,
+	.tk-modal.history > .tk-foot,
+	.tk-modal.history > .tk-danger {
+		display: none;
 	}
 	.tk-key {
 		font-size: 12px;
@@ -2597,45 +2583,6 @@
 	.tk-foot b {
 		color: var(--text-soft);
 		margin-left: 4px;
-	}
-	.tk-history {
-		margin-top: 14px;
-		padding-top: 14px;
-		border-top: 1px solid var(--border);
-	}
-	.tk-history h4 {
-		margin: 0 0 8px;
-		font-size: 13px;
-		font-weight: 600;
-		color: var(--text-soft);
-	}
-	.tk-history ul {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
-		max-height: 160px;
-		overflow-y: auto;
-	}
-	.tk-history li {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: baseline;
-		gap: 8px;
-		font-size: 12.5px;
-	}
-	.tk-history .hf {
-		font-weight: 600;
-		color: var(--text-soft);
-	}
-	.tk-history .hv {
-		color: var(--text);
-	}
-	.tk-history .hm {
-		margin-left: auto;
-		white-space: nowrap;
 	}
 	@media (max-width: 560px) {
 		.tk-grid {

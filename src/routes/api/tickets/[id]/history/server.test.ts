@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { GET } from './+server';
-import { makeWorkspace } from '$lib/server/services/test-helpers';
+import { makeWorkspace, addMember } from '$lib/server/services/test-helpers';
 import { fakeLocals } from '$lib/server/test-helpers/http';
 import { createTicket } from '$lib/server/services/tickets';
 import { logChange } from '$lib/server/services/changeLog';
@@ -60,5 +60,22 @@ describe('GET /api/tickets/[id]/history', () => {
 		const res = await GET({ locals: localsB, params: { id: t.id } } as never);
 		const body = await res.json();
 		expect(body.entries).toHaveLength(0);
+	});
+
+	it('masque Estimation prév. / Enveloppe totale à un USER, pas à un MANAGER', async () => {
+		const { userId, workspaceId } = await makeWorkspace('hist-budget');
+		const { userId: memberId } = await addMember(workspaceId, 'USER', 'hist-budget-user');
+		const { userId: managerId } = await addMember(workspaceId, 'MANAGER', 'hist-budget-mgr');
+		const t = await createTicket(workspaceId, { key: 'HIST-3', title: 'Ticket' });
+		for (const field of ['enveloppeTotale', 'raeReal']) {
+			await logChange({ workspaceId, entityType: 'TICKET', entityId: t.id, field, action: 'UPDATE', oldValue: '1', newValue: '2', changedById: userId });
+		}
+
+		const fieldsSeenBy = async (id: string) => {
+			const res = await GET({ locals: await fakeLocals(id), params: { id: t.id } } as never);
+			return (await res.json()).entries.map((e: { field: string }) => e.field).sort();
+		};
+		expect(await fieldsSeenBy(memberId)).toEqual(['raeReal']);
+		expect(await fieldsSeenBy(managerId)).toEqual(['enveloppeTotale', 'raeReal']);
 	});
 });

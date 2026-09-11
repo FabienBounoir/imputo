@@ -9,6 +9,7 @@
 	import AccentPicker from '$lib/components/AccentPicker.svelte';
 	import MemberAccessModal from '$lib/components/MemberAccessModal.svelte';
 	import UserAvatar from '$lib/components/UserAvatar.svelte';
+	import KeyIcon from '$lib/components/KeyIcon.svelte';
 	import { confirmDialog } from '$lib/confirm.svelte';
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import type { Snippet } from 'svelte';
@@ -1064,7 +1065,7 @@
 			<h3>Temps sur les tickets de support</h3>
 			<p class="hint">
 				Trace le temps que chacun passe sur un ticket de support (identifiant libre, pas un ticket Imputo) — donnée
-				que l'entreprise ne suit nulle part ailleurs aujourd'hui. Raccourci <kbd>Shift</kbd>+<kbd>T</kbd> depuis
+				que l'entreprise ne suit nulle part ailleurs aujourd'hui. Raccourci <kbd><KeyIcon name="shift" /></kbd>+<kbd>T</kbd> depuis
 				n'importe quelle page une fois activé ; historique et export sur la page Support.
 			</p>
 			<form method="POST" action="?/supportTimeTrackingEnabled" use:enhance>

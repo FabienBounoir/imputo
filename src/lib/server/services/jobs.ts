@@ -16,9 +16,10 @@ export async function runCleanup() {
 	const purgedProjects = await db.delete(project).where(and(isNotNull(project.archivedAt), lt(project.archivedAt, purgeBefore))).returning({ id: project.id });
 	const purgedSprints = await db.delete(sprint).where(and(isNotNull(sprint.archivedAt), lt(sprint.archivedAt, purgeBefore))).returning({ id: sprint.id });
 	const purgedActivities = await db.delete(activity).where(and(isNotNull(activity.archivedAt), lt(activity.archivedAt, purgeBefore))).returning({ id: activity.id });
-	// Historique des modifications (estimations tickets, absences) — même rétention que les archives,
-	// affiché sur /admin/history dans la même fenêtre (cf. HISTORY_WINDOW_MS, changeLog.ts).
-	const purgedChangeLog = await db.delete(changeLog).where(lt(changeLog.createdAt, purgeBefore)).returning({ id: changeLog.id });
+	// Historique des modifications — rétention propre (CHANGE_LOG_RETENTION), affiché sur /admin/history
+	// dans la même fenêtre (cf. HISTORY_WINDOW_MS, changeLog.ts).
+	const changeLogPurgeBefore = new Date(now.getTime() - config.changeLogRetentionMs);
+	const purgedChangeLog = await db.delete(changeLog).where(lt(changeLog.createdAt, changeLogPurgeBefore)).returning({ id: changeLog.id });
 
 	return {
 		expiredSessions: expiredSessions.length,
