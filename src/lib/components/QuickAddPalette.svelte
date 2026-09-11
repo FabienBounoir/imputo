@@ -2,6 +2,7 @@
 	import { tick } from 'svelte';
 	import { visualViewportFit } from '$lib/visualViewport';
 	import { goto } from '$app/navigation';
+	import KeyIcon from '$lib/components/KeyIcon.svelte';
 
 	// Palette d'ajout rapide (Mon imputation) — remplace TargetPicker + <select> activité + bouton
 	// "Ajouter" par un seul flux : Shift+A (ou clic) ouvre une fenêtre centrée — pas Ctrl/Cmd+K, déjà
@@ -360,7 +361,7 @@
 			><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg
 		>
 		<span class="qa-launcher-text">Ajouter un ticket ou une catégorie…</span>
-		<kbd class="qa-kbd"><span class="qa-kbd-shift">⇧</span>A</kbd>
+		<kbd class="qa-kbd"><KeyIcon name="shift" />A</kbd>
 	</button>
 
 	{#if open}
@@ -448,8 +449,10 @@
 				</div>
 
 				<div class="qa-footer">
-					<span>↑↓ naviguer · Entrée choisir/valider</span>
-					<span>Échap fermer</span>
+					<span class="qa-hint"
+						><kbd class="qa-key"><KeyIcon name="up" /><KeyIcon name="down" /></kbd> naviguer · <kbd class="qa-key"><KeyIcon name="enter" /></kbd> choisir/valider</span
+					>
+					<span class="qa-hint"><kbd class="qa-key">Échap</kbd> fermer</span>
 				</div>
 			</div>
 		</div>
@@ -489,6 +492,9 @@
 		white-space: nowrap;
 	}
 	.qa-kbd {
+		display: inline-flex;
+		align-items: center;
+		gap: 2px; /* entre l'icône Maj (KeyIcon) et la lettre */
 		font-family: ui-monospace, monospace;
 		font-size: 11px;
 		font-weight: 600;
@@ -498,13 +504,28 @@
 		background: var(--surface);
 		color: var(--text-mute);
 	}
-	/* ⇧ n'existe pas dans les polices monospace : le navigateur retombe sur une police système/emoji,
-	   plus fine et mal alignée à côté du "N" (même correctif que .shortcut-shift sur /tickets). */
-	.qa-kbd-shift {
-		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-		font-size: 1.3em;
-		line-height: 1;
-		margin-right: 1px;
+	/* Pastilles du pied de palette : même rendu que .op-kbd (ObjectivePalette). Classe distincte de
+	   .qa-kbd, masqué sous 640px pour le lanceur alors que le pied peut rester visible. */
+	.qa-hint {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+	}
+	.qa-key {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 1px;
+		min-width: 20px;
+		height: 18px;
+		padding: 0 5px;
+		border-radius: 5px;
+		border: 1px solid var(--border-strong);
+		background: var(--surface);
+		color: var(--text-soft);
+		font: inherit;
+		font-size: 10.5px;
+		font-weight: 600;
 	}
 	@media (max-width: 640px) {
 		/* Pas de clavier physique sur mobile : le raccourci n'a rien à indiquer. */

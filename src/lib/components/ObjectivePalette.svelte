@@ -2,6 +2,7 @@
 	import { tick } from 'svelte';
 	import { visualViewportFit } from '$lib/visualViewport';
 	import UserAvatar from '$lib/components/UserAvatar.svelte';
+	import KeyIcon, { type KeyName } from '$lib/components/KeyIcon.svelte';
 
 	// Palette d'attribution des objectifs de la semaine — jumelle de QuickAddPalette (Mon imputation),
 	// même habillage et même grammaire clavier, composant distinct. Ce que les deux ne partagent pas :
@@ -71,6 +72,16 @@
 
 	const person = $derived(members.find((m) => m.id === userId) ?? null);
 	const mine = $derived(objectives.filter((o) => o.userId === userId));
+	// Maj enfoncée : le pied de palette annonce Maj+Tab (personne précédente) au lieu de Tab.
+	let shiftHeld = $state(false);
+	// Nommée dans le pied de palette : « Tab Passer à Chloé » se comprend, « Tab personne suivante » non.
+	const tabTarget = $derived.by(() => {
+		if (members.length < 2) return null;
+		const i = members.findIndex((m) => m.id === userId);
+		return members[(i + (shiftHeld ? -1 : 1) + members.length) % members.length];
+	});
+	// La borne de la liste d'amorce est dite dans son en-tête : sinon on croit voir tout le backlog.
+	const recentLabel = $derived(tickets.length > 1 ? `${tickets.length} derniers tickets` : 'Dernier ticket');
 
 	let remoteTickets = $state<Ticket[]>([]);
 	let searching = $state(false);
@@ -253,6 +264,7 @@
 		return !!t && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName));
 	}
 	function onWindowKeydown(e: KeyboardEvent) {
+		shiftHeld = e.shiftKey;
 		if (open && e.key === 'Escape') {
 			e.preventDefault();
 			back();
@@ -274,6 +286,12 @@
 	);
 </script>
 
+{#snippet key(names: KeyName[])}
+	<kbd class="op-kbd">
+		{#each names as n (n)}<KeyIcon name={n} />{/each}
+	</kbd>
+{/snippet}
+
 {#snippet searchSkeleton()}
 	<!-- Squelette plutôt qu'un simple "Recherche…" : la liste se remplit au même endroit et à la même
 	     forme que les résultats à venir, donc rien ne saute quand ils arrivent. Largeurs volontairement
@@ -286,7 +304,8 @@
 	{/each}
 {/snippet}
 
-<svelte:window onkeydown={onWindowKeydown} />
+<!-- keyup/blur : Maj relâchée, ou fenêtre quittée Maj enfoncée (keyup jamais reçu) → retour à « Tab ». -->
+<svelte:window onkeydown={onWindowKeydown} onkeyup={(e) => (shiftHeld = e.shiftKey)} onblur={() => (shiftHeld = false)} />
 
 {#if open && person}
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -378,7 +397,7 @@
 					{:else if stage === 'target'}
 						{#each targetItems as it, i (it.kind === 'ticket' ? 't:' + it.ticket.id : 'c')}
 							{#if i === 0 || (targetItems[i - 1].kind === 'ticket') !== (it.kind === 'ticket')}
-								<div class="op-section">{it.kind === 'ticket' ? (query.trim() ? 'Tickets trouvés' : 'Tickets récents') : 'Tâche sans ticket'}</div>
+								<div class="op-section">{it.kind === 'ticket' ? (query.trim() ? 'Tickets trouvés' : recentLabel) : 'Tâche sans ticket'}</div>
 							{/if}
 							<button type="button" class="op-item" class:active={activeIndex === i} class:create={it.kind === 'custom'} onclick={() => pick(i)}>
 								{#if it.kind === 'ticket'}
@@ -402,22 +421,32 @@
 				</div>
 			{/if}
 
+			<!-- Libellés propres à chaque étape : on dit ce que fait la touche ICI (qui est la personne
+			     suivante, où ramène Échap), pas une grammaire clavier générique. Tab reste actif aux étapes
+			     suivantes mais n'y est pas proposé : il abandonnerait le ticket déjà choisi. -->
 			<div class="op-footer">
-				<span>
-					{#if stage === 'note'}Entrée pour ajouter · vide = pas de note
-					{:else}↑↓ naviguer · Entrée choisir{/if}
-				</span>
-				<span>
-					{#if stage === 'target' && !query.trim()}20 plus récents · tape pour chercher · {/if}{members.length > 1 ? 'Tab personne suivante · ' : ''}Échap {stage === 'target' ? 'fermer' : 'revenir'}
-				</span>
+				{#if stage === 'target'}
+					<span class="op-hint">{@render key(['up', 'down'])} Parcourir</span>
+					<span class="op-hint">{@render key(['enter'])} Choisir</span>
+					{#if tabTarget}<span class="op-hint op-hint-person">{@render key(shiftHeld ? ['shift', 'tabBack'] : ['tab'])} <span class="op-hint-name">Passer à {tabTarget.displayName}</span></span>{/if}
+					<span class="op-hint"><kbd class="op-kbd">Échap</kbd> Fermer</span>
+				{:else if stage === 'activity'}
+					<span class="op-hint">{@render key(['up', 'down'])} Parcourir</span>
+					<span class="op-hint">{@render key(['enter'])} {chosen?.kind === 'CUSTOM' ? "Ajouter l'objectif" : 'Valider'}</span>
+					<span class="op-hint"><kbd class="op-kbd">Échap</kbd> {chosen?.kind === 'CUSTOM' ? 'Changer de tâche' : 'Changer de ticket'}</span>
+				{:else}
+					<span class="op-hint">{@render key(['enter'])} Ajouter l'objectif</span>
+					<span class="op-hint"><kbd class="op-kbd">Échap</kbd> Changer d'activité</span>
+				{/if}
 			</div>
 		</div>
 	</div>
 {/if}
 
 <style>
-	/* Reprend au trait près l'habillage de QuickAddPalette : même voile, même largeur, même
-	   position verticale — les deux palettes doivent se ressembler d'un écran à l'autre. */
+	/* Reprend l'habillage de QuickAddPalette : même voile, même position verticale — les deux palettes
+	   doivent se ressembler d'un écran à l'autre. Plus large (560px vs 460px) : le pied de raccourcis,
+	   qui nomme la personne suivante, doit tenir sur une ligne. */
 	.op-veil {
 		position: fixed;
 		inset: 0;
@@ -431,7 +460,7 @@
 	}
 	.op-palette {
 		width: 100%;
-		max-width: 460px;
+		max-width: 560px;
 		max-height: calc(100vh - min(14vh, 100px) - 3vh);
 		display: flex;
 		flex-direction: column;
@@ -669,16 +698,53 @@
 	}
 	.op-footer {
 		display: flex;
-		justify-content: space-between;
-		gap: 10px;
+		align-items: center;
+		gap: 14px;
 		padding: 9px 14px;
 		border-top: 1px solid var(--border);
 		background: var(--surface-2);
-		font-size: 11px;
+		font-size: 11.5px;
 		color: var(--text-mute);
 		flex-shrink: 0;
 	}
-
+	/* Toujours sur une ligne : seul le nom de la personne (indice Tab) rétrécit, en ellipsis, s'il est long. */
+	.op-hint {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+		white-space: nowrap;
+		flex-shrink: 0;
+	}
+	.op-hint-person {
+		flex-shrink: 1;
+		min-width: 0;
+	}
+	.op-hint-name {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.op-hint:last-child {
+		margin-left: auto;
+	}
+	/* Même pastille que .qa-kbd (QuickAddPalette), avec des icônes SVG à la place des glyphes. */
+	.op-kbd {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		flex-shrink: 0;
+		gap: 1px;
+		min-width: 20px;
+		height: 18px;
+		padding: 0 5px;
+		border-radius: 5px;
+		border: 1px solid var(--border-strong);
+		background: var(--surface);
+		color: var(--text-soft);
+		font: inherit;
+		font-size: 10.5px;
+		font-weight: 600;
+	}
 	/* ---------- Mobile : feuille du bas plutôt que fenêtre centrée ----------
 	   Trois problèmes traités ensemble :
 	   1. le clavier virtuel cachait le bas de la modale — le voile suit maintenant le viewport

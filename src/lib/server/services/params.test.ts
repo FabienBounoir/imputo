@@ -187,7 +187,7 @@ describe('params — états', () => {
 
 		const history = await listEntityHistory(workspaceId, 'TICKET', t.id);
 		expect(history).toHaveLength(1);
-		expect(history[0]).toMatchObject({ field: 'stateId', oldValue: 'État jetable', newValue: null });
+		expect(history[0]).toMatchObject({ field: 'stateId', oldValue: 'État jetable (état supprimé)', newValue: null });
 	});
 
 	it('createSsp: le libellé vide retombe sur le code', async () => {

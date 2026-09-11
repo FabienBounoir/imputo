@@ -7,6 +7,7 @@
 	import { toast } from 'svelte-sonner';
 	import SspPicker from '$lib/components/SspPicker.svelte';
 	import TicketHistory from '$lib/components/TicketHistory.svelte';
+	import KeyIcon from '$lib/components/KeyIcon.svelte';
 	import UserAvatar from '$lib/components/UserAvatar.svelte';
 	import Tooltip from '$lib/components/Tooltip.svelte';
 	import { jiraTicketUrl } from '$lib/jiraLink';
@@ -723,7 +724,7 @@
 		<button class="btn btn-primary" data-tour="tickets-new" title="Nouveau ticket (Shift+N)" onclick={() => (showCreate = !showCreate)}>
 			<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg>
 			Nouveau ticket
-			<kbd class="shortcut-kbd"><span class="shortcut-shift">⇧</span>N</kbd>
+			<kbd class="shortcut-kbd"><KeyIcon name="shift" />N</kbd>
 		</button>
 		{#if showCreate}
 			<!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -1457,15 +1458,7 @@
 		border-radius: 4px;
 		padding: 2px 5px;
 		margin-left: 2px;
-	}
-	/* Le glyphe ⇧ n'existe pas dans les polices monospace (cf. .shortcut-kbd) : le navigateur
-	   retombe sur une police système/emoji, plus fine et mal alignée à côté du "N". On le sort du
-	   monospace et on le regrossit pour qu'il porte le même poids visuel que la lettre. */
-	.shortcut-shift {
-		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-		font-size: 1.3em;
-		line-height: 1;
-		margin-right: 1px;
+		gap: 2px; /* entre l'icône Maj (KeyIcon) et la lettre */
 	}
 	.qc-catch {
 		position: fixed;

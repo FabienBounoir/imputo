@@ -1129,7 +1129,7 @@ async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, pe
 	// État « Inbox Jira » supprimé des référentiels quelques heures après le lot Jira récent, dont les
 	// tickets y étaient passés : ils sont repassés « Sans état », une ligne par ticket comme deleteState.
 	const stateDeletedAt = new Date(Date.now() - 6 * 60 * 60 * 1000);
-	for (const t of insertedRecentTickets.slice(0, 2)) logTicket(t.id, 'stateId', 'Inbox Jira', null, stateDeletedAt, alice);
+	for (const t of insertedRecentTickets.slice(0, 2)) logTicket(t.id, 'stateId', 'Inbox Jira (état supprimé)', null, stateDeletedAt, alice);
 
 	// Membres — valeurs finales = état seedé : Manon manager, aucune capacité accordée, tous actifs.
 	const logMember = (slot: string, field: string, oldValue: string, newValue: string, createdAt: Date) =>

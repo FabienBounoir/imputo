@@ -436,7 +436,8 @@ export async function deleteState(workspaceId: string, id: string, actorId: stri
 			entityId: t.id,
 			field: 'stateId',
 			action: 'UPDATE' as const,
-			oldValue: deleted.label,
+			// Distingue la suppression de l'état d'un ticket repassé « Sans état » à la main.
+			oldValue: `${deleted.label} (état supprimé)`,
 			newValue: null,
 			changedById: actorId
 		}))

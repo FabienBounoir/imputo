@@ -4,6 +4,7 @@
 	import { confirmDialog } from '$lib/confirm.svelte';
 	import { formatDayRange } from '$lib/utils/date';
 	import UserAvatar from '$lib/components/UserAvatar.svelte';
+	import KeyIcon from '$lib/components/KeyIcon.svelte';
 	import { buildDeck, evaluatePick, clearOpen, isWon } from '$lib/utils/memoryGame';
 	import { formatDuration } from '$lib/supportDuration';
 
@@ -215,7 +216,7 @@
 				>
 					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg>
 					Ajouter
-					<kbd class="shortcut-kbd"><span class="shortcut-shift">⇧</span>T</kbd>
+					<kbd class="shortcut-kbd"><KeyIcon name="shift" />T</kbd>
 				</button>
 			</div>
 			{#if data.ownTimeEntries.length === 0}
@@ -755,15 +756,7 @@
 		border-radius: 4px;
 		padding: 2px 5px;
 		margin-left: 2px;
-	}
-	/* Le glyphe ⇧ n'existe pas dans les polices monospace (cf. .shortcut-kbd) : le navigateur
-	   retombe sur une police système/emoji, plus fine et mal alignée à côté du "T". On le sort du
-	   monospace et on le regrossit pour qu'il porte le même poids visuel que la lettre. */
-	.shortcut-shift {
-		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-		font-size: 1.3em;
-		line-height: 1;
-		margin-right: 1px;
+		gap: 2px; /* entre l'icône Maj (KeyIcon) et la lettre */
 	}
 	.time-table-wrap {
 		overflow-x: auto;

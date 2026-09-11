@@ -61,8 +61,17 @@ export function fieldLabel(entityType: string, field: string | null): string {
 	return FIELD_LABELS[entityType]?.[field] ?? field;
 }
 
+// Référence vidée : un libellé explicite plutôt qu'un « — » ambigu (même « Sans état » que le kanban).
+const EMPTY_LABELS: Record<string, string> = {
+	'TICKET.stateId': 'Sans état',
+	'TICKET.sprintId': 'Aucun sprint',
+	'TICKET.versionId': 'Aucune version',
+	'TICKET.assigneeId': 'Non assigné',
+	'TICKET.sspId': 'Aucun code SSP'
+};
+
 export function formatChangeValue(entityType: string, field: string | null, value: string | null): string {
-	if (value === null) return '—';
+	if (value === null) return EMPTY_LABELS[`${entityType}.${field}`] ?? '—';
 	if (entityType === 'TICKET' && field === 'priority') return `P${value}`;
 	return VALUE_LABELS[`${entityType}.${field}`]?.[value] ?? value;
 }
