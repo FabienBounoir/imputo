@@ -381,6 +381,18 @@
 	// Modal d'édition (ouverte au clic sur une carte Kanban).
 	let editId = $state<string | null>(null);
 	const editRow = $derived(rows.find((r) => r.id === editId) ?? null);
+	// Vue « historique » à la place de la fiche (bouton en bas de modal). Derived réassignable : le
+	// bouton le passe à true, et tout changement de ticket ou fermeture de la modal revient sur la fiche.
+	let showHistory = $derived.by(() => {
+		void editId;
+		return false;
+	});
+	let historyBtn: HTMLButtonElement | undefined = $state();
+	async function closeHistory() {
+		showHistory = false;
+		await tick();
+		historyBtn?.focus(); // rend le focus au bouton qui a ouvert la vue, sinon il repart sur <body>
+	}
 
 	// Suppression réservée au créateur de l'espace (super admin) ou ADMIN (cf. data.isOwner). `rows` n'a pas le
 	// nombre d'imputations liées (pas ajouté à listTicketsPage pour ne pas alourdir le chargement de
@@ -678,6 +690,11 @@
 	}
 	function onGlobalKeydown(e: KeyboardEvent) {
 		if (e.key === 'Escape') {
+			// Depuis la vue historique, Échap revient d'abord sur la fiche plutôt que de fermer la modal.
+			if (showHistory) {
+				closeHistory();
+				return;
+			}
 			editId = null;
 			showCreate = false;
 			closeContextMenu();
@@ -1281,7 +1298,7 @@
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<div class="tk-backdrop" onclick={(e) => { if (e.target === e.currentTarget) editId = null; }}>
-		<div class="tk-modal">
+		<div class="tk-modal" class:history={showHistory}>
 			<div class="tk-modal-head">
 				{#if data.isOwner}
 					<input class="tk-key-input tabnum" bind:value={editRow.key} onchange={() => save(editRow!, 'key', editRow!.key)} aria-label="Clé du ticket" />
@@ -1301,6 +1318,9 @@
 					<button class="tk-x" onclick={() => (editId = null)} aria-label="Fermer">✕</button>
 				</div>
 			</div>
+			{#if showHistory}
+				<TicketHistory ticketId={editRow.id} onback={closeHistory} />
+			{/if}
 			<input class="tk-title" bind:value={editRow.title} onchange={() => save(editRow!, 'title', editRow!.title)} aria-label="Titre" />
 			<div class="tk-grid">
 				<label class="dfield"><span>État</span>
@@ -1409,15 +1429,15 @@
 				{/if}
 				<span>Avancement <b class="tabnum">{pct(avancement(editRow))}%</b></span>
 			</div>
-			<TicketHistory ticketId={editRow.id} />
-			{#if data.isOwner}
-				<div class="tk-danger">
+			<div class="tk-danger">
+				<button type="button" class="tk-history-link" bind:this={historyBtn} onclick={() => (showHistory = true)}>🕘 Historique</button>
+				{#if data.isOwner}
 					<form method="POST" action="?/delete" use:enhance={(opts) => confirmDeleteTicket(editRow!, opts)}>
 						<input type="hidden" name="ticketId" value={editRow.id} />
 						<button class="tk-delete-link" type="submit">🗑 Supprimer ce ticket</button>
 					</form>
-				</div>
-			{/if}
+				{/if}
+			</div>
 		</div>
 	</div>
 {/if}
@@ -2473,8 +2493,10 @@
 		border-top: 1px solid var(--border);
 		display: flex;
 		justify-content: flex-end;
+		gap: 8px;
 	}
-	.tk-delete-link {
+	.tk-delete-link,
+	.tk-history-link {
 		font-size: 12.5px;
 		font-weight: 600;
 		color: var(--text-mute);
@@ -2484,6 +2506,18 @@
 	.tk-delete-link:hover {
 		color: var(--warn);
 		background: var(--warn-tint);
+	}
+	.tk-history-link:hover {
+		color: var(--text);
+		background: var(--surface-sunk);
+	}
+	/* Vue historique (TicketHistory) à la place de la fiche : la fiche reste montée — saisie en cours
+	   préservée au retour — mais masquée. */
+	.tk-modal.history > .tk-title,
+	.tk-modal.history > .tk-grid,
+	.tk-modal.history > .tk-foot,
+	.tk-modal.history > .tk-danger {
+		display: none;
 	}
 	.tk-key {
 		font-size: 12px;
