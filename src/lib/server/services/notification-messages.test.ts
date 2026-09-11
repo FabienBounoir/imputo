@@ -8,7 +8,7 @@ const CTX: { [K in NotifKind]: NotifCtx[K] } = {
 	WEEKLY_RECAP: { days: ['2026-08-17', '2026-08-19'] },
 	MOOD_DEADLINE: {},
 	MOOD_RECAP: { avg: 2.8, prevAvg: 3.7, votes: 8 },
-	ABSENCE_PENDING: { name: 'Alice', range: '3 → 7 sept. 2026' },
+	ABSENCE_PENDING: { name: 'Alice', range: '3 → 7 sept. 2026', single: false, period: 'FULL' },
 	ABSENCE_VALIDATED: { range: '3 → 7 sept. 2026' },
 	SUPPORT_DUTY: { single: false, until: '24 août' },
 	SUPPORT_DUTY_CHANGED: { single: false, until: '24 août' }
@@ -53,6 +53,17 @@ describe('notifMessage', () => {
 			const { body } = notifMessage('EVENING_MISSING', { missing: 1, nothing: true }, s, 'W');
 			expect(body).not.toMatch(/\d,?\d* j/);
 		}
+	});
+
+	it('adapte le congé à valider : journée, demi-journée ou plage de jours', () => {
+		const bodies = (ctx: Pick<NotifCtx['ABSENCE_PENDING'], 'range' | 'single' | 'period'>) =>
+			Array.from({ length: 40 }, (_, i) => notifMessage('ABSENCE_PENDING', { name: 'Alice', ...ctx }, `u${i}`, 'W').body);
+		const day = { range: '6 juil. 2026', single: true } as const;
+		expect(bodies({ ...day, period: 'FULL' }).every((b) => b.includes('une journée de congé le 6 juil. 2026.'))).toBe(true);
+		expect(bodies({ ...day, period: 'PM' }).every((b) => b.includes('une demi-journée de congé le 6 juil. 2026 (après-midi).'))).toBe(true);
+		expect(
+			bodies({ range: '6 → 10 juil. 2026', single: false, period: 'FULL' }).every((b) => b.includes('un congé du 6 → 10 juil. 2026.'))
+		).toBe(true);
 	});
 
 	it('expose une URL pour chaque type', () => {

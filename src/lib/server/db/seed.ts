@@ -422,8 +422,7 @@ async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, pe
 				raeTest: t.estimationTest != null ? String(t.estimationTest) : null,
 				sspId: chance(0.85) ? rand(insertedSsps).id : null,
 				estimationPrev: chance(0.2) ? String(round(t.estimationReal * 0.9)) : null,
-				enveloppeTotale: chance(0.2) ? String(round(t.estimationReal * 1.3)) : null,
-				raeUpdatedAt: new Date()
+				enveloppeTotale: chance(0.2) ? String(round(t.estimationReal * 1.3)) : null
 			}))
 		)
 		.returning();

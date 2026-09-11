@@ -20,6 +20,17 @@ export function clamp(n: number, min: number, max: number): number {
 	return Math.min(max, Math.max(min, n));
 }
 
+/**
+ * Palier d'ancienneté d'un RAE (ticket × activité) pour le contour de la case RAE : 0 = rien à
+ * signaler, puis 1 / 2 / 3 au-delà de 1×, 2×, 3× le délai de rappel « RAE périmé » (même borne
+ * stricte que la notif). Un RAE à 0 reste à 0 : il n'y a plus rien à réestimer, quel que soit son âge.
+ */
+export function raeAgeStep(updatedAt: Date, rae: number, staleDays: number, now = Date.now()): number {
+	if (!(rae > 0)) return 0;
+	const days = (now - updatedAt.getTime()) / 86400000;
+	return days > 3 * staleDays ? 3 : days > 2 * staleDays ? 2 : days > staleDays ? 1 : 0;
+}
+
 /** Estimation totale d'un ticket = Réalisation (+ Test si la phase Test est active). */
 export function totalEstimation(
 	estimationReal: string | null,

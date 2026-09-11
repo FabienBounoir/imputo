@@ -1,4 +1,4 @@
-import { and, eq, lt, isNull, isNotNull, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import {
 	db,
 	workspace,
@@ -6,15 +6,14 @@ import {
 	user,
 	timeEntry,
 	category,
-	ticket,
-	ticketActivityRae,
 	notificationLog,
 	moodVote,
 	type MoodPeriodKind
 } from '$lib/server/db';
 import { config } from '$lib/server/config';
-import { num, resolvedRae } from './calc';
+import { num } from './calc';
 import { getCurrentDuty } from './support';
+import { listStaleRaePairs } from './tickets';
 import {
 	todayInParis,
 	previousWorkday,
@@ -32,6 +31,7 @@ import {
 } from '$lib/utils/date';
 import { sendToUser, hasSubscription } from './push';
 import { NOTIF_SLOTS, type NotifPrefs, type SlotKey } from '$lib/push';
+import type { AbsencePeriod } from '$lib/absenceTypes';
 import { notifMessage, NOTIF_URL, type NotifKind, type NotifCtx } from './notification-messages';
 
 type Prefs = NotifPrefs;
@@ -241,65 +241,27 @@ async function dayMissing(
 }
 
 /**
- * Tickets actifs au RAE périmé, notifiés à leurs contributeurs réels (plus de colonne assigneeId
- * depuis §2.6 — tout utilisateur ayant déjà imputé au moins une fois sur le ticket, sans fenêtre
- * temporelle : cf. l'hypothèse actée dans docs/SPECS-pilotage-budget.md §2.6).
+ * Relance « RAE périmé » : un envoi par personne et par espace, qui compte ses tickets à revoir.
+ * Ce qu'est une ligne à revoir est défini une seule fois dans tickets.ts (listStaleRaePairs), partagé
+ * avec la page /rae et sa pastille : une ligne visible là-bas déclenche exactement ce rappel.
  */
 async function raeStale(refDate: string, members: Member[]): Promise<number> {
-	const cutoff = new Date(Date.now() - config.raeStaleDays * 86400000);
-	const candidates = await db
-		.select({
-			id: ticket.id,
-			workspaceId: ticket.workspaceId,
-			raeReal: ticket.raeReal,
-			raeTest: ticket.raeTest,
-			testPhase: workspace.testPhase
-		})
-		.from(ticket)
-		.innerJoin(workspace, eq(ticket.workspaceId, workspace.id))
-		.where(and(isNull(ticket.archivedAt), isNotNull(ticket.raeUpdatedAt), lt(ticket.raeUpdatedAt, cutoff)));
-	if (candidates.length === 0) return 0;
-
-	// RAE résolu (activités si présentes, sinon repli ticket.raeReal/raeTest) — la colonne ticket
-	// n'est plus mise à jour une fois que le RAE est suivi par activité, donc filtrer sur elle
-	// directement redonnerait de faux positifs (ticket terminé via ses sous-lignes) ou de faux
-	// négatifs (ticket dont le repli est resté à 0 depuis toujours).
-	const activityRaeRows = await db
-		.select({ ticketId: ticketActivityRae.ticketId, raeReal: ticketActivityRae.raeReal, raeTest: ticketActivityRae.raeTest })
-		.from(ticketActivityRae)
-		.where(inArray(ticketActivityRae.ticketId, candidates.map((c) => c.id)));
-	const activityRaeByTicket = new Map<string, typeof activityRaeRows>();
-	for (const r of activityRaeRows) {
-		if (!activityRaeByTicket.has(r.ticketId)) activityRaeByTicket.set(r.ticketId, []);
-		activityRaeByTicket.get(r.ticketId)!.push(r);
+	// Tickets distincts par (espace, personne) : une personne a souvent plusieurs lignes à revoir sur
+	// le même ticket (Dev + Spécif…), la notif compte des tickets.
+	const ticketsByMember = new Map<string, Set<string>>();
+	for (const p of await listStaleRaePairs()) {
+		const key = `${p.workspaceId}:${p.userId}`;
+		if (!ticketsByMember.has(key)) ticketsByMember.set(key, new Set());
+		ticketsByMember.get(key)!.add(p.ticketId);
 	}
-	const staleTicketIds = candidates
-		.filter((t) => {
-			const resolved = resolvedRae(t.raeReal, t.raeTest, activityRaeByTicket.get(t.id) ?? []);
-			// RAE Test ignoré si la phase Test est désactivée sur l'espace.
-			return resolved.real + (t.testPhase ? resolved.test : 0) > 0;
-		})
-		.map((t) => t.id);
-	if (staleTicketIds.length === 0) return 0;
-
-	const rows = await db
-		.select({
-			workspaceId: ticket.workspaceId,
-			userId: timeEntry.userId,
-			cnt: sql<number>`count(distinct ${ticket.id})::int`
-		})
-		.from(ticket)
-		.innerJoin(timeEntry, eq(timeEntry.ticketId, ticket.id))
-		.where(inArray(ticket.id, staleTicketIds))
-		.groupBy(ticket.workspaceId, timeEntry.userId);
 
 	const byMember = new Map(members.map((m) => [`${m.workspaceId}:${m.userId}`, m]));
 	let sent = 0;
-	for (const r of rows) {
-		const m = r.userId ? byMember.get(`${r.workspaceId}:${r.userId}`) : null;
+	for (const [key, tickets] of ticketsByMember) {
+		const m = byMember.get(key);
 		if (!m) continue;
 		sent += await maybeNotify(m, 'RAE_STALE', refDate, {
-			count: r.cnt,
+			count: tickets.size,
 			staleDays: config.raeStaleDays
 		});
 	}
@@ -460,17 +422,19 @@ export async function notifyAbsencePending(
 	requesterName: string,
 	startDate: string,
 	endDate: string,
-	absenceId: string
+	absenceId: string,
+	period: AbsencePeriod = 'FULL'
 ): Promise<number> {
 	let sent = 0;
 	const range = formatDayRange(startDate, endDate);
+	const single = startDate === endDate;
 	for (const admin of await membersOf(workspaceId, 'ADMIN')) {
 		if (admin.userId === requesterId) continue; // pas de notif à soi-même
 		sent += await maybeNotify(
 			{ workspaceId, workspaceName, userId: admin.userId, capacity: 0, prefsRaw: admin.prefsRaw },
 			'ABSENCE_PENDING',
 			todayInParis(), // refDate = colonne `date` ; le dédup par congé se fait via `slot` (texte libre) ci-dessous
-			{ name: requesterName, range },
+			{ name: requesterName, range, single, period },
 			absenceId
 		);
 	}

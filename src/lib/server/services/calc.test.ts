@@ -15,7 +15,8 @@ import {
 	weeklyCapacity,
 	capacityPct,
 	plannedDays,
-	toAllocate
+	toAllocate,
+	raeAgeStep
 } from './calc';
 
 describe('calc', () => {
@@ -119,5 +120,15 @@ describe('calc', () => {
 		expect(toAllocate(20, 15, 5)).toBe(0);
 		expect(toAllocate(20, 12, 0)).toBe(8);
 		expect(toAllocate(20, 18, 5)).toBe(-3);
+	});
+
+	it('raeAgeStep: paliers au-delà de 1×, 2×, 3× le délai, jamais pour un RAE à 0', () => {
+		const now = Date.parse('2026-09-10T09:00:00Z');
+		const ago = (days: number) => new Date(now - days * 86400000);
+		expect(raeAgeStep(ago(6), 2, 7, now)).toBe(0);
+		expect(raeAgeStep(ago(8), 2, 7, now)).toBe(1);
+		expect(raeAgeStep(ago(15), 2, 7, now)).toBe(2);
+		expect(raeAgeStep(ago(22), 2, 7, now)).toBe(3);
+		expect(raeAgeStep(ago(40), 0, 7, now)).toBe(0);
 	});
 });

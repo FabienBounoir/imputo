@@ -2,6 +2,7 @@ import { redirect } from '@sveltejs/kit';
 import type { LayoutServerLoad } from './$types';
 import { getPeriodParticipation, getMoodConfig, getMyVote } from '$lib/server/services/mood';
 import { countPendingAbsences } from '$lib/server/services/absences';
+import { listStaleRaePairs } from '$lib/server/services/tickets';
 import { getCurrentDuty } from '$lib/server/services/support';
 import { getMyWrapped, isWrappedWindowOpen, wrappedYearFor } from '$lib/server/services/wrapped';
 import { getDailyQuotes } from '$lib/server/services/quotes';
@@ -41,6 +42,12 @@ export const load: LayoutServerLoad = async ({ locals }) => {
 	// concerne donc que l'admin, seul habilité à agir dessus.
 	const pendingAbsencesCount = locals.role === 'ADMIN' ? await countPendingAbsences(locals.workspace.workspaceId) : 0;
 
+	// Pastilles « à faire » au-dessus de la carte du compte (SidebarPills) : une entrée par sujet qui
+	// attend une action, absente sinon — aucune ligne de menu permanente. Nouveau sujet = un push.
+	const pills = [];
+	const raeCount = (await listStaleRaePairs({ workspaceId: locals.workspace.workspaceId, userId: locals.user.id })).length;
+	if (raeCount > 0) pills.push({ href: '/rae', label: 'RAE à revoir', count: raeCount, tone: 'warn' as const });
+
 	// Nom affiché dans le lien "Support" du menu, pour voir qui est de perm sans ouvrir la page.
 	const supportDuty = locals.workspace.supportEnabled ? await getCurrentDuty(locals.workspace.workspaceId) : null;
 
@@ -68,6 +75,7 @@ export const load: LayoutServerLoad = async ({ locals }) => {
 		moodStatus,
 		moodTotalVotes,
 		pendingAbsencesCount,
+		pills,
 		supportDuty,
 		wrappedAvailable,
 		wrappedYear,

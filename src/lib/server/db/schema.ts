@@ -480,6 +480,8 @@ export const ticket = pgTable(
 		estimationTest: numeric('estimation_test', { precision: 7, scale: 2 }),
 		prepa: numeric('prepa', { precision: 7, scale: 2 }),
 		raeTest: numeric('rae_test', { precision: 7, scale: 2 }),
+		// ponytail: plus lue ni écrite depuis que le RAE périmé suit ticket_activity_rae.updated_at —
+		// à supprimer avec la prochaine migration.
 		raeUpdatedAt: timestamp('rae_updated_at', { withTimezone: true }),
 		// Admin only, invisible pour un USER standard.
 		estimationPrev: numeric('estimation_prev', { precision: 7, scale: 2 }),

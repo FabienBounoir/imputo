@@ -17,6 +17,7 @@
 	import Fireworks from '$lib/components/Fireworks.svelte';
 	import HalloweenCorner from '$lib/components/HalloweenCorner.svelte';
 	import UserAvatar from '$lib/components/UserAvatar.svelte';
+	import SidebarPills from '$lib/components/SidebarPills.svelte';
 	import { seasonalState, initSeasonal, activeSeasonalEffects } from '$lib/seasonal.svelte';
 	let { children, data } = $props();
 	let commandPalette: CommandPalette | undefined = $state();
@@ -39,6 +40,44 @@
 		};
 		document.addEventListener('visibilitychange', refresh);
 		return () => document.removeEventListener('visibilitychange', refresh);
+	});
+
+	// Page de l'app demandée depuis l'extérieur (clic sur une notif push, raccourci de l'icône de l'app
+	// installée) alors qu'une fenêtre existe déjà : navigation côté app dans cette fenêtre, sans
+	// rechargement ; si on y est déjà, on rafraîchit juste ses données.
+	function openInApp(url: string) {
+		if (!url.startsWith('/')) return;
+		if (url === page.url.pathname + page.url.search) invalidateAll();
+		else goto(url);
+	}
+
+	// Notif push : cf. service-worker.ts notificationclick.
+	onMount(() => {
+		if (!('serviceWorker' in navigator)) return;
+		const onMessage = (e: MessageEvent) => {
+			if (e.data?.type === 'notification-click' && typeof e.data.url === 'string') openInApp(e.data.url);
+		};
+		navigator.serviceWorker.addEventListener('message', onMessage);
+		return () => navigator.serviceWorker.removeEventListener('message', onMessage);
+	});
+
+	// Raccourcis de l'icône (manifest « shortcuts ») : avec launch_handler « focus-existing », Chrome
+	// remet la fenêtre existante au premier plan au lieu d'en ouvrir une autre et passe l'URL visée
+	// ici. URL capturée avant le montage des pages, qui peuvent la réécrire (ex. ?new=1 retiré).
+	const initialHref = browser ? location.href : '';
+	onMount(() => {
+		type LaunchQueue = { setConsumer(cb: (params: { targetURL?: string }) => void): void };
+		let first = true;
+		(window as unknown as { launchQueue?: LaunchQueue }).launchQueue?.setConsumer(({ targetURL }) => {
+			const wasFirst = first;
+			first = false;
+			if (!targetURL) return;
+			const u = new URL(targetURL);
+			// Icône principale (start_url « / ») : simple mise au premier plan, la page reste telle quelle.
+			// Lancement qui vient d'ouvrir cette fenêtre : la page visée est déjà chargée.
+			if (u.pathname === '/' || (wasFirst && targetURL === initialHref)) return;
+			openInApp(u.pathname + u.search);
+		});
 	});
 	const seasonalIds = $derived(new Set(activeSeasonalEffects().map((e) => e.id)));
 	const seasonalVisible = $derived(browser && (seasonalState.enabled || seasonalState.forced));
@@ -143,6 +182,7 @@
 	<div class="mobile-topbar">
 		<button class="icon-btn" aria-label="Ouvrir le menu" onclick={() => (sidebarOpen = true)}>
 			<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+			{#if data.pills.length}<span class="nav-dot" aria-hidden="true"></span>{/if}
 		</button>
 		<span class="brand-name">Imputo</span>
 	</div>
@@ -329,6 +369,7 @@
 		{/if}
 
 		<div class="side-foot">
+			<SidebarPills pills={data.pills} />
 			<div class="user-card">
 				<a class="user-main" href="/settings" title="Réglages" data-tour="user-menu">
 					<UserAvatar userId={data.user?.id} name={data.user?.displayName ?? '?'} />

@@ -12,7 +12,8 @@ import {
 	imputationPin,
 	user
 } from '$lib/server/db';
-import { num, round } from './calc';
+import { num, round, raeAgeStep } from './calc';
+import { config } from '$lib/server/config';
 import { toISODate, workWeek, parseISODate } from '$lib/utils/date';
 import type { AbsenceType } from '$lib/absenceTypes';
 
@@ -40,6 +41,8 @@ export type ImputationRow = {
 	raeReal: number | null;
 	/** Estimé de la paire (ticket, activité) — même granularité que raeReal, modifiable par tous. */
 	estimation: number | null;
+	/** Palier d'ancienneté du RAE de la paire (0 = rien à signaler, 1 à 3) — contour de la case RAE. */
+	raeAge: number;
 	amounts: Record<string, number>; // day ISO → amount
 	/**
 	 * Jours verrouillés : day ISO → id de l'absence source (cf. absences.ts syncAbsenceEntries).
@@ -168,6 +171,7 @@ function rowSkeleton(e: RawEntry, targetId: string, key: string): ImputationRow 
 		versionName: e.targetType === 'TICKET' ? e.versionName : null,
 		raeReal: null,
 		estimation: null,
+		raeAge: 0,
 		amounts: {},
 		lockedDays: {},
 		absenceType: e.targetType === 'CATEGORY' ? e.categoryLinkedAbsenceType : null,
@@ -293,7 +297,8 @@ async function attachActivityRae(rows: ImputationRow[]) {
 			ticketId: ticketActivityRae.ticketId,
 			activityId: ticketActivityRae.activityId,
 			raeReal: ticketActivityRae.raeReal,
-			estimation: ticketActivityRae.estimation
+			estimation: ticketActivityRae.estimation,
+			updatedAt: ticketActivityRae.updatedAt
 		})
 		.from(ticketActivityRae)
 		.where(
@@ -308,6 +313,7 @@ async function attachActivityRae(rows: ImputationRow[]) {
 		const found = byPair.get(`${r.targetId}:${r.activityId}`);
 		r.raeReal = num(found?.raeReal ?? null);
 		r.estimation = num(found?.estimation ?? null);
+		r.raeAge = found ? raeAgeStep(found.updatedAt, r.raeReal, config.raeStaleDays) : 0;
 	}
 }
 

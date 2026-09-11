@@ -21,6 +21,8 @@ export type Row = {
 	versionName: string | null;
 	raeReal: number | null;
 	estimation: number | null;
+	/** Palier d'ancienneté du RAE de la paire (0 = rien à signaler, 1 à 3) — contour de la case RAE. */
+	raeAge: number;
 	amounts: Record<string, number>;
 	/** Jours issus d'une absence validée (day ISO → id de l'absence) — non éditables ici. */
 	lockedDays: Record<string, string>;

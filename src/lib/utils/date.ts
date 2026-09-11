@@ -384,6 +384,7 @@ export function formatDayRange(fromISO: string, toISO: string): string {
 	const from = parseISODate(fromISO);
 	const to = parseISODate(toISO);
 	const toPart = `${dayNum(to)} ${MONTHS[to.getUTCMonth()]} ${to.getUTCFullYear()}`;
+	if (fromISO === toISO) return toPart; // un seul jour : « 6 juil. 2026 », pas « 6 → 6 juil. 2026 »
 	// Même mois & année : on n'écrit le mois qu'une fois (ex. "29 → 3 juil. 2026" resterait ambigu,
 	// donc on ajoute le mois de la borne gauche dès que le mois — ou l'année — diffère).
 	if (from.getUTCMonth() === to.getUTCMonth() && from.getUTCFullYear() === to.getUTCFullYear())

@@ -1,4 +1,5 @@
 import { formatDay, formatDayList } from '$lib/utils/date';
+import { ABSENCE_PERIOD_LABELS, type AbsencePeriod } from '$lib/absenceTypes';
 
 export type NotifKind =
 	| 'EVENING_MISSING'
@@ -20,7 +21,9 @@ export type NotifCtx = {
 	WEEKLY_RECAP: { days: string[] };
 	MOOD_DEADLINE: Record<string, never>;
 	MOOD_RECAP: { avg: number; prevAvg: number; votes: number };
-	ABSENCE_PENDING: { name: string; range: string };
+	// `period` n'est AM/PM que pour une demi-journée (un seul jour, ou la même demi-journée répétée
+	// jour par jour — cf. absences.ts createHalfDayRangeFor).
+	ABSENCE_PENDING: { name: string; range: string; single: boolean; period: AbsencePeriod };
 	ABSENCE_VALIDATED: { range: string };
 	SUPPORT_DUTY: { single: boolean; until: string };
 	// Même forme que SUPPORT_DUTY : seul le texte change, pour dire que ça vient d'un changement
@@ -35,6 +38,12 @@ const plural = (n: number, s = 's') => (n > 1 ? s : '');
 const de = (name: string) => (/^[aeiouyàâäéèêëîïôöûüh]/i.test(name) ? `d'${name}` : `de ${name}`);
 const note = (n: number) => `${n.toFixed(1).replace('.', ',')}/5`;
 const duree = (c: NotifCtx['SUPPORT_DUTY']) => (c.single ? "aujourd'hui" : `jusqu'au ${c.until}`);
+/** « une journée de congé le 6 juil. 2026 », « une demi-journée de congé le 6 juil. 2026 (matinée) », « un congé du 6 → 10 juil. 2026 ». */
+const conge = (c: NotifCtx['ABSENCE_PENDING']) => {
+	const demi = c.period === 'FULL' ? '' : ` (${ABSENCE_PERIOD_LABELS[c.period].toLowerCase()})`;
+	if (c.single) return `une ${demi ? 'demi-' : ''}journée de congé le ${c.range}${demi}`;
+	return `${demi ? 'des demi-journées de congé' : 'un congé'} du ${c.range}${demi}`;
+};
 
 type Variant<K extends NotifKind> = (c: NotifCtx[K]) => { title: string; body: string };
 
@@ -150,10 +159,10 @@ const VARIANTS: { [K in NotifKind]: Variant<K>[] } = {
 		})
 	],
 	ABSENCE_PENDING: [
-		(c) => ({ title: '🌴 Congé à valider', body: `${c.name} a posé un congé du ${c.range}.` }),
-		(c) => ({ title: '📥 Demande de congé', body: `${c.name} attend ta validation pour le ${c.range}.` }),
-		(c) => ({ title: '✋ Validation en attente', body: `Congé ${de(c.name)} : ${c.range}.` }),
-		(c) => ({ title: '🏖️ Nouvelle demande', body: `${c.name} demande un congé du ${c.range}.` })
+		(c) => ({ title: '🌴 Congé à valider', body: `${c.name} a posé ${conge(c)}.` }),
+		(c) => ({ title: '📥 Demande de congé', body: `${c.name} attend ta validation pour ${conge(c)}.` }),
+		(c) => ({ title: '✋ Validation en attente', body: `Demande ${de(c.name)} : ${conge(c)}.` }),
+		(c) => ({ title: '🏖️ Nouvelle demande', body: `${c.name} demande ${conge(c)}.` })
 	],
 	// Cadence DAY : la période tient sur la journée, « jusqu'au … » n'aurait pas de sens.
 	SUPPORT_DUTY: [
@@ -182,7 +191,7 @@ const VARIANTS: { [K in NotifKind]: Variant<K>[] } = {
 export const NOTIF_URL: Record<NotifKind, string> = {
 	EVENING_MISSING: '/imputation',
 	MORNING_YESTERDAY: '/imputation',
-	RAE_STALE: '/tickets',
+	RAE_STALE: '/rae',
 	WEEKLY_RECAP: '/imputation',
 	MOOD_DEADLINE: '/mood',
 	MOOD_RECAP: '/admin/mood',

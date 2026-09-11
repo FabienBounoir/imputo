@@ -32,6 +32,12 @@
 	--warn-tint: #fbe9dd;
 	--success: #22c55e;
 	--success-tint: color-mix(in srgb, #22c55e 15%, transparent);
+	/* Ancienneté du RAE (contour de la case RAE, cf. calc.ts raeAgeStep) : ambre → orange brûlé →
+	   violet, validé en simulation daltonisme (écart min. 83 en clair, 113 en sombre) — un rouge
+	   final se confondait avec l'orange (écart 20). */
+	--rae-age-1: #d97706;
+	--rae-age-2: #9a3412;
+	--rae-age-3: #9333ea;
 	/* svelte-sonner (toasts) : mêmes teintes que .flash.ok/.flash.error, pour que les toasts restent
 	   visuellement le même composant que le reste de l'appli plutôt qu'un style importé tel quel. */
 	--normal-bg: var(--surface);
@@ -72,6 +78,9 @@
 	--warn-tint: color-mix(in srgb, #fb923c 18%, #1b1d24);
 	--success: color-mix(in srgb, #22c55e 75%, #fff);
 	--success-tint: color-mix(in srgb, #22c55e 15%, transparent);
+	--rae-age-1: #fde047;
+	--rae-age-2: #f97316;
+	--rae-age-3: #a855f7;
 	--normal-bg: var(--surface);
 	--normal-text: var(--text);
 	--normal-border: var(--border);
@@ -244,6 +253,20 @@ select {
 		font-family: var(--font-display);
 		font-weight: 600;
 		font-size: 16px;
+	}
+	/* Point sur le bouton du menu : une pastille « à faire » attend dans le tiroir replié. */
+	.mobile-topbar .icon-btn {
+		position: relative;
+	}
+	.nav-dot {
+		position: absolute;
+		top: -3px;
+		right: -3px;
+		width: 10px;
+		height: 10px;
+		border-radius: 50%;
+		background: var(--warn);
+		box-shadow: 0 0 0 2px var(--surface);
 	}
 	.sidebar {
 		position: fixed;
@@ -884,6 +907,9 @@ select {
 	gap: 12px;
 }
 .user-card {
+	/* Devant la pastille « à faire » (SidebarPills), qui sort de derrière la carte en apparaissant. */
+	position: relative;
+	z-index: 1;
 	display: flex;
 	align-items: center;
 	gap: 10px;
@@ -1046,6 +1072,22 @@ select {
 	border: 1px solid var(--border);
 	border-radius: var(--r-lg);
 	box-shadow: var(--shadow-md);
+}
+
+/* ---------- Ancienneté du RAE ---------- */
+/* Classe posée sur la case RAE (Mon imputation, /rae) : ne définit que des variables, lues par le
+   style scopé du champ (border / box-shadow) — une règle border ici perdrait contre ce style scopé.
+   L'épaisseur grandit avec le palier : la couleur n'est jamais le seul indice. */
+.rae-age-1 {
+	--rae-age-border: var(--rae-age-1);
+}
+.rae-age-2 {
+	--rae-age-border: var(--rae-age-2);
+	--rae-age-ring: 0 0 0 1px var(--rae-age-2);
+}
+.rae-age-3 {
+	--rae-age-border: var(--rae-age-3);
+	--rae-age-ring: 0 0 0 1px var(--rae-age-3), 0 0 0 4px color-mix(in srgb, var(--rae-age-3) 24%, transparent);
 }
 
 /* ---------- Pills ---------- */

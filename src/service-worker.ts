@@ -55,15 +55,18 @@ sw.addEventListener('notificationclick', (event) => {
 	const url = (event.notification.data && event.notification.data.url) || '/';
 	event.waitUntil(
 		(async () => {
-			const all = await sw.clients.matchAll({ type: 'window', includeUncontrolled: true });
-			for (const c of all) {
-				if ('focus' in c) {
-					await c.focus();
-					if ('navigate' in c) await (c as WindowClient).navigate(url).catch(() => {});
-					return;
-				}
+			const all = (await sw.clients.matchAll({ type: 'window', includeUncontrolled: true })) as WindowClient[];
+			// Onglet Imputo déjà ouvert : on le réutilise (le visible en priorité) au lieu d'en ouvrir un
+			// nouveau, et c'est l'app qui navigue (goto, sans rechargement, cf. (app)/+layout.svelte).
+			// ponytail: un onglet hors espace connecté (ex. /login) ignore le message et reste où il est ;
+			// repli sur client.navigate(url) si ça pose problème.
+			const client = all.find((c) => c.visibilityState === 'visible') ?? all[0];
+			if (!client) {
+				await sw.clients.openWindow(url);
+				return;
 			}
-			await sw.clients.openWindow(url);
+			await client.focus();
+			client.postMessage({ type: 'notification-click', url });
 		})()
 	);
 });

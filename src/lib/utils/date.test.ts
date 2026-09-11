@@ -179,6 +179,10 @@ describe('formatDayRange / formatMonthLabel', () => {
 		expect(formatDayRange('2026-06-29', '2026-07-03')).toBe('29 juin → 3 juil. 2026');
 	});
 
+	it("n'écrit qu'une date pour une plage d'un seul jour", () => {
+		expect(formatDayRange('2026-07-06', '2026-07-06')).toBe('6 juil. 2026');
+	});
+
 	it('utilise le nom complet du mois pour un titre de mois', () => {
 		expect(formatMonthLabel('2026-06-01')).toBe('Juin 2026');
 	});

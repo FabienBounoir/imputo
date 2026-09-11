@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, notExists, or, ilike, sql, count, desc } from 'drizzle-orm';
+import { and, eq, gt, lt, inArray, isNull, notExists, or, ilike, sql, count, desc } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import {
 	db,
@@ -21,6 +21,7 @@ import {
 } from '$lib/server/db';
 import { isManagerOrAdmin } from './workspaces';
 import { logChange } from './changeLog';
+import { config } from '$lib/server/config';
 import type { AbsenceType } from '$lib/absenceTypes';
 import {
 	num,
@@ -31,7 +32,8 @@ import {
 	avancement,
 	raeSuggested,
 	resolvedRae,
-	resolvedEstimation
+	resolvedEstimation,
+	raeAgeStep
 } from './calc';
 
 // Bucket synthétique pour les imputations d'un ticket sans activité renseignée — jamais un vrai
@@ -855,8 +857,6 @@ export async function updateTicketField(
 	}
 
 	const patch: Record<string, unknown> = { [field]: value, updatedAt: new Date() };
-	// Trace la dernière mise à jour du RAE (pour les rappels « RAE périmé »).
-	if (field === 'raeReal' || field === 'raeTest') patch.raeUpdatedAt = new Date();
 	const res = await db
 		.update(ticket)
 		.set(patch)
@@ -1077,14 +1077,10 @@ export async function upsertTicketActivityRae(
 		.values({ ticketId, activityId, [field]: String(value) })
 		.onConflictDoUpdate({
 			target: [ticketActivityRae.ticketId, ticketActivityRae.activityId],
+			// updated_at = horloge des rappels « RAE périmé » (notifications.ts raeStale) : réenvoyer
+			// la même valeur la repousse de 7 jours, c'est voulu (confirmer qu'un RAE est toujours bon).
 			set: { [field]: String(value), updatedAt: new Date() }
 		});
-	// Trace la dernière mise à jour du RAE au niveau ticket aussi (rappels « RAE périmé »), même
-	// quand le RAE est suivi par activité et non plus sur le champ ticket directement. Ne concerne
-	// que le RAE — un changement d'Estimé ou de Budget ne doit pas déclencher ce rappel.
-	if (field === 'raeReal' || field === 'raeTest') {
-		await db.update(ticket).set({ raeUpdatedAt: new Date() }).where(eq(ticket.id, ticketId));
-	}
 
 	if (String(oldValue ?? '0') !== String(value)) {
 		await logChange({
@@ -1099,6 +1095,75 @@ export async function upsertTicketActivityRae(
 			changedById: actorId
 		});
 	}
+}
+
+export type StaleRaePair = {
+	workspaceId: string;
+	userId: string;
+	ticketId: string;
+	ticketKey: string;
+	ticketTitle: string;
+	activityId: string;
+	activityLabel: string;
+	raeReal: number;
+	/** Temps imputé par cette personne sur la paire, en jours. */
+	imputed: number;
+	updatedAt: Date;
+	/** Jours entiers depuis la dernière mise à jour de la paire. */
+	days: number;
+	/** Palier d'ancienneté (1 à 3) pour le contour de la case RAE, cf. calc.ts raeAgeStep. */
+	step: number;
+};
+
+/**
+ * Lignes au RAE périmé : paires (ticket, activité) au RAE Réel > 0, non mises à jour depuis le délai
+ * de rappel, sur lesquelles la personne a imputé — exactement la colonne RAE qu'elle voit et corrige
+ * dans /imputation (ni RAE Test, ni repli ticket.raeReal). Source unique de la notif RAE_STALE, de la
+ * page /rae et de sa pastille. Sans filtre : toutes les personnes de tous les espaces (cron).
+ * Choix actés : un ticket au RAE non ventilé par activité ne remonte plus (affiché 0 en imputation,
+ * rien n'y est corrigeable) ; horloge = updated_at de la paire, donc mettre à jour une activité ne
+ * rafraîchit plus les autres, et renvoyer la même valeur (« Toujours bon ») repousse le rappel.
+ * ponytail: updated_at bouge aussi sur un changement d'Estimé/Budget de la même paire ; colonne
+ * rae_updated_at dédiée sur ticket_activity_rae si ça fait rater des relances.
+ */
+export async function listStaleRaePairs(filter?: { workspaceId: string; userId: string }): Promise<StaleRaePair[]> {
+	const now = Date.now();
+	const cutoff = new Date(now - config.raeStaleDays * 86400000);
+	const conds = [isNull(ticket.archivedAt), lt(ticketActivityRae.updatedAt, cutoff), gt(ticketActivityRae.raeReal, '0')];
+	if (filter) conds.push(eq(ticket.workspaceId, filter.workspaceId), eq(timeEntry.userId, filter.userId));
+	const rows = await db
+		.select({
+			workspaceId: ticket.workspaceId,
+			userId: timeEntry.userId,
+			ticketId: ticket.id,
+			ticketKey: ticket.key,
+			ticketTitle: ticket.title,
+			activityId: ticketActivityRae.activityId,
+			activityLabel: activity.label,
+			raeReal: ticketActivityRae.raeReal,
+			updatedAt: ticketActivityRae.updatedAt,
+			imputed: sql<string>`sum(${timeEntry.amount})`
+		})
+		.from(ticketActivityRae)
+		.innerJoin(ticket, eq(ticketActivityRae.ticketId, ticket.id))
+		.innerJoin(activity, eq(ticketActivityRae.activityId, activity.id))
+		.innerJoin(
+			timeEntry,
+			and(eq(timeEntry.ticketId, ticketActivityRae.ticketId), eq(timeEntry.activityId, ticketActivityRae.activityId))
+		)
+		.where(and(...conds))
+		.groupBy(timeEntry.userId, ticket.id, ticketActivityRae.id, activity.id)
+		.orderBy(ticketActivityRae.updatedAt);
+	return rows.map((r) => {
+		const raeReal = num(r.raeReal);
+		return {
+			...r,
+			raeReal,
+			imputed: num(r.imputed),
+			days: Math.floor((now - r.updatedAt.getTime()) / 86400000),
+			step: raeAgeStep(r.updatedAt, raeReal, config.raeStaleDays, now)
+		};
+	});
 }
 
 export async function createTicket(
@@ -1123,7 +1188,7 @@ export async function createTicket(
 ) {
 	const [row] = await db
 		.insert(ticket)
-		.values({ workspaceId, ...data, raeUpdatedAt: new Date() })
+		.values({ workspaceId, ...data })
 		.returning({ id: ticket.id });
 	return row;
 }

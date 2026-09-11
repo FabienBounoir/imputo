@@ -149,7 +149,8 @@ export const actions: Actions = {
 					locals.user.displayName,
 					startDate,
 					endDate,
-					absenceId
+					absenceId,
+					period
 				);
 			}
 		} catch (e) {

@@ -588,6 +588,7 @@
 	async function saveRae(row: Row, value: number) {
 		if (!row.activityId) return;
 		row.raeReal = value; // optimiste
+		row.raeAge = 0; // vient d'être mis à jour : plus de contour d'ancienneté
 		const key = `${row.targetId}-${row.activityId}`;
 		clearTimeout(pendingRaeSaves.get(key));
 		pendingRaeSaves.set(
@@ -673,6 +674,7 @@
 			versionName: null,
 			raeReal: targetType === 'TICKET' && activityId ? 0 : null,
 			estimation: targetType === 'TICKET' && activityId ? 0 : null,
+			raeAge: 0,
 			amounts,
 			lockedDays: {},
 			absenceType: null
@@ -1179,7 +1181,7 @@
 							<td class="rae">
 								{#if row.targetType === 'TICKET' && row.activityId}
 									<input
-										class="rae-input tabnum"
+										class="rae-input tabnum rae-age-{row.raeAge}"
 										type="number"
 										step="0.25"
 										min="0"
@@ -1778,7 +1780,9 @@
 		width: 58px;
 		padding: 5px 6px;
 		border-radius: 8px;
-		border: 1px solid var(--border);
+		/* --rae-age-* posées par la classe globale rae-age-N (app.css) : contour d'ancienneté du RAE. */
+		border: 1px solid var(--rae-age-border, var(--border));
+		box-shadow: var(--rae-age-ring, none);
 		background: var(--surface-2);
 		color: var(--text);
 		font-size: 13px;

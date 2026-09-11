@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, afterAll, afterEach } from 'vitest';
 import { eq, and } from 'drizzle-orm';
-import { db, workspace, category, timeEntry, moodVote, user, membership } from '$lib/server/db';
+import { db, workspace, category, timeEntry, moodVote, user, membership, activity, ticket, ticketActivityRae } from '$lib/server/db';
 import { createWorkspaceWithOwner } from './workspaces';
 import { setSupportEnabled, setSupportCadence, addRotationMember, setOverride, getCurrentDuty } from './support';
-import { addMember } from './test-helpers';
+import { addMember, makeWorkspace } from './test-helpers';
+import { listStaleRaePairs, upsertTicketActivityRae } from './tickets';
 import { todayInParis, parseISODate, toISODate, addDays } from '$lib/utils/date';
 
 const sendCalls: { userId: string; tag?: string }[] = [];
@@ -342,5 +343,54 @@ describe('notifyAbsenceValidated', () => {
 		sendCalls.length = 0;
 		await notifyAbsenceValidated(workspaceId, 'Espace Validation', userId, '2026-08-10', '2026-08-12', 'absence-2');
 		expect(sentTo(userId)).toBe(false); // même congé → dédupliqué
+	});
+});
+
+describe('RAE périmé', () => {
+	it('ne compte que les paires (ticket, activité) imputées, au RAE Réel > 0 et non mises à jour depuis 7 jours', async () => {
+		// makeWorkspace (et pas createWorkspaceWithOwner) : son nettoyage supprime les tickets avant
+		// l'espace, sinon ticket_activity_rae → activity (RESTRICT) bloque la suppression.
+		const { userId: dev, workspaceId } = await makeWorkspace('rae-stale');
+		const recette = await addMember(workspaceId, 'USER', 'rae-stale-recette');
+		const [devAct, recAct] = await db
+			.insert(activity)
+			.values([
+				{ workspaceId, label: `Dev ${rnd}` },
+				{ workspaceId, label: `Recette ${rnd}` }
+			])
+			.returning();
+		const longAgo = new Date(Date.now() - 30 * 86400000);
+		const [ventile, nonVentile] = await db
+			.insert(ticket)
+			.values([
+				{ workspaceId, key: `RAE-1-${rnd}`, title: 'Ventilé', raeReal: '5' },
+				{ workspaceId, key: `RAE-2-${rnd}`, title: 'Non ventilé', raeReal: '5' }
+			])
+			.returning();
+		await db.insert(ticketActivityRae).values([
+			{ ticketId: ventile.id, activityId: devAct.id, raeReal: '3', updatedAt: longAgo },
+			{ ticketId: ventile.id, activityId: recAct.id, raeReal: '0', updatedAt: longAgo }
+		]);
+		const day = todayInParis();
+		const entry = (userId: string, ticketId: string, activityId: string) =>
+			({ workspaceId, userId, targetType: 'TICKET', ticketId, activityId, day, amount: '1' }) as const;
+		await db.insert(timeEntry).values([
+			entry(dev, ventile.id, devAct.id),
+			entry(recette.userId, ventile.id, recAct.id),
+			// RAE non ventilé par activité (repli ticket.raeReal) : affiché 0 en imputation.
+			entry(recette.userId, nonVentile.id, recAct.id)
+		]);
+		// La personne Recette met sa ligne à jour : ça ne rafraîchit plus la ligne Dev du même ticket.
+		await upsertTicketActivityRae(workspaceId, ventile.id, recAct.id, 'raeReal', 2);
+
+		sendCalls.length = 0;
+		await runNotifications('morning', '0900');
+		expect(sentTo(dev, 'RAE_STALE')).toBe(true);
+		expect(sentTo(recette.userId, 'RAE_STALE')).toBe(false);
+
+		// Même définition pour la page /rae et sa pastille : la ligne Dev (30 j, palier 3), rien pour Recette.
+		const devLines = await listStaleRaePairs({ workspaceId, userId: dev });
+		expect(devLines.map((p) => [p.activityId, p.step, p.imputed])).toEqual([[devAct.id, 3, 1]]);
+		expect(await listStaleRaePairs({ workspaceId, userId: recette.userId })).toEqual([]);
 	});
 });
