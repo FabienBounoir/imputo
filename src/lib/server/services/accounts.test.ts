@@ -16,14 +16,31 @@ import {
 	resetJiraUpdatedSince,
 	resetJiraCreatedSince,
 	listJiraSyncRuns,
-	undoJiraSyncRun
+	undoJiraSyncRun,
+	setMemberRole
 } from './accounts';
+import { makeWorkspace, addMember } from './test-helpers';
+import { listEntityHistory } from './changeLog';
 
 const rnd = Math.random().toString(36).slice(2, 8);
 const wsIds: string[] = [];
 
 afterAll(async () => {
 	for (const id of wsIds) await db.delete(workspace).where(eq(workspace.id, id));
+});
+
+describe('historique des membres (changeLog)', () => {
+	it('setMemberRole trace l’ancien et le nouveau rôle, sans ligne si le rôle ne change pas', async () => {
+		const { workspaceId, userId } = await makeWorkspace('member-hist');
+		const { userId: memberId } = await addMember(workspaceId, 'USER', 'member-hist-bob');
+
+		await setMemberRole(workspaceId, memberId, 'MANAGER', userId);
+		await setMemberRole(workspaceId, memberId, 'MANAGER', userId);
+
+		const history = await listEntityHistory(workspaceId, 'MEMBER', memberId);
+		expect(history).toHaveLength(1);
+		expect(history[0]).toMatchObject({ field: 'role', oldValue: 'USER', newValue: 'MANAGER', changedByName: 'member-hist owner' });
+	});
 });
 
 describe('changePassword', () => {
@@ -187,7 +204,7 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 	}
 
 	it('getJiraConfig : valeurs par défaut sur un espace neuf', async () => {
-		const { workspaceId } = await makeWs('jira-default');
+		const { userId, workspaceId } = await makeWs('jira-default');
 		const cfg = await getJiraConfig(workspaceId);
 		expect(cfg).toMatchObject({
 			enabled: false,
@@ -215,7 +232,7 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 	});
 
 	it('setJiraSyncEnabled bascule le flag', async () => {
-		const { workspaceId } = await makeWs('jira-toggle');
+		const { userId, workspaceId } = await makeWs('jira-toggle');
 		await setJiraSyncEnabled(workspaceId, true);
 		expect((await getJiraConfig(workspaceId)).enabled).toBe(true);
 		await setJiraSyncEnabled(workspaceId, false);
@@ -223,7 +240,7 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 	});
 
 	it('saveJiraConfig sans PAT : met à jour jql/stratégie/regex sans toucher au token', async () => {
-		const { workspaceId } = await makeWs('jira-noPat');
+		const { userId, workspaceId } = await makeWs('jira-noPat');
 		await saveJiraConfig(workspaceId, {
 			jql: 'project = X',
 			conflictStrategy: 'JIRA_WINS',
@@ -242,7 +259,7 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 			updatedSinceDate: '',
 			createdSinceDate: '',
 			patEncryptionKey: encKey,
-			changedByUserId: 'unused'
+			changedByUserId: userId
 		});
 		const cfg = await getJiraConfig(workspaceId);
 		expect(cfg).toMatchObject({
@@ -252,6 +269,16 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 			patConfigured: false,
 			patUpdatedByName: null
 		});
+
+		// JQL et stratégie tracés en clair (pas de ligne PAT : aucun token fourni).
+		const history = await listEntityHistory(workspaceId, 'WORKSPACE', workspaceId);
+		expect(history).toHaveLength(2);
+		expect(history).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ field: 'jiraJql', oldValue: null, newValue: 'project = X' }),
+				expect.objectContaining({ field: 'jiraConflictStrategy', oldValue: 'KEEP_LOCAL', newValue: 'JIRA_WINS' })
+			])
+		);
 	});
 
 	it('saveJiraConfig avec un PAT : chiffre, trace qui/quand, remet le compteur d’échecs à 0', async () => {
@@ -291,7 +318,7 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 	});
 
 	it('saveJiraConfig : regex invalide lève une erreur claire, rien n’est écrit', async () => {
-		const { workspaceId } = await makeWs('jira-badregex');
+		const { userId, workspaceId } = await makeWs('jira-badregex');
 		await expect(
 			saveJiraConfig(workspaceId, {
 				jql: 'project = Z',
@@ -311,14 +338,14 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 				updatedSinceDate: '',
 				createdSinceDate: '',
 				patEncryptionKey: encKey,
-				changedByUserId: 'unused'
+				changedByUserId: userId
 			})
 		).rejects.toThrow(/regex/i);
 		expect((await getJiraConfig(workspaceId)).jql).toBe(''); // rien n'a été sauvegardé
 	});
 
 	it('saveJiraConfig : regex de lien invalide lève une erreur claire, rien n’est écrit', async () => {
-		const { workspaceId } = await makeWs('jira-badlinkregex');
+		const { userId, workspaceId } = await makeWs('jira-badlinkregex');
 		await expect(
 			saveJiraConfig(workspaceId, {
 				jql: 'project = Z',
@@ -338,14 +365,14 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 				updatedSinceDate: '',
 				createdSinceDate: '',
 				patEncryptionKey: encKey,
-				changedByUserId: 'unused'
+				changedByUserId: userId
 			})
 		).rejects.toThrow(/lien jira/i);
 		expect((await getJiraConfig(workspaceId)).jql).toBe(''); // rien n'a été sauvegardé
 	});
 
 	it('saveJiraConfig : enregistre le mapping de lien Jira', async () => {
-		const { workspaceId } = await makeWs('jira-link-save');
+		const { userId, workspaceId } = await makeWs('jira-link-save');
 		await saveJiraConfig(workspaceId, {
 			jql: 'project = Z',
 			conflictStrategy: 'KEEP_LOCAL',
@@ -364,7 +391,7 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 			updatedSinceDate: '',
 			createdSinceDate: '',
 			patEncryptionKey: encKey,
-			changedByUserId: 'unused'
+			changedByUserId: userId
 		});
 		const cfg = await getJiraConfig(workspaceId);
 		expect(cfg.linkEnabled).toBe(true);
@@ -373,7 +400,7 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 	});
 
 	it('saveJiraConfig avec une date minimum : parse en minuit UTC', async () => {
-		const { workspaceId } = await makeWs('jira-since-set');
+		const { userId, workspaceId } = await makeWs('jira-since-set');
 		await saveJiraConfig(workspaceId, {
 			jql: 'project = X',
 			conflictStrategy: 'KEEP_LOCAL',
@@ -392,14 +419,14 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 			updatedSinceDate: '2026-06-01',
 			createdSinceDate: '',
 			patEncryptionKey: encKey,
-			changedByUserId: 'unused'
+			changedByUserId: userId
 		});
 		const cfg = await getJiraConfig(workspaceId);
 		expect(cfg.updatedSince?.toISOString()).toBe('2026-06-01T00:00:00.000Z');
 	});
 
 	it('saveJiraConfig avec une date vide : laisse la date existante inchangée', async () => {
-		const { workspaceId } = await makeWs('jira-since-untouched');
+		const { userId, workspaceId } = await makeWs('jira-since-untouched');
 		await db.update(workspace).set({ jiraUpdatedSince: new Date('2026-01-01T00:00:00Z') }).where(eq(workspace.id, workspaceId));
 
 		await saveJiraConfig(workspaceId, {
@@ -420,14 +447,14 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 			updatedSinceDate: '',
 			createdSinceDate: '',
 			patEncryptionKey: encKey,
-			changedByUserId: 'unused'
+			changedByUserId: userId
 		});
 		const cfg = await getJiraConfig(workspaceId);
 		expect(cfg.updatedSince?.toISOString()).toBe('2026-01-01T00:00:00.000Z');
 	});
 
 	it('saveJiraConfig avec une date invalide lève une erreur claire, rien n’est écrit', async () => {
-		const { workspaceId } = await makeWs('jira-since-invalid');
+		const { userId, workspaceId } = await makeWs('jira-since-invalid');
 		await expect(
 			saveJiraConfig(workspaceId, {
 				jql: 'project = X',
@@ -447,14 +474,14 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 				updatedSinceDate: 'pas-une-date',
 				createdSinceDate: '',
 				patEncryptionKey: encKey,
-				changedByUserId: 'unused'
+				changedByUserId: userId
 			})
 		).rejects.toThrow(/date/i);
 		expect((await getJiraConfig(workspaceId)).updatedSince).toBeNull();
 	});
 
 	it('saveJiraConfig avec un JQL contenant ORDER BY lève une erreur claire, rien n’est écrit', async () => {
-		const { workspaceId } = await makeWs('jira-orderby');
+		const { userId, workspaceId } = await makeWs('jira-orderby');
 		await expect(
 			saveJiraConfig(workspaceId, {
 				jql: 'project = X ORDER BY updated DESC',
@@ -474,14 +501,14 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 				updatedSinceDate: '',
 				createdSinceDate: '',
 				patEncryptionKey: encKey,
-				changedByUserId: 'unused'
+				changedByUserId: userId
 			})
 		).rejects.toThrow(/order by/i);
 		expect((await getJiraConfig(workspaceId)).jql).toBe(''); // rien n'a été sauvegardé
 	});
 
 	it('resetJiraUpdatedSince remet la date à null', async () => {
-		const { workspaceId } = await makeWs('jira-since-reset');
+		const { userId, workspaceId } = await makeWs('jira-since-reset');
 		await db.update(workspace).set({ jiraUpdatedSince: new Date('2026-01-01T00:00:00Z') }).where(eq(workspace.id, workspaceId));
 
 		await resetJiraUpdatedSince(workspaceId);
@@ -490,7 +517,7 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 	});
 
 	it('saveJiraConfig avec une date de création minimum : parse en minuit UTC', async () => {
-		const { workspaceId } = await makeWs('jira-created-set');
+		const { userId, workspaceId } = await makeWs('jira-created-set');
 		await saveJiraConfig(workspaceId, {
 			jql: 'project = X',
 			conflictStrategy: 'KEEP_LOCAL',
@@ -509,14 +536,14 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 			updatedSinceDate: '',
 			createdSinceDate: '2020-01-01',
 			patEncryptionKey: encKey,
-			changedByUserId: 'unused'
+			changedByUserId: userId
 		});
 		const cfg = await getJiraConfig(workspaceId);
 		expect(cfg.createdSince?.toISOString()).toBe('2020-01-01T00:00:00.000Z');
 	});
 
 	it('saveJiraConfig avec une date de création vide : laisse la date existante inchangée', async () => {
-		const { workspaceId } = await makeWs('jira-created-untouched');
+		const { userId, workspaceId } = await makeWs('jira-created-untouched');
 		await db.update(workspace).set({ jiraCreatedSince: new Date('2020-01-01T00:00:00Z') }).where(eq(workspace.id, workspaceId));
 
 		await saveJiraConfig(workspaceId, {
@@ -537,14 +564,14 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 			updatedSinceDate: '',
 			createdSinceDate: '',
 			patEncryptionKey: encKey,
-			changedByUserId: 'unused'
+			changedByUserId: userId
 		});
 		const cfg = await getJiraConfig(workspaceId);
 		expect(cfg.createdSince?.toISOString()).toBe('2020-01-01T00:00:00.000Z');
 	});
 
 	it('saveJiraConfig avec une date de création invalide lève une erreur claire, rien n’est écrit', async () => {
-		const { workspaceId } = await makeWs('jira-created-invalid');
+		const { userId, workspaceId } = await makeWs('jira-created-invalid');
 		await expect(
 			saveJiraConfig(workspaceId, {
 				jql: 'project = X',
@@ -564,14 +591,14 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 				updatedSinceDate: '',
 				createdSinceDate: 'pas-une-date',
 				patEncryptionKey: encKey,
-				changedByUserId: 'unused'
+				changedByUserId: userId
 			})
 		).rejects.toThrow(/date/i);
 		expect((await getJiraConfig(workspaceId)).createdSince).toBeNull();
 	});
 
 	it('resetJiraCreatedSince remet la date à null', async () => {
-		const { workspaceId } = await makeWs('jira-created-reset');
+		const { userId, workspaceId } = await makeWs('jira-created-reset');
 		await db.update(workspace).set({ jiraCreatedSince: new Date('2020-01-01T00:00:00Z') }).where(eq(workspace.id, workspaceId));
 
 		await resetJiraCreatedSince(workspaceId);
@@ -601,7 +628,7 @@ describe('historique des runs Jira (listJiraSyncRuns / undoJiraSyncRun)', () => 
 	}
 
 	it('listJiraSyncRuns : plus récent d’abord, scopé à l’espace', async () => {
-		const { workspaceId } = await makeWs('runs-list');
+		const { userId, workspaceId } = await makeWs('runs-list');
 		const { workspaceId: otherWs } = await makeWs('runs-list-other');
 		const older = await makeRun(workspaceId, { startedAt: new Date('2026-01-01T00:00:00Z') });
 		const newer = await makeRun(workspaceId, { startedAt: new Date('2026-01-02T00:00:00Z') });

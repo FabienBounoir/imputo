@@ -41,14 +41,24 @@ import {
 // restent toujours à 0 côté serveur ; l'UI (tickets/+page.svelte) le rend en lecture seule.
 export const NO_ACTIVITY_ID = '__no_activity__';
 
-/** Champs budget/estimation tracés dans l'historique (changeLog) — pas le reste (titre, état, code SSP…). */
+/**
+ * Champs tracés dans l'historique (changeLog) : chiffrage/budget + descriptif structuré. Pas le texte
+ * libre (titre, commentaire), ni projet/flags/groupes — trop de bruit pour ce qu'ils apportent.
+ */
 const TRACKED_FIELDS = new Set([
 	'estimationReal',
 	'estimationTest',
 	'raeReal',
 	'raeTest',
 	'estimationPrev',
-	'enveloppeTotale'
+	'enveloppeTotale',
+	'stateId',
+	'sprintId',
+	'versionId',
+	'sspId',
+	'assigneeId',
+	'priority',
+	'key'
 ]);
 
 /** Indicateurs libres d'un ticket (sérialisés en JSON dans ticket.flags). */
@@ -410,14 +420,24 @@ export async function countTicketImputations(workspaceId: string, ticketId: stri
 }
 
 /** Hard delete — réservé au créateur de l'espace (super admin) et aux ADMIN, et bloqué si des imputations sont liées. */
-export async function deleteTicket(workspaceId: string, ticketId: string) {
+export async function deleteTicket(workspaceId: string, ticketId: string, actorId: string | null = null) {
 	const usage = await countTicketImputations(workspaceId, ticketId);
 	if (usage > 0) throw new Error('Des imputations sont liées à ce ticket : suppression impossible.');
-	const res = await db
+	const [deleted] = await db
 		.delete(ticket)
 		.where(and(eq(ticket.id, ticketId), eq(ticket.workspaceId, workspaceId)))
-		.returning({ id: ticket.id });
-	if (res.length === 0) throw new Error('Introuvable dans cet espace.');
+		.returning({ key: ticket.key, title: ticket.title });
+	if (!deleted) throw new Error('Introuvable dans cet espace.');
+	// Irréversible : la trace garde clé + titre, la ligne source ne sera plus là pour les donner.
+	await logChange({
+		workspaceId,
+		entityType: 'TICKET',
+		entityId: ticketId,
+		action: 'DELETE',
+		oldValue: `${deleted.key} — ${deleted.title}`,
+		newValue: null,
+		changedById: actorId
+	});
 }
 
 /**
@@ -814,6 +834,45 @@ const NUMERIC_FIELDS = new Set([...MANAGER_ONLY_FIELDS, ...ADMIN_ONLY_FIELDS]);
  */
 const OWNER_ONLY_FIELDS = new Set(['key']);
 
+/**
+ * Valeur tracée d'un champ : pour une référence (état, sprint/version, SSP, assigné), son libellé au
+ * moment du changement plutôt que l'uuid — reste lisible après renommage ou purge du référentiel, et
+ * cherchable depuis /admin/history. Retombe sur la valeur brute si la référence est introuvable.
+ */
+async function trackedValue(workspaceId: string, field: string, value: unknown): Promise<string | null> {
+	if (value == null) return null;
+	const id = String(value);
+	switch (field) {
+		case 'stateId': {
+			const [r] = await db.select({ label: state.label }).from(state).where(and(eq(state.id, id), eq(state.workspaceId, workspaceId)));
+			return r?.label ?? id;
+		}
+		case 'sprintId':
+		case 'versionId': {
+			const [r] = await db.select({ label: sprint.name }).from(sprint).where(and(eq(sprint.id, id), eq(sprint.workspaceId, workspaceId)));
+			return r?.label ?? id;
+		}
+		case 'sspId': {
+			const [r] = await db
+				.select({ code: ssp.code, label: ssp.label })
+				.from(ssp)
+				.where(and(eq(ssp.id, id), eq(ssp.workspaceId, workspaceId)));
+			if (!r) return id;
+			return r.label === r.code ? r.code : `${r.label} (${r.code})`;
+		}
+		case 'assigneeId': {
+			const [r] = await db
+				.select({ label: user.displayName })
+				.from(membership)
+				.innerJoin(user, eq(membership.userId, user.id))
+				.where(and(eq(membership.workspaceId, workspaceId), eq(membership.userId, id)));
+			return r?.label ?? id;
+		}
+		default:
+			return id;
+	}
+}
+
 /** Met à jour un champ d'un ticket (édition inline). Scopé workspace + liste blanche par rôle. */
 export async function updateTicketField(
 	workspaceId: string,
@@ -862,6 +921,7 @@ export async function updateTicketField(
 		.set(patch)
 		.where(and(eq(ticket.id, ticketId), eq(ticket.workspaceId, workspaceId)))
 		.returning({ id: ticket.id });
+	if (res.length === 0) throw new Error('Ticket introuvable dans cet espace.');
 
 	if (TRACKED_FIELDS.has(field) && String(oldValue ?? '') !== String(value ?? '')) {
 		await logChange({
@@ -870,12 +930,11 @@ export async function updateTicketField(
 			entityId: ticketId,
 			field,
 			action: 'UPDATE',
-			oldValue: oldValue == null ? null : String(oldValue),
-			newValue: value,
+			oldValue: await trackedValue(workspaceId, field, oldValue),
+			newValue: await trackedValue(workspaceId, field, value),
 			changedById: actorId
 		});
 	}
-	if (res.length === 0) throw new Error('Ticket introuvable dans cet espace.');
 }
 
 /** Met à jour un indicateur (flag) d'un ticket en fusionnant le JSON existant. */

@@ -1,10 +1,9 @@
 <script lang="ts">
 	import { enhance, deserialize } from '$app/forms';
-	import { formatDateTime } from '$lib/utils/date';
-	import { TICKET_FIELD_LABELS } from '$lib/changeLogLabels';
 	import { confirmDialog } from '$lib/confirm.svelte';
 	import { toast } from 'svelte-sonner';
 	import SspPicker from './SspPicker.svelte';
+	import TicketHistory from './TicketHistory.svelte';
 
 	// Même modal d'édition que Tickets & chiffrage (tickets/+page.svelte), rendue utilisable depuis
 	// n'importe quelle page (ex. Mon imputation) : elle se charge elle-même par id plutôt que de
@@ -75,15 +74,6 @@
 		priority: number;
 		assigneeId: string | null;
 	};
-	type HistoryEntry = {
-		field: string | null;
-		action: 'UPDATE' | 'DELETE';
-		oldValue: string | null;
-		newValue: string | null;
-		changedByName: string | null;
-		createdAt: string;
-	};
-
 	const FLAG_VALUES = ['Oui', 'Non', 'N/A', 'À MAJ', 'MAJ', 'OK'];
 	const FLAG_FIELDS = [
 		{ key: 'cypress', label: 'Cypress' },
@@ -93,13 +83,10 @@
 
 	let ticket = $state<Ticket | null>(null);
 	let loading = $state(false);
-	let historyEntries = $state<HistoryEntry[]>([]);
-	let historyLoading = $state(false);
 	$effect(() => {
 		const id = ticketId;
 		if (!id) {
 			ticket = null;
-			historyEntries = [];
 			return;
 		}
 		loading = true;
@@ -107,11 +94,6 @@
 			.then((r) => (r.ok ? r.json() : null))
 			.then((t) => (ticket = t))
 			.finally(() => (loading = false));
-		historyLoading = true;
-		fetch(`/api/tickets/${id}/history`)
-			.then((r) => (r.ok ? r.json() : { entries: [] }))
-			.then((d) => (historyEntries = d.entries))
-			.finally(() => (historyLoading = false));
 	});
 
 	const estTitle = $derived(canEditEstimation ? '' : 'Estimation réservée aux profils Manager et Admin.');
@@ -393,24 +375,7 @@
 					{/if}
 					<span>Avancement <b class="tabnum">{pct(avancement)}%</b></span>
 				</div>
-				<div class="tk-history">
-					<h4>Historique</h4>
-					{#if historyLoading}
-						<p class="hint">Chargement…</p>
-					{:else if historyEntries.length === 0}
-						<p class="hint">Aucune modification tracée pour l'instant.</p>
-					{:else}
-						<ul>
-							{#each historyEntries as h, i (i)}
-								<li>
-									<span class="hf">{TICKET_FIELD_LABELS[h.field ?? ''] ?? h.field}</span>
-									<span class="hv">{h.oldValue ?? '—'} → {h.newValue ?? '—'}</span>
-									<span class="hm hint">{h.changedByName ?? 'Quelqu’un'} · {formatDateTime(new Date(h.createdAt))}</span>
-								</li>
-							{/each}
-						</ul>
-					{/if}
-				</div>
+				<TicketHistory ticketId={ticket.id} />
 				{#if isOwner}
 					<div class="tk-danger">
 						<form method="POST" action="/tickets?/delete" use:enhance={confirmDelete}>
@@ -622,45 +587,6 @@
 	.gap-neg {
 		color: var(--success) !important;
 		font-weight: 700;
-	}
-	.tk-history {
-		margin-top: 14px;
-		padding-top: 14px;
-		border-top: 1px solid var(--border);
-	}
-	.tk-history h4 {
-		margin: 0 0 8px;
-		font-size: 13px;
-		font-weight: 600;
-		color: var(--text-soft);
-	}
-	.tk-history ul {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
-		max-height: 160px;
-		overflow-y: auto;
-	}
-	.tk-history li {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: baseline;
-		gap: 8px;
-		font-size: 12.5px;
-	}
-	.tk-history .hf {
-		font-weight: 600;
-		color: var(--text-soft);
-	}
-	.tk-history .hv {
-		color: var(--text);
-	}
-	.tk-history .hm {
-		margin-left: auto;
-		white-space: nowrap;
 	}
 	@media (max-width: 560px) {
 		.tk-grid {

@@ -257,16 +257,19 @@ async function isWorkspaceOwner(workspaceId: string, userId: string): Promise<bo
 	return rows.length > 0;
 }
 
+/** Trace une modification d'un membre (rôle, statut, capacités, propriété) — onglet Membres de /admin/history. */
+function logMemberChange(workspaceId: string, userId: string, field: string, oldValue: string, newValue: string, actorId: string | null) {
+	return logChange({ workspaceId, entityType: 'MEMBER', entityId: userId, field, action: 'UPDATE', oldValue, newValue, changedById: actorId });
+}
+
 /** Change le rôle d'un membre dans un espace (réservé ADMIN). Le créateur de l'espace ne peut être rétrogradé. */
-export async function setMemberRole(workspaceId: string, userId: string, role: Role) {
+export async function setMemberRole(workspaceId: string, userId: string, role: Role, actorId: string | null = null) {
 	if (role !== 'ADMIN' && (await isWorkspaceOwner(workspaceId, userId)))
 		throw new Error("Le créateur de l'espace ne peut pas être rétrogradé (transférez la propriété d'abord).");
-	const res = await db
-		.update(membership)
-		.set({ role })
-		.where(memberWhere(workspaceId, userId))
-		.returning({ id: membership.id });
-	if (!res[0]) throw new Error('Membre introuvable dans cet espace.');
+	const [before] = await db.select({ role: membership.role }).from(membership).where(memberWhere(workspaceId, userId));
+	if (!before) throw new Error('Membre introuvable dans cet espace.');
+	await db.update(membership).set({ role }).where(memberWhere(workspaceId, userId));
+	if (before.role !== role) await logMemberChange(workspaceId, userId, 'role', before.role, role, actorId);
 }
 
 /** Transmet la propriété de l'espace à un autre membre ADMIN actif ; l'ancien créateur redevient un admin classique. */
@@ -283,6 +286,9 @@ export async function transferOwnership(workspaceId: string, currentOwnerId: str
 			await tx.update(membership).set({ role: 'ADMIN' }).where(memberWhere(workspaceId, newOwnerId));
 		}
 	});
+	// L'ancien propriétaire est forcément l'auteur (seul lui peut transmettre) : une ligne sur le nouveau suffit.
+	await logMemberChange(workspaceId, newOwnerId, 'owner', 'false', 'true', currentOwnerId);
+	if (target.role !== 'ADMIN') await logMemberChange(workspaceId, newOwnerId, 'role', target.role, 'ADMIN', currentOwnerId);
 }
 
 /** Définit la capacité quotidienne d'un membre (temps partiel ; 1 = journée pleine). */
@@ -302,26 +308,23 @@ export async function setMemberCapability(
 	workspaceId: string,
 	userId: string,
 	field: 'canViewImputations' | 'canViewMoodResults',
-	value: boolean
+	value: boolean,
+	actorId: string | null = null
 ) {
-	const res = await db
-		.update(membership)
-		.set({ [field]: value })
-		.where(memberWhere(workspaceId, userId))
-		.returning({ id: membership.id });
-	if (!res[0]) throw new Error('Membre introuvable dans cet espace.');
+	const [before] = await db.select({ value: membership[field] }).from(membership).where(memberWhere(workspaceId, userId));
+	if (!before) throw new Error('Membre introuvable dans cet espace.');
+	await db.update(membership).set({ [field]: value }).where(memberWhere(workspaceId, userId));
+	if (before.value !== value) await logMemberChange(workspaceId, userId, field, String(before.value), String(value), actorId);
 }
 
 /** Active ou désactive un membre (un membre inactif conserve son historique). Le créateur de l'espace ne peut être désactivé. */
-export async function setMemberActive(workspaceId: string, userId: string, active: boolean) {
+export async function setMemberActive(workspaceId: string, userId: string, active: boolean, actorId: string | null = null) {
 	if (!active && (await isWorkspaceOwner(workspaceId, userId)))
 		throw new Error("Le créateur de l'espace ne peut pas être désactivé (transférez la propriété d'abord).");
-	const res = await db
-		.update(membership)
-		.set({ active })
-		.where(memberWhere(workspaceId, userId))
-		.returning({ id: membership.id });
-	if (!res[0]) throw new Error('Membre introuvable dans cet espace.');
+	const [before] = await db.select({ active: membership.active }).from(membership).where(memberWhere(workspaceId, userId));
+	if (!before) throw new Error('Membre introuvable dans cet espace.');
+	await db.update(membership).set({ active }).where(memberWhere(workspaceId, userId));
+	if (before.active !== active) await logMemberChange(workspaceId, userId, 'active', String(before.active), String(active), actorId);
 }
 
 /**
@@ -565,18 +568,29 @@ export async function saveJiraConfig(
 		updates.jiraCreatedSince = parsedCreated;
 	}
 
+	const [before] = await db
+		.select({ jiraJql: workspace.jiraJql, jiraConflictStrategy: workspace.jiraConflictStrategy })
+		.from(workspace)
+		.where(eq(workspace.id, workspaceId));
 	await db.update(workspace).set(updates).where(eq(workspace.id, workspaceId));
 
-	if (input.pat) {
-		await logChange({
-			workspaceId,
-			entityType: 'WORKSPACE',
-			entityId: workspaceId,
-			field: 'jiraPat',
-			action: 'UPDATE',
-			oldValue: null,
-			newValue: null,
-			changedById: input.changedByUserId
-		});
+	// JQL et stratégie tracés en clair (pas des secrets) : passer en JIRA_WINS écrase les tickets
+	// existants au prochain sync, il faut savoir qui l'a décidé. Le PAT, lui, ne trace que qui/quand.
+	const changes: { field: string; oldValue: string | null; newValue: string | null }[] = [];
+	for (const f of ['jiraJql', 'jiraConflictStrategy'] as const) {
+		const oldValue = before?.[f] ?? null;
+		const newValue = updates[f] ?? null;
+		if (oldValue !== newValue) changes.push({ field: f, oldValue, newValue });
 	}
+	if (input.pat) changes.push({ field: 'jiraPat', oldValue: null, newValue: null });
+	await logChange(
+		changes.map((c) => ({
+			...c,
+			workspaceId,
+			entityType: 'WORKSPACE' as const,
+			entityId: workspaceId,
+			action: 'UPDATE' as const,
+			changedById: input.changedByUserId
+		}))
+	);
 }

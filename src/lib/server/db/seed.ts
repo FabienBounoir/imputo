@@ -31,6 +31,7 @@ import {
 	workdaysBetween,
 	formatMonthLabel
 } from '../../utils/date';
+import { ABSENCE_TYPE_LABELS } from '../../absenceTypes';
 import {
 	workspace,
 	user,
@@ -977,10 +978,11 @@ async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, pe
 	]);
 	await db.insert(weeklyVacation).values({ workspaceId: ws.id, userId: bySlot('david').id, weekMonday: thisMondayISO });
 
-	// ---------- Historique des modifications (change_log) : révisions d'estimation ticket, RAE par
-	// activité et absences, + les suppressions ci-dessus — dans les 30 derniers jours (fenêtre
-	// affichée par /admin/history), quelle que soit la date réelle du sprint ou de l'absence, pour
-	// avoir de quoi filtrer/rechercher/paginer sur cet écran dès le premier chargement.
+	// ---------- Historique des modifications (change_log) : chiffrage et descriptif des tickets (état,
+	// sprint, version, SSP, assigné, priorité, clé), RAE par activité, absences, membres, config Jira,
+	// + des suppressions (tickets, état, absences ci-dessus) — dans les 25 derniers jours, quelle que
+	// soit la date réelle du sprint ou de l'absence, pour avoir de quoi filtrer/rechercher/paginer sur
+	// /admin/history dès le premier chargement. Les valeurs « après » collent toujours à l'état seedé.
 	const recentTimestamp = (maxDaysAgo = 25) => new Date(Date.now() - Math.random() * maxDaysAgo * 24 * 60 * 60 * 1000);
 	const anyUserId = () => userByEmail.get(rand(personas).email)!.id;
 	const changeLogRows: (typeof changeLog.$inferInsert)[] = [];
@@ -1052,12 +1054,111 @@ async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, pe
 			entityType: 'ABSENCE',
 			entityId: a.id,
 			action: 'DELETE',
-			oldValue: `${a.startDate} → ${a.endDate} (${a.type})`,
+			oldValue: `${insertedUsers.find((u) => u.id === a.userId)?.displayName ?? '?'} · ${a.startDate} → ${a.endDate} (${ABSENCE_TYPE_LABELS[a.type]})`,
 			newValue: null,
 			changedById: a.userId ?? anyUserId(),
 			createdAt: recentTimestamp(10)
 		});
 	}
+
+	// Descriptif : ~35% des tickets curatés ont avancé d'une ou deux colonnes, ~20% ont été reportés
+	// d'un sprint, quelques-uns ont changé de version, de code SSP ou de priorité. Mêmes valeurs
+	// qu'écrirait updateTicketField (libellés, pas les uuid — cf. trackedValue dans tickets.ts).
+	const DAY_MS = 24 * 60 * 60 * 1000;
+	const alice = bySlot('alice').id;
+	const sspValue = (s: (typeof insertedSsps)[number]) => (s.label === s.code ? s.code : `${s.label} (${s.code})`);
+	const previousIn = <T extends { id: string }>(list: T[], id: string | null) => {
+		const i = list.findIndex((x) => x.id === id);
+		return i > 0 ? { prev: list[i - 1], current: list[i] } : null;
+	};
+	const logTicket = (ticketId: string, field: string, oldValue: string | null, newValue: string | null, createdAt = recentTimestamp(), changedById = anyUserId()) =>
+		changeLogRows.push({ workspaceId: ws.id, entityType: 'TICKET', entityId: ticketId, field, action: 'UPDATE', oldValue, newValue, changedById, createdAt });
+
+	for (const tk of insertedTickets) {
+		const st = previousIn(insertedStates, tk.stateId);
+		if (st && chance(0.35)) {
+			const at = recentTimestamp(12);
+			logTicket(tk.id, 'stateId', st.prev.label, st.current.label, at);
+			const earlier = previousIn(insertedStates, st.prev.id);
+			if (earlier && chance(0.5))
+				logTicket(tk.id, 'stateId', earlier.prev.label, earlier.current.label, new Date(at.getTime() - (1 + Math.random() * 10) * DAY_MS));
+		}
+		const sp = previousIn(insertedSprints, tk.sprintId);
+		if (sp && chance(0.2)) logTicket(tk.id, 'sprintId', sp.prev.name, sp.current.name);
+		const ver = previousIn(insertedVersions, tk.versionId);
+		if (ver && chance(0.1)) logTicket(tk.id, 'versionId', ver.prev.name, ver.current.name);
+		const currentSsp = insertedSsps.find((s) => s.id === tk.sspId);
+		if (currentSsp && chance(0.1)) {
+			const other = rand(insertedSsps.filter((s) => s.id !== currentSsp.id));
+			logTicket(tk.id, 'sspId', chance(0.3) ? null : sspValue(other), sspValue(currentSsp));
+		}
+		if (chance(0.15)) logTicket(tk.id, 'priority', String(rand([0, 1, 3, 4].filter((p) => p !== tk.priority))), String(tk.priority));
+	}
+
+	// Assignés : jamais posés plus haut — ~1 ticket curaté sur 3 reçoit son contributeur principal
+	// (owner du brouillon), avec la trace de l'assignation (parfois une réassignation).
+	const ticketIdsByAssignee = new Map<string, string[]>();
+	for (const t of drafts) {
+		if (!chance(0.35)) continue;
+		const tk = ticketByKey.get(t.key)!;
+		const owner = userByEmail.get(t.owner)!;
+		ticketIdsByAssignee.set(owner.id, [...(ticketIdsByAssignee.get(owner.id) ?? []), tk.id]);
+		const previous = chance(0.3) ? rand(insertedUsers.filter((u) => u.id !== owner.id)).displayName : null;
+		logTicket(tk.id, 'assigneeId', previous, owner.displayName);
+	}
+	for (const [assigneeId, ids] of ticketIdsByAssignee) await db.update(ticket).set({ assigneeId }).where(inArray(ticket.id, ids));
+
+	// Clé corrigée après coup (saisie provisoire avant création dans Jira) — édition réservée admin.
+	const rekeyed = rand(insertedTickets);
+	logTicket(rekeyed.id, 'key', rekeyed.key.replace('SBX-', 'TMP-'), rekeyed.key, recentTimestamp(), alice);
+
+	// Deux doublons supprimés (hard delete) : la ligne source n'existe plus, seule la trace reste.
+	for (const title of ['Doublon — export PDF des tickets', 'Test création ticket (à supprimer)']) {
+		changeLogRows.push({
+			workspaceId: ws.id,
+			entityType: 'TICKET',
+			entityId: crypto.randomUUID(),
+			action: 'DELETE',
+			oldValue: `SBX-${ticketNum++} — ${title}`,
+			newValue: null,
+			changedById: alice,
+			createdAt: recentTimestamp(20)
+		});
+	}
+
+	// État « Inbox Jira » supprimé des référentiels quelques heures après le lot Jira récent, dont les
+	// tickets y étaient passés : ils sont repassés « Sans état », une ligne par ticket comme deleteState.
+	const stateDeletedAt = new Date(Date.now() - 6 * 60 * 60 * 1000);
+	for (const t of insertedRecentTickets.slice(0, 2)) logTicket(t.id, 'stateId', 'Inbox Jira', null, stateDeletedAt, alice);
+
+	// Membres — valeurs finales = état seedé : Manon manager, aucune capacité accordée, tous actifs.
+	const logMember = (slot: string, field: string, oldValue: string, newValue: string, createdAt: Date) =>
+		changeLogRows.push({ workspaceId: ws.id, entityType: 'MEMBER', entityId: bySlot(slot).id, field, action: 'UPDATE', oldValue, newValue, changedById: alice, createdAt });
+	logMember('manon', 'role', 'USER', 'MANAGER', recentTimestamp(20));
+	logMember('chloe', 'canViewImputations', 'true', 'false', recentTimestamp(15));
+	const reactivatedAt = recentTimestamp(8);
+	logMember('david', 'active', 'true', 'false', new Date(reactivatedAt.getTime() - 2 * 60 * 60 * 1000));
+	logMember('david', 'active', 'false', 'true', reactivatedAt);
+
+	// Config Jira : un passage éclair en JIRA_WINS annulé le lendemain, puis JQL resserré (les epics
+	// polluaient le board). Le JQL final est posé sur l'espace pour rester cohérent avec la trace.
+	await db.update(workspace).set({ jiraJql: 'project = SBX AND issuetype != Epic' }).where(eq(workspace.id, ws.id));
+	const logWorkspace = (field: string, oldValue: string | null, newValue: string | null, daysAgo: number) =>
+		changeLogRows.push({
+			workspaceId: ws.id,
+			entityType: 'WORKSPACE',
+			entityId: ws.id,
+			field,
+			action: 'UPDATE',
+			oldValue,
+			newValue,
+			changedById: alice,
+			createdAt: new Date(Date.now() - daysAgo * DAY_MS)
+		});
+	logWorkspace('jiraJql', null, 'project = SBX', 24);
+	logWorkspace('jiraConflictStrategy', 'KEEP_LOCAL', 'JIRA_WINS', 18);
+	logWorkspace('jiraConflictStrategy', 'JIRA_WINS', 'KEEP_LOCAL', 17);
+	logWorkspace('jiraJql', 'project = SBX', 'project = SBX AND issuetype != Epic', 9);
 
 	for (const batch of chunk(changeLogRows, 500)) await db.insert(changeLog).values(batch);
 

@@ -1,0 +1,1 @@
+ALTER TYPE "public"."change_log_entity" ADD VALUE 'MEMBER';

@@ -3,11 +3,10 @@
 	import { enhance, deserialize } from '$app/forms';
 	import { goto } from '$app/navigation';
 	import { page, navigating } from '$app/state';
-	import { formatDateTime } from '$lib/utils/date';
-	import { TICKET_FIELD_LABELS } from '$lib/changeLogLabels';
 	import { confirmDialog } from '$lib/confirm.svelte';
 	import { toast } from 'svelte-sonner';
 	import SspPicker from '$lib/components/SspPicker.svelte';
+	import TicketHistory from '$lib/components/TicketHistory.svelte';
 	import UserAvatar from '$lib/components/UserAvatar.svelte';
 	import Tooltip from '$lib/components/Tooltip.svelte';
 	import { jiraTicketUrl } from '$lib/jiraLink';
@@ -520,29 +519,6 @@
 		}
 	}
 
-	// Historique (champs budget/estimation) — chargé à la demande à l'ouverture de la modal, pas
-	// avec la liste des tickets (rarement consulté, autant ne pas alourdir le chargement initial).
-	type HistoryEntry = {
-		field: string | null;
-		action: 'UPDATE' | 'DELETE';
-		oldValue: string | null;
-		newValue: string | null;
-		changedByName: string | null;
-		createdAt: string;
-	};
-	let historyEntries = $state<HistoryEntry[]>([]);
-	let historyLoading = $state(false);
-	$effect(() => {
-		if (!editId) {
-			historyEntries = [];
-			return;
-		}
-		historyLoading = true;
-		fetch(`/api/tickets/${editId}/history`)
-			.then((r) => (r.ok ? r.json() : { entries: [] }))
-			.then((d) => (historyEntries = d.entries))
-			.finally(() => (historyLoading = false));
-	});
 	const kanbanCols = $derived([
 		...data.ref.states.map((s) => ({
 			id: s.id as string | null,
@@ -1433,24 +1409,7 @@
 				{/if}
 				<span>Avancement <b class="tabnum">{pct(avancement(editRow))}%</b></span>
 			</div>
-			<div class="tk-history">
-				<h4>Historique</h4>
-				{#if historyLoading}
-					<p class="hint">Chargement…</p>
-				{:else if historyEntries.length === 0}
-					<p class="hint">Aucune modification tracée pour l'instant.</p>
-				{:else}
-					<ul>
-						{#each historyEntries as h, i (i)}
-							<li>
-								<span class="hf">{TICKET_FIELD_LABELS[h.field ?? ''] ?? h.field}</span>
-								<span class="hv">{h.oldValue ?? '—'} → {h.newValue ?? '—'}</span>
-								<span class="hm hint">{h.changedByName ?? 'Quelqu’un'} · {formatDateTime(new Date(h.createdAt))}</span>
-							</li>
-						{/each}
-					</ul>
-				{/if}
-			</div>
+			<TicketHistory ticketId={editRow.id} />
 			{#if data.isOwner}
 				<div class="tk-danger">
 					<form method="POST" action="?/delete" use:enhance={(opts) => confirmDeleteTicket(editRow!, opts)}>
@@ -2597,45 +2556,6 @@
 	.tk-foot b {
 		color: var(--text-soft);
 		margin-left: 4px;
-	}
-	.tk-history {
-		margin-top: 14px;
-		padding-top: 14px;
-		border-top: 1px solid var(--border);
-	}
-	.tk-history h4 {
-		margin: 0 0 8px;
-		font-size: 13px;
-		font-weight: 600;
-		color: var(--text-soft);
-	}
-	.tk-history ul {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
-		max-height: 160px;
-		overflow-y: auto;
-	}
-	.tk-history li {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: baseline;
-		gap: 8px;
-		font-size: 12.5px;
-	}
-	.tk-history .hf {
-		font-weight: 600;
-		color: var(--text-soft);
-	}
-	.tk-history .hv {
-		color: var(--text);
-	}
-	.tk-history .hm {
-		margin-left: auto;
-		white-space: nowrap;
 	}
 	@media (max-width: 560px) {
 		.tk-grid {

@@ -46,7 +46,7 @@ export const absenceTypeEnum = pgEnum('absence_type', [
 export const absencePeriodEnum = pgEnum('absence_period', ['FULL', 'AM', 'PM']);
 // 'WORKSPACE' : utilisé pour tracer les changements de config Jira (ex. rotation du PAT) —
 // jamais oldValue/newValue pour ce type, voir services/jiraSync.ts.
-export const changeLogEntityEnum = pgEnum('change_log_entity', ['TICKET', 'ABSENCE', 'WORKSPACE']);
+export const changeLogEntityEnum = pgEnum('change_log_entity', ['TICKET', 'ABSENCE', 'WORKSPACE', 'MEMBER']);
 export const changeLogActionEnum = pgEnum('change_log_action', ['UPDATE', 'DELETE']);
 export const supportCadenceEnum = pgEnum('support_cadence', ['DAY', 'WEEK', 'MONTH']);
 export const jiraSyncStatusEnum = pgEnum('jira_sync_status', ['SUCCESS', 'ERROR']);
@@ -759,9 +759,9 @@ export const absence = pgTable(
 	]
 );
 
-// ---------- Historique des modifications (estimations tickets, absences) ----------
-// entityId reste un UUID nu (pas de FK réelle) : polymorphe entre ticket/absence, et doit survivre
-// à la suppression d'une absence (on veut garder la trace même quand la ligne source a disparu).
+// ---------- Historique des modifications (tickets, absences, membres, configuration) ----------
+// entityId reste un UUID nu (pas de FK réelle) : polymorphe entre ticket/absence/membre/espace, et
+// doit survivre à la suppression de la ligne source (on veut garder la trace même quand elle a disparu).
 export const changeLog = pgTable(
 	'change_log',
 	{

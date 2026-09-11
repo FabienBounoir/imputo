@@ -460,7 +460,7 @@ export const actions: Actions = {
 		const role: Role = roleRaw === 'ADMIN' ? 'ADMIN' : roleRaw === 'MANAGER' ? 'MANAGER' : 'USER';
 		if (userId === locals.user!.id) return fail(400, { error: 'Vous ne pouvez pas changer votre propre rôle.' });
 		try {
-			await setMemberRole(ws.workspaceId, userId, role);
+			await setMemberRole(ws.workspaceId, userId, role, locals.user!.id);
 		} catch (e) {
 			logger.error('admin_member_role_failed', e, { workspaceId: ws.workspaceId, userId, role });
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
@@ -478,7 +478,7 @@ export const actions: Actions = {
 		if (field !== 'canViewImputations' && field !== 'canViewMoodResults')
 			return fail(400, { error: 'Capacité invalide.' });
 		try {
-			await setMemberCapability(ws.workspaceId, userId, field, value);
+			await setMemberCapability(ws.workspaceId, userId, field, value, locals.user!.id);
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
@@ -493,7 +493,7 @@ export const actions: Actions = {
 		const active = f.get('active') === 'true';
 		if (userId === locals.user!.id) return fail(400, { error: 'Vous ne pouvez pas vous désactiver vous-même.' });
 		try {
-			await setMemberActive(ws.workspaceId, userId, active);
+			await setMemberActive(ws.workspaceId, userId, active, locals.user!.id);
 		} catch (e) {
 			logger.error('admin_member_active_failed', e, { workspaceId: ws.workspaceId, userId, active });
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
@@ -788,7 +788,7 @@ export const actions: Actions = {
 		const ws = locals.workspace!;
 		const f = await request.formData();
 		try {
-			await deleteState(ws.workspaceId, String(f.get('id')));
+			await deleteState(ws.workspaceId, String(f.get('id')), locals.user!.id);
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}

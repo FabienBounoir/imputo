@@ -1,5 +1,6 @@
 import { and, eq, ne, isNull, count, sql } from 'drizzle-orm';
 import { db, category, activity, timeEntry, state, ticket, ticketActivityRae, ssp } from '$lib/server/db';
+import { logChange } from './changeLog';
 
 export type CategoryKind = 'PRODUCTIVE' | 'NON_PRODUCTIVE';
 export type CategoryItem = {
@@ -416,10 +417,28 @@ export async function moveState(workspaceId: string, id: string, dir: 'up' | 'do
 	});
 }
 
-export async function deleteState(workspaceId: string, id: string) {
-	const res = await db
+/** Supprime un état — ses tickets repassent « Sans état » (FK set null), tracé ticket par ticket. */
+export async function deleteState(workspaceId: string, id: string, actorId: string | null = null) {
+	// Capturés avant : la FK remet stateId à null en base, sans passer par updateTicketField.
+	const affected = await db
+		.select({ id: ticket.id })
+		.from(ticket)
+		.where(and(eq(ticket.workspaceId, workspaceId), eq(ticket.stateId, id)));
+	const [deleted] = await db
 		.delete(state)
 		.where(and(eq(state.id, id), eq(state.workspaceId, workspaceId)))
-		.returning({ id: state.id });
-	if (res.length === 0) throw new Error('Introuvable dans cet espace.');
+		.returning({ label: state.label });
+	if (!deleted) throw new Error('Introuvable dans cet espace.');
+	await logChange(
+		affected.map((t) => ({
+			workspaceId,
+			entityType: 'TICKET' as const,
+			entityId: t.id,
+			field: 'stateId',
+			action: 'UPDATE' as const,
+			oldValue: deleted.label,
+			newValue: null,
+			changedById: actorId
+		}))
+	);
 }

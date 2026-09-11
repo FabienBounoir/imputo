@@ -281,7 +281,7 @@ export const actions: Actions = {
 		const ticketId = String(f.get('ticketId') ?? '');
 		if (!ticketId) return fail(400, { error: 'Données invalides.' });
 		try {
-			await deleteTicket(ws.workspaceId, ticketId);
+			await deleteTicket(ws.workspaceId, ticketId, locals.user.id);
 		} catch (e) {
 			logger.error('ticket_delete_failed', e, { workspaceId: ws.workspaceId, ticketId });
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
