@@ -224,11 +224,12 @@ describe('getMonthProdTnf (cartes TNF/Produit du mois de la Synthèse)', () => {
 				{ workspaceId: w.workspaceId, code: 'AM-2', label: 'Sans prod' }
 			])
 			.returning();
+		const perimeterId = await defaultPerimeterId(w.workspaceId);
 		const [t1, t2] = await db
 			.insert(ticket)
 			.values([
-				{ workspaceId: w.workspaceId, key: `AM1-${w.workspaceId.slice(0, 8)}`, title: 'T1', sspId: withProd.id },
-				{ workspaceId: w.workspaceId, key: `AM2-${w.workspaceId.slice(0, 8)}`, title: 'T2', sspId: withoutProd.id }
+				{ workspaceId: w.workspaceId, perimeterId, key: `AM1-${w.workspaceId.slice(0, 8)}`, title: 'T1', sspId: withProd.id },
+				{ workspaceId: w.workspaceId, perimeterId, key: `AM2-${w.workspaceId.slice(0, 8)}`, title: 'T2', sspId: withoutProd.id }
 			])
 			.returning({ id: ticket.id });
 		await db.insert(timeEntry).values([

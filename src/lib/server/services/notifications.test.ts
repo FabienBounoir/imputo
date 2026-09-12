@@ -3,7 +3,7 @@ import { eq, and } from 'drizzle-orm';
 import { db, workspace, category, timeEntry, moodVote, user, membership, activity, ticket, ticketActivityRae } from '$lib/server/db';
 import { createWorkspaceWithOwner } from './workspaces';
 import { setSupportEnabled, setSupportCadence, addRotationMember, setOverride, getCurrentDuty } from './support';
-import { addMember, makeWorkspace } from './test-helpers';
+import { addMember, makeWorkspace, defaultPerimeterId } from './test-helpers';
 import { listStaleRaePairs, upsertTicketActivityRae } from './tickets';
 import { todayInParis, parseISODate, toISODate, addDays } from '$lib/utils/date';
 
@@ -360,11 +360,12 @@ describe('RAE périmé', () => {
 			])
 			.returning();
 		const longAgo = new Date(Date.now() - 30 * 86400000);
+		const perimeterId = await defaultPerimeterId(workspaceId);
 		const [ventile, nonVentile] = await db
 			.insert(ticket)
 			.values([
-				{ workspaceId, key: `RAE-1-${rnd}`, title: 'Ventilé', raeReal: '5' },
-				{ workspaceId, key: `RAE-2-${rnd}`, title: 'Non ventilé', raeReal: '5' }
+				{ workspaceId, perimeterId, key: `RAE-1-${rnd}`, title: 'Ventilé', raeReal: '5' },
+				{ workspaceId, perimeterId, key: `RAE-2-${rnd}`, title: 'Non ventilé', raeReal: '5' }
 			])
 			.returning();
 		await db.insert(ticketActivityRae).values([

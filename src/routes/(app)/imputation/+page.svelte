@@ -91,12 +91,29 @@
 	// `data.tickets` n'est plus tout le catalogue mais une graine bornée (cf. +page.server.ts) : les
 	// tickets trouvés par la recherche serveur des sélecteurs s'y ajoutent au fil de l'eau, sinon on
 	// ne saurait pas résoudre le titre/sprint d'un ticket qu'on vient de choisir.
-	let fetchedTickets = $state<typeof data.tickets>([]);
-	const ticketById = $derived(new Map([...data.tickets, ...fetchedTickets].map((t) => [t.id, t])));
-	// Le sélecteur type ses tickets au plus juste de ce qu'il affiche (sprint/version optionnels) ;
-	// la table de correspondance, elle, veut la forme complète — d'où la normalisation ici.
+	type FetchedTicket = Omit<(typeof data.tickets)[number], 'perimeterId' | 'perimeterName'> & {
+		perimeterId: string | null;
+		perimeterName: string | null;
+	};
+	let fetchedTickets = $state<FetchedTicket[]>([]);
+	const ticketById = $derived(new Map<string, FetchedTicket>([...data.tickets, ...fetchedTickets].map((t) => [t.id, t])));
+	// Le sélecteur type ses tickets au plus juste de ce qu'il affiche (sprint/version/périmètre
+	// optionnels) ; la table de correspondance, elle, veut la forme complète — d'où la normalisation
+	// ici. La recherche serveur renvoie toujours le périmètre : les replis ne servent qu'au typage.
 	function mergeFetchedTickets(
-		found: { id: string; key: string; title: string; sprintId?: string | null; versionId?: string | null; sprintName?: string | null }[]
+		found: {
+			id: string;
+			key: string;
+			title: string;
+			sprintId?: string | null;
+			versionId?: string | null;
+			sprintName?: string | null;
+			perimeterId?: string | null;
+			perimeterName?: string | null;
+			perimeterColor?: string | null;
+			perimeterTransverse?: boolean;
+			perimeterSortOrder?: number;
+		}[]
 	) {
 		const known = new Set([...data.tickets, ...fetchedTickets].map((t) => t.id));
 		const additions = found
@@ -107,7 +124,12 @@
 				title: t.title,
 				sprintId: t.sprintId ?? null,
 				versionId: t.versionId ?? null,
-				sprintName: t.sprintName ?? null
+				sprintName: t.sprintName ?? null,
+				perimeterId: t.perimeterId ?? null,
+				perimeterName: t.perimeterName ?? null,
+				perimeterColor: t.perimeterColor ?? null,
+				perimeterTransverse: t.perimeterTransverse ?? false,
+				perimeterSortOrder: t.perimeterSortOrder ?? NO_PERIMETER_ORDER
 			}));
 		if (additions.length > 0) fetchedTickets = [...fetchedTickets, ...additions];
 	}
@@ -967,7 +989,7 @@
 											<!-- La vue équipe est groupée par personne, pas par périmètre : la pastille est
 											     ici le seul repère (contrairement à la grille perso, qui a des sections). -->
 											{#if showPerimeters && row.perimeterName}
-												<span class="perim-chip" style="--perim:{row.perimeterColor ?? 'var(--muted)'}">{row.perimeterName}</span>
+												<span class="perim-chip" style="--perim:{row.perimeterColor ?? 'var(--text-mute)'}">{row.perimeterName}</span>
 											{/if}
 											{#if ticketJiraUrl(row)}
 												<a class="sub" href={ticketJiraUrl(row)} target="_blank" rel="noopener noreferrer" title="Ouvrir dans Jira" onclick={(e) => e.stopPropagation()}>{row.sublabel}</a>
@@ -1136,7 +1158,7 @@
 						     la grille, pas un second tableau. -->
 						<tr class="perim-head-row">
 							<td colspan={days.length + (showRae ? 4 : 2)}>
-								<span class="perim-head" style="--perim:{row.perimeterColor ?? 'var(--muted)'}">
+								<span class="perim-head" style="--perim:{row.perimeterColor ?? 'var(--text-mute)'}">
 									{heading}{#if row.perimeterTransverse}<span class="perim-head-tag">transverse</span>{/if}
 								</span>
 							</td>
@@ -2313,7 +2335,7 @@
 		font-weight: 500;
 		text-transform: none;
 		letter-spacing: 0;
-		color: var(--muted);
+		color: var(--text-mute);
 	}
 	/* Pastille de périmètre (vue équipe uniquement — la grille perso a ses sections). */
 	.perim-chip {

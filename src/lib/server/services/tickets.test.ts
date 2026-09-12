@@ -505,7 +505,7 @@ describe('deleteUntouchedSyncedTickets', () => {
 		expect(byPriority.rows.map((r) => r.key)).toEqual(['PRIO-HIGH', 'PRIO-MID', 'PRIO-LOW']);
 
 		// Sens inverse : le moins prioritaire d'abord.
-		const inverse = await listTicketsPage(workspaceId, true, true, {}, undefined, true, 'priority_desc');
+		const inverse = await listTicketsPage(workspaceId, true, 'SYSTEM',{}, undefined, true, 'priority_desc');
 		expect(inverse.rows.map((r) => r.key)).toEqual(['PRIO-LOW', 'PRIO-MID', 'PRIO-HIGH']);
 	});
 
@@ -513,13 +513,14 @@ describe('deleteUntouchedSyncedTickets', () => {
 		const { workspaceId } = await makeWorkspace();
 		// Priorité identique partout : seul le départage par date décide, et il ne doit pas basculer
 		// juste parce qu'on a inversé le sens de la priorité.
+		const perimeterId = await defaultPerimeterId(workspaceId);
 		await db.insert(ticket).values([
-			{ workspaceId, key: 'EQ-OLD', title: 'Ancien', priority: 3, createdAt: new Date('2026-01-01T00:00:00Z') },
-			{ workspaceId, key: 'EQ-NEW', title: 'Récent', priority: 3, createdAt: new Date('2026-06-01T00:00:00Z') }
+			{ workspaceId, perimeterId, key: 'EQ-OLD', title: 'Ancien', priority: 3, createdAt: new Date('2026-01-01T00:00:00Z') },
+			{ workspaceId, perimeterId, key: 'EQ-NEW', title: 'Récent', priority: 3, createdAt: new Date('2026-06-01T00:00:00Z') }
 		]);
 
 		for (const sort of ['priority', 'priority_desc'] as const) {
-			const res = await listTicketsPage(workspaceId, true, true, {}, undefined, true, sort);
+			const res = await listTicketsPage(workspaceId, true, 'SYSTEM',{}, undefined, true, sort);
 			expect(res.rows.map((r) => r.key), sort).toEqual(['EQ-OLD', 'EQ-NEW']);
 		}
 	});
@@ -528,33 +529,35 @@ describe('deleteUntouchedSyncedTickets', () => {
 		const { workspaceId } = await makeWorkspace();
 		// createdAt explicites : l'insertion en masse partage le même timestamp par défaut, ce qui
 		// rendrait l'assertion dépendante du tie-breaker `id` plutôt que de la date.
+		const perimeterId = await defaultPerimeterId(workspaceId);
 		await db.insert(ticket).values([
-			{ workspaceId, key: 'OLD-1', title: 'Ancien', createdAt: new Date('2026-01-01T00:00:00Z') },
-			{ workspaceId, key: 'MID-1', title: 'Milieu', createdAt: new Date('2026-02-01T00:00:00Z') },
-			{ workspaceId, key: 'NEW-1', title: 'Récent', createdAt: new Date('2026-03-01T00:00:00Z') }
+			{ workspaceId, perimeterId, key: 'OLD-1', title: 'Ancien', createdAt: new Date('2026-01-01T00:00:00Z') },
+			{ workspaceId, perimeterId, key: 'MID-1', title: 'Milieu', createdAt: new Date('2026-02-01T00:00:00Z') },
+			{ workspaceId, perimeterId, key: 'NEW-1', title: 'Récent', createdAt: new Date('2026-03-01T00:00:00Z') }
 		]);
 
-		const asc = await listTicketsPage(workspaceId, true, true, {}, undefined, true, 'created');
+		const asc = await listTicketsPage(workspaceId, true, 'SYSTEM',{}, undefined, true, 'created');
 		expect(asc.rows.map((r) => r.key)).toEqual(['OLD-1', 'MID-1', 'NEW-1']);
 
-		const desc = await listTicketsPage(workspaceId, true, true, {}, undefined, true, 'created_desc');
+		const desc = await listTicketsPage(workspaceId, true, 'SYSTEM',{}, undefined, true, 'created_desc');
 		expect(desc.rows.map((r) => r.key)).toEqual(['NEW-1', 'MID-1', 'OLD-1']);
 	});
 
 	it('listTicketsPage: en ordre décroissant, une sous-tâche reste sous son parent', async () => {
 		const { workspaceId } = await makeWorkspace();
+		const perimeterId = await defaultPerimeterId(workspaceId);
 		const [parent] = await db
 			.insert(ticket)
-			.values({ workspaceId, key: 'FAM-P', title: 'Parent', createdAt: new Date('2026-01-01T00:00:00Z') })
+			.values({ workspaceId, perimeterId, key: 'FAM-P', title: 'Parent', createdAt: new Date('2026-01-01T00:00:00Z') })
 			.returning({ id: ticket.id });
 		await db.insert(ticket).values([
-			{ workspaceId, key: 'FAM-C', title: 'Enfant', parentId: parent.id, createdAt: new Date('2026-01-02T00:00:00Z') },
-			{ workspaceId, key: 'AUTRE', title: 'Autre', createdAt: new Date('2026-05-01T00:00:00Z') }
+			{ workspaceId, perimeterId, key: 'FAM-C', title: 'Enfant', parentId: parent.id, createdAt: new Date('2026-01-02T00:00:00Z') },
+			{ workspaceId, perimeterId, key: 'AUTRE', title: 'Autre', createdAt: new Date('2026-05-01T00:00:00Z') }
 		]);
 
 		// La famille est classée sur la date du parent, mais l'enfant ne remonte jamais au-dessus
 		// de lui : la hiérarchie ne s'inverse pas avec le sens du tri.
-		const desc = await listTicketsPage(workspaceId, true, true, {}, undefined, true, 'created_desc');
+		const desc = await listTicketsPage(workspaceId, true, 'SYSTEM',{}, undefined, true, 'created_desc');
 		expect(desc.rows.map((r) => r.key)).toEqual(['AUTRE', 'FAM-P', 'FAM-C']);
 	});
 });

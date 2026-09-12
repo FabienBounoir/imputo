@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { GET } from './+server';
-import { makeWorkspace, addMember } from '$lib/server/services/test-helpers';
+import { makeWorkspace, addMember, defaultPerimeterId } from '$lib/server/services/test-helpers';
 import { fakeLocals } from '$lib/server/test-helpers/http';
 import { createTicket } from '$lib/server/services/tickets';
+import { createPerimeter } from '$lib/server/services/perimeters';
 
 const call = async (locals: unknown, search: string) =>
 	GET({ locals, url: new URL(`http://localhost/api/tickets/search${search}`) } as never);
@@ -23,7 +24,7 @@ describe('GET /api/tickets/search', () => {
 		}
 	});
 
-	it('renvoie exactement id/clé/titre — la forme dont les sélecteurs ont besoin', async () => {
+	it('renvoie exactement id/clé/titre/sprint/version/périmètre — la forme dont les sélecteurs ont besoin', async () => {
 		const { userId, workspaceId } = await makeWorkspace('api-search-shape');
 		const t = await createTicket(workspaceId, { key: 'API-2', title: 'Recherche serveur' });
 		const res = await call(await fakeLocals(userId), '?q=recherche');
@@ -36,8 +37,23 @@ describe('GET /api/tickets/search', () => {
 			title: 'Recherche serveur',
 			sprintId: null,
 			versionId: null,
-			sprintName: null
+			sprintName: null,
+			perimeterId: await defaultPerimeterId(workspaceId),
+			perimeterName: expect.any(String),
+			perimeterColor: null,
+			perimeterTransverse: false,
+			perimeterSortOrder: 0
 		});
+	});
+
+	it('filtre par périmètre, même sans texte — le filtre de la palette « + Ajouter » montre tout le périmètre', async () => {
+		const { userId, workspaceId } = await makeWorkspace('api-search-perim');
+		const mobileId = await createPerimeter(workspaceId, 'Mobile', null, false);
+		await createTicket(workspaceId, { key: 'PER-WEB', title: 'Web' });
+		await createTicket(workspaceId, { key: 'PER-MOB', title: 'Mobile', perimeterId: mobileId });
+
+		const res = await call(await fakeLocals(userId), `?perimeter=${mobileId}`);
+		expect((await res.json()).tickets.map((t: { key: string }) => t.key)).toEqual(['PER-MOB']);
 	});
 
 	it('un simple membre y a accès : ces champs sont déjà visibles partout ailleurs', async () => {

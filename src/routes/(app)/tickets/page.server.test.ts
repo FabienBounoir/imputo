@@ -65,6 +65,7 @@ describe('tickets +page.server load — mémorisation des filtres (arrivée à b
 			projectId: null,
 			sprintId: null,
 			versionId: null,
+			perimeterId: null,
 			sort: 'priority'
 		});
 
@@ -85,6 +86,7 @@ describe('tickets +page.server load — mémorisation des filtres (arrivée à b
 			projectId: null,
 			sprintId: null,
 			versionId: null,
+			perimeterId: null,
 			sort: 'created'
 		});
 

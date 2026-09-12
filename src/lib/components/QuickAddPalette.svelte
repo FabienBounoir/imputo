@@ -890,7 +890,7 @@
 		margin-left: auto;
 		padding-left: 0.5rem;
 		font-size: 0.72rem;
-		color: var(--muted);
+		color: var(--text-mute);
 		white-space: nowrap;
 	}
 </style>
