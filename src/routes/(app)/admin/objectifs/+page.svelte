@@ -26,8 +26,10 @@
 	// Comparaison de dates ISO en chaîne : l'ordre lexicographique y est l'ordre chronologique.
 	const beforePrepWeek = $derived(data.weekMondayISO < data.prepWeekMondayISO);
 
-	/** Chacun coche les siennes ; un admin/manager coche pour tout le monde (revérifié serveur). */
-	const canCheck = (userId: string) => data.canManage || userId === data.selfId;
+	/** Admin/manager : tout le monde ; CP : ses collaborateurs (revérifié serveur). */
+	const canManageUser = (userId: string) => data.canManage && (!data.manageableIds || data.manageableIds.includes(userId));
+	/** Chacun coche les siennes ; celui qui pilote une personne coche aussi pour elle. */
+	const canCheck = (userId: string) => canManageUser(userId) || userId === data.selfId;
 
 	const withObjectives = $derived(
 		data.members.map((m) => ({ ...m, objectives: data.objectives.filter((o) => o.userId === m.id) }))
@@ -67,11 +69,11 @@
 	});
 	const vacationMembers = $derived(data.members.filter((m) => onVacation.has(m.id)));
 	/** Personnes attribuables dans la palette — jamais quelqu'un en congés, addObjective le refuse. */
-	const assignable = $derived(activeMembers.map((m) => ({ id: m.id, displayName: m.displayName })));
+	const assignable = $derived(activeMembers.filter((m) => canManageUser(m.id)).map((m) => ({ id: m.id, displayName: m.displayName })));
 
-	// Un manager suit l'avancement de l'équipe entière, un membre le sien : c'est la seule part sur
-	// laquelle il peut agir.
-	const tracked = $derived(data.canManage ? data.objectives : data.objectives.filter((o) => o.userId === data.selfId));
+	// Un manager suit l'avancement de l'équipe qu'il pilote, un membre le sien : c'est la seule part
+	// sur laquelle il peut agir.
+	const tracked = $derived(data.objectives.filter((o) => (data.canManage ? canManageUser(o.userId) : o.userId === data.selfId)));
 	const doneCount = $derived(tracked.filter((o) => isDone(o)).length);
 
 
@@ -172,7 +174,9 @@
 							<span class="bar"><span style="width:{(doneCount / tracked.length) * 100}%"></span></span>
 						</span>
 					{/if}
-					{#if data.canManage}
+					<!-- L'export rend la semaine de tout l'espace, sans notion de périmètre : réservé aux
+					     MANAGER/ADMIN, masqué pour un CP (qui ne pilote que sa population). -->
+					{#if data.canExportImage}
 						<button class="btn btn-ghost" type="button" disabled={imgBusy} onclick={downloadObjectivesPng}>
 							{imgBusy ? 'Génération…' : '⬇ Exporter en image (PNG)'}
 						</button>
@@ -189,7 +193,7 @@
 							<UserAvatar userId={m.id} name={m.displayName} size={26} />
 							<h3>{m.displayName}</h3>
 							{#if m.id === data.selfId}<span class="you">Vous</span>{/if}
-							{#if data.canManage}
+							{#if canManageUser(m.id)}
 								<form method="POST" action="?/toggleVacation" use:enhance>
 									<input type="hidden" name="userId" value={m.id} />
 									<input type="hidden" name="weekMondayISO" value={data.weekMondayISO} />
@@ -247,7 +251,7 @@
 											</form>
 										{/if}
 										<span class="task-text">{@render objectiveLabel(o)}</span>
-										{#if data.canManage}
+										{#if canManageUser(m.id)}
 											<span class="row-ctl">
 												<form method="POST" action="?/moveObjective" use:enhance>
 													<input type="hidden" name="id" value={o.id} />
@@ -270,7 +274,7 @@
 							</ul>
 						{/if}
 
-						{#if data.canManage}
+						{#if canManageUser(m.id)}
 							<button class="add-row" type="button" onclick={() => palette?.show(m.id)}>
 								<!-- Croix dessinée, pas le caractère "+" : le glyphe s'assoit sur l'axe mathématique de
 								     la police, plus haut que le centre optique de sa pastille, et aucun centrage CSS ne
@@ -288,7 +292,7 @@
 			{#if vacationMembers.length > 0}
 				<div class="vac-strip">
 					{#each vacationMembers as m (m.id)}
-						{#if data.canManage}
+						{#if canManageUser(m.id)}
 							<form method="POST" action="?/toggleVacation" use:enhance>
 								<input type="hidden" name="userId" value={m.id} />
 								<input type="hidden" name="weekMondayISO" value={data.weekMondayISO} />

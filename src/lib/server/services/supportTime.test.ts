@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { eq, sql } from 'drizzle-orm';
+import { db, supportTimeEntry } from '$lib/server/db';
 import { makeWorkspace, addMember } from './test-helpers';
 import { setSupportTimeTrackingEnabled } from './support';
 import {
@@ -9,7 +11,8 @@ import {
 	listTimeEntriesPage,
 	getSupportTimeStats,
 	listPeopleWithEntries,
-	updateTimeEntry
+	updateTimeEntry,
+	type SupportTimeCursor
 } from './supportTime';
 
 describe('supportTime', () => {
@@ -128,6 +131,38 @@ describe('supportTime', () => {
 
 		const allIds = [...page1.entries, ...page2.entries, ...page3.entries].map((e) => e.id);
 		expect(new Set(allIds).size).toBe(5);
+	});
+
+	// Régression : le curseur repart en ISO (milliseconde) alors que Postgres stocke la microseconde.
+	// Comparé à la colonne brute, il faisait disparaître toute ligne située dans la MÊME milliseconde
+	// que la dernière de la page précédente — d'où une pagination qui sautait des lignes, au hasard
+	// des timings d'insertion. On force ici la collision plutôt que d'espérer la reproduire.
+	it('ne saute aucune ligne quand plusieurs saisies partagent la même milliseconde', async () => {
+		const ws = await makeWorkspace('sti');
+		for (let i = 0; i < 4; i++) {
+			await createTimeEntry(ws.workspaceId, ws.userId, { ticketRef: `MS-${i}`, minutes: 10, day: '2026-03-02' });
+		}
+		// .500000, .500250, .500500, .500750 : même milliseconde, microsecondes différentes.
+		const rows = await db
+			.select({ id: supportTimeEntry.id })
+			.from(supportTimeEntry)
+			.where(eq(supportTimeEntry.workspaceId, ws.workspaceId))
+			.orderBy(supportTimeEntry.id);
+		for (const [i, r] of rows.entries()) {
+			await db.execute(
+				sql`update support_time_entry set created_at = timestamptz '2026-03-02T10:00:00.500Z' + ${i * 250} * interval '1 microsecond' where id = ${r.id}`
+			);
+		}
+
+		const seen: string[] = [];
+		let cursor: SupportTimeCursor | undefined;
+		for (let page = 0; page < 6; page++) {
+			const res = await listTimeEntriesPage(ws.workspaceId, {}, { limit: 2, cursor });
+			seen.push(...res.entries.map((e) => e.id));
+			if (!res.nextCursor) break;
+			cursor = res.nextCursor;
+		}
+		expect(new Set(seen).size).toBe(4);
 	});
 
 	it('liste les personnes ayant au moins une saisie', async () => {

@@ -114,14 +114,23 @@ export async function listTimeEntriesPage(
 ): Promise<SupportTimePage> {
 	const limit = opts.limit ?? 50;
 	const conditions = [filterConditions(workspaceId, filter)];
+// Postgres stocke created_at à la microseconde, mais le driver le rend en `Date` JS (milliseconde)
+// et le curseur repart en ISO — donc tronqué. Comparer ce curseur tronqué à la colonne brute fait
+// SAUTER des lignes : la dernière ligne d'une page à .834606 produit un curseur .834000, et la
+// ligne suivante à .834200 satisfait ni `< .834000` ni `= .834000`. On tronque donc des DEUX côtés
+// (tri et comparaison) pour que SQL et le curseur parlent de la même valeur ; l'ordre à l'intérieur
+// d'une milliseconde est alors départagé par l'id, comme prévu.
+	const createdAtMs = sql`date_trunc('milliseconds', ${supportTimeEntry.createdAt})`;
 	if (opts.cursor) {
 		const { day, createdAt, id } = opts.cursor;
-		const c = new Date(createdAt);
+		// Cast explicite : comparé à une expression SQL (et non à une colonne typée), drizzle ne sait
+		// pas sérialiser un objet Date — on passe donc l'ISO du curseur tel quel.
+		const c = sql`${new Date(createdAt).toISOString()}::timestamptz`;
 		conditions.push(
 			or(
 				lt(supportTimeEntry.day, day),
-				and(eq(supportTimeEntry.day, day), lt(supportTimeEntry.createdAt, c)),
-				and(eq(supportTimeEntry.day, day), eq(supportTimeEntry.createdAt, c), lt(supportTimeEntry.id, id))
+				and(eq(supportTimeEntry.day, day), lt(createdAtMs, c)),
+				and(eq(supportTimeEntry.day, day), eq(createdAtMs, c), lt(supportTimeEntry.id, id))
 			)!
 		);
 	}
@@ -130,7 +139,7 @@ export async function listTimeEntriesPage(
 		.from(supportTimeEntry)
 		.innerJoin(user, eq(supportTimeEntry.userId, user.id))
 		.where(and(...conditions))
-		.orderBy(desc(supportTimeEntry.day), desc(supportTimeEntry.createdAt), desc(supportTimeEntry.id))
+		.orderBy(desc(supportTimeEntry.day), desc(createdAtMs), desc(supportTimeEntry.id))
 		.limit(limit + 1);
 
 	const hasMore = rows.length > limit;

@@ -9,7 +9,7 @@ import { db, project } from '$lib/server/db';
 import { setTicketFiltersSnapshot, setRememberTicketFiltersPref, setRememberTicketSearchPref } from '$lib/server/services/accounts';
 
 describe('tickets +page.server load', () => {
-	it('isAdmin/canEditEstimation sont false pour un USER, true pour un ADMIN', async () => {
+	it('isAdmin est false pour un USER, true pour un ADMIN', async () => {
 		const { userId, workspaceId } = await makeWorkspace('ticketsload');
 		const { userId: memberId } = await addMember(workspaceId, 'USER', 'ticketsload-member');
 		const url = new URL('http://localhost/tickets');
@@ -18,9 +18,7 @@ describe('tickets +page.server load', () => {
 		const adminResult = await load({ locals: await fakeLocals(userId), url } as never);
 
 		expect(memberResult.isAdmin).toBe(false);
-		expect(memberResult.canEditEstimation).toBe(false);
 		expect(adminResult.isAdmin).toBe(true);
-		expect(adminResult.canEditEstimation).toBe(true);
 	});
 
 	it('vue kanban par défaut sans pagination, vue table paginée', async () => {
@@ -48,6 +46,7 @@ describe('tickets +page.server load — mémorisation des filtres (arrivée à b
 			projectId: p.id,
 			sprintId: null,
 			versionId: null,
+			perimeterId: null,
 			sort: 'created'
 		});
 
@@ -66,6 +65,7 @@ describe('tickets +page.server load — mémorisation des filtres (arrivée à b
 			projectId: null,
 			sprintId: null,
 			versionId: null,
+			perimeterId: null,
 			sort: 'priority'
 		});
 
@@ -86,6 +86,7 @@ describe('tickets +page.server load — mémorisation des filtres (arrivée à b
 			projectId: null,
 			sprintId: null,
 			versionId: null,
+			perimeterId: null,
 			sort: 'created'
 		});
 
@@ -102,7 +103,7 @@ describe('tickets +page.server load — mémorisation des filtres (arrivée à b
 	it('remember=false → aucune redirection même avec un snapshot valide', async () => {
 		const { userId, workspaceId } = await makeWorkspace('ticketsremember');
 		const [p] = await db.insert(project).values({ workspaceId, name: 'Projet A' }).returning({ id: project.id });
-		await setTicketFiltersSnapshot(userId, { view: 'table', query: null, stateId: null, projectId: p.id, sprintId: null, versionId: null, sort: 'created' });
+		await setTicketFiltersSnapshot(userId, { view: 'table', query: null, stateId: null, projectId: p.id, sprintId: null, versionId: null, perimeterId: null, sort: 'created' });
 		await setRememberTicketFiltersPref(userId, false);
 
 		const result = await load({ locals: await fakeLocals(userId), url: new URL('http://localhost/tickets') } as never);
@@ -112,7 +113,7 @@ describe('tickets +page.server load — mémorisation des filtres (arrivée à b
 	it('rememberSearch=false → la recherche du snapshot est ignorée à la redirection, mais les autres filtres restent', async () => {
 		const { userId, workspaceId } = await makeWorkspace('ticketsremember');
 		const [p] = await db.insert(project).values({ workspaceId, name: 'Projet A' }).returning({ id: project.id });
-		await setTicketFiltersSnapshot(userId, { view: 'table', query: 'US-42', stateId: null, projectId: p.id, sprintId: null, versionId: null, sort: 'created' });
+		await setTicketFiltersSnapshot(userId, { view: 'table', query: 'US-42', stateId: null, projectId: p.id, sprintId: null, versionId: null, perimeterId: null, sort: 'created' });
 		await setRememberTicketSearchPref(userId, false);
 
 		await expect(load({ locals: await fakeLocals(userId), url: new URL('http://localhost/tickets') } as never)).rejects.toMatchObject({
@@ -137,6 +138,7 @@ describe('tickets +page.server load — mémorisation des filtres (arrivée à b
 			projectId: foreignProject.id,
 			sprintId: null,
 			versionId: null,
+			perimeterId: null,
 			sort: 'created'
 		});
 
@@ -155,7 +157,7 @@ describe('tickets +page.server load — mémorisation des filtres (arrivée à b
 	it('URL déjà paramétrée → jamais de redirection, même avec un snapshot valide', async () => {
 		const { userId, workspaceId } = await makeWorkspace('ticketsremember');
 		const [p] = await db.insert(project).values({ workspaceId, name: 'Projet A' }).returning({ id: project.id });
-		await setTicketFiltersSnapshot(userId, { view: 'table', query: null, stateId: null, projectId: p.id, sprintId: null, versionId: null, sort: 'created' });
+		await setTicketFiltersSnapshot(userId, { view: 'table', query: null, stateId: null, projectId: p.id, sprintId: null, versionId: null, perimeterId: null, sort: 'created' });
 
 		const result = await load({ locals: await fakeLocals(userId), url: new URL('http://localhost/tickets?page=2') } as never);
 		expect(result.filters.projectId).toBeUndefined();

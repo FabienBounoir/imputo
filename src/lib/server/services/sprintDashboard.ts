@@ -2,6 +2,7 @@ import { and, eq, inArray, isNull, notInArray, sql } from 'drizzle-orm';
 import { db, sprint, timeEntry, user, activity, ticketActivityRae, ticketSnapshot, ticketGroup } from '$lib/server/db';
 import { num, round, totalEstimation, totalRae, avancement } from './calc';
 import { listTickets } from './tickets';
+import { canLeadArg, type LeadScopeArg } from './perimeters';
 
 export type SprintDashboard = {
 	sprintId: string;
@@ -13,10 +14,15 @@ export type SprintDashboard = {
 		raeTotal: number;
 		avancement: number;
 		ecartVsEstimeTotal: number;
-		/** Admin only — null pour un USER standard (dérive de enveloppeTotale, invisible pour lui). Libellé historique "TNF". */
+		/** Lead only — null pour qui ne pilote aucun des périmètres du sprint (dérive de
+		 *  enveloppeTotale, invisible pour lui). Libellé historique "TNF". */
 		ecartVsBudgetTotal: number | null;
-		/** Admin only — somme des enveloppeTotale des tickets du périmètre. */
+		/** Lead only — somme des enveloppeTotale des tickets DONT L'APPELANT EST LEAD. */
 		budgetTotal: number | null;
+		/** true = le sprint contient des tickets hors de la portée de l'appelant, les deux totaux
+		 *  ci-dessus ne couvrent donc qu'une partie du sprint. À signaler dans l'UI : un CP qui lit
+		 *  « budget 120 j » sur une version transverse doit savoir que c'est sa part, pas le tout. */
+		budgetPartial: boolean;
 		ticketCount: number;
 	};
 	byActivity: { label: string; raeReal: number; raeTest: number }[];
@@ -73,7 +79,7 @@ export async function getSprintDashboard(
 	workspaceId: string,
 	sprintId: string,
 	testPhase = true,
-	isAdmin = true,
+	lead: LeadScopeArg = 'SYSTEM',
 	/** Répartition par activité : false (défaut) = ordre des référentiels (activity.sortOrder), true = alphabétique — préférence du membre courant (user.sortActivitiesAlpha). */
 	sortActivitiesAlpha = false,
 	/** Membres à exclure de `byPerson` (cf. accounts.ts listFacticeMemberIds) — jamais renseigné pour un rôle ADMIN. */
@@ -85,7 +91,7 @@ export async function getSprintDashboard(
 		.where(and(eq(sprint.id, sprintId), eq(sprint.workspaceId, workspaceId)));
 	if (!sprintRow) throw new Error('Sprint/version introuvable dans cet espace.');
 
-	const allTickets = await listTickets(workspaceId, testPhase, isAdmin);
+	const allTickets = await listTickets(workspaceId, testPhase, lead);
 	const tickets =
 		sprintRow.kind === 'VERSION'
 			? allTickets.filter((t) => t.versionId === sprintId)
@@ -135,6 +141,7 @@ export async function getSprintDashboard(
 	raeTotal = round(raeTotal);
 	consumedTotal = round(consumedTotal);
 	ecartEstimeTotal = round(ecartEstimeTotal);
+	const budgetVisibleCount = tickets.filter((t) => canLeadArg(lead, t.perimeterId)).length;
 	ecartBudgetTotal = round(ecartBudgetTotal);
 	budgetTotal = round(budgetTotal);
 	// Par état (ordre du référentiel, paramétrable dans Réglages → États) puis par clé — un même état
@@ -257,8 +264,12 @@ export async function getSprintDashboard(
 			raeTotal,
 			avancement: avancement(estTotal, raeTotal, consumedTotal),
 			ecartVsEstimeTotal: ecartEstimeTotal,
-			ecartVsBudgetTotal: isAdmin ? ecartBudgetTotal : null,
-			budgetTotal: isAdmin ? budgetTotal : null,
+			// Les deux totaux sont déjà restreints aux tickets visibles (enrichTickets redacte
+			// enveloppeTotale ticket par ticket) : reste à ne rien afficher du tout à qui n'en voit aucun,
+			// plutôt qu'un 0 qui se lirait « budget nul ».
+			ecartVsBudgetTotal: budgetVisibleCount > 0 ? ecartBudgetTotal : null,
+			budgetTotal: budgetVisibleCount > 0 ? budgetTotal : null,
+			budgetPartial: budgetVisibleCount < tickets.length,
 			ticketCount: tickets.length
 		},
 		byActivity,

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { eq, and } from 'drizzle-orm';
 import { db, ssp, ticket, timeEntry, monthlyClosing, membership } from '$lib/server/db';
-import { makeWorkspace, addMember } from './test-helpers';
+import { makeWorkspace, addMember, defaultPerimeterId } from './test-helpers';
 import {
 	getClosingView,
 	openClosing,
@@ -36,7 +36,13 @@ beforeAll(async () => {
 	sspB = inserted.find((s) => s.code === '123DBS34842')!.id;
 	const [t] = await db
 		.insert(ticket)
-		.values({ workspaceId: ws.workspaceId, key: 'CLO-1', title: 'Ticket clôture', sspId: sspA })
+		.values({
+			workspaceId: ws.workspaceId,
+			perimeterId: await defaultPerimeterId(ws.workspaceId),
+			key: 'CLO-1',
+			title: 'Ticket clôture',
+			sspId: sspA
+		})
 		.returning({ id: ticket.id });
 	ticketA = t.id;
 });
@@ -292,7 +298,13 @@ describe('monthlyClosing', () => {
 			.returning();
 		const [t] = await db
 			.insert(ticket)
-			.values({ workspaceId: w.workspaceId, key: 'RV-1', title: 't', sspId: s.id })
+			.values({
+				workspaceId: w.workspaceId,
+				perimeterId: await defaultPerimeterId(w.workspaceId),
+				key: 'RV-1',
+				title: 't',
+				sspId: s.id
+			})
 			.returning({ id: ticket.id });
 		await db.insert(timeEntry).values({
 			workspaceId: w.workspaceId,

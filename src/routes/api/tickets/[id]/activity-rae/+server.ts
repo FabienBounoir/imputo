@@ -13,7 +13,7 @@ const DENIED_MESSAGE: Record<TicketActivityField, string> = {
 	raeReal: 'RAE réservé aux personnes ayant imputé sur cette activité.',
 	raeTest: 'RAE réservé aux personnes ayant imputé sur cette activité.',
 	estimation: 'Estimé non autorisé.',
-	budget: 'Budget par activité réservé aux administrateurs.'
+	budget: 'Budget par activité réservé au CP du périmètre (ou au DP).'
 };
 
 // GET retiré : le détail par activité est désormais chargé eagerly avec la liste des tickets
@@ -30,7 +30,7 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
 
 	// Point de passage unique des valeurs par activité (RAE, Estimé, Budget — onglet chiffrage ET
 	// colonnes de Mon imputation) : le contrôle de rôle vit donc ici, pas dans les pages.
-	if (!(await canEditActivityField(ws.workspaceId, locals.user.id, locals.role, params.id, activityId, field)))
+	if (!(await canEditActivityField(ws.workspaceId, locals.user.id, locals.perimeterCtx, params.id, activityId, field)))
 		error(403, DENIED_MESSAGE[field as TicketActivityField]);
 
 	try {

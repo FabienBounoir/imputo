@@ -1,8 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { actions } from './+page.server';
+import { actions, load as loadUntyped } from './+page.server';
+// `load` peut renvoyer `void` côté types (branche du redirect non-ADMIN) ; en pratique il renvoie
+// toujours des données ici, donc on retype une fois plutôt que de caster à chaque accès.
+const load = loadUntyped as (event: unknown) => Promise<Record<string, any>>;
 import { makeWorkspace, addMember } from '$lib/server/services/test-helpers';
 import { fakeLocals, formRequest } from '$lib/server/test-helpers/http';
 import { getJiraConfig } from '$lib/server/services/accounts';
+import { listPerimeters, loadPerimeterCtx } from '$lib/server/services/perimeters';
+import { createTicket } from '$lib/server/services/tickets';
 
 // Toutes ces actions (sauf transferOwnership, gardée par le statut owner et testée séparément)
 // partagent la même garde `locals.role !== 'ADMIN'` -> fail(403). On le vérifie une seule fois
@@ -413,5 +418,94 @@ describe('admin jiraToggleEnabled / jiraSave / jiraSyncNow', () => {
 
 		expect(res).toEqual({ jiraResetCreatedSinceOk: true });
 		expect((await getJiraConfig(workspaceId)).createdSince).toBeNull();
+	});
+});
+
+describe('admin perimètres', () => {
+	it('crée un périmètre, le renomme, le bascule transverse', async () => {
+		const { userId, workspaceId } = await makeWorkspace('perimact');
+		const locals = await fakeLocals(userId);
+
+		const created = await actions.perimeterCreate({
+			locals,
+			request: formRequest({ name: 'Paiement', color: '#123456', transverse: 'false' })
+		} as never);
+		expect(created).toEqual({ perimeterOk: true });
+
+		const p = (await listPerimeters(workspaceId)).find((x) => x.name === 'Paiement')!;
+		expect(p.color).toBe('#123456');
+		expect(p.transverse).toBe(false);
+
+		await actions.perimeterUpdate({
+			locals,
+			request: formRequest({ id: p.id, name: 'Paiement & encaissement', color: '', transverse: 'true' })
+		} as never);
+		const after = (await listPerimeters(workspaceId)).find((x) => x.id === p.id)!;
+		expect(after.name).toBe('Paiement & encaissement');
+		expect(after.transverse).toBe(true);
+		// Couleur vidée dans le formulaire = pas de couleur, pas la chaîne vide.
+		expect(after.color).toBeNull();
+	});
+
+	it("remonte tel quel le refus d'archivage d'un périmètre qui porte des tickets", async () => {
+		const { userId, workspaceId } = await makeWorkspace('perimarch');
+		const locals = await fakeLocals(userId);
+		await actions.perimeterCreate({ locals, request: formRequest({ name: 'Occupé', color: '', transverse: 'false' }) } as never);
+		const p = (await listPerimeters(workspaceId)).find((x) => x.name === 'Occupé')!;
+		await createTicket(workspaceId, { key: `ADM-${p.id.slice(0, 8)}`, title: 'x', perimeterId: p.id });
+
+		const res = await actions.perimeterArchive({
+			locals,
+			request: formRequest({ id: p.id, archived: 'true' })
+		} as never);
+		expect(res?.status).toBe(400);
+		expect((res as { data?: { error?: string } })?.data?.error).toMatch(/ticket\(s\) y sont encore rattachés/);
+	});
+
+	it('rattache un membre puis le retire du périmètre', async () => {
+		const { userId, workspaceId } = await makeWorkspace('perimmemb');
+		const { userId: memberId } = await addMember(workspaceId, 'USER', 'perim-member');
+		const locals = await fakeLocals(userId);
+		const p = (await listPerimeters(workspaceId))[0];
+
+		await actions.perimeterMember({
+			locals,
+			request: formRequest({ perimeterId: p.id, userId: memberId, role: 'CP_BACKUP' })
+		} as never);
+		expect((await loadPerimeterCtx(workspaceId, memberId, 'USER')).leadPerimeterIds.has(p.id)).toBe(true);
+
+		// '' = « Non rattaché » dans le <select>.
+		await actions.perimeterMember({
+			locals,
+			request: formRequest({ perimeterId: p.id, userId: memberId, role: '' })
+		} as never);
+		expect((await loadPerimeterCtx(workspaceId, memberId, 'USER')).memberPerimeterIds.size).toBe(0);
+	});
+
+	it('refuse un rôle de périmètre inconnu', async () => {
+		const { userId, workspaceId } = await makeWorkspace('perimrole');
+		const locals = await fakeLocals(userId);
+		const p = (await listPerimeters(workspaceId))[0];
+
+		const res = await actions.perimeterMember({
+			locals,
+			request: formRequest({ perimeterId: p.id, userId, role: 'DP' })
+		} as never);
+		expect(res?.status).toBe(400);
+	});
+
+	it('le load expose les périmètres de chaque membre pour la colonne Membres', async () => {
+		const { userId, workspaceId } = await makeWorkspace('perimload');
+		const locals = await fakeLocals(userId);
+		const p = (await listPerimeters(workspaceId))[0];
+		await actions.perimeterMember({
+			locals,
+			request: formRequest({ perimeterId: p.id, userId, role: 'CP' })
+		} as never);
+
+		const data = await load({ locals } as never);
+		expect(data.perimeters.length).toBeGreaterThanOrEqual(2);
+		const me = data.members.find((m: { id: string }) => m.id === userId);
+		expect(me?.perimeters.map((x: { id: string }) => x.id)).toContain(p.id);
 	});
 });

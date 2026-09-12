@@ -81,7 +81,6 @@
 		ticketGroups: allTicketGroups,
 		members,
 		testPhase,
-		canEditEstimation,
 		isAdmin,
 		isOwner
 	}: {
@@ -102,7 +101,6 @@
 		ticketGroups: { id: string; label: string }[];
 		members: { id: string; displayName: string; factice: boolean }[];
 		testPhase: boolean;
-		canEditEstimation: boolean;
 		isAdmin: boolean;
 		isOwner: boolean;
 	} = $props();
@@ -709,7 +707,6 @@
 	ticketGroups={allTicketGroups}
 	{members}
 	{testPhase}
-	{canEditEstimation}
 	{isAdmin}
 	{isOwner}
 	onClose={() => (editTicketId = null)}

@@ -470,6 +470,20 @@
       "when": 1789129199334,
       "tag": "0066_change_log_member_entity",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1789160815397,
+      "tag": "0067_naive_black_bolt",
+      "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1789164170100,
+      "tag": "0068_perimeter_jira_projects",
+      "breakpoints": true
     }
   ]
 }

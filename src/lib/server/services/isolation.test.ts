@@ -1,8 +1,10 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { db, workspace } from '$lib/server/db';
+import { db, workspace, user } from '$lib/server/db';
 import { createWorkspaceWithOwner } from './workspaces';
-import { listTickets, createTicket } from './tickets';
+import { listTickets, createTicket, updateTicketField } from './tickets';
+import { createPerimeter, setPerimeterMemberRole, loadPerimeterCtx } from './perimeters';
+import { inviteMember } from './accounts';
 import { setCell, getWeek } from './imputation';
 import { addObjective } from './weeklyObjectives';
 import { encryptSecret } from '../auth/secretCrypto';
@@ -183,5 +185,145 @@ describe('isolation multi-espaces', () => {
 		const ticketsB = await listTickets(b.workspaceId);
 		expect(ticketsA.map((t) => t.key)).toContain(`ISO-${rnd}`);
 		expect(ticketsB.map((t) => t.key)).not.toContain(`ISO-${rnd}`);
+	});
+});
+
+// ---------------------------------------------------------------------------------------------
+// Isolation par PÉRIMÈTRE — deuxième niveau, à l'intérieur d'un même espace. L'isolation d'espace
+// ci-dessus reste la frontière dure ; celle-ci ne fait que restreindre ce qu'un CP pilote.
+// ---------------------------------------------------------------------------------------------
+describe('cloisonnement par périmètre (dans un même espace)', () => {
+	/** Un espace avec deux périmètres, un CP sur le premier, et un ticket dans chacun. */
+	async function makeTwoPerimeters(tag: string) {
+		const ws = await createWorkspaceWithOwner({
+			displayName: 'DP',
+			email: `dp-${tag}-${rnd}@acme.test`,
+			password: 'password123',
+			workspaceName: `Espace ${tag} ${rnd}`
+		});
+		wsIds.push(ws.workspaceId);
+		const perimA = await createPerimeter(ws.workspaceId, `Périmètre A ${tag}`, null, false);
+		const perimB = await createPerimeter(ws.workspaceId, `Périmètre B ${tag}`, null, false);
+		const { userId: cpId } = await (async () => {
+			await inviteMember({
+				workspaceId: ws.workspaceId,
+				email: `cp-${tag}-${rnd}@acme.test`,
+				displayName: 'CP',
+				role: 'USER'
+			});
+			const [u] = await db
+				.select({ id: user.id })
+				.from(user)
+				.where(eq(user.email, `cp-${tag}-${rnd}@acme.test`));
+			return { userId: u.id };
+		})();
+		await setPerimeterMemberRole(ws.workspaceId, perimA, cpId, 'CP');
+
+		const tA = await createTicket(ws.workspaceId, {
+			key: `PA-${tag}-${rnd}`,
+			title: 'Ticket A',
+			perimeterId: perimA,
+			enveloppeTotale: '100'
+		});
+		const tB = await createTicket(ws.workspaceId, {
+			key: `PB-${tag}-${rnd}`,
+			title: 'Ticket B',
+			perimeterId: perimB,
+			enveloppeTotale: '200'
+		});
+		return { ws, perimA, perimB, cpId, tA, tB };
+	}
+
+	it("un CP ne peut pas éditer le chiffrage d'un ticket d'un autre périmètre, mais peut sur le sien", async () => {
+		const { ws, cpId, tA, tB } = await makeTwoPerimeters('edit');
+		const ctx = await loadPerimeterCtx(ws.workspaceId, cpId, 'USER');
+
+		await updateTicketField(ws.workspaceId, tA.id, 'estimationReal', '3', ctx, cpId);
+		await expect(
+			updateTicketField(ws.workspaceId, tB.id, 'estimationReal', '3', ctx, cpId)
+		).rejects.toThrow('Champ non éditable.');
+	});
+
+	it("un CP ne peut pas éditer le budget d'un ticket d'un autre périmètre", async () => {
+		const { ws, cpId, tA, tB } = await makeTwoPerimeters('budget');
+		const ctx = await loadPerimeterCtx(ws.workspaceId, cpId, 'USER');
+
+		await updateTicketField(ws.workspaceId, tA.id, 'enveloppeTotale', '150', ctx, cpId);
+		await expect(
+			updateTicketField(ws.workspaceId, tB.id, 'enveloppeTotale', '150', ctx, cpId)
+		).rejects.toThrow('Champ non éditable.');
+	});
+
+	it('listTickets masque le budget des tickets hors des périmètres pilotés, ticket par ticket', async () => {
+		const { ws, cpId, tA, tB } = await makeTwoPerimeters('read');
+		const ctx = await loadPerimeterCtx(ws.workspaceId, cpId, 'USER');
+
+		const rows = await listTickets(ws.workspaceId, true, ctx);
+		expect(rows.find((r) => r.id === tA.id)?.enveloppeTotale).toBe(100);
+		expect(rows.find((r) => r.id === tB.id)?.enveloppeTotale).toBeNull();
+		// …et le ticket reste bien visible : c'est le champ budget qui est masqué, pas la ligne.
+		expect(rows.find((r) => r.id === tB.id)).toBeDefined();
+	});
+
+	// Régression : `canLead` alimente l'UI (champs de chiffrage éditables ou non). Il était calculé
+	// côté serveur mais jamais exposé, et les pages gardaient un drapeau global `isManagerOrAdmin` —
+	// un CP simple membre voyait donc « Estimation réservée aux profils Manager et Admin » sur SES
+	// propres tickets, alors que le serveur acceptait son écriture.
+	it('canLead accompagne chaque ticket et suit le périmètre, pas le rôle d’espace', async () => {
+		const { ws, cpId, tA, tB } = await makeTwoPerimeters('canlead');
+		const ctx = await loadPerimeterCtx(ws.workspaceId, cpId, 'USER');
+
+		const rows = await listTickets(ws.workspaceId, true, ctx);
+		expect(rows.find((r) => r.id === tA.id)?.canLead).toBe(true);
+		expect(rows.find((r) => r.id === tB.id)?.canLead).toBe(false);
+
+		// Le serveur et l'UI doivent dire la même chose : ce que canLead autorise doit passer.
+		await updateTicketField(ws.workspaceId, tA.id, 'estimationReal', '4', ctx, cpId);
+		await expect(
+			updateTicketField(ws.workspaceId, tB.id, 'estimationReal', '4', ctx, cpId)
+		).rejects.toThrow('Champ non éditable.');
+	});
+
+	it('le DP voit et édite le budget des deux périmètres sans y être rattaché', async () => {
+		const { ws, tA, tB } = await makeTwoPerimeters('dp');
+		const dp = await loadPerimeterCtx(ws.workspaceId, ws.userId, 'ADMIN');
+
+		const rows = await listTickets(ws.workspaceId, true, dp);
+		expect(rows.find((r) => r.id === tA.id)?.enveloppeTotale).toBe(100);
+		expect(rows.find((r) => r.id === tB.id)?.enveloppeTotale).toBe(200);
+		await updateTicketField(ws.workspaceId, tB.id, 'enveloppeTotale', '250', dp, ws.userId);
+	});
+
+	it('un backup a exactement les mêmes droits que le CP titulaire', async () => {
+		const { ws, perimA, tA } = await makeTwoPerimeters('backup');
+		await inviteMember({
+			workspaceId: ws.workspaceId,
+			email: `backup-${rnd}@acme.test`,
+			displayName: 'Backup',
+			role: 'USER'
+		});
+		const [b] = await db.select({ id: user.id }).from(user).where(eq(user.email, `backup-${rnd}@acme.test`));
+		await setPerimeterMemberRole(ws.workspaceId, perimA, b.id, 'CP_BACKUP');
+		const ctx = await loadPerimeterCtx(ws.workspaceId, b.id, 'USER');
+
+		await updateTicketField(ws.workspaceId, tA.id, 'enveloppeTotale', '120', ctx, b.id);
+		const rows = await listTickets(ws.workspaceId, true, ctx);
+		expect(rows.find((r) => r.id === tA.id)?.enveloppeTotale).toBe(120);
+	});
+
+	it("le périmètre ne franchit jamais la frontière d'espace : CP ici ≠ droits là-bas", async () => {
+		const one = await makeTwoPerimeters('cross-1');
+		const two = await makeTwoPerimeters('cross-2');
+		// Le CP de l'espace 1 n'est même pas membre de l'espace 2 : son contexte y est vide.
+		const ctxElsewhere = await loadPerimeterCtx(two.ws.workspaceId, one.cpId, 'USER');
+		expect(ctxElsewhere.leadPerimeterIds.size).toBe(0);
+
+		await expect(
+			updateTicketField(two.ws.workspaceId, two.tA.id, 'enveloppeTotale', '999', ctxElsewhere, one.cpId)
+		).rejects.toThrow('Champ non éditable.');
+		// …et le ticket de l'autre espace reste introuvable depuis le premier, périmètre ou pas.
+		await expect(
+			updateTicketField(one.ws.workspaceId, two.tA.id, 'title', 'x', ctxElsewhere, one.cpId)
+		).rejects.toThrow('Ticket introuvable dans cet espace.');
 	});
 });

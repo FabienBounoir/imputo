@@ -1,0 +1,1 @@
+ALTER TABLE "perimeter" ADD COLUMN "jira_project_keys" text[] DEFAULT '{}'::text[] NOT NULL;

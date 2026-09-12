@@ -12,8 +12,9 @@
 	// admin — sans étape activité, l'y greffer aurait complexifié un composant qui n'en a pas besoin),
 	// puis l'activité (« Aucune activité » toujours pré-surlignée en premier, jamais une activité au
 	// hasard), et Entrée ajoute la ligne et referme — on n'ajoute jamais plusieurs lignes d'une traite.
-	// sprintId/sprintName voyagent depuis la recherche serveur jusqu'au parent (via onfetched), qui
-	// en a besoin pour construire la ligne : la palette ne les affiche pas mais ne doit pas les perdre.
+	// sprintId/sprintName (et le périmètre) voyagent depuis la recherche serveur jusqu'au parent (via
+	// onfetched), qui en a besoin pour construire la ligne : la palette ne les affiche pas tous mais ne
+	// doit pas les perdre.
 	type Ticket = {
 		id: string;
 		key: string;
@@ -21,7 +22,10 @@
 		versionId?: string | null;
 		sprintId?: string | null;
 		sprintName?: string | null;
+		perimeterId?: string | null;
+		perimeterName?: string | null;
 	};
+	type Perimeter = { id: string; name: string; transverse: boolean };
 	type Category = { id: string; label: string };
 	type Version = { id: string; name: string };
 	type Objective = {
@@ -40,6 +44,7 @@
 		categories,
 		recentTicketIds,
 		versions = [],
+		perimeters = [],
 		objectives = [],
 		activities,
 		onadd,
@@ -51,6 +56,8 @@
 		categories: Category[];
 		recentTicketIds: string[];
 		versions?: Version[];
+		/** Périmètres de l'espace — le filtre n'apparaît qu'à partir de deux (rien à trier sinon). */
+		perimeters?: Perimeter[];
 		objectives?: Objective[];
 		activities: Activity[];
 		/** `pickTarget` suit exactly l'encodage TargetPicker (`TICKET::id[::objectiveId]`, `CATEGORY::id`,
@@ -70,6 +77,14 @@
 	let stage = $state<'target' | 'activity'>('target');
 	let query = $state('');
 	let versionFilter = $state('');
+	let perimeterFilter = $state('');
+	// Basé sur les TICKETS et non sur `perimeters.length` : tout espace neuf a déjà deux périmètres
+	// (le principal + Transverse, cf. seedDefaults), le filtre serait donc affiché partout alors
+	// qu'il n'y aurait rien à trier.
+	// ponytail: `tickets` n'est plus qu'une graine (lignes/épingles/objectifs, cf. imputation/+page.server.ts) :
+	// une feuille mono-périmètre masque le filtre même si l'espace en a d'autres. Passer un drapeau
+	// serveur « l'espace a des tickets dans plusieurs périmètres » si ça gêne.
+	const showPerimeterFilter = $derived(new Set(tickets.map((t) => t.perimeterId).filter(Boolean)).size > 1);
 	let activeIndex = $state(0);
 	let chosenTarget = $state<{ value: string; label: string } | null>(null);
 	let root: HTMLDivElement | null = $state(null);
@@ -90,9 +105,10 @@
 	$effect(() => {
 		const q = query.trim();
 		const version = versionFilter;
+		const perimeter = perimeterFilter;
 		clearTimeout(searchTimer);
 		// Étape activité : `query` sert alors à filtrer les activités, pas les tickets.
-		if (stage !== 'target' || (q.length < MIN_QUERY && !version)) {
+		if (stage !== 'target' || (q.length < MIN_QUERY && !version && !perimeter)) {
 			remote = [];
 			searching = false;
 			return;
@@ -104,6 +120,7 @@
 				const params = new URLSearchParams();
 				if (q) params.set('q', q);
 				if (version) params.set('version', version);
+				if (perimeter) params.set('perimeter', perimeter);
 				const res = await fetch(`/api/tickets/search?${params}`);
 				const found = res.ok ? ((await res.json()).tickets as Ticket[]) : [];
 				if (token !== searchToken) return;
@@ -126,13 +143,15 @@
 		// lisaient comme des lignes supplémentaires plutôt que comme une recherche en cours.
 		if (searching) return [];
 		const q = query.trim();
-		if (q.length >= MIN_QUERY || versionFilter) return remote;
+		// Le filtre périmètre suit la même règle que le filtre version : actif, il montre tout le
+		// périmètre au lieu des suggestions récentes — sinon il semblerait ne rien faire.
+		if (q.length >= MIN_QUERY || versionFilter || perimeterFilter) return remote;
 		if (q) return [];
 		return suggested;
 	});
 	// Catégories jamais filtrées par la recherche (comme TargetPicker) : une poignée de valeurs,
 	// toujours utile de les garder visibles pendant qu'on tape un ticket.
-	const showObjectives = $derived(objectives.length > 0 && !query.trim() && !versionFilter);
+	const showObjectives = $derived(objectives.length > 0 && !query.trim() && !versionFilter && !perimeterFilter);
 
 	const stage1Items = $derived.by((): FlatItem[] => {
 		const out: FlatItem[] = [];
@@ -286,6 +305,10 @@
 		versionFilter = (e.currentTarget as HTMLSelectElement).value;
 		activeIndex = 0;
 	}
+	function onPerimeterChange(e: Event) {
+		perimeterFilter = (e.currentTarget as HTMLSelectElement).value;
+		activeIndex = 0;
+	}
 	function onKeydown(e: KeyboardEvent) {
 		if (e.key === 'Backspace' && stage === 'activity' && query === '') {
 			e.preventDefault();
@@ -393,6 +416,12 @@
 						class:qa-input-pill={stage === 'activity'}
 						placeholder={stage === 'target' ? 'Rechercher un ticket ou une catégorie…' : 'Activité — Entrée pour valider sans'}
 					/>
+					{#if stage === 'target' && showPerimeterFilter}
+						<select class="qa-version" value={perimeterFilter} onchange={onPerimeterChange} aria-label="Filtrer par périmètre">
+							<option value="">Tous périmètres</option>
+							{#each perimeters as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
+						</select>
+					{/if}
 					{#if stage === 'target' && versions.length > 0}
 						<select class="qa-version" value={versionFilter} onchange={onVersionChange} aria-label="Filtrer par version">
 							<option value="">Toutes versions</option>
@@ -422,6 +451,11 @@
 							{:else if it.kind === 'ticket'}
 								<button type="button" class="qa-item" class:active={activeIndex === i} onclick={() => pick(i)}>
 									<span class="qa-key">{it.ticket.key}</span><span class="qa-title">{it.ticket.title}</span>
+									<!-- Distingue deux tickets de titre proche appartenant à des applications
+									     différentes ; inutile tant qu'il n'y a qu'un périmètre. -->
+									{#if showPerimeterFilter && it.ticket.perimeterName}
+										<span class="qa-perim">{it.ticket.perimeterName}</span>
+									{/if}
 								</button>
 							{:else if it.kind === 'create-ticket'}
 								<button type="button" class="qa-item qa-item-create" class:active={activeIndex === i} onclick={() => pick(i)}>
@@ -627,7 +661,10 @@
 	}
 	.qa-input {
 		flex: 1;
-		min-width: 80px;
+		/* Avec deux sélecteurs (périmètre + version) sur la même rangée, 80px laissaient un champ de
+		   recherche illisible : on lui garantit une largeur utile, quitte à faire passer les
+		   sélecteurs à la ligne (le conteneur est déjà en flex-wrap). */
+		min-width: 14rem;
 		border: none;
 		background: none;
 		outline: none;
@@ -652,8 +689,9 @@
 		box-shadow: 0 0 0 3px var(--accent-tint, transparent);
 	}
 	.qa-version {
-		flex: 0 0 auto;
+		flex: 0 1 auto;
 		max-width: 40%;
+		min-width: 0;
 		padding: 6px 8px;
 		border-radius: 8px;
 		border: 1px solid var(--border);
@@ -847,5 +885,12 @@
 		.qa-skel-bar {
 			animation: none;
 		}
+	}
+	.qa-perim {
+		margin-left: auto;
+		padding-left: 0.5rem;
+		font-size: 0.72rem;
+		color: var(--text-mute);
+		white-space: nowrap;
 	}
 </style>

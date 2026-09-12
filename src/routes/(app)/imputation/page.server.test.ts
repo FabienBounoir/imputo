@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { load as loadUntyped } from './+page.server';
-import { makeWorkspace } from '$lib/server/services/test-helpers';
+import { makeWorkspace, defaultPerimeterId } from '$lib/server/services/test-helpers';
 import { fakeLocals, fakeCookies } from '$lib/server/test-helpers/http';
 import { createTicket } from '$lib/server/services/tickets';
 import { setCell, pinRow } from '$lib/server/services/imputation';
@@ -82,7 +82,7 @@ describe('imputation +page.server load — graine de tickets', () => {
 		expect(res.tickets.some((x: { key: string }) => x.key.startsWith('NOISE-'))).toBe(false);
 	});
 
-	it('les résumés portent bien sprint et version, dont buildRow a besoin', async () => {
+	it('les résumés portent bien sprint, version et périmètre, dont buildRow a besoin', async () => {
 		const { userId, workspaceId } = await makeWorkspace('imp-shape');
 		const t = await createTicket(workspaceId, { key: 'SEED-5', title: 'Forme' });
 		await setCell(workspaceId, userId, {
@@ -100,7 +100,12 @@ describe('imputation +page.server load — graine de tickets', () => {
 			title: 'Forme',
 			sprintId: null,
 			versionId: null,
-			sprintName: null
+			sprintName: null,
+			perimeterId: await defaultPerimeterId(workspaceId),
+			perimeterName: expect.any(String),
+			perimeterColor: null,
+			perimeterTransverse: false,
+			perimeterSortOrder: 0
 		});
 	});
 

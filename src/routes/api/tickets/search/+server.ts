@@ -18,9 +18,10 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 
 	const q = url.searchParams.get('q')?.trim() ?? '';
 	const versionId = url.searchParams.get('version')?.trim() || undefined;
-	// Sans recherche ni version, l'appel n'a rien à faire ici : la liste d'amorce vient déjà du load
+	const perimeterId = url.searchParams.get('perimeter')?.trim() || undefined;
+	// Sans recherche ni filtre, l'appel n'a rien à faire ici : la liste d'amorce vient déjà du load
 	// de la page. Renvoyer tout le catalogue serait exactement ce qu'on cherche à éviter.
-	if (q.length < 2 && !versionId) return json({ tickets: [] });
+	if (q.length < 2 && !versionId && !perimeterId) return json({ tickets: [] });
 
-	return json({ tickets: await searchTicketSummaries(ws.workspaceId, { query: q, versionId }) });
+	return json({ tickets: await searchTicketSummaries(ws.workspaceId, { query: q, versionId, perimeterId }) });
 };
