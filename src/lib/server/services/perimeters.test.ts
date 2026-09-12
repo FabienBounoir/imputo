@@ -16,7 +16,8 @@ import {
 	leadScope,
 	hasLeadScope,
 	isLeadRole,
-	EMPTY_PERIMETER_CTX
+	EMPTY_PERIMETER_CTX,
+	parseJiraProjectKeys
 } from './perimeters';
 
 describe('perimeters — prédicats', () => {
@@ -95,6 +96,22 @@ describe('perimeters — référentiel', () => {
 		expect(row.name).toBe('Chantiers transverses');
 		expect(row.color).toBe('#123456');
 		expect(row.transverse).toBe(true);
+	});
+
+	it('projets Jira : saisie normalisée, clé invalide refusée, un projet dans un seul périmètre', async () => {
+		expect(parseJiraProjectKeys(' blm, web ; BLM\nmob ')).toEqual(['BLM', 'WEB', 'MOB']);
+		expect(() => parseJiraProjectKeys('BLM-1')).toThrow('Clé de projet Jira invalide');
+
+		const { workspaceId } = await makeWorkspace('perim');
+		const mobile = await createPerimeter(workspaceId, 'Mobile', null, false, ['MOB']);
+		const web = await createPerimeter(workspaceId, 'Web', null, false);
+		await expect(updatePerimeter(workspaceId, web, 'Web', null, false, ['WEB', 'MOB'])).rejects.toThrow(
+			'déjà rattaché au périmètre « Mobile »'
+		);
+		// Un périmètre ne se bloque pas lui-même, et omettre la liste la laisse intacte.
+		await updatePerimeter(workspaceId, mobile, 'Mobile', null, false, ['MOB', 'APP']);
+		await updatePerimeter(workspaceId, mobile, 'Mobile app', null, false);
+		expect((await listPerimeters(workspaceId)).find((p) => p.id === mobile)!.jiraProjectKeys).toEqual(['MOB', 'APP']);
 	});
 
 	it('movePerimeter échange la position avec le voisin', async () => {

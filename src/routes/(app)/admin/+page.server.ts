@@ -42,6 +42,7 @@ import {
 	listPerimetersByUser,
 	createPerimeter,
 	updatePerimeter,
+	parseJiraProjectKeys,
 	setPerimeterArchived,
 	movePerimeter,
 	setPerimeterMemberRole
@@ -446,7 +447,9 @@ export const actions: Actions = {
 				ws.workspaceId,
 				String(f.get('name') ?? ''),
 				emptyToNull(f.get('color')),
-				f.get('transverse') === 'true'
+				f.get('transverse') === 'true',
+				// Champ absent du POST (espace sans Jira, où il n'est pas affiché) = liste inchangée.
+				f.has('jiraProjectKeys') ? parseJiraProjectKeys(String(f.get('jiraProjectKeys'))) : undefined
 			);
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
@@ -464,7 +467,9 @@ export const actions: Actions = {
 				String(f.get('id')),
 				String(f.get('name') ?? ''),
 				emptyToNull(f.get('color')),
-				f.get('transverse') === 'true'
+				f.get('transverse') === 'true',
+				// Champ absent du POST (espace sans Jira, où il n'est pas affiché) = liste inchangée.
+				f.has('jiraProjectKeys') ? parseJiraProjectKeys(String(f.get('jiraProjectKeys'))) : undefined
 			);
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });

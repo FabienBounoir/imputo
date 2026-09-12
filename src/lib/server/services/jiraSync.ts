@@ -1,6 +1,6 @@
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Db } from '../db/connection';
-import { workspace, project, sprint, ticket, jiraSyncRun } from '../db/schema';
+import { workspace, project, sprint, ticket, jiraSyncRun, perimeter } from '../db/schema';
 import {
 	getAzureToken,
 	searchJiraIssues,
@@ -12,7 +12,6 @@ import {
 } from './jiraClient';
 import { decryptSecret } from '../auth/secretCrypto';
 import { logger } from '../logger';
-import { resolveDefaultPerimeterId } from './perimeters';
 
 // $env-libre par design (comme db/connection.ts) : ce module tourne à la fois dans SvelteKit
 // (action "forcer le sync") et sous tsx brut (scripts/jira-sync.ts, CronJob) où $env ne se
@@ -232,10 +231,27 @@ export async function syncWorkspace(
 			}
 		}
 
-		// Jira ne connaît pas la notion de périmètre : les tickets importés atterrissent sur le
-		// périmètre par défaut de l'espace, à charge du CP/DP de les re-ventiler. Résolu une fois par
-		// run (et non par ticket) — la valeur ne change pas en cours de sync.
-		const landingPerimeterId = await resolveDefaultPerimeterId(workspaceId);
+		// Jira ne connaît pas la notion de périmètre : un ticket importé atterrit sur le périmètre qui
+		// liste son projet Jira (Admin > Périmètres), sinon sur le périmètre par défaut de l'espace, à
+		// charge du CP/DP de le re-ventiler. Résolu une fois par run (et non par ticket).
+		// Requête locale et non resolveDefaultPerimeterId (perimeters.ts, même règle) : perimeters.ts
+		// importe $lib/server/db, introuvable sous tsx — le CronJob plantait dès l'import.
+		const activePerimeters = await tx
+			.select({ id: perimeter.id, transverse: perimeter.transverse, jiraProjectKeys: perimeter.jiraProjectKeys })
+			.from(perimeter)
+			.where(and(eq(perimeter.workspaceId, workspaceId), isNull(perimeter.archivedAt)))
+			.orderBy(perimeter.sortOrder, perimeter.name);
+		const landingPerimeterId = (activePerimeters.find((p) => !p.transverse) ?? activePerimeters[0])?.id;
+		if (!landingPerimeterId) throw new Error("Cet espace n'a aucun périmètre actif.");
+		const perimeterByJiraProject = new Map<string, string>();
+		// Dans l'ordre des périmètres : si une clé se retrouve en double (désarchivage), le premier gagne.
+		for (const p of activePerimeters) {
+			for (const k of p.jiraProjectKeys) if (!perimeterByJiraProject.has(k)) perimeterByJiraProject.set(k, p.id);
+		}
+		// Clé projet = préfixe de la clé Jira BRUTE, avant transformKey (CARTEJEUNE_BLM-123 → CARTEJEUNE_BLM) :
+		// Jira forme toujours ses clés ainsi, pas besoin de demander fields.project.key.
+		const perimeterFor = (jiraKey: string) =>
+			perimeterByJiraProject.get(jiraKey.slice(0, jiraKey.lastIndexOf('-')).toUpperCase()) ?? landingPerimeterId;
 
 		// Passe 1 : upsert de chaque ticket par (workspaceId, key transformée). estimationReal/raeReal/
 		// comment/sspCode/stateId/flags restent la propriété exclusive de la saisie humaine, quelle que
@@ -258,7 +274,7 @@ export async function syncWorkspace(
 
 				const insertValues: typeof ticket.$inferInsert = {
 					workspaceId,
-					perimeterId: landingPerimeterId,
+					perimeterId: perimeterFor(issue.key),
 					key,
 					title: issue.summary
 				};
@@ -295,7 +311,7 @@ export async function syncWorkspace(
 				// (repéré en test réel : ça polluait la DB de versions/sprints sans aucun ticket rattaché).
 				const [inserted] = await tx
 					.insert(ticket)
-					.values({ workspaceId, perimeterId: landingPerimeterId, key, title: issue.summary })
+					.values({ workspaceId, perimeterId: perimeterFor(issue.key), key, title: issue.summary })
 					.onConflictDoNothing({ target: [ticket.workspaceId, ticket.key] })
 					.returning({ id: ticket.id });
 

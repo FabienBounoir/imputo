@@ -2,6 +2,7 @@ import { and, desc, eq } from 'drizzle-orm';
 import { describe, it, expect } from 'vitest';
 import { db, workspace, project, sprint, ticket, jiraSyncRun } from '$lib/server/db';
 import { makeWorkspace, defaultPerimeterId } from './test-helpers';
+import { createPerimeter } from './perimeters';
 import { encryptSecret } from '../auth/secretCrypto';
 import { syncWorkspace, syncAllEnabledWorkspaces, WATERMARK_SAFETY_MARGIN_MS, type JiraSyncConfig } from './jiraSync';
 
@@ -256,6 +257,22 @@ describe('jiraSync / syncWorkspace', () => {
 		expect(projects).toHaveLength(1);
 		const rows = await ticketsOf(ws.workspaceId);
 		expect(rows.every((r) => r.projectId === projects[0].id)).toBe(true);
+	});
+
+	it('range un ticket créé dans le périmètre de son projet Jira, sinon dans le périmètre par défaut', async () => {
+		// Les deux stratégies passent par deux INSERT distincts : on les couvre toutes les deux.
+		for (const conflictStrategy of ['KEEP_LOCAL', 'JIRA_WINS'] as const) {
+			const ws = await makeJiraWorkspace({ conflictStrategy });
+			const mobile = await createPerimeter(ws.workspaceId, 'Mobile', null, false, ['MOB']);
+			await syncWorkspace(db, cfg, ws.workspaceId, {
+				fetchImpl: fakeFetch({ issues: [rawIssue('MOB-1', 'Appli'), rawIssue('WEB-1', 'Portail')] })
+			});
+
+			const rows = await db.select().from(ticket).where(eq(ticket.workspaceId, ws.workspaceId));
+			const byKey = new Map(rows.map((r) => [r.key, r.perimeterId]));
+			expect(byKey.get('MOB-1'), conflictStrategy).toBe(mobile);
+			expect(byKey.get('WEB-1'), conflictStrategy).toBe(await defaultPerimeterId(ws.workspaceId));
+		}
 	});
 
 	describe('sprint / version', () => {

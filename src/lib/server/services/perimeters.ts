@@ -1,4 +1,4 @@
-import { and, eq, ne, isNull, inArray, count, sql } from 'drizzle-orm';
+import { and, eq, ne, isNull, inArray, count, sql, arrayOverlaps } from 'drizzle-orm';
 import {
 	db,
 	perimeter,
@@ -168,6 +168,8 @@ export type PerimeterItem = {
 	name: string;
 	color: string | null;
 	transverse: boolean;
+	/** Projets Jira dont les tickets importés atterrissent ici (cf. jiraSync.ts). */
+	jiraProjectKeys: string[];
 	sortOrder: number;
 	archived: boolean;
 	/** Tickets actifs rattachés — bloque l'archivage tant qu'il en reste. */
@@ -198,6 +200,7 @@ export async function listPerimeters(workspaceId: string): Promise<PerimeterItem
 				name: perimeter.name,
 				color: perimeter.color,
 				transverse: perimeter.transverse,
+				jiraProjectKeys: perimeter.jiraProjectKeys,
 				sortOrder: perimeter.sortOrder,
 				archivedAt: perimeter.archivedAt,
 				ticketCount: count(ticket.id)
@@ -212,6 +215,7 @@ export async function listPerimeters(workspaceId: string): Promise<PerimeterItem
 				perimeter.name,
 				perimeter.color,
 				perimeter.transverse,
+				perimeter.jiraProjectKeys,
 				perimeter.sortOrder,
 				perimeter.archivedAt
 			)
@@ -240,6 +244,7 @@ export async function listPerimeters(workspaceId: string): Promise<PerimeterItem
 		name: r.name,
 		color: r.color,
 		transverse: r.transverse,
+		jiraProjectKeys: r.jiraProjectKeys,
 		sortOrder: r.sortOrder,
 		archived: r.archivedAt !== null,
 		ticketCount: r.ticketCount,
@@ -289,22 +294,55 @@ async function assertUniqueName(workspaceId: string, name: string, excludeId: st
 	if (dup.length) throw new Error('Un périmètre actif porte déjà ce nom.');
 }
 
+/** Clé de projet Jira : majuscules, chiffres et underscore, commence par une lettre (ex. CARTEJEUNE_BLM). */
+const JIRA_PROJECT_KEY = /^[A-Z][A-Z0-9_]*$/;
+
+/** Saisie libre de l'admin (« blm, web  MOB ») → clés normalisées et dédoublonnées. */
+export function parseJiraProjectKeys(raw: string): string[] {
+	const keys = [...new Set(raw.split(/[\s,;]+/).map((k) => k.trim().toUpperCase()).filter(Boolean))];
+	const bad = keys.find((k) => !JIRA_PROJECT_KEY.test(k));
+	if (bad) throw new Error(`Clé de projet Jira invalide : « ${bad} ».`);
+	return keys;
+}
+
+/** Un projet Jira n'atterrit que dans un seul périmètre actif : sinon le sync devrait choisir au hasard. */
+async function assertJiraProjectKeysFree(workspaceId: string, keys: string[], excludeId: string | null) {
+	if (keys.length === 0) return;
+	const conds = [
+		eq(perimeter.workspaceId, workspaceId),
+		isNull(perimeter.archivedAt),
+		arrayOverlaps(perimeter.jiraProjectKeys, keys)
+	];
+	if (excludeId) conds.push(ne(perimeter.id, excludeId));
+	const [dup] = await db
+		.select({ name: perimeter.name, keys: perimeter.jiraProjectKeys })
+		.from(perimeter)
+		.where(and(...conds))
+		.limit(1);
+	if (dup) {
+		const taken = keys.find((k) => dup.keys.includes(k));
+		throw new Error(`Le projet Jira ${taken} est déjà rattaché au périmètre « ${dup.name} ».`);
+	}
+}
+
 export async function createPerimeter(
 	workspaceId: string,
 	name: string,
 	color: string | null,
-	transverse: boolean
+	transverse: boolean,
+	jiraProjectKeys: string[] = []
 ) {
 	const n = name.trim();
 	if (!n) throw new Error('Nom requis.');
 	await assertUniqueName(workspaceId, n, null);
+	await assertJiraProjectKeysFree(workspaceId, jiraProjectKeys, null);
 	const [max] = await db
 		.select({ v: sql<number>`coalesce(max(${perimeter.sortOrder}), -1)` })
 		.from(perimeter)
 		.where(eq(perimeter.workspaceId, workspaceId));
 	const [row] = await db
 		.insert(perimeter)
-		.values({ workspaceId, name: n, color, transverse, sortOrder: Number(max.v) + 1 })
+		.values({ workspaceId, name: n, color, transverse, jiraProjectKeys, sortOrder: Number(max.v) + 1 })
 		.returning({ id: perimeter.id });
 	return row.id;
 }
@@ -314,14 +352,17 @@ export async function updatePerimeter(
 	id: string,
 	name: string,
 	color: string | null,
-	transverse: boolean
+	transverse: boolean,
+	/** Omis = inchangés. */
+	jiraProjectKeys?: string[]
 ) {
 	const n = name.trim();
 	if (!n) throw new Error('Nom requis.');
 	await assertUniqueName(workspaceId, n, id);
+	if (jiraProjectKeys) await assertJiraProjectKeysFree(workspaceId, jiraProjectKeys, id);
 	const res = await db
 		.update(perimeter)
-		.set({ name: n, color, transverse })
+		.set({ name: n, color, transverse, ...(jiraProjectKeys ? { jiraProjectKeys } : {}) })
 		.where(and(eq(perimeter.id, id), eq(perimeter.workspaceId, workspaceId)))
 		.returning({ id: perimeter.id });
 	if (res.length === 0) throw new Error('Introuvable dans cet espace.');

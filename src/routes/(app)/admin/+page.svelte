@@ -409,7 +409,7 @@
 										{#each m.perimeters as mp (mp.id)}
 											<span
 												class="member-perim"
-												style="--perim:{mp.color ?? 'var(--muted)'}"
+												style="--perim:{mp.color ?? 'var(--text-mute)'}"
 												title={mp.role === 'CP' ? 'CP du périmètre' : mp.role === 'CP_BACKUP' ? 'Backup du CP' : 'Collaborateur'}
 											>{#if mp.role !== 'CONTRIBUTOR'}{mp.role === 'CP' ? '★' : '☆'} {/if}{mp.name}</span>
 										{/each}
@@ -1025,6 +1025,11 @@
 								<input type="checkbox" name="transverse" value="true" />
 								<span>Périmètre transverse (chantiers hors application) — exclu par défaut des consolidations par application.</span>
 							</label>
+							<!-- Affiché seulement si l'espace tire des tickets de Jira : ailleurs, le champ ne
+							     voudrait rien dire. -->
+							{#if data.jira.jql}
+								<input class="ref-input" name="jiraProjectKeys" placeholder="Projets Jira, ex. CARTEJEUNE_BLM, CARTEJEUNE_WEB" />
+							{/if}
 							<div class="modal-actions">
 								<button type="button" class="btn btn-ghost" onclick={() => (perimeterAddOpen = false)}>Annuler</button>
 								<button class="btn btn-primary" type="submit">+ Ajouter</button>
@@ -1068,6 +1073,19 @@
 								/>
 								<span>transverse</span>
 							</label>
+							<!-- Projets Jira qui atterrissent ici à l'import. Masqué tant que l'espace ne
+							     synchronise pas Jira, sauf si une valeur y est déjà posée. -->
+							{#if data.jira.jql || p.jiraProjectKeys.length > 0}
+								<input
+									class="ref-input perim-jira"
+									name="jiraProjectKeys"
+									value={p.jiraProjectKeys.join(', ')}
+									disabled={p.archived}
+									placeholder="Projets Jira"
+									title="Projets Jira dont les tickets importés atterrissent dans ce périmètre (ex. CARTEJEUNE_BLM)"
+									onchange={(e) => e.currentTarget.form?.requestSubmit()}
+								/>
+							{/if}
 							{#if p.ticketCount > 0}
 								<a class="tag-usage" href="/tickets?perimeter={p.id}" title="Voir ces tickets">
 									{p.ticketCount} ticket{p.ticketCount > 1 ? 's' : ''}
@@ -2833,8 +2851,16 @@
 		align-items: center;
 		gap: 0.35rem;
 		font-size: 0.8rem;
-		color: var(--muted);
+		color: var(--text-mute);
 		white-space: nowrap;
+	}
+	/* `.ref-input` est en flex:1 (champ unique d'une barre) ; ici la ligne porte déjà couleur, nom,
+	   transverse et pastilles de CP — on lui donne un gabarit court plutôt que la moitié de la ligne. */
+	.perim-form .perim-jira {
+		flex: 0 1 12rem;
+		min-width: 6rem;
+		padding: 6px 8px;
+		font-size: 12.5px;
 	}
 	.perim-lead {
 		font-size: 0.78rem;

@@ -287,6 +287,12 @@ export const perimeter = pgTable(
 		// (ticket.perimeterId est NOT NULL), mais exclu par défaut des consolidations « par périmètre
 		// applicatif » — sinon le transverse écraserait la lecture par application.
 		transverse: boolean('transverse').notNull().default(false),
+		// Projets Jira dont les tickets importés atterrissent ici (clés, ex. CARTEJEUNE_BLM), réglés dans
+		// Admin > Périmètres. Ne joue qu'à la CRÉATION d'un ticket par le sync : un ticket déjà connu
+		// n'est jamais re-ventilé, pour que le déplacement manuel d'un CP tienne. Une clé n'appartient
+		// qu'à un seul périmètre actif de l'espace (vérifié dans perimeters.ts). Projet absent de toutes
+		// les listes = périmètre par défaut.
+		jiraProjectKeys: text('jira_project_keys').array().notNull().default(sql`'{}'::text[]`),
 		sortOrder: integer('sort_order').notNull().default(0),
 		archivedAt: archivedAt(),
 		createdAt: createdAt()

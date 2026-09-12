@@ -37,7 +37,7 @@ collaborateur = membre de l'espace + rattaché à N périmètres
 
 | Table / colonne | Rôle |
 |---|---|
-| `perimeter` | nom, couleur, `transverse`, ordre, `archivedAt` |
+| `perimeter` | nom, couleur, `transverse`, ordre, `archivedAt`, `jiraProjectKeys` (projets Jira dont les tickets **créés** par le sync atterrissent ici — sinon périmètre par défaut) |
 | `perimeter_member` | rattachement `(perimeterId, userId)` + rôle `CONTRIBUTOR \| CP \| CP_BACKUP` |
 | `ticket.perimeterId` | **NOT NULL** — l'autorité du rattachement |
 | `ssp.perimeterId` | nullable — porte le **budget** (`budgetDays`) |
