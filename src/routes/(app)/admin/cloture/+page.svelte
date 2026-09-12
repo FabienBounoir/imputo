@@ -363,7 +363,7 @@
 									</a>
 								{:else}
 									{#if perimeterCaption(c)}
-										<span class="col-perim" style="--perim:{c.perimeterColor ?? 'var(--muted)'}" title="Périmètre du code">
+										<span class="col-perim" style="--perim:{c.perimeterColor ?? 'var(--text-mute)'}" title="Périmètre du code">
 											{perimeterCaption(c)}
 										</span>
 									{/if}
@@ -482,7 +482,7 @@
 									</a>
 								{:else}
 									{#if perimeterCaption(c)}
-										<span class="col-perim" style="--perim:{c.perimeterColor ?? 'var(--muted)'}" title="Périmètre du code">
+										<span class="col-perim" style="--perim:{c.perimeterColor ?? 'var(--text-mute)'}" title="Périmètre du code">
 											{perimeterCaption(c)}
 										</span>
 									{/if}
@@ -594,7 +594,7 @@
 									</a>
 								{:else}
 									{#if perimeterCaption(c)}
-										<span class="col-perim" style="--perim:{c.perimeterColor ?? 'var(--muted)'}" title="Périmètre du code">
+										<span class="col-perim" style="--perim:{c.perimeterColor ?? 'var(--text-mute)'}" title="Périmètre du code">
 											{perimeterCaption(c)}
 										</span>
 									{/if}
@@ -649,7 +649,7 @@
 									</a>
 								{:else}
 									{#if perimeterCaption(c)}
-										<span class="col-perim" style="--perim:{c.perimeterColor ?? 'var(--muted)'}" title="Périmètre du code">
+										<span class="col-perim" style="--perim:{c.perimeterColor ?? 'var(--text-mute)'}" title="Périmètre du code">
 											{perimeterCaption(c)}
 										</span>
 									{/if}

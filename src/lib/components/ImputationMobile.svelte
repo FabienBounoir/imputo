@@ -158,7 +158,7 @@
 						<!-- Pas de sections sur mobile (liste verticale déjà dense) : la pastille porte
 						     l'information de périmètre à elle seule. -->
 						{#if showPerimeters && row.perimeterName}
-							<span class="perim-chip" style="--perim:{row.perimeterColor ?? 'var(--muted)'}">{row.perimeterName}</span>
+							<span class="perim-chip" style="--perim:{row.perimeterColor ?? 'var(--text-mute)'}">{row.perimeterName}</span>
 						{/if}
 						{#if readOnly || row.objectiveId}
 							{#if activityLabel(row)}<span class="tag" title={row.objectiveId ? "Activité fixée par l'objectif de la semaine" : undefined}>{activityLabel(row)}</span>{/if}

@@ -324,7 +324,7 @@
 	{:else if viewMode === 'ssp'}
 		{#each groups as g (g.key)}
 			{#if showGroups}
-				<div class="perim-group" style="--perim:{g.color ?? 'var(--muted)'}">
+				<div class="perim-group" style="--perim:{g.color ?? 'var(--text-mute)'}">
 					<h3>{g.name}</h3>
 					<div class="perim-totals tabnum">
 						<!-- Zéro affiché tel quel, comme la colonne « Cumul » des tableaux juste en dessous :
@@ -664,7 +664,7 @@
 		flex-wrap: wrap;
 		gap: 0.9rem;
 		font-size: 0.8rem;
-		color: var(--muted);
+		color: var(--text-mute);
 	}
 	.perim-totals b {
 		color: var(--text);

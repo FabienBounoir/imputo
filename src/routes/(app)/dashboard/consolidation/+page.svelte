@@ -35,136 +35,172 @@
 
 <svelte:head><title>Consolidation — Imputo</title></svelte:head>
 
-<div class="page">
-	<header class="page-head">
-		<div>
-			<h2>Consolidation par périmètre</h2>
-			<p class="hint">
-				Charges et économie, périmètre par périmètre. Les <strong>charges</strong> se ventilent par le
-				périmètre du ticket ; le <strong>budget SSP</strong> par celui du code — un code partagé entre
-				plusieurs périmètres tombe dans la ligne « Partagé » plutôt que d'être réparti au hasard.
-				État courant, pas de filtre de période : le détail mois par mois vit dans le Suivi annuel.
-			</p>
-		</div>
-	</header>
+<div class="topbar">
+	<h1>
+		Consolidation<small>Charges et économie, périmètre par périmètre — état courant.</small>
+	</h1>
+	<div class="spacer"></div>
+	<label class="toggle">
+		<input
+			type="checkbox"
+			checked={data.includeTransverse}
+			onchange={(e) => navigateWith({ transverse: e.currentTarget.checked })}
+		/>
+		<span>Inclure les chantiers transverses</span>
+	</label>
+</div>
 
-	<section class="card filters">
-		<div class="chips">
-			{#each data.perimeters as p (p.id)}
-				<button
-					type="button"
-					class="chip"
-					class:on={data.selectedPerimeterIds.includes(p.id)}
-					style="--perim:{p.color ?? 'var(--muted)'}"
-					onclick={() => togglePerimeter(p.id)}
-				>
-					{p.name}{p.transverse ? ' (transverse)' : ''}
-				</button>
-			{/each}
-			{#if data.selectedPerimeterIds.length > 0}
-				<button type="button" class="chip chip-reset" onclick={() => navigateWith({ perimeters: [] })}>
-					Tous
-				</button>
-			{/if}
-		</div>
-		<label class="toggle">
-			<input
-				type="checkbox"
-				checked={data.includeTransverse}
-				onchange={(e) => navigateWith({ transverse: e.currentTarget.checked })}
-			/>
-			<span>Inclure les chantiers transverses</span>
-		</label>
-	</section>
-
+<div class="content">
 	{#if data.consolidation.partial}
-		<p class="hint warn">
-			Cette vue ne couvre que les périmètres que vous pilotez ; les colonnes budget des autres sont
-			masquées, et aucun total d'argent n'est affiché tant que c'est le cas.
-		</p>
+		<section class="card block banner">
+			<div>
+				<b>Vue partielle</b> — elle ne couvre que les périmètres que vous pilotez : les colonnes
+				d'argent des autres sont masquées, et aucun total d'argent n'est affiché tant que c'est le cas.
+			</div>
+		</section>
 	{/if}
 
-	<section class="card">
-		<div class="table-scroll">
+	{#if data.perimeters.length > 1}
+		<section class="card block filters">
+			<span class="filters-label">Périmètres</span>
+			<div class="chips">
+				{#each data.perimeters as p (p.id)}
+					<button
+						type="button"
+						class="chip"
+						class:on={data.selectedPerimeterIds.includes(p.id)}
+						style="--perim:{p.color ?? 'var(--text-mute)'}"
+						onclick={() => togglePerimeter(p.id)}
+					>
+						<span class="dot"></span>
+						{p.name}{p.transverse ? ' (transverse)' : ''}
+					</button>
+				{/each}
+				{#if data.selectedPerimeterIds.length > 0}
+					<button type="button" class="chip chip-reset" onclick={() => navigateWith({ perimeters: [] })}>
+						Tout afficher
+					</button>
+				{/if}
+			</div>
+		</section>
+	{/if}
+
+	<section class="card block">
+		<h3>Charges et économie</h3>
+		<p class="hint">
+			Les <strong>charges</strong> se ventilent par le périmètre du ticket ; le
+			<strong>budget SSP</strong> par celui du code — un code partagé entre plusieurs périmètres tombe
+			dans la ligne « Partagé » plutôt que d'être réparti au hasard. Pas de filtre de période : le détail
+			mois par mois vit dans le Suivi annuel.
+		</p>
+
+		<!-- Beaucoup de colonnes dès que l'argent est visible : c'est le tableau qui défile, jamais la
+		     page — et la colonne des périmètres reste collée à gauche pour qu'on sache toujours quelle
+		     ligne on lit. -->
+		<div class="scroll">
 			<table class="cons">
 				<thead>
+					<tr class="groups">
+						<th></th>
+						<th colspan="6">Charges (jours)</th>
+						{#if showMoney}
+							<th class="sep" colspan="3">Économie — tickets</th>
+							<th class="sep" colspan="3">Économie — codes SSP</th>
+						{/if}
+					</tr>
 					<tr>
 						<th class="left">Périmètre</th>
-						<th>Tickets</th>
-						<th>Estimé</th>
-						<th>Consommé</th>
-						<th>RAE</th>
-						<th>Écart d'exécution</th>
-						<th>Avancement</th>
+						<th class="num">Tickets</th>
+						<th class="num">Estimé</th>
+						<th class="num">Consommé</th>
+						<th class="num">RAE</th>
+						<th class="num">Écart d'exécution</th>
+						<th class="num">Avancement</th>
 						{#if showMoney}
-							<th class="sep">Enveloppe</th>
-							<th>PPR</th>
-							<th>TNF budget</th>
-							<th class="sep">Budget SSP</th>
-							<th>Prod</th>
-							<th>TNF</th>
+							<th class="num sep">Enveloppe</th>
+							<th class="num">PPR</th>
+							<th class="num">TNF budget</th>
+							<th class="num sep">Budget SSP</th>
+							<th class="num">Prod</th>
+							<th class="num">TNF</th>
 						{/if}
 					</tr>
 				</thead>
 				<tbody>
 					{#each rows as r (r.perimeterId ?? 'shared')}
-						<tr class:transverse={r.transverse} class:shared={r.perimeterId === null}>
+						<tr class:muted-row={r.transverse || r.perimeterId === null}>
 							<td class="left">
-								<span class="dot" style="--perim:{r.color ?? 'var(--muted)'}"></span>
+								<span class="dot" style="--perim:{r.color ?? 'var(--text-mute)'}"></span>
 								{r.name}
-								{#if r.transverse}<span class="tag">transverse</span>{/if}
-								{#if r.perimeterId === null}<span class="tag" title="Codes SSP rattachés à aucun périmètre">partagé</span>{/if}
+								{#if r.transverse}<span class="pill">transverse</span>{/if}
+								{#if r.perimeterId === null}
+									<span class="pill" title="Codes SSP rattachés à aucun périmètre">partagé</span>
+								{/if}
 							</td>
-							<td class="tabnum">{dash(r.ticketCount)}</td>
-							<td class="tabnum">{dash(r.estTotal)}</td>
-							<td class="tabnum">{dash(r.consumedTotal)}</td>
-							<td class="tabnum">{dash(r.raeTotal)}</td>
-							<td class="tabnum" class:gap-pos={r.ecartVsEstimeTotal > 0} class:gap-neg={r.ecartVsEstimeTotal < 0}>
+							<td class="num tabnum">{dash(r.ticketCount)}</td>
+							<td class="num tabnum">{dash(r.estTotal)}</td>
+							<td class="num tabnum">{dash(r.consumedTotal)}</td>
+							<td class="num tabnum">{dash(r.raeTotal)}</td>
+							<td class="num tabnum" class:gap-pos={r.ecartVsEstimeTotal > 0} class:gap-neg={r.ecartVsEstimeTotal < 0}>
 								<!-- Une ligne sans ticket n'a pas un écart « nul », elle n'en a pas. -->
 								{r.ticketCount ? signed(r.ecartVsEstimeTotal) : '—'}
 							</td>
-							<td class="tabnum">{r.ticketCount ? `${pct(r.avancement)} %` : '—'}</td>
+							<td class="num tabnum">
+								{#if r.ticketCount}
+									{pct(r.avancement)} %
+									<!-- La barre double le chiffre, elle ne le remplace pas : elle sert à comparer les
+									     lignes d'un coup d'œil, le pourcentage reste la valeur lisible. -->
+									<span class="prog" aria-hidden="true"><span style="width:{Math.min(100, Math.max(0, pct(r.avancement)))}%"></span></span>
+								{:else}
+									—
+								{/if}
+							</td>
 							{#if showMoney}
-								<td class="tabnum sep">{fmt(r.enveloppeTotal)}</td>
-								<td class="tabnum">{fmt(r.pprTotal)}</td>
-								<td class="tabnum" class:gap-pos={(r.ecartVsBudgetTotal ?? 0) > 0} class:gap-neg={(r.ecartVsBudgetTotal ?? 0) < 0}>
+								<td class="num tabnum sep">{fmt(r.enveloppeTotal)}</td>
+								<td class="num tabnum">{fmt(r.pprTotal)}</td>
+								<td class="num tabnum" class:gap-pos={(r.ecartVsBudgetTotal ?? 0) > 0} class:gap-neg={(r.ecartVsBudgetTotal ?? 0) < 0}>
 									{signed(r.ecartVsBudgetTotal)}
 								</td>
-								<td class="tabnum sep">{fmt(r.budgetTotal)}</td>
-								<td class="tabnum">{fmt(r.prodTotal)}</td>
-								<td class="tabnum">{signed(r.tnfTotal)}</td>
+								<td class="num tabnum sep">{fmt(r.budgetTotal)}</td>
+								<td class="num tabnum">{fmt(r.prodTotal)}</td>
+								<td class="num tabnum">{signed(r.tnfTotal)}</td>
 							{/if}
 						</tr>
 					{/each}
 					{#if rows.length === 0}
-						<tr><td class="left empty" colspan={showMoney ? 13 : 7}>Aucun périmètre à consolider avec ces filtres.</td></tr>
+						<tr>
+							<td class="left empty" colspan={showMoney ? 13 : 7}>
+								Aucun périmètre à consolider avec ces filtres.
+							</td>
+						</tr>
 					{/if}
 				</tbody>
 				{#if rows.length > 1}
 					<tfoot>
 						<tr>
 							<td class="left">Total</td>
-							<td class="tabnum">{total.ticketCount}</td>
-							<td class="tabnum">{total.estTotal}</td>
-							<td class="tabnum">{total.consumedTotal}</td>
-							<td class="tabnum">{total.raeTotal}</td>
-							<td class="tabnum" class:gap-pos={total.ecartVsEstimeTotal > 0} class:gap-neg={total.ecartVsEstimeTotal < 0}>
+							<td class="num tabnum">{total.ticketCount}</td>
+							<td class="num tabnum">{total.estTotal}</td>
+							<td class="num tabnum">{total.consumedTotal}</td>
+							<td class="num tabnum">{total.raeTotal}</td>
+							<td class="num tabnum" class:gap-pos={total.ecartVsEstimeTotal > 0} class:gap-neg={total.ecartVsEstimeTotal < 0}>
 								{signed(total.ecartVsEstimeTotal)}
 							</td>
-							<td class="tabnum">{pct(total.avancement)} %</td>
+							<td class="num tabnum">{pct(total.avancement)} %</td>
 							{#if showMoney}
-								<td class="tabnum sep">{fmt(total.enveloppeTotal)}</td>
-								<td class="tabnum">{fmt(total.pprTotal)}</td>
-								<td class="tabnum">{signed(total.ecartVsBudgetTotal)}</td>
-								<td class="tabnum sep">{fmt(total.budgetTotal)}</td>
-								<td class="tabnum">{fmt(total.prodTotal)}</td>
-								<td class="tabnum">{signed(total.tnfTotal)}</td>
+								<td class="num tabnum sep">{fmt(total.enveloppeTotal)}</td>
+								<td class="num tabnum">{fmt(total.pprTotal)}</td>
+								<td class="num tabnum">{signed(total.ecartVsBudgetTotal)}</td>
+								<td class="num tabnum sep">{fmt(total.budgetTotal)}</td>
+								<td class="num tabnum">{fmt(total.prodTotal)}</td>
+								<td class="num tabnum">{signed(total.tnfTotal)}</td>
 							{/if}
 						</tr>
 					</tfoot>
 				{/if}
 			</table>
 		</div>
+
 		<p class="hint legend">
 			<b>Écart d'exécution</b> = (RAE + consommé) − estimé. <b>TNF budget</b> = (RAE + consommé) −
 			enveloppe du ticket. <b>TNF</b> = consommé − prod déclarée, cumulé depuis l'origine (même
@@ -175,134 +211,187 @@
 </div>
 
 <style>
-	.page {
-		display: flex;
-		flex-direction: column;
-		gap: 1rem;
+	/* .card ne porte aucun padding dans app.css : chaque page pose le sien, 22px comme /admin. */
+	.block {
+		padding: 22px;
+		margin-bottom: 18px;
 	}
-	.page-head h2 {
-		margin: 0 0 0.25rem;
+	.block h3 {
+		margin: 0 0 4px;
 	}
 	.hint {
-		color: var(--muted);
-		font-size: 0.85rem;
-		margin: 0;
+		margin: 0 0 14px;
+		font-size: 12.5px;
+		line-height: 1.5;
+		color: var(--text-mute);
+		max-width: 78ch;
 	}
-	.hint.warn {
-		padding: 0.6rem 0.8rem;
-		border-radius: 0.6rem;
-		background: color-mix(in srgb, #f59e0b 12%, transparent);
-		border: 1px solid color-mix(in srgb, #f59e0b 32%, transparent);
+	.banner {
+		font-size: 13px;
+		border-color: var(--error-border);
+		background: var(--error-bg);
 	}
-	.card {
-		background: var(--card);
-		border: 1px solid var(--border);
-		border-radius: 0.9rem;
-		padding: 1rem;
+	.toggle {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 12.5px;
+		color: var(--text-soft);
+		white-space: nowrap;
 	}
+
+	/* ---------- Filtre par périmètre ---------- */
 	.filters {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
-		justify-content: space-between;
-		gap: 0.75rem;
+		gap: 10px;
+	}
+	.filters-label {
+		font-size: 11.5px;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		color: var(--text-mute);
 	}
 	.chips {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.4rem;
+		gap: 6px;
 	}
 	.chip {
-		font-size: 0.8rem;
-		padding: 0.2rem 0.6rem;
-		border-radius: 999px;
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 12.5px;
+		padding: 5px 11px;
+		border-radius: 30px;
 		cursor: pointer;
-		color: var(--text);
-		background: transparent;
-		border: 1px solid color-mix(in srgb, var(--perim, var(--muted)) 45%, transparent);
+		color: var(--text-soft);
+		background: var(--surface-2);
+		border: 1px solid var(--border);
+		transition: border-color 0.15s, background 0.15s;
 	}
+	.chip:hover {
+		border-color: var(--border-strong);
+		color: var(--text);
+	}
+	/* Le périmètre sélectionné garde sa couleur de pastille : c'est le même repère que partout
+	   ailleurs (ligne de ticket, en-tête de section d'imputation). */
 	.chip.on {
-		background: color-mix(in srgb, var(--perim, var(--accent)) 22%, transparent);
+		background: color-mix(in srgb, var(--perim, var(--accent)) 16%, var(--surface));
+		border-color: color-mix(in srgb, var(--perim, var(--accent)) 55%, transparent);
+		color: var(--text);
 		font-weight: 600;
 	}
 	.chip-reset {
 		border-style: dashed;
 	}
-	.toggle {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.4rem;
-		font-size: 0.85rem;
-		color: var(--muted);
-		white-space: nowrap;
+	.dot {
+		display: inline-block;
+		width: 8px;
+		height: 8px;
+		border-radius: 30px;
+		background: var(--perim, var(--text-mute));
+		flex: none;
 	}
-	/* Beaucoup de colonnes dès que l'argent est visible : c'est le tableau qui défile, jamais la page. */
-	.table-scroll {
+	td .dot {
+		margin-right: 8px;
+	}
+
+	/* ---------- Tableau ---------- */
+	.scroll {
 		overflow-x: auto;
 	}
 	table.cons {
 		width: 100%;
 		border-collapse: collapse;
-		font-size: 0.88rem;
+		font-size: 13px;
 	}
 	table.cons th,
 	table.cons td {
-		padding: 0.45rem 0.6rem;
-		text-align: right;
+		padding: 8px 12px;
+		text-align: left;
 		white-space: nowrap;
 		border-bottom: 1px solid var(--border);
 	}
 	table.cons th {
-		font-weight: 600;
-		color: var(--muted);
-		font-size: 0.78rem;
+		font-size: 11.5px;
+		font-weight: 700;
+		color: var(--text-mute);
 	}
-	/* `table.cons th/td` a une spécificité supérieure à `.left` seul : sans le préfixe, la colonne
-	   des noms restait alignée à droite comme les colonnes de chiffres. */
-	table.cons .left {
-		text-align: left;
+	table.cons .num {
+		text-align: right;
 	}
+	/* En-tête de groupe : dit à quoi se rapportent les colonnes (jours vs argent, ticket vs code SSP)
+	   — 13 colonnes alignées sans ça se lisaient comme une seule série. */
+	.groups th {
+		font-size: 10.5px;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		text-align: center;
+		color: var(--text-mute);
+		border-bottom: 1px solid var(--border);
+		padding-bottom: 4px;
+	}
+	.groups th:empty {
+		border-bottom: none;
+	}
+	/* La colonne des périmètres reste lisible pendant le défilement horizontal. */
+	table.cons th:first-child,
+	table.cons td:first-child {
+		position: sticky;
+		left: 0;
+		z-index: 1;
+		background: var(--surface);
+	}
+	table.cons tbody tr:hover td {
+		background: var(--surface-2);
+	}
+	/* Séparation des trois familles de colonnes, plus marquée que la grille des lignes. */
 	.sep {
-		border-left: 1px solid var(--border);
+		border-left: 1px solid var(--border-strong);
 	}
 	.tabnum {
 		font-variant-numeric: tabular-nums;
 	}
 	tfoot td {
 		font-weight: 700;
-		border-top: 2px solid var(--border);
+		border-top: 2px solid var(--border-strong);
 		border-bottom: none;
+		background: var(--surface-2);
 	}
-	tr.transverse td,
-	tr.shared td {
-		color: var(--muted);
-	}
-	.dot {
-		display: inline-block;
-		width: 0.55rem;
-		height: 0.55rem;
-		border-radius: 999px;
-		margin-right: 0.4rem;
-		background: var(--perim);
-	}
-	.tag {
-		font-size: 0.68rem;
-		padding: 0 0.35rem;
-		margin-left: 0.35rem;
-		border-radius: 999px;
-		border: 1px solid var(--border);
-		color: var(--muted);
-	}
-	.gap-pos {
-		color: #dc2626;
-	}
-	.gap-neg {
-		color: #16a34a;
+	.muted-row td {
+		color: var(--text-mute);
 	}
 	.empty {
-		color: var(--muted);
+		color: var(--text-mute);
+		padding: 26px 12px;
+	}
+	/* Même code couleur que les écarts de la liste des tickets et de la modale : dépassement en
+	   `--warn`, marge en `--success`, et jamais la couleur seule — le signe + / − porte l'info. */
+	.gap-pos {
+		color: var(--warn);
+		font-weight: 700;
+	}
+	.gap-neg {
+		color: var(--success);
+		font-weight: 700;
+	}
+	.prog {
+		display: block;
+		height: 3px;
+		margin-top: 5px;
+		border-radius: 30px;
+		background: var(--surface-sunk);
+		overflow: hidden;
+	}
+	.prog span {
+		display: block;
+		height: 100%;
+		background: var(--accent);
 	}
 	.legend {
-		margin-top: 0.75rem;
+		margin: 14px 0 0;
 	}
 </style>

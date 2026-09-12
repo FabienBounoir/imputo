@@ -1022,7 +1022,7 @@
 											<button
 												type="button"
 												class="perim-chip"
-												style="--perim:{r.perimeterColor ?? 'var(--muted)'}"
+												style="--perim:{r.perimeterColor ?? 'var(--text-mute)'}"
 												title={r.perimeterTransverse ? `${r.perimeterName} (transverse) — filtrer` : `${r.perimeterName} — filtrer`}
 												onclick={(e) => {
 													e.stopPropagation();
@@ -2696,6 +2696,6 @@
 	.dfield-ro {
 		display: block;
 		padding: 0.35rem 0;
-		color: var(--muted);
+		color: var(--text-mute);
 	}
 </style>
