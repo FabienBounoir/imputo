@@ -41,6 +41,7 @@ const handleRequest: Handle = async ({ event, resolve }) => {
 				accentColor: user.accentColor,
 				sortActivitiesAlpha: user.sortActivitiesAlpha,
 				motivationBanner: user.motivationBanner,
+				petId: user.petId,
 				tutorialSeenAt: user.tutorialSeenAt
 			};
 

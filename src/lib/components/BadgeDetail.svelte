@@ -2,6 +2,7 @@
 	// Fiche d'un badge : les cinq paliers d'un coup d'œil, franchis ou non, et de quoi rejouer
 	// l'animation de déblocage. Même ossature que ConfirmDialog (backdrop + carte centrée) pour que
 	// ça se comporte comme les autres modales de l'app.
+	import { petForTier } from '$lib/pets';
 	import BadgeMedal from './BadgeMedal.svelte';
 
 	type BadgeView = {
@@ -60,9 +61,15 @@
 			{#each badge.thresholds as threshold, i (i)}
 				{@const done = badge.tier > i}
 				{@const current = badge.tier === i}
+				{@const pet = petForTier(badge.id, i + 1)}
 				<li class:done class:current>
 					<span class="bd-num">{done ? '✓' : i + 1}</span>
-					<span class="bd-name">{badge.tierNames[i]}</span>
+					<span class="bd-name">
+						{badge.tierNames[i]}
+						<!-- Annoncé même si le palier n'est pas atteint : savoir ce qu'on va gagner est
+						     précisément ce qu'on vient chercher ici. Seul le dessin se mérite. -->
+						{#if pet}<em class="bd-pet">🐾 {pet.name}</em>{/if}
+					</span>
 					<span class="bd-goal">
 						{#if current}
 							{badge.value} / {threshold}
@@ -184,6 +191,13 @@
 		border-color: transparent;
 		background: var(--accent);
 		color: #fff;
+	}
+	.bd-pet {
+		font-style: normal;
+		font-size: 11.5px;
+		font-weight: 500;
+		color: var(--accent);
+		white-space: nowrap;
 	}
 	.bd-goal {
 		font-variant-numeric: tabular-nums;

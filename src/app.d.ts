@@ -16,6 +16,7 @@ declare global {
 				accentColor: string | null;
 				sortActivitiesAlpha: boolean;
 				motivationBanner: boolean;
+				petId: string | null;
 				tutorialSeenAt: Date | null;
 			} | null;
 			sessionToken: string | null;

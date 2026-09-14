@@ -214,6 +214,17 @@ export async function setMotivationBannerPref(userId: string, value: boolean) {
 	await db.update(user).set({ motivationBanner: value }).where(eq(user.id, userId));
 }
 
+/**
+ * Compagnon affiché en bas de la fenêtre — null pour n'en afficher aucun.
+ *
+ * Le déblocage se vérifie AVANT l'appel (cf. l'action petPref des Réglages) : ce setter ne
+ * revalide rien, il enregistre. Un compagnon retiré du catalogue reste stocké sans nuire, il
+ * n'est simplement plus rendu.
+ */
+export async function setPetPref(userId: string, petId: string | null) {
+	await db.update(user).set({ petId }).where(eq(user.id, userId));
+}
+
 /** Marque le tutoriel de prise en main comme vu — plus jamais lancé automatiquement au login. */
 export async function markTutorialSeen(userId: string) {
 	await db.update(user).set({ tutorialSeenAt: new Date() }).where(eq(user.id, userId));

@@ -5,7 +5,9 @@
 	// l'écran appartienne visiblement à l'app et pas à une librairie d'animation.
 	import { onMount } from 'svelte';
 	import { MATERIALS, TIER_MATERIAL } from '$lib/badgeArt';
+	import { petForTier } from '$lib/pets';
 	import BadgeMedal from './BadgeMedal.svelte';
+	import PetSprite from './PetSprite.svelte';
 
 	let {
 		badgeId,
@@ -24,6 +26,9 @@
 	} = $props();
 
 	const material = $derived(MATERIALS[TIER_MATERIAL[Math.max(0, Math.min(4, tier - 1))]]);
+	// Déduit du catalogue plutôt que passé en prop : l'appelant n'a rien à savoir des compagnons, et
+	// le rejeu depuis la fiche montre donc la même chose que l'annonce d'origine.
+	const pet = $derived(petForTier(badgeId, tier));
 
 	let stage: HTMLDivElement | undefined = $state();
 
@@ -72,6 +77,19 @@
 		<b>{tierName}</b>
 		<span>{name}</span>
 	</div>
+
+	<!-- Second temps : le palier d'abord, le compagnon ensuite. Les deux annoncés en même temps, on
+	     ne lit ni l'un ni l'autre. -->
+	{#if pet}
+		<div class="pet-reveal">
+			<PetSprite petId={pet.id} scale={3} />
+			<div class="pet-text">
+				<small>Compagnon débloqué</small>
+				<b>{pet.name}</b>
+				<span>À activer dans Réglages → Badges &amp; compagnon</span>
+			</div>
+		</div>
+	{/if}
 	<p class="hint">Toucher pour fermer</p>
 </div>
 
@@ -210,6 +228,38 @@
 		font-size: 13px;
 	}
 
+	.pet-reveal {
+		position: relative;
+		display: flex;
+		align-items: center;
+		gap: 14px;
+		margin-top: 22px;
+		padding: 10px 18px 10px 12px;
+		border: 1px solid rgba(255, 255, 255, 0.14);
+		border-radius: 14px;
+		background: rgba(255, 255, 255, 0.05);
+		animation: rise 0.6s 2.35s ease-out both;
+	}
+	.pet-text {
+		text-align: left;
+		color: #fff;
+	}
+	.pet-text small {
+		display: block;
+		color: var(--tint);
+		font-size: 11px;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+	}
+	.pet-text b {
+		display: block;
+		font-size: 18px;
+	}
+	.pet-text span {
+		color: #b9b2a7;
+		font-size: 12px;
+	}
+
 	.hint {
 		position: absolute;
 		bottom: 34px;
@@ -219,7 +269,7 @@
 	}
 
 	@media (prefers-reduced-motion: reduce) {
-		.dropping, .caption, .hint, .flash, .shock { animation: none; opacity: 1; transform: none; }
+		.dropping, .caption, .hint, .pet-reveal, .flash, .shock { animation: none; opacity: 1; transform: none; }
 		.glow, .rays::before, .sweep { animation: none; }
 	}
 </style>

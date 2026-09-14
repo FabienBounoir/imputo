@@ -20,14 +20,18 @@
 	import { requestTourReplay } from '$lib/tour/tourState.svelte';
 	import AccentPicker from '$lib/components/AccentPicker.svelte';
 	import PasswordField from '$lib/components/PasswordField.svelte';
+	import PetSprite from '$lib/components/PetSprite.svelte';
+	import { petForBadge } from '$lib/pets';
 
 	let { data, form } = $props();
 	$effect(() => {
 		if (!form) return;
 		if (form.pwError) toast.error(form.pwError);
+		else if (form.error) toast.error(form.error);
 		else if (form.pwOk) toast.success('Mot de passe changé ✓');
 		else if (
 			form.accentPrefOk ||
+			form.petPrefOk ||
 			form.motivationBannerOk ||
 			form.rememberTicketFiltersOk ||
 			form.rememberTicketSearchOk ||
@@ -153,7 +157,7 @@
 	import BadgeDetail from '$lib/components/BadgeDetail.svelte';
 
 	const TABS = [
-		{ key: 'badges', label: 'Badges' },
+		{ key: 'badges', label: 'Badges & compagnon' },
 		{ key: 'notifications', label: 'Notifications' },
 		{ key: 'apparence', label: 'Apparence' },
 		{ key: 'vues', label: 'Mes vues' },
@@ -181,6 +185,7 @@
 	const current = $derived(replay);
 	const won = $derived(data.badges.filter((b) => b.tier > 0).length);
 	const tiersTotal = $derived(data.badges.reduce((n, b) => n + b.tier, 0));
+	const petsUnlocked = $derived(data.pets.filter((p) => p.unlocked).length);
 
 	// Un rejeu ne marque rien comme vu : c'est une relecture, pas une annonce.
 	function closeBadge() {
@@ -211,6 +216,45 @@
 
 	{#if tab === 'badges'}
 		<section class="card block">
+			<h3>Mon compagnon</h3>
+			<p class="hint">
+				{petsUnlocked} compagnon{petsUnlocked > 1 ? 's' : ''} sur {data.pets.length} débloqué{petsUnlocked > 1 ? 's' : ''}.
+				Chacun s’ouvre avec un palier de badge. Celui qu’on choisit s’installe en bas de la fenêtre sur
+				toutes les pages : il se promène, s’endort si on l’oublie, et se laisse attraper, lancer et
+				renvoyer au curseur.
+			</p>
+			<form method="POST" action="?/petPref" use:enhance>
+				<div class="pet-grid">
+					<button type="submit" name="petId" value="" class="pet-card" class:on={!data.petId}>
+						<span class="pet-slot" aria-hidden="true">∅</span>
+						<b>Aucun</b>
+						<span class="pet-species">Rien en bas de l’écran</span>
+					</button>
+					{#each data.pets as p (p.id)}
+						<button
+							type="submit"
+							name="petId"
+							value={p.id}
+							class="pet-card"
+							class:on={data.petId === p.id}
+							class:locked={!p.unlocked}
+							disabled={!p.unlocked}
+						>
+							{#if p.unlocked}
+								<PetSprite petId={p.id} scale={4} />
+							{:else}
+								<span class="pet-slot" aria-hidden="true">?</span>
+							{/if}
+							<b>{p.name}</b>
+							<span class="pet-species">{p.unlocked ? p.species : 'À débloquer'}</span>
+							<span class="pet-trait">{p.unlocked ? p.trait : p.requirement}</span>
+						</button>
+					{/each}
+				</div>
+			</form>
+		</section>
+
+		<section class="card block">
 			<h3>Mes badges</h3>
 			<p class="hint">
 				{won} badge{won > 1 ? 's' : ''} décroché{won > 1 ? 's' : ''} · {tiersTotal} paliers sur {data.badges.length * 5}.
@@ -235,6 +279,12 @@
 							{#if b.next}{b.value} / {b.next.target} {b.unit}{:else}{b.value} {b.unit} — palier max{/if}
 						</span>
 						<span class="badge-how">{b.how}</span>
+						{#if petForBadge(b.id)}
+							{@const p = petForBadge(b.id)!}
+							<span class="badge-pet" class:got={b.tier >= p.unlock.tier}>
+								🐾 {p.name} au palier {p.unlock.tier}
+							</span>
+						{/if}
 					</button>
 				{/each}
 			</div>
@@ -557,6 +607,79 @@
 	}
 	.badge-card.locked .badge-tier {
 		opacity: 0.75;
+	}
+	/* Ce que le badge mène à débloquer : discret tant que ce n'est pas acquis, à l'accent une fois
+	   le palier franchi — c'est ce qui rend le badge utile à autre chose qu'à lui-même. */
+	.badge-pet {
+		font-size: 11px;
+		color: var(--text-mute);
+	}
+	.badge-pet.got {
+		color: var(--accent);
+		font-weight: 500;
+	}
+	/* Compagnons : même trame que les badges, cartes plus basses — le sprite fait 64 px de large. */
+	.pet-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+		gap: 12px;
+		margin-top: 14px;
+	}
+	.pet-card {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 4px;
+		padding: 12px 10px;
+		border: 1px solid var(--border);
+		border-radius: 14px;
+		background: none;
+		font: inherit;
+		color: inherit;
+		text-align: center;
+		cursor: pointer;
+		transition:
+			border-color 0.15s,
+			transform 0.15s;
+	}
+	.pet-card:hover:not(:disabled) {
+		border-color: var(--accent);
+		transform: translateY(-2px);
+	}
+	.pet-card:focus-visible {
+		outline: 2px solid var(--accent);
+		outline-offset: 2px;
+	}
+	.pet-card.on {
+		border-color: var(--accent);
+		box-shadow: inset 0 0 0 1px var(--accent);
+	}
+	.pet-card:disabled {
+		cursor: not-allowed;
+	}
+	.pet-card b {
+		font-size: 13px;
+	}
+	.pet-species {
+		font-size: 11.5px;
+		color: var(--text-mute);
+	}
+	.pet-trait {
+		font-size: 11px;
+		color: var(--text-mute);
+		line-height: 1.35;
+	}
+	/* Verrouillé : le dessin reste caché, comme un badge non décroché. Seuls le nom et la condition
+	   sont lisibles — découvrir la bestiole fait partie de la récompense. */
+	.pet-slot {
+		display: grid;
+		place-items: center;
+		width: 64px;
+		height: 80px;
+		font-size: 24px;
+		color: var(--text-mute);
+		border: 1px dashed var(--border);
+		border-radius: 10px;
 	}
 	/* La consigne d'obtention : discrète sur un badge déjà gagné, mise en avant sur un verrouillé —
 	   c'est la seule chose qu'on y apprend, le dessin restant caché jusqu'au déblocage. */

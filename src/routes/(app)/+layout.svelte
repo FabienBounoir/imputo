@@ -176,6 +176,7 @@
 		}
 	}
 	import BadgeUnlock from '$lib/components/BadgeUnlock.svelte';
+	import PetCompanion from '$lib/components/PetCompanion.svelte';
 
 	// Paliers gagnés et pas encore annoncés, servis par le layout serveur : l'animation surgit donc
 	// sur n'importe quelle page, juste après l'action qui l'a déclenchée (SvelteKit réinvalide les
@@ -442,6 +443,14 @@
 		letter={badgeCurrent.name[0]}
 		onclose={closeBadgeAnnounce}
 	/>
+{/if}
+<!-- Compagnon débloqué par les badges et choisi dans les Réglages. Rien tant que personne n'en a
+     choisi un : `petId` est null par défaut. Remonté sur changement de choix, pour repartir d'un
+     état propre plutôt que de réconcilier une boucle d'animation en cours. -->
+{#if data.user?.petId}
+	{#key data.user.petId}
+		<PetCompanion petId={data.user.petId} />
+	{/key}
 {/if}
 <CommandPalette bind:this={commandPalette} {data} />
 <SupportTimePalette enabled={data.workspace?.supportTimeTrackingEnabled ?? false} />

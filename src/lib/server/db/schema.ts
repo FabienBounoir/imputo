@@ -196,6 +196,12 @@ export const user = pgTable('user', {
 	compactTicketActivity: boolean('compact_ticket_activity').notNull().default(true),
 	// Bandeau de citations motivantes en haut des pages (rotation toutes les 30 s).
 	motivationBanner: boolean('motivation_banner').notNull().default(true),
+	// Compagnon affiché en bas de la fenêtre. Null = aucun, et c'est le défaut : personne ne se
+	// retrouve avec une bestiole à l'écran sans l'avoir choisie. Pas de contrainte ni d'enum : le
+	// catalogue vit dans le code (cf. src/lib/pets.ts), un identifiant qui en disparaît se comporte
+	// comme "aucun compagnon" au rendu. Préférence de COMPTE, comme le thème : elle suit la personne
+	// d'un espace à l'autre, alors que le déblocage, lui, se vérifie dans l'espace courant.
+	petId: text('pet_id'),
 	// Null = jamais vu le tutoriel de prise en main (déclenche le lancement auto au prochain
 	// chargement). Rejouable depuis Réglages sans repasser par null (juste relancé côté client).
 	tutorialSeenAt: timestamp('tutorial_seen_at'),
