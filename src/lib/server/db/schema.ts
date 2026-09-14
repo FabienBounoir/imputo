@@ -1056,6 +1056,38 @@ export const wrappedSnapshot = pgTable(
 	(t) => [uniqueIndex('wrapped_snapshot_ws_user_year_uq').on(t.workspaceId, t.userId, t.year)]
 );
 
+// Progression d'un membre sur un badge — une ligne par (espace, membre, badge), pas une par palier :
+// le palier se déduit de `value` et des seuils du catalogue (cf. $lib/badges), qui peuvent donc être
+// retouchés sans migration ni recalcul. `tier` est quand même stocké : c'est lui qui dit si un palier
+// vient d'être franchi (et qu'il faut jouer l'animation), sinon chaque recalcul rejouerait tout.
+// `discoveries` ne sert qu'au badge « Explorateur » : la liste des recoins déjà trouvés, en jsonb
+// parce qu'elle est propre à ce badge et qu'y ajouter une découverte ne doit pas coûter une colonne.
+export const badgeProgress = pgTable(
+	'badge_progress',
+	{
+		id: id(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspace.id, { onDelete: 'cascade' }),
+		userId: uuid('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		badgeId: text('badge_id').notNull(),
+		value: integer('value').notNull().default(0),
+		tier: integer('tier').notNull().default(0),
+		discoveries: jsonb('discoveries'),
+		// Date du dernier palier franchi — affichée sur la fiche du badge ("obtenu le").
+		tierAt: timestamp('tier_at', { withTimezone: true }),
+		// Palier déjà annoncé à l'écran : tant qu'il est en retard sur `tier`, l'animation est due.
+		seenTier: integer('seen_tier').notNull().default(0),
+		updatedAt: updatedAt()
+	},
+	(t) => [
+		uniqueIndex('badge_progress_ws_user_badge_uq').on(t.workspaceId, t.userId, t.badgeId),
+		index('badge_progress_ws_user_idx').on(t.workspaceId, t.userId)
+	]
+);
+
 // ---------- Relations ----------
 export const ticketRelations = relations(ticket, ({ one, many }) => ({
 	parent: one(ticket, { fields: [ticket.parentId], references: [ticket.id], relationName: 'parent' }),
@@ -1101,3 +1133,4 @@ export type SupportRotationMember = typeof supportRotationMember.$inferSelect;
 export type SupportOverride = typeof supportOverride.$inferSelect;
 export type SupportCadence = (typeof supportCadenceEnum.enumValues)[number];
 export type WrappedSnapshot = typeof wrappedSnapshot.$inferSelect;
+export type BadgeProgress = typeof badgeProgress.$inferSelect;

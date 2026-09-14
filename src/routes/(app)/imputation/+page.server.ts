@@ -13,6 +13,7 @@ import {
 } from '$lib/server/services/imputation';
 import { getRefData, listTicketSummariesByIds } from '$lib/server/services/tickets';
 import { getMembership, isManagerOrAdmin } from '$lib/server/services/workspaces';
+import { refreshBadges } from '$lib/server/services/badges';
 import { listObjectivesForUserWeeks, vacationWeeks } from '$lib/server/services/weeklyObjectives';
 import { listAbsencesForRange, buildAbsenceGrid } from '$lib/server/services/absences';
 import { resolvePeriodPrefs } from '$lib/server/services/imputationPrefs';
@@ -205,6 +206,9 @@ export const actions: Actions = {
 			logger.error('imputation_set_cell_failed', e, { workspaceId: ws.workspaceId, subjectId, targetType, targetId, day });
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
+		// Compteurs de badges touchés par une imputation, recalculés pour la personne concernée (pas
+		// forcément celle qui saisit : un admin peut imputer pour un autre membre).
+		await refreshBadges(ws.workspaceId, subjectId, locals.role === 'ADMIN', 'imputation');
 		return { ok: true };
 	},
 

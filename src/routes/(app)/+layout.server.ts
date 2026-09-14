@@ -6,6 +6,7 @@ import { listStaleRaePairs } from '$lib/server/services/tickets';
 import { getCurrentDuty } from '$lib/server/services/support';
 import { getMyWrapped, isWrappedWindowOpen, wrappedYearFor } from '$lib/server/services/wrapped';
 import { getDailyQuotes } from '$lib/server/services/quotes';
+import { listToAnnounce } from '$lib/server/services/badges';
 import { currentMoodPeriod, todayInParis, parseISODate, lastWorkdayOnOrBefore } from '$lib/utils/date';
 import { config } from '$lib/server/config';
 
@@ -59,6 +60,13 @@ export const load: LayoutServerLoad = async ({ locals }) => {
 		isWrappedWindowOpen(todayInParis()) &&
 		Boolean(await getMyWrapped(locals.workspace.workspaceId, locals.user.id, wrappedYear));
 
+	// Paliers gagnés et pas encore annoncés. Simple LECTURE de badge_progress (une requête) : le
+	// recalcul, lui, se fait après l'action qui peut faire bouger un compteur — ce load tourne sur
+	// CHAQUE navigation de CHAQUE page, y relancer les compteurs coûterait une dizaine de requêtes
+	// à chaque clic. C'est ce qui permet à l'animation de surgir là où on est, pas seulement dans
+	// les Réglages.
+	const badgesToAnnounce = await listToAnnounce(locals.workspace.workspaceId, locals.user.id);
+
 	// Phrases du jour du bandeau motivation (cache mémoire côté serveur, cf. services/quotes.ts).
 	// Volontairement PAS awaité : sur cache manqué (1x/jour/process), le fetch réseau sous-jacent
 	// peut prendre jusqu'à 5s (timeout), et ce load tourne sur CHAQUE navigation de CHAQUE page —
@@ -76,6 +84,7 @@ export const load: LayoutServerLoad = async ({ locals }) => {
 		moodTotalVotes,
 		pendingAbsencesCount,
 		pills,
+		badgesToAnnounce,
 		supportDuty,
 		wrappedAvailable,
 		wrappedYear,

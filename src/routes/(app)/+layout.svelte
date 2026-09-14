@@ -175,6 +175,26 @@
 			beep(CLICK_NOTES[logoClicks - 1], { duration: 0.07, volume: 0.09 });
 		}
 	}
+	import BadgeUnlock from '$lib/components/BadgeUnlock.svelte';
+
+	// Paliers gagnés et pas encore annoncés, servis par le layout serveur : l'animation surgit donc
+	// sur n'importe quelle page, juste après l'action qui l'a déclenchée (SvelteKit réinvalide les
+	// loads après une action, le palier tout juste franchi est déjà là).
+	// `dismissed` plutôt qu'une copie locale de la liste : pas d'état dupliqué à resynchroniser à
+	// chaque navigation, la file reste dérivée de `data`.
+	let dismissedBadges = $state<string[]>([]);
+	const badgeCurrent = $derived(data.badgesToAnnounce.filter((b) => !dismissedBadges.includes(b.id))[0] ?? null);
+
+	async function closeBadgeAnnounce() {
+		const done = badgeCurrent;
+		if (!done) return;
+		dismissedBadges = [...dismissedBadges, done.id];
+		await fetch('/api/badges/seen', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ badgeIds: [done.id] })
+		});
+	}
 </script>
 
 <div class="pageload-bar" class:on={isPageChange} aria-hidden="true"></div>
@@ -412,6 +432,17 @@
 	tutorialSeenAt={data.user?.tutorialSeenAt ?? null}
 />
 <NotificationPromptModal vapidPublicKey={data.vapidPublicKey} />
+
+{#if badgeCurrent}
+	<BadgeUnlock
+		badgeId={badgeCurrent.id}
+		name={badgeCurrent.name}
+		tier={badgeCurrent.tier}
+		tierName={badgeCurrent.tierName}
+		letter={badgeCurrent.name[0]}
+		onclose={closeBadgeAnnounce}
+	/>
+{/if}
 <CommandPalette bind:this={commandPalette} {data} />
 <SupportTimePalette enabled={data.workspace?.supportTimeTrackingEnabled ?? false} />
 {#if seasonalVisible && seasonalIds.has('christmas')}<Snow />{/if}

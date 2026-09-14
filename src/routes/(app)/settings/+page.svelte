@@ -148,7 +148,12 @@
 	// « Apparence » = ce qui change le look de l'app entière ; « Mes vues » = les réglages par défaut
 	// d'une page précise (Tickets & chiffrage, Synthèse). Les mélanger donnait une liste sans fin où
 	// l'ordre des activités voisinait avec le choix du thème.
+	import BadgeMedal from '$lib/components/BadgeMedal.svelte';
+	import BadgeUnlock from '$lib/components/BadgeUnlock.svelte';
+	import BadgeDetail from '$lib/components/BadgeDetail.svelte';
+
 	const TABS = [
+		{ key: 'badges', label: 'Badges' },
 		{ key: 'notifications', label: 'Notifications' },
 		{ key: 'apparence', label: 'Apparence' },
 		{ key: 'vues', label: 'Mes vues' },
@@ -163,8 +168,32 @@
 				? 'apparence'
 				: form?.sortActivitiesAlphaOk || form?.rememberTicketFiltersOk || form?.rememberTicketSearchOk || form?.compactActivityOk
 					? 'vues'
-					: 'notifications'
+					: 'badges'
 	);
+
+	// Paliers gagnés mais pas encore montrés : joués l'un après l'autre à l'ouverture, puis marqués
+	// vus côté serveur.
+	// Fiche ouverte, et rejeu demandé depuis cette fiche. L'ANNONCE des nouveaux paliers, elle, est
+	// gérée par le layout de l'app : elle doit pouvoir surgir sur n'importe quelle page. La rejouer
+	// aussi ici lancerait deux animations superposées sur l'écran des Réglages.
+	let selected = $state<(typeof data.badges)[number] | null>(null);
+	let replay = $state<(typeof data.badges)[number] | null>(null);
+	const current = $derived(replay);
+	const won = $derived(data.badges.filter((b) => b.tier > 0).length);
+	const tiersTotal = $derived(data.badges.reduce((n, b) => n + b.tier, 0));
+
+	// Un rejeu ne marque rien comme vu : c'est une relecture, pas une annonce.
+	function closeBadge() {
+		replay = null;
+	}
+
+	// Avancement à l'intérieur du palier courant, pas depuis zéro : sinon une barre à 99 % stagne
+	// pendant des mois entre deux seuils éloignés.
+	function badgePct(b: (typeof data.badges)[number]) {
+		if (!b.next) return 100;
+		const floor = b.tier > 0 ? b.thresholds[b.tier - 1] : 0;
+		return Math.max(2, Math.min(100, Math.round(((b.value - floor) / (b.next.target - floor)) * 100)));
+	}
 </script>
 
 <div class="topbar">
@@ -173,14 +202,66 @@
 	<button type="button" class="btn btn-ghost" onclick={requestTourReplay}>Revoir le tutoriel</button>
 </div>
 
-<div class="content settings">
+<div class="content settings" class:wide={tab === 'badges'}>
 	<div class="tabs">
 		{#each TABS as t (t.key)}
 			<button type="button" class:on={tab === t.key} onclick={() => (tab = t.key)}>{t.label}</button>
 		{/each}
 	</div>
 
-	{#if tab === 'notifications'}
+	{#if tab === 'badges'}
+		<section class="card block">
+			<h3>Mes badges</h3>
+			<p class="hint">
+				{won} badge{won > 1 ? 's' : ''} décroché{won > 1 ? 's' : ''} · {tiersTotal} paliers sur {data.badges.length * 5}.
+				Chaque badge a cinq paliers : le compteur avance tout seul, rien à réclamer.
+			</p>
+			<div class="badge-grid">
+				{#each data.badges as b (b.id)}
+					<button
+						type="button"
+						class="badge-card"
+						class:locked={b.tier === 0}
+						onclick={() => (selected = b)}
+						aria-label="Voir le détail du badge {b.name}"
+					>
+						<BadgeMedal badgeId={b.id} tier={b.tier} letter={b.name[0]} size={128} locked={b.tier === 0} interactive />
+						<b>{b.name}</b>
+						<span class="badge-tier">
+							{#if b.tier > 0}{b.tierNames[b.tier - 1]} · palier {b.tier}/5{:else}Pas encore décroché{/if}
+						</span>
+						<div class="badge-bar" aria-hidden="true"><i style:width="{badgePct(b)}%"></i></div>
+						<span class="badge-progress">
+							{#if b.next}{b.value} / {b.next.target} {b.unit}{:else}{b.value} {b.unit} — palier max{/if}
+						</span>
+						<span class="badge-how">{b.how}</span>
+					</button>
+				{/each}
+			</div>
+		</section>
+
+		{#if selected}
+			<BadgeDetail
+				badge={selected}
+				onclose={() => (selected = null)}
+				onreplay={() => {
+					replay = selected;
+					selected = null;
+				}}
+			/>
+		{/if}
+
+		{#if current}
+			<BadgeUnlock
+				badgeId={current.id}
+				name={current.name}
+				tier={current.tier}
+				tierName={current.tierNames[current.tier - 1]}
+				letter={current.name[0]}
+				onclose={closeBadge}
+			/>
+		{/if}
+	{:else if tab === 'notifications'}
 		<section class="card block">
 			<h3>Notifications</h3>
 			<p class="hint">Rappels pour ne pas oublier de saisir ton imputation ou de mettre à jour ton RAE. Envoyés même quand l’app est fermée (navigateur compatible, ou app installée sur iOS).</p>
@@ -408,6 +489,88 @@
 		   explication qui tenait sur une ligne en pleine largeur en prenait trois. */
 		max-width: 780px;
 	}
+	/* L'onglet Badges est une galerie, pas un formulaire : la brider à 780 px laissait la moitié de
+	   l'écran vide et forçait la grille à 4 colonnes alors qu'elle peut en tenir le double. Les
+	   autres onglets gardent leur largeur de lecture. */
+	.settings.wide {
+		max-width: none;
+	}
+	/* Grille de badges : 170 px mini par carte, c'est la taille en dessous de laquelle la scène
+	   sertie dans la monture cesse d'être lisible et ne ressemble plus qu'à une tache. */
+	.badge-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+		gap: 16px;
+		margin-top: 14px;
+	}
+	/* Carte = bouton : elle ouvre la fiche du badge, donc elle doit être atteignable au clavier et
+	   annoncée comme cliquable. D'où le reset des styles natifs de <button>. */
+	.badge-card {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 6px;
+		padding: 16px 12px 14px;
+		border: 1px solid var(--border);
+		border-radius: 14px;
+		text-align: center;
+		background: none;
+		font: inherit;
+		color: inherit;
+		cursor: pointer;
+		transition:
+			border-color 0.15s,
+			transform 0.15s;
+	}
+	.badge-card:hover {
+		border-color: var(--accent);
+		transform: translateY(-2px);
+	}
+	.badge-card:focus-visible {
+		outline: 2px solid var(--accent);
+		outline-offset: 2px;
+	}
+	.badge-card b {
+		margin-top: 4px;
+		font-size: 14px;
+	}
+	.badge-tier {
+		font-size: 12px;
+		color: var(--text-mute);
+	}
+	.badge-bar {
+		width: 100%;
+		height: 5px;
+		border-radius: 999px;
+		background: var(--border);
+		overflow: hidden;
+	}
+	.badge-bar i {
+		display: block;
+		height: 100%;
+		background: var(--accent);
+	}
+	.badge-progress {
+		font-size: 11px;
+		color: var(--text-mute);
+		line-height: 1.35;
+	}
+	.badge-card.locked .badge-tier {
+		opacity: 0.75;
+	}
+	/* La consigne d'obtention : discrète sur un badge déjà gagné, mise en avant sur un verrouillé —
+	   c'est la seule chose qu'on y apprend, le dessin restant caché jusqu'au déblocage. */
+	.badge-how {
+		font-size: 11px;
+		line-height: 1.35;
+		color: var(--text-mute);
+		opacity: 0.75;
+	}
+	.badge-card.locked .badge-how {
+		opacity: 1;
+		color: var(--text);
+	}
+
 	.tabs {
 		display: inline-flex;
 		flex-wrap: wrap;
