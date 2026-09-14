@@ -14,6 +14,7 @@
 	import { tick } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import { goto, afterNavigate, invalidateAll, replaceState } from '$app/navigation';
+	import { postOrToast } from '$lib/postAction';
 	import { beep } from '$lib/sound';
 	import { Confetti } from 'svelte-confetti';
 	import { navigating, page } from '$app/state';
@@ -150,6 +151,19 @@
 			rows = syncedRows();
 		}
 	});
+
+	/**
+	 * Toutes les mutations de cette page sont optimistes : quand le serveur refuse, il ne suffit pas
+	 * d'afficher le motif (postOrToast s'en charge), il faut aussi effacer ce qui a été écrit à
+	 * l'écran. On resynchronise la feuille depuis le serveur plutôt que d'écrire un rollback manuel
+	 * par mutation — la fusion d'activités n'est pas trivialement réversible.
+	 */
+	async function submit(url: string, init: RequestInit): Promise<boolean> {
+		if (await postOrToast(url, init)) return true;
+		await invalidateAll();
+		rows = syncedRows();
+		return false;
+	}
 
 	// Clic sur le sprint/version d'une ligne ticket : va sur Tickets & chiffrage filtré sur ce
 	// sprint/version, avec le ticket d'origine mis en surbrillance dans la liste.
@@ -296,7 +310,7 @@
 		body.set('day', day);
 		body.set('amount', String(value));
 		body.set('targetUserId', data.viewedId);
-		await fetch('?/setCell', { method: 'POST', body });
+		await submit('?/setCell', { method: 'POST', body });
 	}
 
 	/** Clic = avance dans CYCLE, Shift+clic = recule (pas de conflit avec le clic droit/molette). */
@@ -543,7 +557,7 @@
 		body.set('g', data.period.granularity);
 		body.set('mode', data.period.mode);
 		body.set('targetUserId', data.viewedId);
-		await fetch('?/deleteRow', { method: 'POST', body });
+		await submit('?/deleteRow', { method: 'POST', body });
 	}
 
 	// Changement d'activité d'une ligne (clic sur son tag, ou sur "+ Activité" quand elle n'en a pas) —
@@ -576,7 +590,7 @@
 		body.set('g', data.period.granularity);
 		body.set('mode', data.period.mode);
 		body.set('targetUserId', data.viewedId);
-		await fetch('?/reassignActivity', { method: 'POST', body });
+		await submit('?/reassignActivity', { method: 'POST', body });
 	}
 
 	// Anti-rafale pour le champ RAE (spinner/molette) : chaque pas déclenche un onchange, donc sans
@@ -595,7 +609,7 @@
 			key,
 			setTimeout(async () => {
 				pendingRaeSaves.delete(key);
-				await fetch(`/api/tickets/${row.targetId}/activity-rae`, {
+				await submit(`/api/tickets/${row.targetId}/activity-rae`, {
 					method: 'POST',
 					headers: { 'content-type': 'application/json' },
 					body: JSON.stringify({ activityId: row.activityId, field: 'raeReal', value })
@@ -617,7 +631,7 @@
 			key,
 			setTimeout(async () => {
 				pendingEstimationSaves.delete(key);
-				await fetch(`/api/tickets/${row.targetId}/activity-rae`, {
+				await submit(`/api/tickets/${row.targetId}/activity-rae`, {
 					method: 'POST',
 					headers: { 'content-type': 'application/json' },
 					body: JSON.stringify({ activityId: row.activityId, field: 'estimation', value })
@@ -728,7 +742,7 @@
 		body.set('g', data.period.granularity);
 		body.set('mode', data.period.mode);
 		body.set('targetUserId', data.viewedId);
-		await fetch('?/pinRow', { method: 'POST', body });
+		await submit('?/pinRow', { method: 'POST', body });
 	}
 
 	// Seuls les objectifs SANS ticket sont rappelés ici : ceux qui en ont un sont déjà épinglés comme
@@ -1253,7 +1267,7 @@
 			<QuickAddPalette
 				bind:this={quickAddPalette}
 				tickets={data.tickets}
-				categories={data.categories.filter((c) => !c.linkedAbsenceType)}
+				categories={data.categories.filter((c) => !c.linkedAbsenceType || c.allowManualImputation)}
 				recentTicketIds={data.recentTicketIds}
 				versions={data.versions}
 				objectives={data.weeklyObjectives.filter((o) => o.kind === 'TICKET')}

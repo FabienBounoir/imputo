@@ -399,6 +399,12 @@ export const category = pgTable(
 		// absences.ts) — non-null uniquement pour CONGE_VALIDE/FORMATION/HORS_PROJET (jamais
 		// CONGE_PREVISIONNEL, pas encore imputable). Verrouille la suppression admin (cf. params.ts).
 		linkedAbsenceType: absenceTypeEnum('linked_absence_type'),
+		// Rouvre la saisie à la main de CETTE catégorie liée dans Mon imputation (sélecteur "+ Ajouter"
+		// et cases), pour une équipe qui impute son Hors-projet directement sans passer par la page
+		// Absences. Sans effet sur une catégorie non liée, qui est déjà librement saisissable. Les jours
+		// couverts par une absence restent verrouillés dans tous les cas : la synchro reprend la main
+		// dessus (cf. absences.ts syncAbsenceEntries).
+		allowManualImputation: boolean('allow_manual_imputation').notNull().default(false),
 		archivedAt: archivedAt(),
 		createdAt: createdAt()
 	},

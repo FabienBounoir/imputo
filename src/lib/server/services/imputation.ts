@@ -354,6 +354,10 @@ export async function getRecentTicketIds(workspaceId: string, userId: string, li
  * absences.ts syncAbsenceEntries) — ces lignes ne sont alimentées que depuis la page Absences,
  * jamais manuellement (setCell/pinRow), sous peine d'entrées fantômes que la prochaine
  * synchronisation ne saura jamais nettoyer.
+ *
+ * Une catégorie liée peut être rouverte une par une (category.allowManualImputation, réglé dans
+ * Référentiels > Catégories). Les jours déjà couverts par une absence restent intouchables dans
+ * tous les cas, drapeau ou pas (cf. la garde sur timeEntry.absenceId dans setCell).
  */
 async function assertTargetInWorkspace(
 	workspaceId: string,
@@ -387,11 +391,15 @@ async function assertTargetInWorkspace(
 		}
 	} else if (targetType === 'CATEGORY') {
 		const r = await db
-			.select({ id: category.id, linkedAbsenceType: category.linkedAbsenceType })
+			.select({
+				id: category.id,
+				linkedAbsenceType: category.linkedAbsenceType,
+				allowManualImputation: category.allowManualImputation
+			})
 			.from(category)
 			.where(and(eq(category.id, targetId), eq(category.workspaceId, workspaceId)));
 		if (!r[0]) throw new Error('Catégorie introuvable dans cet espace.');
-		if (opts.blockLinkedCategory && r[0].linkedAbsenceType)
+		if (opts.blockLinkedCategory && r[0].linkedAbsenceType && !r[0].allowManualImputation)
 			throw new Error('Cette catégorie est alimentée automatiquement depuis les absences validées — modifiez-la depuis la page Absences.');
 	} else {
 		// Un objectif n'est imputable que par la personne à qui il a été assigné.

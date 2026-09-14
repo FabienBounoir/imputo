@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { tick } from 'svelte';
+	import { postOrToast } from '$lib/postAction';
 	import { enhance, deserialize } from '$app/forms';
 	import { confirmDialog } from '$lib/confirm.svelte';
 	import { toast } from 'svelte-sonner';
@@ -223,19 +224,23 @@
 		body.set('ticketId', ticket.id);
 		body.set('key', key);
 		body.set('value', value ?? '');
-		await fetch('/tickets?/flag', { method: 'POST', body });
+		if (!(await postOrToast('/tickets?/flag', { method: 'POST', body }))) return;
 		flash(snapshot);
 	}
 	async function toggleGroup(groupId: string) {
 		if (!ticket) return;
 		const snapshot = { id: ticket.id, title: ticket.title, sprintId: ticket.sprintId, versionId: ticket.versionId };
+		const before = ticket.groupIds;
 		const member = !ticket.groupIds.includes(groupId);
 		ticket.groupIds = member ? [...ticket.groupIds, groupId] : ticket.groupIds.filter((g) => g !== groupId);
 		const body = new FormData();
 		body.set('ticketId', ticket.id);
 		body.set('groupId', groupId);
 		body.set('member', String(member));
-		await fetch('/tickets?/groupToggle', { method: 'POST', body });
+		if (!(await postOrToast('/tickets?/groupToggle', { method: 'POST', body }))) {
+			ticket.groupIds = before; // le refus est affiché : la coche ne doit pas rester non plus
+			return;
+		}
 		flash(snapshot);
 	}
 	function flash(snapshot?: { id: string; title: string; sprintId: string | null; versionId: string | null }) {

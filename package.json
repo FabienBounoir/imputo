@@ -19,6 +19,7 @@
 		"db:reset": "docker exec imputo-db psql -U imputo -d imputo -c 'drop schema public cascade; drop schema if exists drizzle cascade; create schema public;' && npm run db:migrate && npm run db:seed",
 		"db:pull:prod": "./scripts/db-pull.sh prod",
 		"db:pull:preprod": "./scripts/db-pull.sh preprod",
+		"db:copy:prod-to-preprod": "./scripts/db-pull.sh prod preprod",
 		"jira:sync": "tsx scripts/jira-sync.ts",
 		"test": "WRAPPED_FORCE_OPEN= vitest run",
 		"test:watch": "WRAPPED_FORCE_OPEN= vitest",

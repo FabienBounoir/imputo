@@ -10,7 +10,7 @@ import {
 	getRecentTicketIds
 } from './imputation';
 import { createTicket } from './tickets';
-import { listCategories, createActivity, listActivities } from './params';
+import { listCategories, createActivity, listActivities, setCategoryAllowManual } from './params';
 import { createAbsenceFor } from './absences';
 import { addObjective, listObjectivesForUser } from './weeklyObjectives';
 import { makeWorkspace } from './test-helpers';
@@ -195,6 +195,32 @@ describe('cases verrouillées par une absence (cf. absences.ts syncAbsenceEntrie
 		const row = week.rows.find((r) => r.targetId === conge.id)!;
 		expect(row.amounts[MONDAY]).toBe(1);
 		expect(row.amounts[FRIDAY]).toBeUndefined();
+	});
+
+	it("allowManualImputation rouvre la saisie manuelle de CETTE catégorie, sans déverrouiller la case de l'absence", async () => {
+		const { workspaceId, userId, conge } = await makeLockedCongeCell('lock-allow-manual');
+		await setCategoryAllowManual(workspaceId, conge.id, true);
+
+		// Jour libre : la saisie passe désormais, sur la catégorie comme sur l'épingle.
+		await setCell(workspaceId, userId, { targetType: 'CATEGORY', targetId: conge.id, activityId: null, day: FRIDAY, amount: 1 });
+		await pinRow(workspaceId, userId, { targetType: 'CATEGORY', targetId: conge.id, activityId: null, firstDay: MONDAY, lastDay: FRIDAY });
+
+		// Le jour couvert par l'absence reste intouchable : c'est la synchro qui en a la charge,
+		// le drapeau n'ouvre que les jours libres (cf. setCell, garde sur timeEntry.absenceId).
+		await expect(
+			setCell(workspaceId, userId, { targetType: 'CATEGORY', targetId: conge.id, activityId: null, day: MONDAY, amount: 0.5 })
+		).rejects.toThrow();
+
+		const week = await getWeek(workspaceId, userId, MONDAY);
+		const row = week.rows.find((r) => r.targetId === conge.id)!;
+		expect(row.amounts[FRIDAY]).toBe(1);
+		expect(row.amounts[MONDAY]).toBe(1);
+	});
+
+	it("setCategoryAllowManual refuse une catégorie qui n'est liée à aucun type d'absence", async () => {
+		const { workspaceId } = await makeWorkspace('allow-manual-unlinked');
+		const mco = (await listCategories(workspaceId)).find((c) => c.label === 'MCO')!;
+		await expect(setCategoryAllowManual(workspaceId, mco.id, true)).rejects.toThrow();
 	});
 
 	it("pinRow refuse d'épingler une catégorie liée à un type d'absence", async () => {

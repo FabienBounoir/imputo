@@ -1,0 +1,1 @@
+ALTER TABLE "category" ADD COLUMN "allow_manual_imputation" boolean DEFAULT false NOT NULL;

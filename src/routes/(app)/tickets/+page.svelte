@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { tick } from 'svelte';
+	import { postOrToast } from '$lib/postAction';
 	import { enhance, deserialize } from '$app/forms';
-	import { goto } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
 	import { page, navigating } from '$app/state';
 	import { confirmDialog } from '$lib/confirm.svelte';
 	import { toast } from 'svelte-sonner';
@@ -233,12 +234,13 @@
 		field: 'raeReal' | 'raeTest' | 'estimation' | 'budget',
 		value: number
 	) {
-		const res = await fetch(`/api/tickets/${row.id}/activity-rae`, {
+		const res = await postOrToast(`/api/tickets/${row.id}/activity-rae`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ activityId, field, value })
 		});
-		if (!res.ok) return;
+		// Refus typique : « Budget par activité réservé aux administrateurs » — muet jusqu'ici.
+		if (!res) return invalidateAll();
 		row.activityBreakdown = (await res.json()).rows;
 		// RAE Réal/Test et Estimé global = compilation des activités (jamais saisis à la main).
 		if (row.activityBreakdown.length > 0) {
@@ -666,17 +668,21 @@
 		body.set('ticketId', row.id);
 		body.set('key', key);
 		body.set('value', value ?? '');
-		await fetch('?/flag', { method: 'POST', body });
+		if (!(await postOrToast('?/flag', { method: 'POST', body }))) return;
 		flash();
 	}
 	async function toggleGroup(row: Row, groupId: string) {
+		const before = row.groupIds;
 		const member = !row.groupIds.includes(groupId);
 		row.groupIds = member ? [...row.groupIds, groupId] : row.groupIds.filter((g) => g !== groupId);
 		const body = new FormData();
 		body.set('ticketId', row.id);
 		body.set('groupId', groupId);
 		body.set('member', String(member));
-		await fetch('?/groupToggle', { method: 'POST', body });
+		if (!(await postOrToast('?/groupToggle', { method: 'POST', body }))) {
+			row.groupIds = before; // le refus est affiché : la coche ne doit pas rester non plus
+			return;
+		}
 		flash();
 	}
 	function flash() {

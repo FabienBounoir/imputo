@@ -11,6 +11,8 @@ export type CategoryItem = {
 	usage: number;
 	/** Requise par le suivi des absences (cf. absences.ts) — ne peut pas être archivée. */
 	locked: boolean;
+	/** Catégorie liée rouverte à la saisie manuelle dans Mon imputation (cf. schema.ts). */
+	allowManual: boolean;
 };
 export type ActivityItem = { id: string; label: string; archived: boolean; usage: number };
 
@@ -47,12 +49,13 @@ export async function listCategories(workspaceId: string): Promise<CategoryItem[
 			kind: category.kind,
 			archivedAt: category.archivedAt,
 			linkedAbsenceType: category.linkedAbsenceType,
+			allowManualImputation: category.allowManualImputation,
 			usage: count(timeEntry.id)
 		})
 		.from(category)
 		.leftJoin(timeEntry, eq(timeEntry.categoryId, category.id))
 		.where(eq(category.workspaceId, workspaceId))
-		.groupBy(category.id, category.label, category.kind, category.archivedAt, category.linkedAbsenceType)
+		.groupBy(category.id, category.label, category.kind, category.archivedAt, category.linkedAbsenceType, category.allowManualImputation)
 		.orderBy(category.label);
 	return rows.map((r) => ({
 		id: r.id,
@@ -60,7 +63,8 @@ export async function listCategories(workspaceId: string): Promise<CategoryItem[
 		kind: kindOf(r.kind),
 		archived: r.archivedAt !== null,
 		usage: r.usage,
-		locked: r.linkedAbsenceType !== null
+		locked: r.linkedAbsenceType !== null,
+		allowManual: r.allowManualImputation
 	}));
 }
 
@@ -90,6 +94,25 @@ export async function setCategoryKind(workspaceId: string, id: string, kind: Cat
 		.where(and(eq(category.id, id), eq(category.workspaceId, workspaceId)))
 		.returning({ id: category.id });
 	if (res.length === 0) throw new Error('Introuvable dans cet espace.');
+}
+
+/**
+ * Rouvre (ou referme) la saisie manuelle d'UNE catégorie liée à un type d'absence dans Mon
+ * imputation. Refermer ne supprime rien : les saisies déjà posées restent visibles, seule la
+ * nouvelle saisie est refusée. Sans effet sur une catégorie non liée — elle est déjà saisissable,
+ * d'où le refus explicite plutôt qu'un drapeau qui ne servirait jamais.
+ */
+export async function setCategoryAllowManual(workspaceId: string, id: string, allow: boolean) {
+	const [existing] = await db
+		.select({ linkedAbsenceType: category.linkedAbsenceType })
+		.from(category)
+		.where(and(eq(category.id, id), eq(category.workspaceId, workspaceId)));
+	if (!existing) throw new Error('Introuvable dans cet espace.');
+	if (!existing.linkedAbsenceType) throw new Error("Cette catégorie n'est liée à aucun type d'absence.");
+	await db
+		.update(category)
+		.set({ allowManualImputation: allow })
+		.where(and(eq(category.id, id), eq(category.workspaceId, workspaceId)));
 }
 
 export async function setCategoryArchived(workspaceId: string, id: string, archived: boolean) {

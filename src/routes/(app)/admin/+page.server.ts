@@ -43,6 +43,7 @@ import {
 	renameCategory,
 	setCategoryKind,
 	setCategoryArchived,
+	setCategoryAllowManual,
 	listSsp,
 	createSsp,
 	updateSsp,
@@ -622,6 +623,18 @@ export const actions: Actions = {
 		const f = await request.formData();
 		try {
 			await setCategoryArchived(ws.workspaceId, String(f.get('id')), f.get('archived') === 'true');
+		} catch (e) {
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { catOk: true };
+	},
+
+	catAllowManual: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const f = await request.formData();
+		try {
+			await setCategoryAllowManual(ws.workspaceId, String(f.get('id')), f.get('allow') === 'true');
 		} catch (e) {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}

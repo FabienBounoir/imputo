@@ -112,6 +112,28 @@ describe('absences → "Mon imputation" : synchronisation automatique', () => {
 		});
 	});
 
+	it("une saisie refusée sur une catégorie d'absence affiche le motif et ne laisse pas la valeur à l'écran", () => {
+		cy.registerAndLogin().then(() => {
+			openDeclareWizard();
+			fillDatesAndNext(MONDAY, MONDAY);
+			selectTypeAndSubmit('CONGE_VALIDE');
+
+			cy.visit(`/imputation?w=${MONDAY}`);
+			const row = () => cy.get('table.imp').contains('tr', 'Congé');
+
+			// Seul le lundi porte l'absence : les autres jours de la ligne restent des cases
+			// éditables côté client alors que le serveur refuse TOUTE saisie manuelle sur une
+			// catégorie liée (cf. assertTargetInWorkspace). Le refus doit se voir.
+			// clickReliably (et pas .click()) : un <button> cliqué avant l'hydratation ne déclenche
+			// rien, contrairement aux <a href> cliqués ailleurs dans ce fichier.
+			cy.clickReliably(() => row().find('button.cell').first(), '[data-sonner-toast]');
+			cy.contains('[data-sonner-toast]', 'alimentée automatiquement').should('exist');
+			// La valeur optimiste a disparu : le total de la ligne n'a pas bougé.
+			row().find('td.sum').should('have.text', '1');
+			row().find('button.cell').first().should('have.text', '·');
+		});
+	});
+
 	it('le sélecteur "+ Ajouter" de Mon imputation n\'propose plus les catégories liées à une absence', () => {
 		cy.registerAndLogin().then(() => {
 			cy.visit('/imputation');
@@ -125,6 +147,44 @@ describe('absences → "Mon imputation" : synchronisation automatique', () => {
 				cy.contains('.qa-item', 'Formation').should('not.exist');
 				cy.contains('.qa-item', 'Hors-projet').should('not.exist');
 			});
+		});
+	});
+
+	it("la bascule de saisie manuelle s'applique à UNE catégorie, pas aux autres", () => {
+		cy.registerAndLogin().then(() => {
+			// Une absence d'abord : elle crée la ligne Congé dans la feuille, donc le tableau existe.
+			openDeclareWizard();
+			fillDatesAndNext(MONDAY, MONDAY);
+			selectTypeAndSubmit('CONGE_VALIDE');
+
+			// La bascule vit sur la LIGNE de la catégorie, dans Référentiels > Catégories.
+			cy.visit('/admin');
+			cy.gotoRefSection('Catégories', 'Rechercher une catégorie…');
+			const catItem = (label: string) =>
+				cy
+					.get('input.ref-name')
+					.filter((_, el) => (el as HTMLInputElement).value === label)
+					.closest('.ref-item');
+			cy.clickReliably(() => catItem('Congé').contains('button', 'saisie fermée'), '.ref-btn-manual.on');
+			catItem('Congé').find('.ref-btn-manual.on').should('exist');
+			// Les autres catégories liées ne bougent pas : la bascule est bien par catégorie.
+			catItem('Formation').find('.ref-btn-manual').should('not.have.class', 'on');
+			catItem('Hors-projet').find('.ref-btn-manual').should('not.have.class', 'on');
+
+			cy.visit(`/imputation?w=${MONDAY}`);
+			// Le sélecteur la propose de nouveau…
+			cy.clickReliably(() => cy.get('.qa-launcher'), '.qa-input');
+			cy.get('.qa-list').within(() => {
+				cy.contains('.qa-item', 'Congé').should('exist');
+				cy.contains('.qa-item', 'Formation').should('not.exist');
+			});
+			cy.get('body').type('{esc}');
+
+			// …et un jour libre de la ligne accepte la saisie (premier cran du cycle = 0,25), sans erreur.
+			const row = () => cy.get('table.imp').contains('tr', 'Congé');
+			cy.clickReliably(() => row().find('button.cell').first(), 'button.cell.val');
+			cy.get('[data-sonner-toast]').should('not.exist');
+			row().find('td.sum').should('have.text', '1.25');
 		});
 	});
 

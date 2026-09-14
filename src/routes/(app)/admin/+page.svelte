@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { tick } from 'svelte';
+	import { postOrToast } from '$lib/postAction';
 	import { enhance } from '$app/forms';
 	import { toast } from 'svelte-sonner';
 	import { invalidateAll, replaceState } from '$app/navigation';
@@ -173,7 +174,7 @@
 		groupOrder = next;
 		const body = new FormData();
 		for (const g of next) body.append('id', g.id);
-		fetch('?/groupReorder', { method: 'POST', body }).then(() => invalidateAll());
+		postOrToast('?/groupReorder', { method: 'POST', body }).then(() => invalidateAll());
 	}
 
 	// Même mécanique pour l'ordre des activités (référentiels) — cf. onGroupDrop ci-dessus.
@@ -193,7 +194,7 @@
 		activityOrder = next;
 		const body = new FormData();
 		for (const a of next) body.append('id', a.id);
-		fetch('?/actReorder', { method: 'POST', body }).then(() => invalidateAll());
+		postOrToast('?/actReorder', { method: 'POST', body }).then(() => invalidateAll());
 	}
 
 	const PRESETS = ['#16A34A', '#4F46E5', '#9333EA', '#0EA5E9', '#E11D48', '#EA580C', '#0D9488', '#CA8A04'];
@@ -622,6 +623,12 @@
 					{@const filtered = data.categories.filter((c) => refMatch(c.label))}
 					<h3>Catégories</h3>
 					<p class="hint">Cibles d'imputation hors-ticket (MCO, congés, formation…). « Non productif » est exclu de la charge projet.</p>
+					<p class="hint">
+						Une catégorie <b>🔒 requis</b> est alimentée depuis les absences validées : par défaut elle n'apparaît
+						pas dans « + Ajouter » de Mon imputation et toute saisie à la main y est refusée. Le bouton à droite
+						de sa ligne rouvre la saisie manuelle, catégorie par catégorie — les jours couverts par une absence
+						restent verrouillés dans les deux cas.
+					</p>
 						{@render refToolbar('Rechercher une catégorie…')}
 					{#if refAddOpen}
 						{#snippet catAddBody()}
@@ -660,6 +667,18 @@
 									{#if c.archived}<span class="tag-arch">archivé</span>{/if}
 									{#if c.locked}
 										<span class="ref-btn ref-btn-locked" title="Requise par le suivi des absences — ne peut pas être archivée">🔒 requis</span>
+										<form method="POST" action="?/catAllowManual" use:enhance={enhanceEdit}>
+											<input type="hidden" name="id" value={c.id} />
+											<input type="hidden" name="allow" value={c.allowManual ? 'false' : 'true'} />
+											<button
+												type="submit"
+												class="ref-btn ref-btn-manual"
+												class:on={c.allowManual}
+												title={c.allowManual
+													? 'Saisie manuelle autorisée dans Mon imputation — cliquer pour la refuser'
+													: 'Alimentée uniquement depuis les absences — cliquer pour autoriser aussi la saisie manuelle'}
+											>{c.allowManual ? '✏️ saisie ouverte' : '✏️ saisie fermée'}</button>
+										</form>
 									{:else}
 										<form
 											method="POST"
@@ -2264,6 +2283,23 @@
 	.ref-item-end-wide {
 		min-width: 260px;
 	}
+	/* Bascule de saisie manuelle d'une catégorie liée à une absence : même gabarit que les autres
+	   boutons de ligne, l'état ouvert se lit à l'accent plutôt qu'à un libellé plus long. */
+	.ref-btn-manual {
+		cursor: pointer;
+		opacity: 0.65;
+	}
+	.ref-btn-manual:hover,
+	.ref-btn-manual:focus-visible {
+		opacity: 1;
+	}
+	.ref-btn-manual.on {
+		opacity: 1;
+		color: var(--accent);
+		border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+		background: color-mix(in srgb, var(--accent) 12%, transparent);
+	}
+
 	/* Même gabarit qu'un .ref-btn (padding, taille, coins) pour que "🔒 requis" occupe exactement la
 	   place du bouton "Archiver" qu'il remplace — non interactif, donc pas de bordure ni de hover. */
 	.ref-btn-locked {

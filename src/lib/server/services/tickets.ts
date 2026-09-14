@@ -734,7 +734,7 @@ export type RefData = {
 	versions: { id: string; name: string }[];
 	projects: { id: string; name: string }[];
 	activities: { id: string; label: string }[];
-	categories: { id: string; label: string; kind: string; linkedAbsenceType: AbsenceType | null }[];
+	categories: { id: string; label: string; kind: string; linkedAbsenceType: AbsenceType | null; allowManualImputation: boolean }[];
 	members: { id: string; displayName: string; factice: boolean }[];
 	ticketGroups: { id: string; label: string }[];
 	ssps: { id: string; code: string; label: string }[];
@@ -774,7 +774,7 @@ export async function getRefData(workspaceId: string, sortActivitiesAlpha = fals
 			.where(and(eq(activity.workspaceId, workspaceId), isNull(activity.archivedAt)))
 			.orderBy(activity.sortOrder),
 		db
-			.select({ id: category.id, label: category.label, kind: category.kind, linkedAbsenceType: category.linkedAbsenceType })
+			.select({ id: category.id, label: category.label, kind: category.kind, linkedAbsenceType: category.linkedAbsenceType, allowManualImputation: category.allowManualImputation })
 			.from(category)
 			.where(and(eq(category.workspaceId, workspaceId), isNull(category.archivedAt))),
 		db
