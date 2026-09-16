@@ -9,7 +9,8 @@ import {
 	listTimeEntriesPage,
 	getSupportTimeStats,
 	listPeopleWithEntries,
-	updateTimeEntry
+	updateTimeEntry,
+	deleteTimeEntry
 } from './supportTime';
 
 describe('supportTime', () => {
@@ -25,9 +26,16 @@ describe('supportTime', () => {
 		await expect(createTimeEntry(ws.workspaceId, ws.userId, { ticketRef: '  ', minutes: 30 })).rejects.toThrow(
 			/identifiant/i
 		);
-		await expect(createTimeEntry(ws.workspaceId, ws.userId, { ticketRef: 'INC-1', minutes: 0 })).rejects.toThrow(
+		await expect(createTimeEntry(ws.workspaceId, ws.userId, { ticketRef: 'INC-1', minutes: -1 })).rejects.toThrow(
 			/durée/i
 		);
+	});
+
+	it('accepte une durée nulle — ticket traité sans temps passé (ex. hors périmètre)', async () => {
+		const ws = await makeWorkspace('sti');
+		await createTimeEntry(ws.workspaceId, ws.userId, { ticketRef: 'INC-0', minutes: 0 });
+		const own = await listOwnTimeEntries(ws.workspaceId, ws.userId);
+		expect(own.map((e) => [e.ticketRef, e.minutes])).toEqual([['INC-0', 0]]);
 	});
 
 	it("crée une saisie sur aujourd'hui par défaut, visible dans ses propres entrées", async () => {
@@ -67,6 +75,35 @@ describe('supportTime', () => {
 		await expect(
 			updateTimeEntry(ws.workspaceId, other.userId, created.id, { ticketRef: 'hijack', minutes: 5, day: '2026-01-01' })
 		).rejects.toThrow(/introuvable/i);
+	});
+
+	it('accepte un jour passé mais refuse une date future ou mal formée', async () => {
+		const ws = await makeWorkspace('sti');
+		await createTimeEntry(ws.workspaceId, ws.userId, { ticketRef: 'INC-5', minutes: 30, day: '2026-01-02' });
+		const [entry] = await listOwnTimeEntries(ws.workspaceId, ws.userId);
+		expect(entry.day).toBe('2026-01-02');
+
+		await expect(
+			createTimeEntry(ws.workspaceId, ws.userId, { ticketRef: 'INC-5', minutes: 30, day: '2999-01-01' })
+		).rejects.toThrow(/futur/i);
+		await expect(
+			createTimeEntry(ws.workspaceId, ws.userId, { ticketRef: 'INC-5', minutes: 30, day: '02/01/2026' })
+		).rejects.toThrow(/date invalide/i);
+		await expect(
+			updateTimeEntry(ws.workspaceId, ws.userId, entry.id, { ticketRef: 'INC-5', minutes: 30, day: '2999-01-01' })
+		).rejects.toThrow(/futur/i);
+	});
+
+	it("supprime sa propre saisie, mais pas celle d'un autre", async () => {
+		const ws = await makeWorkspace('sti');
+		const other = await addMember(ws.workspaceId, 'USER', 'sti-del');
+		const created = await createTimeEntry(ws.workspaceId, ws.userId, { ticketRef: 'INC-7', minutes: 20 });
+
+		await expect(deleteTimeEntry(ws.workspaceId, other.userId, created.id)).rejects.toThrow(/introuvable/i);
+		expect(await listOwnTimeEntries(ws.workspaceId, ws.userId)).toHaveLength(1);
+
+		await deleteTimeEntry(ws.workspaceId, ws.userId, created.id);
+		expect(await listOwnTimeEntries(ws.workspaceId, ws.userId)).toHaveLength(0);
 	});
 
 	it('agrège les stats par personne/ticket côté SQL, et filtre par période/personne', async () => {

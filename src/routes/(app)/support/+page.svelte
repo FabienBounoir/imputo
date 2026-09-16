@@ -19,6 +19,7 @@
 			toast.success('Temps mis à jour ✓');
 			editEntry = null;
 		}
+		if (form?.timeDeleted) toast.success('Saisie supprimée ✓');
 	});
 
 	// Jeu des paires caché dans la grille du planning : les cases existantes deviennent des cartes
@@ -85,6 +86,12 @@
 
 	const fmtFull = (iso: string) =>
 		new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(iso + 'T00:00:00Z'));
+	// Heure de création de la saisie (fuseau Paris) : le jour seul ne suffit pas à distinguer
+	// plusieurs saisies du même jour sur le même ticket.
+	const fmtTime = (d: Date) =>
+		new Intl.DateTimeFormat('fr-FR', { timeZone: 'Europe/Paris', hour: '2-digit', minute: '2-digit' }).format(
+			new Date(d)
+		);
 	// "10 août" — jour + mois affichés dans chaque case du calendrier, pour se repérer sans colonne dédiée.
 	const fmtCellDate = (iso: string) =>
 		new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short' }).format(new Date(iso + 'T00:00:00Z'));
@@ -106,6 +113,24 @@
 		const today = Date.parse(data.todayISO + 'T00:00:00Z');
 		return Math.max(4, Math.min(100, Math.round(((today - start) / (end - start)) * 100)));
 	});
+
+	// La confirmation vit dans `use:enhance` : avant l'hydratation, un clic partirait en POST natif
+	// et supprimerait la saisie sans rien demander. Le bouton reste donc inerte jusque-là.
+	let hydrated = $state(false);
+	$effect(() => {
+		hydrated = true;
+	});
+
+	const confirmDeleteEntry =
+		(entry: (typeof data.ownTimeEntries)[number]) =>
+		async ({ cancel }: { cancel: () => void }) => {
+			const ok = await confirmDialog({
+				title: 'Supprimer la saisie',
+				message: `${entry.ticketRef} · ${formatDuration(entry.minutes)} du ${fmtFull(entry.day)} — la saisie sera définitivement supprimée.`,
+				confirmLabel: 'Supprimer'
+			});
+			if (!ok) cancel();
+		};
 
 	async function confirmSkip({ cancel }: { cancel: () => void }) {
 		const ok = await confirmDialog({
@@ -228,11 +253,31 @@
 						<tbody>
 							{#each data.ownTimeEntries as entry (entry.id)}
 								<tr>
-									<td>{fmtFull(entry.day)}</td>
+									<td>{fmtFull(entry.day)} <span class="time-hour tabnum">{fmtTime(entry.createdAt)}</span></td>
 									<td>{entry.ticketRef}</td>
 									<td class="num tabnum">{formatDuration(entry.minutes)}</td>
 									<td class="time-row-actions">
-										<button type="button" class="link-btn" onclick={() => (editEntry = entry)}>Modifier</button>
+										<button
+											type="button"
+											class="icon-btn"
+											title="Modifier"
+											aria-label="Modifier la saisie"
+											onclick={() => (editEntry = entry)}
+										>
+											<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+										</button>
+										<form method="POST" action="?/deleteTimeEntry" use:enhance={confirmDeleteEntry(entry)}>
+											<input type="hidden" name="id" value={entry.id} />
+											<button
+												type="submit"
+												class="icon-btn icon-btn-danger"
+												title="Supprimer"
+												aria-label="Supprimer la saisie"
+												disabled={!hydrated}
+											>
+												<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg>
+											</button>
+										</form>
 									</td>
 								</tr>
 							{/each}
@@ -784,7 +829,35 @@
 	.time-table .num {
 		text-align: right;
 	}
+	/* .icon-btn vient de app.css (bouton icône standard de l'appli) — on n'ajoute ici que la
+	   disposition en ligne et la teinte de survol de la suppression. */
+	/* Pas de `display: flex` sur la cellule : ça la sort de la grille du tableau et le filet de
+	   séparation s'arrête avant la dernière colonne. */
 	.time-row-actions {
 		text-align: right;
+		white-space: nowrap;
+	}
+	.time-row-actions form {
+		display: inline-block;
+		vertical-align: middle;
+		margin-left: 6px;
+	}
+	/* .icon-btn (app.css) est un bloc `grid` : sur une ligne de tableau il faut le repasser en
+	   ligne pour que crayon et corbeille restent côte à côte. */
+	.time-row-actions .icon-btn {
+		display: inline-grid;
+		vertical-align: middle;
+	}
+	.time-hour {
+		color: var(--text-mute);
+		font-size: 12px;
+	}
+	.icon-btn-danger {
+		color: var(--text-soft);
+	}
+	.icon-btn-danger:hover,
+	.icon-btn-danger:focus-visible {
+		background: color-mix(in srgb, var(--warn) 14%, transparent);
+		color: var(--warn);
 	}
 </style>

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { invalidateAll } from '$app/navigation';
 	import { toast } from 'svelte-sonner';
 	import { parseDuration, formatDuration } from '$lib/supportDuration';
 
@@ -17,12 +18,25 @@
 	let ticketInput: HTMLInputElement | null = $state(null);
 	let durationInput: HTMLInputElement | null = $state(null);
 
+	// Le jour vaut aujourd'hui par défaut (le cas courant : on saisit ce qu'on vient de faire) et
+	// reste replié — le changer est un cas rare, ça ne doit pas rallonger le chemin clavier.
+	const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris' }).format(new Date());
+	let day = $state(today());
+	let dayOpen = $state(false);
+	let dayInput: HTMLInputElement | null = $state(null);
+	const fmtDay = (iso: string) =>
+		new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }).format(
+			new Date(iso + 'T00:00:00Z')
+		);
+
 	const parsedMinutes = $derived(durationRaw.trim() ? parseDuration(durationRaw) : null);
 
 	function openPalette() {
 		open = true;
 		ticketRef = '';
 		durationRaw = '';
+		day = today();
+		dayOpen = false;
 		error = '';
 		queueMicrotask(() => ticketInput?.focus());
 	}
@@ -49,7 +63,7 @@
 			return;
 		}
 		const minutes = parsedMinutes;
-		if (minutes === null || minutes <= 0) {
+		if (minutes === null || minutes < 0) {
 			error = 'Durée invalide — ex. 1h, 45m, 1h30m, 2 (= 2h).';
 			durationInput?.focus();
 			return;
@@ -60,15 +74,20 @@
 			const res = await fetch('/api/support-time', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ ticketRef: ref, duration: durationRaw })
+				body: JSON.stringify({ ticketRef: ref, duration: durationRaw, day })
 			});
 			const data = await res.json();
 			if (!res.ok) {
 				error = data?.error ?? 'Erreur.';
 				return;
 			}
-			toast.success('Temps enregistré ✓', { description: `${ref} · ${formatDuration(minutes)}` });
+			toast.success('Temps enregistré ✓', {
+				description: `${ref} · ${formatDuration(minutes)}${day === today() ? '' : ` · ${fmtDay(day)}`}`
+			});
 			closePalette();
+			// La liste « Mon temps sur le support » est juste en dessous quand on saisit depuis
+			// /support : sans ça elle garde l'état du dernier chargement.
+			invalidateAll();
 		} catch {
 			error = 'Erreur réseau — réessaie.';
 		} finally {
@@ -145,12 +164,36 @@
 					autocapitalize="off"
 					autocorrect="off"
 					spellcheck="false"
-					placeholder="1h, 45m, 1h30m, 2 (= 2h)…"
+					placeholder="1h, 45m, 1h30m, 2 (= 2h), 0…"
 				/>
 				{#if durationRaw.trim()}
 					<span class="st-preview" class:st-preview-invalid={parsedMinutes === null}>
 						{parsedMinutes === null ? 'Format non reconnu' : `→ ${formatDuration(parsedMinutes)}`}
 					</span>
+				{/if}
+			</div>
+			<div class="st-field st-day">
+				{#if dayOpen}
+					<label for="st-day">Jour</label>
+					<input
+						id="st-day"
+						bind:this={dayInput}
+						bind:value={day}
+						onkeydown={onDurationKeydown}
+						type="date"
+						max={today()}
+					/>
+				{:else}
+					<button
+						type="button"
+						class="st-day-toggle"
+						onclick={() => {
+							dayOpen = true;
+							queueMicrotask(() => dayInput?.focus());
+						}}
+					>
+						{day === today() ? 'Maintenant' : fmtDay(day)} · changer le jour
+					</button>
 				{/if}
 			</div>
 			{#if error}<p class="st-error">{error}</p>{/if}
@@ -227,6 +270,16 @@
 	.st-preview-invalid {
 		color: var(--warn);
 		font-weight: 500;
+	}
+	.st-day-toggle {
+		font-size: 12px;
+		font-weight: 600;
+		color: var(--text-mute);
+		padding: 2px 0;
+	}
+	.st-day-toggle:hover {
+		color: var(--accent);
+		text-decoration: underline;
 	}
 	.st-error {
 		margin: 0 0 12px;
