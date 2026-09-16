@@ -1,6 +1,6 @@
 import { and, eq, desc, gte, lte, lt, or, sql } from 'drizzle-orm';
 import { db, workspace, supportTimeEntry, user } from '$lib/server/db';
-import { todayInParis } from '$lib/utils/date';
+import { dateInParis, todayInParis } from '$lib/utils/date';
 
 /**
  * Temps passé sur un ticket de support (cf. workspace.supportTimeTrackingEnabled) — donnée que
@@ -64,19 +64,44 @@ function filterConditions(workspaceId: string, filter: SupportTimeFilter) {
 	return and(...conditions)!;
 }
 
-/** `day` par défaut = aujourd'hui (heure de Paris) — la saisie rapide (raccourci global) ne
- * propose pas de date, seule l'édition sur /support permet de la corriger après coup. */
+/**
+ * Instant d'une saisie (`at`), ISO strict, absent = maintenant. Jamais un jour futur : les stats
+ * support sont un relevé de ce qui a été fait, et une faute de frappe d'année fausserait les
+ * périodes. `day` en est déduit (date parisienne de cet instant), jamais fourni à part : deux
+ * champs libres, c'est deux champs qui finissent par se contredire.
+ * ponytail: l'heure choisie est rangée dans `createdAt` plutôt que dans une colonne `occurred_at`
+ * dédiée — rien ne lit `createdAt` comme un horodatage d'insertion (que du tri et la pagination
+ * par curseur). Ajouter la colonne le jour où il faut vraiment auditer la date de saisie.
+ */
+function instantOf(at: string | Date | undefined): Date {
+	if (at === undefined) return new Date();
+	const d = at instanceof Date ? at : /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(at) ? new Date(at) : new Date(NaN);
+	if (Number.isNaN(d.getTime())) throw new Error('Date invalide.');
+	if (dateInParis(d) > todayInParis()) throw new Error('Date dans le futur.');
+	return d;
+}
+
+/** `at` par défaut = maintenant ; la saisie rapide permet de choisir un jour et une heure passés
+ * (oubli, ticket traité la veille), et l'édition sur /support de les corriger après coup. */
 export async function createTimeEntry(
 	workspaceId: string,
 	userId: string,
-	data: { ticketRef: string; minutes: number; day?: string }
+	data: { ticketRef: string; minutes: number; at?: string | Date }
 ): Promise<{ id: string }> {
 	const ticketRef = data.ticketRef.trim();
 	if (!ticketRef) throw new Error('Identifiant de ticket requis.');
-	if (!Number.isFinite(data.minutes) || data.minutes <= 0) throw new Error('Durée invalide.');
+	if (!Number.isFinite(data.minutes) || data.minutes < 0) throw new Error('Durée invalide.');
+	const at = instantOf(data.at);
 	const [row] = await db
 		.insert(supportTimeEntry)
-		.values({ workspaceId, userId, ticketRef, minutes: Math.round(data.minutes), day: data.day ?? todayInParis() })
+		.values({
+			workspaceId,
+			userId,
+			ticketRef,
+			minutes: Math.round(data.minutes),
+			day: dateInParis(at),
+			createdAt: at
+		})
 		.returning({ id: supportTimeEntry.id });
 	return row;
 }
@@ -223,14 +248,36 @@ export async function updateTimeEntry(
 	workspaceId: string,
 	userId: string,
 	entryId: string,
-	data: { ticketRef: string; minutes: number; day: string }
+	data: { ticketRef: string; minutes: number; at: string | Date }
 ): Promise<void> {
 	const ticketRef = data.ticketRef.trim();
 	if (!ticketRef) throw new Error('Identifiant de ticket requis.');
-	if (!Number.isFinite(data.minutes) || data.minutes <= 0) throw new Error('Durée invalide.');
+	if (!Number.isFinite(data.minutes) || data.minutes < 0) throw new Error('Durée invalide.');
+	const at = instantOf(data.at);
 	const result = await db
 		.update(supportTimeEntry)
-		.set({ ticketRef, minutes: Math.round(data.minutes), day: data.day, updatedAt: new Date() })
+		.set({
+			ticketRef,
+			minutes: Math.round(data.minutes),
+			day: dateInParis(at),
+			createdAt: at,
+			updatedAt: new Date()
+		})
+		.where(
+			and(
+				eq(supportTimeEntry.id, entryId),
+				eq(supportTimeEntry.workspaceId, workspaceId),
+				eq(supportTimeEntry.userId, userId)
+			)
+		)
+		.returning({ id: supportTimeEntry.id });
+	if (result.length === 0) throw new Error("Saisie introuvable, ou vous n'en êtes pas l'auteur.");
+}
+
+/** Supprime une saisie — même règle que la modification : seulement la sienne. */
+export async function deleteTimeEntry(workspaceId: string, userId: string, entryId: string): Promise<void> {
+	const result = await db
+		.delete(supportTimeEntry)
 		.where(
 			and(
 				eq(supportTimeEntry.id, entryId),

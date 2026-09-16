@@ -200,6 +200,16 @@ describe('support : suivi du temps sans rotation activée', () => {
 			cy.visit('/support');
 			cy.contains('.time-table td', 'INC-4242').should('be.visible');
 			cy.contains('.time-table td', '1h 30m').should('be.visible');
+
+			// Suppression : passe forcément par la modale de confirmation.
+			cy.clickReliably(() => cy.get('.time-row-actions .icon-btn-danger').first(), '.cd-modal');
+			cy.contains('.cd-modal', 'INC-4242').should('be.visible');
+			cy.contains('.cd-modal button', 'Annuler').click();
+			cy.contains('.time-table td', 'INC-4242').should('be.visible');
+
+			cy.clickReliably(() => cy.get('.time-row-actions .icon-btn-danger').first(), '.cd-modal');
+			cy.contains('.cd-modal button', 'Supprimer').click();
+			cy.contains('.empty-hint', 'Aucune saisie').should('be.visible');
 		});
 	});
 });

@@ -9,7 +9,7 @@ import {
 	skipCurrentTurn
 } from '$lib/server/services/support';
 import { notifySupportDutyChanged } from '$lib/server/services/notifications';
-import { listOwnTimeEntries, updateTimeEntry } from '$lib/server/services/supportTime';
+import { listOwnTimeEntries, updateTimeEntry, deleteTimeEntry } from '$lib/server/services/supportTime';
 import { parseDuration } from '$lib/supportDuration';
 import { todayInParis } from '$lib/utils/date';
 import { logger } from '$lib/server/logger';
@@ -89,15 +89,27 @@ export const actions: Actions = {
 		const id = String(f.get('id') ?? '');
 		const ticketRef = String(f.get('ticketRef') ?? '');
 		const durationRaw = String(f.get('duration') ?? '');
-		const day = String(f.get('day') ?? '');
+		const at = String(f.get('at') ?? '');
 		const minutes = parseDuration(durationRaw);
-		if (minutes === null || minutes <= 0)
+		if (minutes === null || minutes < 0)
 			return fail(400, { timeError: 'Durée invalide — ex. 1h, 45m, 1h30m, 2 (= 2h).' });
 		try {
-			await updateTimeEntry(ws.workspaceId, locals.user!.id, id, { ticketRef, minutes, day });
+			await updateTimeEntry(ws.workspaceId, locals.user!.id, id, { ticketRef, minutes, at });
 		} catch (e) {
 			return fail(400, { timeError: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { timeOk: true };
+	},
+
+	/** Supprime une saisie — la sienne uniquement, comme l'édition (cf. supportTime.ts). */
+	deleteTimeEntry: async ({ request, locals }) => {
+		const ws = locals.workspace!;
+		const id = String((await request.formData()).get('id') ?? '');
+		try {
+			await deleteTimeEntry(ws.workspaceId, locals.user!.id, id);
+		} catch (e) {
+			return fail(400, { timeError: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { timeDeleted: true };
 	}
 };
