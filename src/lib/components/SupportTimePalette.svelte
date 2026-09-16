@@ -18,16 +18,25 @@
 	let ticketInput: HTMLInputElement | null = $state(null);
 	let durationInput: HTMLInputElement | null = $state(null);
 
-	// Le jour vaut aujourd'hui par défaut (le cas courant : on saisit ce qu'on vient de faire) et
-	// reste replié — le changer est un cas rare, ça ne doit pas rallonger le chemin clavier.
-	const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris' }).format(new Date());
-	let day = $state(today());
-	let dayOpen = $state(false);
-	let dayInput: HTMLInputElement | null = $state(null);
-	const fmtDay = (iso: string) =>
-		new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }).format(
-			new Date(iso + 'T00:00:00Z')
-		);
+	// Jour ET heure valent maintenant par défaut (le cas courant : on saisit ce qu'on vient de
+	// faire) et restent repliés — les changer est un cas rare, ça ne doit pas rallonger le chemin
+	// clavier. `at` vide = maintenant, résolu au moment de l'enregistrement et pas à l'ouverture.
+	const localNow = () => {
+		const d = new Date();
+		d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+		return d.toISOString().slice(0, 16);
+	};
+	let at = $state('');
+	let atOpen = $state(false);
+	let atInput: HTMLInputElement | null = $state(null);
+	const fmtAt = (local: string) =>
+		new Intl.DateTimeFormat('fr-FR', {
+			weekday: 'long',
+			day: 'numeric',
+			month: 'long',
+			hour: '2-digit',
+			minute: '2-digit'
+		}).format(new Date(local));
 
 	const parsedMinutes = $derived(durationRaw.trim() ? parseDuration(durationRaw) : null);
 
@@ -35,8 +44,8 @@
 		open = true;
 		ticketRef = '';
 		durationRaw = '';
-		day = today();
-		dayOpen = false;
+		at = '';
+		atOpen = false;
 		error = '';
 		queueMicrotask(() => ticketInput?.focus());
 	}
@@ -74,7 +83,11 @@
 			const res = await fetch('/api/support-time', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ ticketRef: ref, duration: durationRaw, day })
+				body: JSON.stringify({
+					ticketRef: ref,
+					duration: durationRaw,
+					at: at ? new Date(at).toISOString() : undefined
+				})
 			});
 			const data = await res.json();
 			if (!res.ok) {
@@ -82,7 +95,7 @@
 				return;
 			}
 			toast.success('Temps enregistré ✓', {
-				description: `${ref} · ${formatDuration(minutes)}${day === today() ? '' : ` · ${fmtDay(day)}`}`
+				description: `${ref} · ${formatDuration(minutes)}${at ? ` · ${fmtAt(at)}` : ''}`
 			});
 			closePalette();
 			// La liste « Mon temps sur le support » est juste en dessous quand on saisit depuis
@@ -172,27 +185,28 @@
 					</span>
 				{/if}
 			</div>
-			<div class="st-field st-day">
-				{#if dayOpen}
-					<label for="st-day">Jour</label>
+			<div class="st-field">
+				{#if atOpen}
+					<label for="st-at">Jour et heure</label>
 					<input
-						id="st-day"
-						bind:this={dayInput}
-						bind:value={day}
+						id="st-at"
+						bind:this={atInput}
+						bind:value={at}
 						onkeydown={onDurationKeydown}
-						type="date"
-						max={today()}
+						type="datetime-local"
+						max={localNow()}
 					/>
 				{:else}
 					<button
 						type="button"
 						class="st-day-toggle"
 						onclick={() => {
-							dayOpen = true;
-							queueMicrotask(() => dayInput?.focus());
+							at = localNow();
+							atOpen = true;
+							queueMicrotask(() => atInput?.focus());
 						}}
 					>
-						{day === today() ? 'Maintenant' : fmtDay(day)} · changer le jour
+						Maintenant · changer le jour et l'heure
 					</button>
 				{/if}
 			</div>
@@ -255,6 +269,13 @@
 		font-size: 16px;
 		outline: none;
 		transition: border-color 0.15s, box-shadow 0.15s;
+	}
+	/* Cf. la modale d'édition : iOS ne comprime pas les champs date/heure sans ça. */
+	.st-field input[type='datetime-local'] {
+		-webkit-appearance: none;
+		appearance: none;
+		min-width: 0;
+		max-width: 100%;
 	}
 	.st-field input:focus {
 		border-color: var(--accent);

@@ -28,9 +28,13 @@ export function workWeek(monday: Date): Date[] {
 }
 
 /** Date du jour (ISO YYYY-MM-DD) dans le fuseau Europe/Paris. */
+/** Date (YYYY-MM-DD) d'un instant donné, vue de Paris. en-CA donne le format YYYY-MM-DD. */
+export function dateInParis(d: Date): string {
+	return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris' }).format(d);
+}
+
 export function todayInParis(): string {
-	// en-CA donne le format YYYY-MM-DD
-	return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris' }).format(new Date());
+	return dateInParis(new Date());
 }
 
 /** Date + heure de dépôt, lisibles, fuseau Paris : « 06/08/2026 à 14:32 ». */

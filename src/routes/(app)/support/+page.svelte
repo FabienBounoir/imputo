@@ -12,6 +12,18 @@
 
 	let pickerOpen = $state(false);
 	let editEntry = $state<(typeof data.ownTimeEntries)[number] | null>(null);
+	// Valeur du <input type="datetime-local"> de la modale (heure locale, sans fuseau) : le jour
+	// imputé + l'heure enregistrée, c'est-à-dire exactement ce que la ligne affiche.
+	let editAt = $state('');
+	function openEdit(entry: (typeof data.ownTimeEntries)[number]) {
+		editAt = `${entry.day}T${fmtTime(entry.createdAt)}`;
+		editEntry = entry;
+	}
+	const localNow = () => {
+		const d = new Date();
+		d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+		return d.toISOString().slice(0, 16);
+	};
 	$effect(() => {
 		if (form?.error) toast.error(form.error);
 		if (form?.timeError) toast.error(form.timeError);
@@ -262,7 +274,7 @@
 											class="icon-btn"
 											title="Modifier"
 											aria-label="Modifier la saisie"
-											onclick={() => (editEntry = entry)}
+											onclick={() => openEdit(entry)}
 										>
 											<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
 										</button>
@@ -369,8 +381,10 @@
 					<input id="et-duration" name="duration" value={formatDuration(entry.minutes)} required />
 				</div>
 				<div class="field">
-					<label for="et-day">Jour</label>
-					<input id="et-day" name="day" type="date" value={entry.day} required />
+					<label for="et-at">Jour et heure</label>
+					<input id="et-at" type="datetime-local" bind:value={editAt} max={localNow()} required />
+					<!-- Le serveur reçoit un instant ISO : c'est le navigateur qui connaît le fuseau. -->
+					<input type="hidden" name="at" value={editAt ? new Date(editAt).toISOString() : ''} />
 				</div>
 				<div class="modal-actions">
 					<button class="btn btn-ghost" type="button" onclick={() => (editEntry = null)}>Annuler</button>
@@ -689,6 +703,15 @@
 		padding: 24px;
 		width: 100%;
 		max-width: 420px;
+	}
+	/* iOS Safari donne aux champs date/heure une largeur intrinsèque qui ignore `width: 100%` et
+	   ne se comprime pas : sans ça le champ déborde de la modale sur téléphone. */
+	.modal .field input[type='datetime-local'] {
+		-webkit-appearance: none;
+		appearance: none;
+		width: 100%;
+		min-width: 0;
+		max-width: 100%;
 	}
 	.modal h3 {
 		font-family: var(--font-display);

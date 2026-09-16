@@ -13,15 +13,15 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 	const body = await request.json().catch(() => null);
 	const ticketRef = typeof body?.ticketRef === 'string' ? body.ticketRef.trim() : '';
 	const durationRaw = typeof body?.duration === 'string' ? body.duration : '';
-	// Jour optionnel : absent = aujourd'hui (cf. createTimeEntry), sinon une date passée choisie
-	// dans la palette. Le format et la borne « pas dans le futur » sont validés côté service.
-	const day = typeof body?.day === 'string' && body.day ? body.day : undefined;
+	// Instant optionnel : absent = maintenant (cf. createTimeEntry), sinon le jour et l'heure
+	// choisis dans la palette, en ISO. Format et borne « pas dans le futur » validés côté service.
+	const at = typeof body?.at === 'string' && body.at ? body.at : undefined;
 	if (!ticketRef) return json({ error: 'Identifiant de ticket requis.' }, { status: 400 });
 	const minutes = parseDuration(durationRaw);
 	if (minutes === null || minutes < 0) return json({ error: 'Durée invalide.' }, { status: 400 });
 
 	try {
-		await createTimeEntry(ws.workspaceId, locals.user.id, { ticketRef, minutes, day });
+		await createTimeEntry(ws.workspaceId, locals.user.id, { ticketRef, minutes, at });
 	} catch (e) {
 		return json({ error: e instanceof Error ? e.message : 'Erreur.' }, { status: 400 });
 	}

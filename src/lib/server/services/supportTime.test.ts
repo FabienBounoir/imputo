@@ -66,31 +66,33 @@ describe('supportTime', () => {
 		const other = await addMember(ws.workspaceId, 'USER', 'sti-other2');
 		const created = await createTimeEntry(ws.workspaceId, ws.userId, { ticketRef: 'INC-9', minutes: 15 });
 
-		await updateTimeEntry(ws.workspaceId, ws.userId, created.id, { ticketRef: 'INC-9-bis', minutes: 45, day: '2026-01-01' });
+		await updateTimeEntry(ws.workspaceId, ws.userId, created.id, { ticketRef: 'INC-9-bis', minutes: 45, at: '2026-01-01T12:00:00.000Z' });
 		const [updated] = await listOwnTimeEntries(ws.workspaceId, ws.userId);
 		expect(updated.ticketRef).toBe('INC-9-bis');
 		expect(updated.minutes).toBe(45);
 		expect(updated.day).toBe('2026-01-01');
 
 		await expect(
-			updateTimeEntry(ws.workspaceId, other.userId, created.id, { ticketRef: 'hijack', minutes: 5, day: '2026-01-01' })
+			updateTimeEntry(ws.workspaceId, other.userId, created.id, { ticketRef: 'hijack', minutes: 5, at: '2026-01-01T12:00:00.000Z' })
 		).rejects.toThrow(/introuvable/i);
 	});
 
-	it('accepte un jour passé mais refuse une date future ou mal formée', async () => {
+	it('accepte un jour et une heure passés mais refuse une date future ou mal formée', async () => {
 		const ws = await makeWorkspace('sti');
-		await createTimeEntry(ws.workspaceId, ws.userId, { ticketRef: 'INC-5', minutes: 30, day: '2026-01-02' });
+		await createTimeEntry(ws.workspaceId, ws.userId, { ticketRef: 'INC-5', minutes: 30, at: '2026-01-02T12:00:00.000Z' });
 		const [entry] = await listOwnTimeEntries(ws.workspaceId, ws.userId);
+		// `day` est déduit de l'instant (date parisienne), et l'heure choisie est conservée.
 		expect(entry.day).toBe('2026-01-02');
+		expect(entry.createdAt.toISOString()).toBe('2026-01-02T12:00:00.000Z');
 
 		await expect(
-			createTimeEntry(ws.workspaceId, ws.userId, { ticketRef: 'INC-5', minutes: 30, day: '2999-01-01' })
+			createTimeEntry(ws.workspaceId, ws.userId, { ticketRef: 'INC-5', minutes: 30, at: '2999-01-01T12:00:00.000Z' })
 		).rejects.toThrow(/futur/i);
 		await expect(
-			createTimeEntry(ws.workspaceId, ws.userId, { ticketRef: 'INC-5', minutes: 30, day: '02/01/2026' })
+			createTimeEntry(ws.workspaceId, ws.userId, { ticketRef: 'INC-5', minutes: 30, at: '02/01/2026' })
 		).rejects.toThrow(/date invalide/i);
 		await expect(
-			updateTimeEntry(ws.workspaceId, ws.userId, entry.id, { ticketRef: 'INC-5', minutes: 30, day: '2999-01-01' })
+			updateTimeEntry(ws.workspaceId, ws.userId, entry.id, { ticketRef: 'INC-5', minutes: 30, at: '2999-01-01T12:00:00.000Z' })
 		).rejects.toThrow(/futur/i);
 	});
 
@@ -109,9 +111,9 @@ describe('supportTime', () => {
 	it('agrège les stats par personne/ticket côté SQL, et filtre par période/personne', async () => {
 		const ws = await makeWorkspace('sti');
 		const other = await addMember(ws.workspaceId, 'USER', 'sti-stats');
-		await createTimeEntry(ws.workspaceId, ws.userId, { ticketRef: 'INC-1', minutes: 30, day: '2026-01-05' });
-		await createTimeEntry(ws.workspaceId, ws.userId, { ticketRef: 'INC-1', minutes: 15, day: '2026-02-01' });
-		await createTimeEntry(ws.workspaceId, other.userId, { ticketRef: 'INC-2', minutes: 60, day: '2026-01-10' });
+		await createTimeEntry(ws.workspaceId, ws.userId, { ticketRef: 'INC-1', minutes: 30, at: '2026-01-05T12:00:00.000Z' });
+		await createTimeEntry(ws.workspaceId, ws.userId, { ticketRef: 'INC-1', minutes: 15, at: '2026-02-01T12:00:00.000Z' });
+		await createTimeEntry(ws.workspaceId, other.userId, { ticketRef: 'INC-2', minutes: 60, at: '2026-01-10T12:00:00.000Z' });
 
 		const all = await getSupportTimeStats(ws.workspaceId);
 		expect(all.totalMinutes).toBe(105);
@@ -149,7 +151,7 @@ describe('supportTime', () => {
 	it('pagine par curseur sans doublon ni trou sur plusieurs pages', async () => {
 		const ws = await makeWorkspace('sti');
 		for (let i = 0; i < 5; i++) {
-			await createTimeEntry(ws.workspaceId, ws.userId, { ticketRef: `INC-${i}`, minutes: 10, day: '2026-03-01' });
+			await createTimeEntry(ws.workspaceId, ws.userId, { ticketRef: `INC-${i}`, minutes: 10, at: '2026-03-01T12:00:00.000Z' });
 		}
 		const page1 = await listTimeEntriesPage(ws.workspaceId, {}, { limit: 2 });
 		expect(page1.entries).toHaveLength(2);
