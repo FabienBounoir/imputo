@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+	<!-- Curseur du 1er avril. Le poisson est dessiné à l'horizontale puis pivoté de -135° : son
+	     museau arrive en haut à gauche et sert de hotspot (7 7 côté CSS), comme la pointe d'une
+	     flèche. Le dessin tient dans 25 × 17 pour que la diagonale ne dépasse pas 32 px une fois
+	     tourné, et le trait reste fin (1.2) sinon le contour mange la silhouette à l'écran. -->
+	<defs>
+		<linearGradient id="fish-body" x1="0" y1="0" x2="0" y2="1">
+			<stop offset="0" stop-color="#e2700f" />
+			<stop offset=".45" stop-color="#f7a03f" />
+			<stop offset="1" stop-color="#ffd9a6" />
+		</linearGradient>
+	</defs>
+	<g transform="rotate(-135 16 16)" stroke="#83441a" stroke-width="1.2" stroke-linejoin="round">
+		<!-- nageoires et queue d'abord : le corps les recouvre, donc elles en sortent au lieu
+		     de flotter à côté -->
+		<path d="M15.4 11.4 18.3 6.9 21.6 10.6Z" fill="#e2700f" />
+		<path d="M15.8 20.6 17.6 24.4 21 21.4Z" fill="#e2700f" />
+		<path d="M10 16 3.2 10.2Q5.8 16 3.2 21.8Z" fill="#ec8221" />
+		<path d="M8 16Q18 6.8 28 16 18 25.2 8 16Z" fill="url(#fish-body)" />
+		<path d="M17.8 17.4Q21.4 17.8 22.2 20.6 18.4 20.6 17.8 17.4Z" fill="#ef8f31" />
+		<circle cx="22.6" cy="14.6" r="1.9" fill="#fffaf2" stroke-width="1" />
+	</g>
+	<g transform="rotate(-135 16 16)">
+		<circle cx="22.9" cy="14.8" r="1" fill="#3a1a06" />
+		<circle cx="23.35" cy="14.25" r=".4" fill="#fff" />
+	</g>
+</svg>

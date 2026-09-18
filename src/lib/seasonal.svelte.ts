@@ -22,8 +22,27 @@ export const SEASONAL_EFFECTS: SeasonalEffect[] = [
 	},
 	{
 		id: 'new-year',
-		label: '🎆 Nouvel An (31 déc. – 1er jan.)',
-		active: (d) => (d.getMonth() === 11 && d.getDate() === 31) || (d.getMonth() === 0 && d.getDate() === 1)
+		label: '🎆 Nouvel An (31 déc. – 4 jan.)',
+		active: (d) => (d.getMonth() === 11 && d.getDate() === 31) || (d.getMonth() === 0 && d.getDate() <= 4)
+	},
+	{
+		// ponytail: l'équinoxe tombe le 22 ou le 23 selon l'année (23 en 2026) — la fenêtre de
+		// trois jours l'englobe dans tous les cas, sans calcul astronomique pour un tas de feuilles.
+		id: 'autumn',
+		label: "🍂 Début de l'automne (22 – 24 sept.)",
+		active: (d) => d.getMonth() === 8 && d.getDate() >= 22 && d.getDate() <= 24
+	},
+	{
+		// ponytail: l'équinoxe de printemps tombe le 20 ou le 21 selon l'année — même fenêtre de
+		// trois jours que l'automne, pour la même raison.
+		id: 'spring',
+		label: '🌸 Début du printemps (20 – 22 mars)',
+		active: (d) => d.getMonth() === 2 && d.getDate() >= 20 && d.getDate() <= 22
+	},
+	{
+		id: 'epiphany',
+		label: '👑 Épiphanie (6 jan.)',
+		active: (d) => d.getMonth() === 0 && d.getDate() === 6
 	},
 	{
 		id: 'halloween',

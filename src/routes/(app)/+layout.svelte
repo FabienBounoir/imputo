@@ -16,13 +16,19 @@
 	import MotivationBanner from '$lib/components/MotivationBanner.svelte';
 	import Fireworks from '$lib/components/Fireworks.svelte';
 	import HalloweenCorner from '$lib/components/HalloweenCorner.svelte';
+	import Flypast from '$lib/components/Flypast.svelte';
+	import Spring from '$lib/components/Spring.svelte';
+	import Epiphany from '$lib/components/Epiphany.svelte';
+	import Leaves from '$lib/components/Leaves.svelte';
 	import UserAvatar from '$lib/components/UserAvatar.svelte';
 	import SidebarPills from '$lib/components/SidebarPills.svelte';
 	import { seasonalState, initSeasonal, activeSeasonalEffects } from '$lib/seasonal.svelte';
+	import { CROWN_BODY, CROWN_BAND, epiphanyState, initEpiphany } from '$lib/epiphany.svelte';
 	let { children, data } = $props();
 	let commandPalette: CommandPalette | undefined = $state();
 
 	onMount(initSeasonal);
+	onMount(initEpiphany);
 
 	// Les compteurs de la navbar (votes mood, congés à valider, personne de support) viennent du
 	// load de +layout.server.ts, qui ne rejoue pas sur une navigation client : un onglet laissé
@@ -81,6 +87,14 @@
 	});
 	const seasonalIds = $derived(new Set(activeSeasonalEffects().map((e) => e.id)));
 	const seasonalVisible = $derived(browser && (seasonalState.enabled || seasonalState.forced));
+
+	// 1er avril : curseur poisson, Comic Sans et sidebar à droite sont trois règles CSS globales
+	// (cf. app.css) — une classe sur <html> suffit, comme pour le thème.
+	$effect(() => {
+		const on = !!seasonalVisible && seasonalIds.has('april-fools');
+		document.documentElement.classList.toggle('april-fools', on);
+		return () => document.documentElement.classList.remove('april-fools');
+	});
 
 	let wsMenuOpen = $state(false);
 	let sidebarOpen = $state(false);
@@ -373,6 +387,12 @@
 			<div class="user-card">
 				<a class="user-main" href="/settings" title="Réglages" data-tour="user-menu">
 					<UserAvatar userId={data.user?.id} name={data.user?.displayName ?? '?'} />
+					{#if seasonalVisible && seasonalIds.has('epiphany') && epiphanyState.crowned}
+						<svg class="feve-crown" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+							<path d={CROWN_BODY} fill="#f3c559" stroke="#b9861a" stroke-width="1.2" stroke-linejoin="round" />
+							<path d={CROWN_BAND} fill="#e0a92c" />
+						</svg>
+					{/if}
 					<div class="um">
 					<b>{data.user?.displayName}</b>
 					<span>{isOwner ? 'Créateur' : roleLabel}{#if isOwner}<span class="owner-crown" title="Créateur de l'espace">👑</span>{/if}</span>
@@ -416,8 +436,12 @@
 <SupportTimePalette enabled={data.workspace?.supportTimeTrackingEnabled ?? false} />
 {#if seasonalVisible && seasonalIds.has('christmas')}<Snow />{/if}
 {#if seasonalVisible && seasonalIds.has('valentine')}<Hearts />{/if}
-{#if seasonalVisible && (seasonalIds.has('new-year') || seasonalIds.has('bastille-day'))}<Fireworks />{/if}
+{#if seasonalVisible && seasonalIds.has('new-year')}<Fireworks />{/if}
+{#if seasonalVisible && seasonalIds.has('bastille-day')}<Flypast />{/if}
+{#if seasonalVisible && seasonalIds.has('spring')}<Spring />{/if}
+{#if seasonalVisible && seasonalIds.has('epiphany')}<Epiphany />{/if}
 {#if seasonalVisible && seasonalIds.has('halloween')}<HalloweenCorner />{/if}
+{#if seasonalVisible && seasonalIds.has('autumn')}<Leaves />{/if}
 {#if wrapGlitchActive}
 	<div class="wrap-glitch" class:opening={wrapGlitchOpening} aria-hidden="true">
 		<div class="wg-band wg-b1"></div>
