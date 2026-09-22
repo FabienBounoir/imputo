@@ -24,7 +24,7 @@
 	import ImputationMobile from '$lib/components/ImputationMobile.svelte';
 	import UserAvatar from '$lib/components/UserAvatar.svelte';
 	import { ABSENCE_TYPE_COLORS, ABSENCE_TYPE_LABELS, ABSENCE_PERIOD_LABELS } from '$lib/absenceTypes';
-	import type { Row } from '$lib/imputationRow';
+	import { mergeRecurringObjectiveRows, type Row } from '$lib/imputationRow';
 	import { jiraTicketUrl } from '$lib/jiraLink';
 	import { buildCycle, cycleNext } from '$lib/utils/imputationCycle';
 
@@ -131,7 +131,14 @@
 				next.push(buildRow(p.targetType, p.targetId, p.activityId, undefined, p.objectiveId, null));
 			}
 		}
-		return next;
+		// Un objectif reconduit d'une semaine à l'autre existe une fois par semaine : sur une quinzaine
+		// ou un mois, il produisait autant de lignes identiques. `data.period.days` et non `days`, qui
+		// est déclaré plus bas — cette fonction tourne dès l'initialisation de `rows`.
+		return mergeRecurringObjectiveRows(
+			next,
+			new Map(data.weeklyObjectives.map((o) => [o.id, o.weekMonday])),
+			data.period.days
+		);
 	}
 
 	// (Re)synchronise les lignes quand la plage affichée — ou le membre consulté — change. Le
@@ -306,7 +313,10 @@
 		body.set('targetType', row.targetType);
 		body.set('targetId', row.targetId);
 		if (row.activityId) body.set('activityId', row.activityId);
-		if (row.objectiveId) body.set('objectiveId', row.objectiveId);
+		// Ligne repliant un objectif reconduit : la case part sous l'objectif de SA semaine, sinon le
+		// serveur ne retrouve pas l'entrée existante et en crée une seconde le même jour.
+		const objectiveId = row.objectiveByDay?.[day] ?? row.objectiveId;
+		if (objectiveId) body.set('objectiveId', objectiveId);
 		body.set('day', day);
 		body.set('amount', String(value));
 		body.set('targetUserId', data.viewedId);
