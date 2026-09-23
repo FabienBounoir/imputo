@@ -14,7 +14,9 @@ const UNIT_MINUTES: Record<string, number> = {
 
 /** Parse une durée saisie en minutes, ou `null` si le texte ne correspond à aucun format valide. */
 export function parseDuration(raw: string): number | null {
-	const s = raw.trim().toLowerCase();
+	// Virgule décimale (clavier FR — "1,5") normalisée en point avant le parsing : les deux motifs
+	// ci-dessous n'attendent que "." et rejetaient silencieusement une saisie pourtant valide.
+	const s = raw.trim().toLowerCase().replace(/(\d),(\d)/g, '$1.$2');
 	if (!s) return null;
 	if (/^\d+(\.\d+)?$/.test(s)) return Math.round(parseFloat(s) * 60);
 

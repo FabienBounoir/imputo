@@ -37,6 +37,17 @@ export type SupportTimeStats = {
 export type SupportTimeCursor = { day: string; createdAt: string; id: string };
 export type SupportTimePage = { entries: SupportTimeEntryRow[]; nextCursor: SupportTimeCursor | null };
 
+/**
+ * `ticketRef` n'est pas une FK (cf. l'en-tête du fichier) : rien n'empêche deux personnes — ou la
+ * même à deux moments — de saisir "inc-1234" puis "INC-1234". Sans cette normalisation, les deux
+ * chaînes sont strictement distinctes pour SQL (`count(distinct …)`, `group by`) : les stats par
+ * ticket se fragmentent en silence, sans qu'aucune saisie ne soit rejetée — même famille de bug que
+ * la virgule décimale de parseDuration, une équivalence évidente à l'écran, invisible pour le calcul.
+ */
+function normalizeTicketRef(raw: string): string {
+	return raw.trim().toUpperCase();
+}
+
 export async function isSupportTimeTrackingEnabled(workspaceId: string): Promise<boolean> {
 	const [row] = await db
 		.select({ enabled: workspace.supportTimeTrackingEnabled })
@@ -88,7 +99,7 @@ export async function createTimeEntry(
 	userId: string,
 	data: { ticketRef: string; minutes: number; at?: string | Date }
 ): Promise<{ id: string }> {
-	const ticketRef = data.ticketRef.trim();
+	const ticketRef = normalizeTicketRef(data.ticketRef);
 	if (!ticketRef) throw new Error('Identifiant de ticket requis.');
 	if (!Number.isFinite(data.minutes) || data.minutes < 0) throw new Error('Durée invalide.');
 	const at = instantOf(data.at);
@@ -250,7 +261,7 @@ export async function updateTimeEntry(
 	entryId: string,
 	data: { ticketRef: string; minutes: number; at: string | Date }
 ): Promise<void> {
-	const ticketRef = data.ticketRef.trim();
+	const ticketRef = normalizeTicketRef(data.ticketRef);
 	if (!ticketRef) throw new Error('Identifiant de ticket requis.');
 	if (!Number.isFinite(data.minutes) || data.minutes < 0) throw new Error('Durée invalide.');
 	const at = instantOf(data.at);

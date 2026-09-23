@@ -6,6 +6,11 @@ describe('parseDuration', () => {
 		expect(parseDuration('2')).toBe(120);
 		expect(parseDuration('1.5')).toBe(90);
 	});
+	it('virgule décimale (clavier FR), seule ou avec unité', () => {
+		expect(parseDuration('1,5')).toBe(90);
+		expect(parseDuration('1,5h')).toBe(90);
+		expect(parseDuration('1,5h 30m')).toBe(120);
+	});
 	it('une seule unité', () => {
 		expect(parseDuration('45m')).toBe(45);
 		expect(parseDuration('1h')).toBe(60);

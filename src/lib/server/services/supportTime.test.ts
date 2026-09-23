@@ -61,6 +61,32 @@ describe('supportTime', () => {
 		expect(all.map((e) => e.ticketRef).sort()).toEqual(['INC-1', 'INC-2']);
 	});
 
+	// `ticketRef` n'est pas une FK : sans normalisation, "inc-1" et "INC-1" fragmentent les stats par
+	// ticket (count distinct, group by) au lieu de désigner la même demande support.
+	it('normalise la casse du ticket, à la création comme à la modification', async () => {
+		const ws = await makeWorkspace('sti');
+		await createTimeEntry(ws.workspaceId, ws.userId, { ticketRef: '  inc-1  ', minutes: 30 });
+		const [created] = await listOwnTimeEntries(ws.workspaceId, ws.userId);
+		expect(created.ticketRef).toBe('INC-1');
+
+		await updateTimeEntry(ws.workspaceId, ws.userId, created.id, {
+			ticketRef: 'inc-1-bis',
+			minutes: 30,
+			at: '2026-01-01T12:00:00.000Z'
+		});
+		const [updated] = await listOwnTimeEntries(ws.workspaceId, ws.userId);
+		expect(updated.ticketRef).toBe('INC-1-BIS');
+	});
+
+	it('regroupe dans les mêmes stats deux saisies du même ticket tapé avec une casse différente', async () => {
+		const ws = await makeWorkspace('sti');
+		await createTimeEntry(ws.workspaceId, ws.userId, { ticketRef: 'inc-1', minutes: 30 });
+		await createTimeEntry(ws.workspaceId, ws.userId, { ticketRef: 'INC-1', minutes: 15 });
+		const stats = await getSupportTimeStats(ws.workspaceId);
+		expect(stats.distinctTickets).toBe(1);
+		expect(stats.byTicket).toEqual([expect.objectContaining({ ticketRef: 'INC-1', minutes: 45, entries: 2 })]);
+	});
+
 	it("modifie sa propre saisie, mais pas celle d'un autre (même auteur requis, pas seulement le même espace)", async () => {
 		const ws = await makeWorkspace('sti');
 		const other = await addMember(ws.workspaceId, 'USER', 'sti-other2');
@@ -68,7 +94,7 @@ describe('supportTime', () => {
 
 		await updateTimeEntry(ws.workspaceId, ws.userId, created.id, { ticketRef: 'INC-9-bis', minutes: 45, at: '2026-01-01T12:00:00.000Z' });
 		const [updated] = await listOwnTimeEntries(ws.workspaceId, ws.userId);
-		expect(updated.ticketRef).toBe('INC-9-bis');
+		expect(updated.ticketRef).toBe('INC-9-BIS'); // casse normalisée, cf. le test dédié plus haut
 		expect(updated.minutes).toBe(45);
 		expect(updated.day).toBe('2026-01-01');
 
