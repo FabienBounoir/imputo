@@ -166,9 +166,57 @@ export function hasOrderByClause(jql: string): boolean {
 	return /\border\s+by\b/i.test(jql);
 }
 
-/** GET /rest/api/2/search, pagination startAt/maxResults/total jusqu'à épuisement. Headers JTOKEN
- *  (PAT de l'espace) + Authorization (token Azure partagé) — contrat confirmé contre l'instance
- *  réelle. Forme exacte de la réponse à re-vérifier live avant de faire confiance à ce parsing. */
+/** Une page brute de /rest/api/2/search — factorisé hors de searchJiraIssues pour être réutilisable
+ *  telle quelle par searchJiraIssuesPage (chargement page par page, cf. plus bas), sans dupliquer le
+ *  parsing. Headers JTOKEN (PAT de l'espace) + Authorization (token Azure partagé) — contrat
+ *  confirmé contre l'instance réelle. Forme exacte de la réponse à re-vérifier live avant de faire
+ *  confiance à ce parsing. */
+async function fetchIssuePage(
+	cfg: JiraClientConfig,
+	azureToken: string,
+	pat: string,
+	jql: string,
+	startAt: number,
+	maxResults: number,
+	fetchImpl: typeof fetch
+): Promise<{ issues: JiraIssue[]; total: number }> {
+	const url = new URL(`${cfg.jiraBaseUrl}/rest/api/2/search`);
+	url.searchParams.set('jql', jql);
+	url.searchParams.set('startAt', String(startAt));
+	url.searchParams.set('maxResults', String(maxResults));
+	url.searchParams.set('fields', `summary,issuetype,parent,project,fixVersions,priority,${SPRINT_CUSTOM_FIELD_ID}`);
+
+	const { status, body, text } = await fetchJson<JiraSearchResponse>(fetchImpl, url.toString(), {
+		headers: { JTOKEN: `Bearer ${pat}`, Authorization: `Bearer ${azureToken}` }
+	});
+
+	if (status === 401 || status === 403) {
+		throw new JiraAuthError(`PAT Jira invalide ou expiré (${status}).`);
+	}
+	if (status < 200 || status >= 300 || !body) {
+		throw new JiraApiError(`Erreur Jira (${status}) : ${text.slice(0, 200)}`);
+	}
+
+	const issues: JiraIssue[] = body.issues.map((issue) => {
+		const sprintRaw = issue.fields[SPRINT_CUSTOM_FIELD_ID];
+		const sprintEntries = Array.isArray(sprintRaw) ? sprintRaw.filter((s): s is string => typeof s === 'string') : [];
+		return {
+			key: issue.key,
+			summary: issue.fields.summary ?? '',
+			issueTypeName: issue.fields.issuetype?.name ?? '',
+			parentKey: issue.fields.parent?.key ?? null,
+			projectName: issue.fields.project?.name ?? '',
+			versionName: issue.fields.fixVersions?.at(-1)?.name ?? null,
+			sprintName: sprintEntries.length > 0 ? parseSprintName(sprintEntries[sprintEntries.length - 1]) : null,
+			priorityName: issue.fields.priority?.name ?? null
+		};
+	});
+
+	return { issues, total: body.total };
+}
+
+/** GET /rest/api/2/search, pagination startAt/maxResults/total jusqu'à épuisement — utilisé par le
+ *  sync qui veut tout le résultat d'un coup. */
 export async function searchJiraIssues(
 	cfg: JiraClientConfig,
 	azureToken: string,
@@ -181,42 +229,27 @@ export async function searchJiraIssues(
 	let total = Infinity;
 
 	while (startAt < total) {
-		const url = new URL(`${cfg.jiraBaseUrl}/rest/api/2/search`);
-		url.searchParams.set('jql', jql);
-		url.searchParams.set('startAt', String(startAt));
-		url.searchParams.set('maxResults', String(PAGE_SIZE));
-		url.searchParams.set('fields', `summary,issuetype,parent,project,fixVersions,priority,${SPRINT_CUSTOM_FIELD_ID}`);
-
-		const { status, body, text } = await fetchJson<JiraSearchResponse>(fetchImpl, url.toString(), {
-			headers: { JTOKEN: `Bearer ${pat}`, Authorization: `Bearer ${azureToken}` }
-		});
-
-		if (status === 401 || status === 403) {
-			throw new JiraAuthError(`PAT Jira invalide ou expiré (${status}).`);
-		}
-		if (status < 200 || status >= 300 || !body) {
-			throw new JiraApiError(`Erreur Jira (${status}) : ${text.slice(0, 200)}`);
-		}
-
-		for (const issue of body.issues) {
-			const sprintRaw = issue.fields[SPRINT_CUSTOM_FIELD_ID];
-			const sprintEntries = Array.isArray(sprintRaw) ? sprintRaw.filter((s): s is string => typeof s === 'string') : [];
-			issues.push({
-				key: issue.key,
-				summary: issue.fields.summary ?? '',
-				issueTypeName: issue.fields.issuetype?.name ?? '',
-				parentKey: issue.fields.parent?.key ?? null,
-				projectName: issue.fields.project?.name ?? '',
-				versionName: issue.fields.fixVersions?.at(-1)?.name ?? null,
-				sprintName: sprintEntries.length > 0 ? parseSprintName(sprintEntries[sprintEntries.length - 1]) : null,
-				priorityName: issue.fields.priority?.name ?? null
-			});
-		}
-
-		total = body.total;
-		startAt += body.issues.length;
-		if (body.issues.length === 0) break; // garde-fou anti-boucle si l'API renvoie moins que prévu
+		const page = await fetchIssuePage(cfg, azureToken, pat, jql, startAt, PAGE_SIZE, fetchImpl);
+		issues.push(...page.issues);
+		total = page.total;
+		startAt += page.issues.length;
+		if (page.issues.length === 0) break; // garde-fou anti-boucle si l'API renvoie moins que prévu
 	}
 
 	return issues;
+}
+
+/** Une seule page (pas de pagination interne), avec le total Jira — sert à l'aperçu "Tester ce
+ *  JQL" de l'admin, qui charge page par page au scroll dans la modale plutôt que de paginer tout
+ *  le résultat d'un coup comme searchJiraIssues. */
+export async function searchJiraIssuesPage(
+	cfg: JiraClientConfig,
+	azureToken: string,
+	pat: string,
+	jql: string,
+	startAt: number,
+	maxResults: number,
+	fetchImpl: typeof fetch = fetch
+): Promise<{ issues: JiraIssue[]; total: number }> {
+	return fetchIssuePage(cfg, azureToken, pat, jql, startAt, maxResults, fetchImpl);
 }

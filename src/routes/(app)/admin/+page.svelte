@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import { postOrToast } from '$lib/postAction';
-	import { enhance } from '$app/forms';
+	import { enhance, deserialize } from '$app/forms';
 	import { toast } from 'svelte-sonner';
 	import { invalidateAll, replaceState } from '$app/navigation';
 	import { page } from '$app/state';
@@ -315,6 +315,69 @@
 	});
 	const jiraAutoDisabled = $derived(!data.jira.enabled && data.jira.consecutiveFailures >= 5);
 	let jiraSyncing = $state(false);
+
+	// ---------- Test JQL (modale avec pagination au scroll) ----------
+	type JiraTestIssue = { key: string; summary: string; isNew: boolean };
+	let jiraJqlValue = $state(data.jira.jql);
+	let jiraTesting = $state(false);
+	let jiraTestModalOpen = $state(false);
+	let jiraTestResults = $state<JiraTestIssue[]>([]);
+	let jiraTestTotal = $state(0);
+	let jiraTestLoadingMore = $state(false);
+	const jiraTestNewCount = $derived(jiraTestResults.filter((i) => i.isNew).length);
+
+	async function jiraTestFetchPage(startAt: number): Promise<{ issues: JiraTestIssue[]; total: number }> {
+		const fd = new FormData();
+		fd.set('jql', jiraJqlValue);
+		fd.set('startAt', String(startAt));
+		const res = await fetch('?/jiraTestQuery', { method: 'POST', body: fd });
+		const result = deserialize(await res.text());
+		if (result.type !== 'success' || !result.data) {
+			const message =
+				result.type === 'error'
+					? (result.error as { message?: string } | undefined)?.message
+					: result.type === 'failure'
+						? (result.data as { error?: string } | undefined)?.error
+						: undefined;
+			throw new Error(message ?? 'Erreur.');
+		}
+		const resultData = result.data as { jiraTestIssues: JiraTestIssue[]; jiraTestTotal: number };
+		return { issues: resultData.jiraTestIssues, total: resultData.jiraTestTotal };
+	}
+
+	async function jiraTestStart() {
+		jiraTesting = true;
+		try {
+			const { issues, total } = await jiraTestFetchPage(0);
+			jiraTestResults = issues;
+			jiraTestTotal = total;
+			jiraTestModalOpen = true;
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : 'Erreur.');
+		} finally {
+			jiraTesting = false;
+		}
+	}
+
+	async function jiraTestLoadMore() {
+		if (jiraTestLoadingMore || jiraTestResults.length >= jiraTestTotal) return;
+		jiraTestLoadingMore = true;
+		try {
+			const { issues, total } = await jiraTestFetchPage(jiraTestResults.length);
+			jiraTestResults = [...jiraTestResults, ...issues];
+			jiraTestTotal = total;
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : 'Erreur.');
+		} finally {
+			jiraTestLoadingMore = false;
+		}
+	}
+
+	function jiraTestOnScroll(e: Event) {
+		const el = e.currentTarget as HTMLElement;
+		if (el.scrollHeight - el.scrollTop - el.clientHeight < 150) jiraTestLoadMore();
+	}
+
 	// Une fois JQL + PAT renseignés, la configuration se replie derrière un bouton "Éditer" — seule
 	// l'activation (toggle + statut + sync manuel) reste visible en permanence.
 	const jiraConfigured = $derived(!!data.jira.jql && data.jira.patConfigured);
@@ -1165,8 +1228,45 @@
 						<div class="step-body">
 							<h4>Connexion</h4>
 							<div class="field">
+								<label for="jira-pat">Token Jira (PAT)</label>
+								{#if data.jira.patConfigured && !jiraPatEditing}
+									<div class="jira-pat-summary">
+										<div class="jira-pat-summary-info">
+											<span class="pill active">✓ Configuré</span>
+											{#if data.jira.patUpdatedByName && data.jira.patUpdatedAt}
+												<span class="hint">Modifié par {data.jira.patUpdatedByName} le {formatDateTime(new Date(data.jira.patUpdatedAt))}</span>
+											{/if}
+										</div>
+										<button type="button" class="btn btn-ghost" onclick={() => (jiraPatEditing = true)}>Changer le token</button>
+									</div>
+								{:else}
+									<input id="jira-pat" name="pat" type="password" autocomplete="new-password" placeholder="Coller le token ici" />
+									{#if data.jira.patConfigured}
+										<p class="hint pat-meta">Laisser vide pour ne pas changer.</p>
+									{:else}
+										<p class="hint pat-meta">Aucun token enregistré pour l'instant — enregistrez-le d'abord, rien d'autre ne fonctionne sans lui.</p>
+									{/if}
+								{/if}
+							</div>
+							<div class="field">
 								<label for="jira-jql">Filtre JQL</label>
-								<input id="jira-jql" name="jql" value={data.jira.jql} placeholder="project = CARTEJEUNE_BLM" />
+								<div class="jira-jql-row">
+									<input id="jira-jql" name="jql" bind:value={jiraJqlValue} placeholder="project = CARTEJEUNE_BLM" />
+									<button
+										type="button"
+										class="jira-test-icon-btn"
+										disabled={jiraTesting || !jiraJqlValue.trim() || !data.jira.patConfigured}
+										aria-label="Tester ce filtre JQL"
+										title={data.jira.patConfigured ? 'Tester ce filtre JQL' : 'Enregistrez un token Jira avant de tester.'}
+										onclick={jiraTestStart}
+									>
+										{#if jiraTesting}
+											<span class="jira-test-spinner"></span>
+										{:else}
+											<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
+										{/if}
+									</button>
+								</div>
 								<p class="hint" style="margin:6px 0 0;">Ne doit pas contenir ORDER BY (inutile ici, incompatible avec la date minimum ci-dessous).</p>
 							</div>
 							<div class="field-row">
@@ -1192,27 +1292,6 @@
 										{/if}
 									</p>
 								</div>
-							</div>
-							<div class="field">
-								<label for="jira-pat">Token Jira (PAT)</label>
-								{#if data.jira.patConfigured && !jiraPatEditing}
-									<div class="jira-pat-summary">
-										<div class="jira-pat-summary-info">
-											<span class="pill active">✓ Configuré</span>
-											{#if data.jira.patUpdatedByName && data.jira.patUpdatedAt}
-												<span class="hint">Modifié par {data.jira.patUpdatedByName} le {formatDateTime(new Date(data.jira.patUpdatedAt))}</span>
-											{/if}
-										</div>
-										<button type="button" class="btn btn-ghost" onclick={() => (jiraPatEditing = true)}>Changer le token</button>
-									</div>
-								{:else}
-									<input id="jira-pat" name="pat" type="password" autocomplete="new-password" placeholder="Coller le token ici" />
-									{#if data.jira.patConfigured}
-										<p class="hint pat-meta">Laisser vide pour ne pas changer.</p>
-									{:else}
-										<p class="hint pat-meta">Aucun token enregistré pour l'instant.</p>
-									{/if}
-								{/if}
 							</div>
 						</div>
 					</div>
@@ -1360,6 +1439,44 @@
 				</div>
 			{/if}
 		</section>
+
+		{#if jiraTestModalOpen}
+			<!-- svelte-ignore a11y_click_events_have_key_events -->
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<div class="modal-backdrop" onclick={() => (jiraTestModalOpen = false)}>
+				<div class="modal modal-lg" onclick={(e) => e.stopPropagation()}>
+					<h3>Résultat du test JQL</h3>
+					{#if jiraTestTotal === 0}
+						<p class="hint">Aucun ticket ne correspond à ce filtre.</p>
+					{:else}
+						<div class="jira-test-stats">
+							<div class="jira-test-stat">
+								<span class="jira-test-stat-value">{jiraTestTotal}</span>
+								<span class="jira-test-stat-label">au total pour ce filtre</span>
+							</div>
+							<div class="jira-test-stat jira-test-stat-new">
+								<span class="jira-test-stat-value">{jiraTestNewCount}</span>
+								<span class="jira-test-stat-label">nouveau{jiraTestNewCount > 1 ? 'x' : ''}</span>
+							</div>
+						</div>
+						<ul class="jira-test-list-modal" onscroll={jiraTestOnScroll}>
+							{#each jiraTestResults as issue (issue.key)}
+								<li class:is-new={issue.isNew}>
+									<span class="jira-test-badge">{issue.isNew ? 'Nouveau' : 'Existe déjà'}</span>
+									<b>{issue.key}</b> — {issue.summary}
+								</li>
+							{/each}
+							{#if jiraTestLoadingMore}
+								<li class="jira-test-list-loading"><span class="jira-test-spinner"></span> Chargement…</li>
+							{/if}
+						</ul>
+					{/if}
+					<div class="modal-actions">
+						<button type="button" class="btn btn-primary" onclick={() => (jiraTestModalOpen = false)}>Fermer</button>
+					</div>
+				</div>
+			</div>
+		{/if}
 
 		<section class="card block">
 			<h3>Activation</h3>
@@ -2528,6 +2645,128 @@
 		display: flex;
 		gap: 10px;
 		margin-left: 46px;
+	}
+	.jira-jql-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+	.jira-jql-row input {
+		flex: 1 1 auto;
+		min-width: 0;
+	}
+	.jira-test-icon-btn {
+		flex: 0 0 auto;
+		width: 34px;
+		height: 34px;
+		border-radius: 9px;
+		border: 1px solid var(--border);
+		background: var(--surface);
+		color: var(--text-soft);
+		display: grid;
+		place-items: center;
+		cursor: pointer;
+	}
+	.jira-test-icon-btn:hover:not(:disabled) {
+		color: var(--text);
+		border-color: var(--text-soft);
+	}
+	.jira-test-icon-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+	.jira-test-spinner {
+		width: 13px;
+		height: 13px;
+		border-radius: 50%;
+		border: 2px solid var(--border);
+		border-top-color: var(--text-soft);
+		animation: jira-test-spin 0.6s linear infinite;
+	}
+	@keyframes jira-test-spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+	.modal-lg {
+		max-width: 720px;
+		height: 85vh;
+		display: flex;
+		flex-direction: column;
+	}
+	.jira-test-stats {
+		flex: 0 0 auto;
+		display: flex;
+		gap: 10px;
+		margin-bottom: 14px;
+	}
+	.jira-test-stat {
+		flex: 1 1 0;
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		padding: 12px 14px;
+		border: 1px solid var(--border);
+		border-radius: 12px;
+		background: var(--surface-2, rgba(0, 0, 0, 0.02));
+	}
+	.jira-test-stat-value {
+		font-family: var(--font-display);
+		font-size: 26px;
+		font-weight: 700;
+		line-height: 1.1;
+	}
+	.jira-test-stat-label {
+		font-size: 0.8em;
+		color: var(--text-soft);
+	}
+	.jira-test-stat-new {
+		border-color: color-mix(in srgb, var(--accent, #3a7) 35%, var(--border));
+		background: color-mix(in srgb, var(--accent, #3a7) 8%, transparent);
+	}
+	.jira-test-stat-new .jira-test-stat-value {
+		color: var(--accent, #3a7);
+	}
+	.jira-test-list-modal {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		flex: 1 1 auto;
+		min-height: 0;
+		overflow-y: auto;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+	.jira-test-list-modal li {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 6px 8px;
+		border-radius: 6px;
+		font-size: 0.92em;
+	}
+	.jira-test-list-modal li.is-new {
+		background: color-mix(in srgb, var(--accent, #3a7) 12%, transparent);
+	}
+	.jira-test-badge {
+		flex: 0 0 auto;
+		font-size: 0.75em;
+		font-weight: 600;
+		padding: 2px 7px;
+		border-radius: 999px;
+		background: var(--border);
+		color: var(--text-soft);
+	}
+	.jira-test-list-modal li.is-new .jira-test-badge {
+		background: var(--accent, #3a7);
+		color: #fff;
+	}
+	.jira-test-list-loading {
+		justify-content: center;
+		color: var(--text-soft);
+		font-size: 0.85em;
+		padding: 10px 0;
 	}
 	.jira-sync-fields {
 		display: flex;

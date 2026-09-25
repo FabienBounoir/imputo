@@ -1,9 +1,9 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { logger } from '$lib/server/logger';
 import { z } from 'zod';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import type { Actions, PageServerLoad } from './$types';
-import { db, membership, user, type Role } from '$lib/server/db';
+import { db, membership, user, workspace, ticket, type Role } from '$lib/server/db';
 import { inviteSchema } from '$lib/server/validation/auth';
 import {
 	inviteMember,
@@ -29,6 +29,8 @@ import {
 	undoJiraSyncRun
 } from '$lib/server/services/accounts';
 import { syncWorkspace } from '$lib/server/services/jiraSync';
+import { getAzureToken, searchJiraIssuesPage } from '$lib/server/services/jiraClient';
+import { decryptSecret } from '$lib/server/auth/secretCrypto';
 import { config } from '$lib/server/config';
 import {
 	listRefs,
@@ -832,6 +834,70 @@ export const actions: Actions = {
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { jiraSaveOk: true };
+	},
+
+	// Aperçu du JQL en cours de saisie (pas forcément enregistré) — ne touche pas à la DB, contrairement
+	// à jiraSyncNow qui upsert vraiment les tickets. Utilise le PAT déjà enregistré (aucun moyen de
+	// tester avec un PAT pas encore sauvegardé sans le faire transiter par le formulaire en clair).
+	jiraTestQuery: async ({ request, locals }) => {
+		if (locals.role !== 'ADMIN') return fail(403, { error: 'Réservé aux admins.' });
+		const ws = locals.workspace!;
+		const fd = await request.formData();
+		const jql = String(fd.get('jql') ?? '').trim();
+		// Une page à la fois — la modale d'aperçu charge la suite au scroll (voir jiraTestLoadPage
+		// côté client) plutôt que de paginer tout le résultat d'un coup.
+		const startAt = Math.max(0, Number(fd.get('startAt') ?? 0) || 0);
+		if (!jql) return fail(400, { error: 'Filtre JQL vide.' });
+
+		const [row] = await db.select().from(workspace).where(eq(workspace.id, ws.workspaceId));
+		if (!row?.jiraPatEncrypted) return fail(400, { error: 'Token Jira (PAT) non enregistré — enregistrez-le avant de tester.' });
+
+		try {
+			const pat = decryptSecret(row.jiraPatEncrypted, config.jiraPatEncryptionKey);
+			const cfg = {
+				azureTenantId: config.azureTenantId,
+				azureClientId: config.azureClientId,
+				azureClientSecret: config.azureClientSecret,
+				jiraBaseUrl: config.jiraBaseUrl
+			};
+			const azureToken = await getAzureToken(cfg);
+			const { issues, total } = await searchJiraIssuesPage(cfg, azureToken, pat, jql, startAt, 20, fetch);
+
+			// Même transformation de clé que le sync réel (jiraSync.ts) — sans ça le diff nouveau/existant
+			// compare des clés Jira brutes à des clés locales potentiellement différentes.
+			let keyRegex: RegExp | null = null;
+			if (row.jiraKeyRegexPattern) {
+				try {
+					keyRegex = new RegExp(row.jiraKeyRegexPattern);
+				} catch {
+					keyRegex = null;
+				}
+			}
+			const keyReplacement = row.jiraKeyRegexReplacement ?? '';
+			const transformKey = (key: string) => (keyRegex ? key.replace(keyRegex, keyReplacement) : key);
+
+			const localKeys = issues.map((i) => transformKey(i.key));
+			const existingKeys = localKeys.length
+				? await db
+						.select({ key: ticket.key })
+						.from(ticket)
+						.where(and(eq(ticket.workspaceId, ws.workspaceId), inArray(ticket.key, localKeys)))
+				: [];
+			const existingKeySet = new Set(existingKeys.map((r) => r.key));
+
+			return {
+				jiraTestOk: true,
+				jiraTestTotal: total,
+				jiraTestIssues: issues.map((issue) => ({
+					key: issue.key,
+					summary: issue.summary,
+					isNew: !existingKeySet.has(transformKey(issue.key))
+				}))
+			};
+		} catch (e) {
+			logger.error('admin_jira_test_query_failed', e, { workspaceId: ws.workspaceId });
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
 	},
 
 	jiraSyncNow: async ({ locals }) => {
