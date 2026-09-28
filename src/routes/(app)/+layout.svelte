@@ -420,8 +420,10 @@
 		{/if}
 		<!-- data.motivationQuotes est streamé (non awaité côté load, cf. +layout.server.ts) : rien ne
 		     s'affiche tant qu'il n'est pas résolu, plutôt que de retarder tout le reste de la page. -->
+		<!-- Certaines phrases de l'API portent un placeholder `*name*` (« Votre résilience est votre
+		     force, *name*. ») : substitué ici au prénom, le cache serveur étant commun à tous. -->
 		{#await data.motivationQuotes then quotes}
-			<MotivationBanner {quotes} />
+			<MotivationBanner quotes={quotes.map((q) => q.replaceAll('*name*', data.user.displayName.split(' ')[0]))} />
 		{/await}
 		{@render children()}
 	</main>
