@@ -160,10 +160,32 @@ describe('sspAnnualTracking (intégration DB)', () => {
 		await setComplement(ws.workspaceId, closingId, ws.userId, s.id, 2);
 		await integrate(ws.workspaceId, closingId, ws.userId);
 
+		// Prod déclarée dans GPS = le détail d'intégration, comme en vrai. Hors curseur : direct en table.
+		await db.insert(sspAnnualProd).values({ workspaceId: ws.workspaceId, sspId: s.id, month: '2024-05-01', value: '6' });
+		// Conso sans prod en face (avant le début du suivi) : visible, mais hors cumul TNF.
+		await db.insert(timeEntry).values({
+			workspaceId: ws.workspaceId,
+			userId: ws.userId,
+			targetType: 'TICKET',
+			ticketId: t.id,
+			day: '2024-02-12',
+			amount: '9'
+		});
+
 		const view = await getAnnualTrackingView(ws.workspaceId);
-		const cell = view.rows.find((r) => r.sspId === s.id)!.cells.find((c) => c.month === '2024-05-01')!;
+		const row = view.rows.find((r) => r.sspId === s.id)!;
+		const cell = row.cells.find((c) => c.month === '2024-05-01')!;
 		expect(cell.conso).toBe(6); // 4 j réels + 2 j de complément (rattrapage vers le prévu GPS)
 		expect(cell.consoIntegrated).toBe(true);
+		expect(cell.consoReal).toBe(4); // imputations seules, sans complément
+		expect(cell.tnf).toBe(0); // GPS vs GPS
+		expect(cell.tnfReal).toBe(-2); // 2 j déclarés sans imputation en face
+
+		expect(row.totalConso).toBe(15); // 9 (février, non intégré : réel) + 6
+		expect(row.totalConsoReal).toBe(13); // 9 + 4
+		expect(row.totalProd).toBe(6);
+		expect(row.totalTnf).toBe(0); // février n'a pas de prod : pas dans le cumul TNF
+		expect(row.totalTnfReal).toBe(-2);
 	});
 
 	it('setProd rejette un mois hors curseur', async () => {
@@ -205,7 +227,9 @@ describe('sspAnnualTracking (intégration DB)', () => {
 		// Conso cumulée = 5 (juin, test précédent) + 7 (janvier 2023) ; Prod cumulée = 4 (juin) + 3.
 		expect(row.totalConso).toBe(12);
 		expect(row.totalProd).toBe(7);
-		expect(row.totalTnf).toBe(5); // 12 - 7
+		expect(row.totalTnf).toBe(5); // (5 - 4) + (7 - 3)
+		expect(row.totalConsoReal).toBe(12); // aucun complément sur ce SSP : réel = GPS
+		expect(row.totalTnfReal).toBe(5);
 	});
 
 	it('advanceCursor amorce depuis le curseur courant puis incrémente d\'un mois à chaque appel, et la fenêtre suit', async () => {
