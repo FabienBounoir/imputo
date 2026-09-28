@@ -199,6 +199,7 @@
 			nav('Paramètres & membres', '/admin', '⚙️');
 			nav('Clôture mensuelle', '/admin/cloture', '📁');
 			nav('Suivi annuel', '/admin/suivi-annuel', '📈');
+			nav('Synthèse par activité', '/admin/synthese-activites', '🗂️');
 			nav('Historique', '/admin/history', '🕘');
 		}
 		nav('Réglages', '/settings', '👤');
