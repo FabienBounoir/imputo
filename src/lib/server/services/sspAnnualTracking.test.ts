@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { db, ssp, ticket, timeEntry, workspace, sspAnnualProd } from '$lib/server/db';
 import { makeWorkspace } from './test-helpers';
 import { computeRaeChain, getAnnualTrackingView, getMonthProdTnf, setProd, setRaeOverride, advanceCursor } from './sspAnnualTracking';
-import { openClosing, integrate } from './monthlyClosing';
+import { openClosing, integrate, setComplement } from './monthlyClosing';
 
 describe('computeRaeChain (pur)', () => {
 	const months = ['2024-01-01', '2024-02-01', '2024-03-01'];
@@ -136,6 +136,34 @@ describe('sspAnnualTracking (intégration DB)', () => {
 		expect(cell.consoIntegrated).toBe(true);
 		expect(cell.consoIntegratedAt).toBeInstanceOf(Date);
 		expect(cell.consoIntegratedBy).toBe('annual owner');
+	});
+
+	it('la conso figée inclut le complément saisi à la clôture, pas seulement le réel', async () => {
+		const [s] = await db
+			.insert(ssp)
+			.values({ workspaceId: ws.workspaceId, code: 'AN-3', label: 'Suivi annuel test complément', budgetDays: '20' })
+			.returning();
+		const [t] = await db
+			.insert(ticket)
+			.values({ workspaceId: ws.workspaceId, key: 'ANN-3', title: 'Ticket suivi annuel complément', sspId: s.id })
+			.returning({ id: ticket.id });
+		await db.insert(timeEntry).values({
+			workspaceId: ws.workspaceId,
+			userId: ws.userId,
+			targetType: 'TICKET',
+			ticketId: t.id,
+			day: '2024-05-08',
+			amount: '4'
+		});
+
+		const closingId = await openClosing(ws.workspaceId, '2024-05');
+		await setComplement(ws.workspaceId, closingId, ws.userId, s.id, 2);
+		await integrate(ws.workspaceId, closingId, ws.userId);
+
+		const view = await getAnnualTrackingView(ws.workspaceId);
+		const cell = view.rows.find((r) => r.sspId === s.id)!.cells.find((c) => c.month === '2024-05-01')!;
+		expect(cell.conso).toBe(6); // 4 j réels + 2 j de complément (rattrapage vers le prévu GPS)
+		expect(cell.consoIntegrated).toBe(true);
 	});
 
 	it('setProd rejette un mois hors curseur', async () => {

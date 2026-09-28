@@ -156,7 +156,12 @@ async function getLatestIntegratedClosingByMonth(
 	return infoByMonth;
 }
 
-/** Conso par (ssp, mois) figée à l'intégration — une requête groupée sur les closingId retenus. */
+/**
+ * Conso par (ssp, mois) figée à l'intégration — détail d'intégration complet (consoSnapshot +
+ * complement), pas la seule photo du réel. `complement` est le rattrapage manuel saisi pour
+ * atteindre le prévu réellement reporté dans GPS (cf. monthlyClosingLine.complement) : l'ignorer
+ * fait mentir la conso affichée ici vis-à-vis de ce que GPS a effectivement reçu.
+ */
 async function getSnapshotConsoBySspByMonth(
 	closingIdByMonth: Map<string, string>
 ): Promise<{ sspId: string; month: string; total: number }[]> {
@@ -166,7 +171,7 @@ async function getSnapshotConsoBySspByMonth(
 		.select({
 			closingId: monthlyClosingLine.closingId,
 			sspId: monthlyClosingLine.sspId,
-			total: sql<string>`sum(${monthlyClosingLine.consoSnapshot})`
+			total: sql<string>`sum(coalesce(${monthlyClosingLine.consoSnapshot}, 0) + ${monthlyClosingLine.complement})`
 		})
 		.from(monthlyClosingLine)
 		.where(inArray(monthlyClosingLine.closingId, [...closingIdByMonth.values()]))
