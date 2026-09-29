@@ -2,6 +2,7 @@
 	import { tick } from 'svelte';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { navigating } from '$app/state';
+	import { compressPlateaus } from '$lib/utils/chartHistory';
 	import { deserialize } from '$app/forms';
 	import { confirmDialog } from '$lib/confirm.svelte';
 	import { toast } from 'svelte-sonner';
@@ -313,7 +314,11 @@
 	// Courbe conso/RAE : petit line chart SVG, 2 séries à couleur fixe (identité, pas de rang).
 	// Grille Y graduée + aire remplie + axe X à dates régulières, pour que le graphe garde du
 	// "corps" même avec peu de points (retour utilisateur : "juste des points sans rien").
-	const CHART_W = 600;
+	// Largeur réelle de la carte (bind:clientWidth) plutôt qu'un viewBox fixe : à 600 de large figé,
+	// le SVG gardait ses proportions et ne remplissait qu'un bloc centré de la carte pleine largeur.
+	let chartW = $state(600);
+	let hoverIdx = $state<number | null>(null);
+	const fmtDelta = (d: number | null) => (d === null || d === 0 ? '' : ` (${d > 0 ? '+' : ''}${d})`);
 	const CHART_H = 180;
 	const PAD_T = 10;
 	const PAD_B = 22;
@@ -335,7 +340,9 @@
 	}
 
 	const points = $derived.by(() => {
-		const h = dashboard?.history ?? [];
+		// Jours figés retirés de l'axe X (cf. compressPlateaus) : un point par changement seulement.
+		const h = compressPlateaus(dashboard?.history ?? []);
+		const CHART_W = Math.max(300, chartW);
 		if (h.length === 0) return null;
 		const rawMax = Math.max(1, ...h.map((p) => Math.max(p.consumed, p.rae)));
 		const step = niceStep(rawMax);
@@ -356,8 +363,8 @@
 		const yTicks: { v: number; y: number }[] = [];
 		for (let v = 0; v <= topVal + step * 0.001; v += step) yTicks.push({ v: round2(v), y: y(v) });
 
-		// ~5 ticks X répartis uniformément sur les index (jamais plus que de points).
-		const n = Math.min(5, h.length);
+		// Ticks X répartis uniformément sur les index, ~1 tous les 90px (jamais plus que de points).
+		const n = Math.min(Math.max(2, Math.floor(innerW / 90)), h.length);
 		const idx = n <= 1 ? [0] : [...new Set(Array.from({ length: n }, (_, k) => Math.round((k * (h.length - 1)) / (n - 1))))];
 		const xTicks = idx.map((i, k) => ({
 			x: x(i),
@@ -366,11 +373,27 @@
 		}));
 
 		return {
+			w: CHART_W,
+			compressed: h.length < (dashboard?.history.length ?? 0),
 			consumedPath,
 			raePath,
 			consumedArea: area(consumedPath),
 			raeArea: area(raePath),
-			dots: h.map((p, i) => ({ x: x(i), yc: y(p.consumed), yr: y(p.rae), date: p.date, consumed: p.consumed, rae: p.rae })),
+			dots: h.map((p, i) => ({
+				x: x(i),
+				yc: y(p.consumed),
+				yr: y(p.rae),
+				date: p.date,
+				until: p.until,
+				consumed: p.consumed,
+				rae: p.rae,
+				dConsumed: i ? round2(p.consumed - h[i - 1].consumed) : null,
+				dRae: i ? round2(p.rae - h[i - 1].rae) : null
+			})),
+			// Zone de survol d'un point : toute la hauteur, à mi-chemin des voisins (pas juste le rond).
+			hitW: h.length > 1 ? stepX : innerW,
+			top: PAD_T,
+			innerH,
 			yTicks,
 			xTicks
 		};
@@ -435,25 +458,58 @@
 			{#if !points}
 				<p class="empty">Pas encore d'historique — alimenté par le snapshot quotidien.</p>
 			{:else}
-				<svg viewBox="0 0 {CHART_W} {CHART_H}" class="history-chart" role="img" aria-label="Courbe consommé et RAE dans le temps">
+				<div class="chart-box" bind:clientWidth={chartW}>
+				<svg viewBox="0 0 {points.w} {CHART_H}" class="history-chart" role="img" aria-label="Courbe consommé et RAE dans le temps">
 					{#each points.yTicks as t (t.v)}
-						<line x1={PAD_L} y1={t.y} x2={CHART_W - PAD_R} y2={t.y} class="grid-line" />
+						<line x1={PAD_L} y1={t.y} x2={points.w - PAD_R} y2={t.y} class="grid-line" />
 						<text x={PAD_L - 6} y={t.y} text-anchor="end" dominant-baseline="middle" class="axis-label">{t.v}</text>
 					{/each}
 					{#if points.consumedArea}<path d={points.consumedArea} class="area area-consumed" />{/if}
 					{#if points.raeArea}<path d={points.raeArea} class="area area-rae" />{/if}
 					<path d={points.consumedPath} fill="none" stroke="var(--accent)" stroke-width="2" />
 					<path d={points.raePath} fill="none" stroke="color-mix(in srgb, var(--accent) 30%, var(--text-mute))" stroke-width="2" />
-					{#each points.dots as d (d.date)}
-						<circle cx={d.x} cy={d.yc} r="3" fill="var(--accent)"><title>{d.date} — Consommé {d.consumed} j</title></circle>
-						<circle cx={d.x} cy={d.yr} r="3" fill="color-mix(in srgb, var(--accent) 30%, var(--text-mute))"><title>{d.date} — RAE {d.rae} j</title></circle>
+					{#if hoverIdx !== null && points.dots[hoverIdx]}
+						{@const d = points.dots[hoverIdx]}
+						<line x1={d.x} y1={points.top} x2={d.x} y2={points.top + points.innerH} class="hover-line" />
+					{/if}
+					{#each points.dots as d, i (d.date)}
+						{@const on = hoverIdx === i}
+						<circle cx={d.x} cy={d.yc} r={on ? 6 : 4} class="pt" fill="var(--accent)" />
+						<circle cx={d.x} cy={d.yr} r={on ? 6 : 4} class="pt" fill="color-mix(in srgb, var(--accent) 30%, var(--text-mute))" />
+					{/each}
+					{#each points.dots as d, i (d.date)}
+						<!-- svelte-ignore a11y_no_static_element_interactions -->
+						<rect
+							x={d.x - points.hitW / 2}
+							y={points.top}
+							width={points.hitW}
+							height={points.innerH}
+							class="hit"
+							onmouseenter={() => (hoverIdx = i)}
+							onmouseleave={() => (hoverIdx = null)}
+						/>
 					{/each}
 					{#each points.xTicks as t (t.x)}
 						<text x={t.x} y={CHART_H - 6} text-anchor={t.anchor} class="axis-label">{t.label}</text>
 					{/each}
 				</svg>
+				{#if hoverIdx !== null && points.dots[hoverIdx]}
+					{@const d = points.dots[hoverIdx]}
+					<!-- Bulle HTML sur le SVG : viewBox = largeur réelle, donc x SVG = x CSS. À côté de la ligne
+					     guide (jamais sur les points survolés), basculée à gauche près du bord droit. -->
+					{@const flip = d.x > points.w - 200}
+					<div class="chart-pop" class:flip style:left="{d.x}px" style:top="{points.top + points.innerH / 2}px" role="tooltip">
+						<div class="pop-date">
+							{fmtShortDate(d.date)}{#if d.until !== d.date}<span> → {fmtShortDate(d.until)} · stable</span>{/if}
+						</div>
+						<div class="pop-row"><i class="dot prod"></i> Consommé <b class="tabnum">{d.consumed} j</b><small>{fmtDelta(d.dConsumed)}</small></div>
+						<div class="pop-row"><i class="dot nonprod"></i> RAE <b class="tabnum">{d.rae} j</b><small>{fmtDelta(d.dRae)}</small></div>
+					</div>
+				{/if}
+				</div>
 				<div class="chart-axis">
 					<span class="chart-legend"><i class="dot prod"></i> Consommé <i class="dot nonprod"></i> RAE</span>
+					{#if points.compressed}<span class="chart-note">· jours sans changement regroupés</span>{/if}
 				</div>
 			{/if}
 		</div>
@@ -874,6 +930,66 @@
 		margin-top: 6px;
 		font-size: 11px;
 		color: var(--text-mute);
+	}
+	.chart-box {
+		position: relative;
+	}
+	.hit {
+		fill: transparent;
+		cursor: crosshair;
+	}
+	.pt {
+		stroke: var(--surface);
+		stroke-width: 1.5;
+		transition: r 0.12s;
+		pointer-events: none;
+	}
+	.hover-line {
+		stroke: var(--border-strong, var(--border));
+		stroke-dasharray: 3 3;
+	}
+	.chart-pop {
+		position: absolute;
+		transform: translate(12px, -50%);
+		min-width: 160px;
+		padding: 8px 10px;
+		border-radius: 10px;
+		background: var(--text);
+		color: var(--surface);
+		font-size: 12px;
+		box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.18));
+		pointer-events: none;
+		z-index: 3;
+	}
+	.chart-pop.flip {
+		transform: translate(calc(-100% - 12px), -50%);
+	}
+	.pop-date {
+		font-weight: 700;
+		margin-bottom: 4px;
+	}
+	.pop-date span {
+		font-weight: 500;
+		opacity: 0.75;
+	}
+	.pop-row {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		white-space: nowrap;
+	}
+	.pop-row b {
+		margin-left: auto;
+	}
+	.pop-row small {
+		opacity: 0.75;
+		min-width: 0;
+	}
+	.pop-row .dot.nonprod {
+		margin-left: 0;
+	}
+	.chart-note {
+		margin-left: 8px;
 	}
 	.chart-legend {
 		display: flex;
