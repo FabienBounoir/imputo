@@ -77,6 +77,12 @@ test:e2e:
     - npm run dev &
     - node -e "const t=Date.now();(async()=>{while(Date.now()-t<60000){try{if((await fetch('http://localhost:5173/login')).ok)process.exit(0)}catch{}await new Promise(r=>setTimeout(r,1000))}process.exit(1)})()"
     - npx cypress run
+  # Captures prises par Cypress sur échec : sans elles, un « never found » en CI ne se diagnostique pas.
+  artifacts:
+    when: on_failure
+    expire_in: 7 days
+    paths:
+      - cypress/screenshots/
 
 # Ni l'un ni l'autre n'était vérifié en CI jusqu'ici — une erreur de type ou un build cassé ne se
 # découvrait qu'en local (ou pire, pendant le déploiement OpenShift lui-même pour le build).

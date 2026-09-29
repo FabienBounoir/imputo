@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, ne } from 'drizzle-orm';
 import { describe, it, expect } from 'vitest';
 import { db, workspace, project, sprint, ticket, jiraSyncRun } from '$lib/server/db';
 import { makeWorkspace } from './test-helpers';
@@ -614,6 +614,12 @@ describe('jiraSync / syncAllEnabledWorkspaces', () => {
 		const wsOn = await makeJiraWorkspace();
 		const wsOff = await makeJiraWorkspace();
 		await db.update(workspace).set({ jiraSyncEnabled: false }).where(eq(workspace.id, wsOff.workspaceId));
+		// syncAllEnabledWorkspaces balaie TOUTE la base : sans ça, il resynchronise aussi la vingtaine
+		// d'espaces Jira laissés actifs par les tests précédents — timeout de 5 s sur un runner CI lent.
+		await db
+			.update(workspace)
+			.set({ jiraSyncEnabled: false })
+			.where(and(eq(workspace.jiraSyncEnabled, true), ne(workspace.id, wsOn.workspaceId)));
 
 		await syncAllEnabledWorkspaces(db, cfg, { fetchImpl: fakeFetch({ issues: [rawIssue('T-1', 'x')] }) });
 
