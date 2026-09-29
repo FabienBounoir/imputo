@@ -16,6 +16,7 @@
 	const EDGE = 60;
 
 	let wrap: HTMLSpanElement | null = $state(null);
+	let bubble: HTMLSpanElement | null = $state(null);
 	let pos = $state<{ top: number; left: number; below: boolean } | null>(null);
 
 	function show() {
@@ -37,6 +38,15 @@
 	// Un défilement laisserait la bulle en place pendant que sa carte s'en va : on la referme.
 	// Écoute en capture — le défilement d'un conteneur imbriqué ne remonte pas jusqu'à window
 	// (même raison que dans TargetPicker).
+	// EDGE ne suffit pas pour une bulle plus large que 2×EDGE posée en bout d'écran (ex. en-tête
+	// « Cumul » d'un tableau collé à droite) : une fois rendue, on la recale d'après sa vraie largeur.
+	$effect(() => {
+		if (!pos || !bubble) return;
+		const half = bubble.offsetWidth / 2;
+		const left = Math.min(Math.max(pos.left, half + 8), window.innerWidth - half - 8);
+		if (left !== pos.left) pos = { ...pos, left };
+	});
+
 	$effect(() => {
 		if (!pos) return;
 		window.addEventListener('scroll', hide, true);
@@ -59,7 +69,7 @@
 >
 	{@render children()}
 	{#if text && pos}
-		<span class="tt-bubble" class:below={pos.below} role="tooltip" style="top:{pos.top}px; left:{pos.left}px;">
+		<span bind:this={bubble} class="tt-bubble" class:below={pos.below} role="tooltip" style="top:{pos.top}px; left:{pos.left}px;">
 			{text}
 		</span>
 	{/if}

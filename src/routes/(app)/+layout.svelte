@@ -340,6 +340,10 @@
 				<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg>
 				Par sprint
 			</a>
+			<a class="nav-item" class:active={isActive('/dashboard/activite')} href="/dashboard/activite">
+				<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+				Par activité
+			</a>
 		</div>
 		{#if data.workspace?.objectivesEnabled}
 			<a class="nav-item" class:active={isActive('/admin/objectifs')} href="/admin/objectifs">
@@ -375,10 +379,6 @@
 			<a class="nav-item" class:active={isActive('/admin/suivi-annuel')} href="/admin/suivi-annuel">
 				<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v18h18"/><path d="M7 16v-4M12 16V8M17 16v-7"/></svg>
 				Suivi annuel
-			</a>
-			<a class="nav-item" class:active={isActive('/admin/synthese-activites')} href="/admin/synthese-activites">
-				<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-				Synthèse par activité
 			</a>
 			<a class="nav-item" class:active={isActive('/admin/history')} href="/admin/history">
 				<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>
