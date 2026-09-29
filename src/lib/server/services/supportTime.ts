@@ -1,4 +1,4 @@
-import { and, eq, desc, gte, lte, lt, or, sql } from 'drizzle-orm';
+import { and, eq, desc, gte, lte, lt, or, sql, inArray } from 'drizzle-orm';
 import { db, workspace, supportTimeEntry, user } from '$lib/server/db';
 import { dateInParis, todayInParis } from '$lib/utils/date';
 
@@ -126,6 +126,37 @@ export async function listOwnTimeEntries(workspaceId: string, userId: string, li
 		.where(and(eq(supportTimeEntry.workspaceId, workspaceId), eq(supportTimeEntry.userId, userId)))
 		.orderBy(desc(supportTimeEntry.day), desc(supportTimeEntry.createdAt))
 		.limit(limit);
+}
+
+export type SupportDayRecap = { day: string; minutes: number; tickets: number };
+
+/**
+ * Récap de ses propres saisies sur les `days` demandés (ISO, dans l'ordre voulu) : temps total et
+ * tickets distincts par jour, un jour sans saisie compris (à 0). Agrégé en SQL, pas dérivé de la
+ * liste courte de listOwnTimeEntries — tronquée à 20 lignes, elle fausserait les totaux.
+ */
+export async function getOwnDailyRecap(workspaceId: string, userId: string, days: string[]): Promise<SupportDayRecap[]> {
+	if (days.length === 0) return [];
+	const rows = await db
+		.select({
+			day: supportTimeEntry.day,
+			minutes: sql<string>`sum(${supportTimeEntry.minutes})`,
+			tickets: sql<string>`count(distinct ${supportTimeEntry.ticketRef})`
+		})
+		.from(supportTimeEntry)
+		.where(
+			and(
+				eq(supportTimeEntry.workspaceId, workspaceId),
+				eq(supportTimeEntry.userId, userId),
+				inArray(supportTimeEntry.day, days)
+			)
+		)
+		.groupBy(supportTimeEntry.day);
+	const byDay = new Map(rows.map((r) => [r.day, r]));
+	return days.map((day) => {
+		const r = byDay.get(day);
+		return { day, minutes: Number(r?.minutes ?? 0), tickets: Number(r?.tickets ?? 0) };
+	});
 }
 
 /** Dump complet (non paginé) sur le filtre donné — réservé à l'export Excel, qui a besoin de tout charger. */

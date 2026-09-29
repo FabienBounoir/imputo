@@ -10,7 +10,8 @@ import {
 	getSupportTimeStats,
 	listPeopleWithEntries,
 	updateTimeEntry,
-	deleteTimeEntry
+	deleteTimeEntry,
+	getOwnDailyRecap
 } from './supportTime';
 
 describe('supportTime', () => {
@@ -202,5 +203,21 @@ describe('supportTime', () => {
 		await createTimeEntry(ws.workspaceId, other.userId, { ticketRef: 'INC-1', minutes: 10 });
 		const people = await listPeopleWithEntries(ws.workspaceId);
 		expect(people.map((p) => p.userId)).toEqual([other.userId]);
+	});
+
+	it('getOwnDailyRecap : temps et tickets distincts par jour, jours vides à 0, seulement les siennes', async () => {
+		const ws = await makeWorkspace('sti');
+		const other = await addMember(ws.workspaceId, 'USER', 'sti-recap');
+		const at = (day: string, h: string) => `${day}T${h}:00:00.000Z`;
+		await createTimeEntry(ws.workspaceId, ws.userId, { ticketRef: 'INC-1', minutes: 30, at: at('2026-03-02', '08') });
+		await createTimeEntry(ws.workspaceId, ws.userId, { ticketRef: 'inc-1', minutes: 15, at: at('2026-03-02', '10') }); // même ticket
+		await createTimeEntry(ws.workspaceId, ws.userId, { ticketRef: 'INC-2', minutes: 60, at: at('2026-03-02', '12') });
+		await createTimeEntry(ws.workspaceId, ws.userId, { ticketRef: 'INC-3', minutes: 20, at: at('2026-02-27', '09') }); // hors jours demandés
+		await createTimeEntry(ws.workspaceId, other.userId, { ticketRef: 'INC-9', minutes: 90, at: at('2026-03-03', '09') });
+
+		expect(await getOwnDailyRecap(ws.workspaceId, ws.userId, ['2026-03-03', '2026-03-02'])).toEqual([
+			{ day: '2026-03-03', minutes: 0, tickets: 0 },
+			{ day: '2026-03-02', minutes: 105, tickets: 2 }
+		]);
 	});
 });
