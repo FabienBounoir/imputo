@@ -118,7 +118,7 @@ ADMIN d'un workspace et simple USER d'un autre.
   tickets, catégories, sprints, états, activités, imputations, membres).
 - **Auto-inscription** : s'inscrire **crée un nouveau workspace** dont l'inscrit devient
   **ADMIN**. Le workspace conserve le domaine de l'email du fondateur comme simple libellé
-  informatif (ex. `soprasteria.com`), sans effet restrictif.
+  informatif (ex. `example.com`), sans effet restrictif.
 - **Aucune restriction de domaine** : ni à l'auto-inscription, ni à l'invitation — un admin
   peut inviter n'importe quelle adresse email, quel que soit son domaine. *(Retiré : les
   anciens réglages `ALLOW_PUBLIC_EMAIL_DOMAINS`/`ALLOWED_SIGNUP_DOMAINS` et la restriction
@@ -223,7 +223,7 @@ le workspace de l'utilisateur courant (isolation stricte). L'identité (`User`) 
 **globale** (une personne peut appartenir à plusieurs workspaces) ; le rôle et la capacité
 sont portés par l'appartenance (`Membership`).
 
-- **Workspace** : `id, name, allowedDomain (ex. soprasteria.com), accentColor (hex, défaut
+- **Workspace** : `id, name, allowedDomain (ex. example.com), accentColor (hex, défaut
   vert `#16A34A`), createdByUserId, createdAt`.
 - **User** (identité globale) : `id, displayName, email (unique global),
   passwordHash (nullable tant que non défini), themePref (LIGHT|DARK|SYSTEM, défaut SYSTEM),

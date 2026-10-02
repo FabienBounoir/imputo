@@ -204,7 +204,7 @@ describe('jiraClient / searchJiraIssues', () => {
 	});
 
 	it('parse le format toString() Java du Sprint (Server/DC, plugin Greenhopper)', async () => {
-		// Chaîne réelle observée en direct le 2026-08-16 contre jira.constellation.soprasteria.com.
+		// Chaîne réelle observée en direct le 2026-08-16 contre le Jira interne.
 		const raw =
 			'com.atlassian.greenhopper.service.sprint.Sprint@715e3c72[activatedDate=2026-06-19T17:35:03.865+02:00,autoStartStop=false,completeDate=<null>,endDate=2026-10-26T17:35:00.000+01:00,goal=,id=59928,incompleteIssuesDestinationId=<null>,name=Sprint V36,rapidViewId=18632,sequence=59928,startDate=2026-06-19T17:35:00.000+02:00,state=ACTIVE,synced=false]';
 		const { fetchImpl } = makeFakeFetch({

@@ -16,16 +16,17 @@ Choix retenus :
 
 1. Se placer dans le bon projet OpenShift : `oc project <votre-projet>` (ou `oc new-project
    imputo`).
-2. Adapter `buildconfig.yaml` si l'URL du dépôt Git ou la branche (`ref`) diffère.
+2. Dans `buildconfig*.yaml`, `CHANGEME-git-uri` est remplacé par la CI depuis la variable
+   `GIT_SOURCE_URI` ; en manuel : `sed "s#CHANGEME-git-uri#<url>#" openshift/buildconfig.yaml | oc apply -f -`
+   (idem `buildconfig-tools.yaml`). Adapter la branche (`ref`) si elle diffère.
 3. Remplacer les placeholders `CHANGEME-*` :
    - `secret.yaml` : `DATABASE_URL`, `SESSION_SECRET`, `CRON_SECRET`, et éventuellement les
      clés VAPID (`npx web-push generate-vapid-keys`). Voir les commandes `oc create secret`
      suggérées en commentaire dans le fichier. Pour l'intégration Jira (voir plus bas) :
-     `AZURE_CLIENT_SECRET` (app registration Azure AD) et `JIRA_PAT_ENCRYPTION_KEY`
+     `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` (app registration Azure AD),
+     `JIRA_BASE_URL` et `JIRA_PAT_ENCRYPTION_KEY`
      (`openssl rand -base64 32` — chiffre les PAT Jira saisis par espace, à ne jamais faire
      tourner sans re-chiffrer les PAT existants).
-   - `configmap.yaml` : `AZURE_TENANT_ID`/`AZURE_CLIENT_ID` (identifiants publics de l'app
-     registration, non secrets) et `JIRA_BASE_URL` si l'instance diffère du défaut.
    - `db-secret.yaml` : mot de passe Postgres (`imputo-db-secret`) — doit correspondre à
      `DATABASE_URL` ci-dessus.
    - `deployment.yaml` : le namespace dans `spec.template.spec.containers[0].image` (valeur de
@@ -35,6 +36,9 @@ Choix retenus :
    aussi pour ça que la CI (voir plus bas) n'applique jamais `secret.yaml` ni `db-secret.yaml`.
 
 ## Déploiement
+
+Attention : `oc apply -k` appliquerait `CHANGEME-git-uri` tel quel. Appliquer d'abord le BuildConfig
+substitué (étape 2), puis le reste ; ou laisser la CI le faire.
 
 ```sh
 oc apply -k openshift/

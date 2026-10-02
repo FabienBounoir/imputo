@@ -14,11 +14,8 @@ data:
   ORIGIN: 'https://imputo-imputo.apps.ocp4.innershift.sodigital.io'
   VAPID_SUBJECT: 'mailto:admin@imputo.app'
   NOTIF_RAE_STALE_DAYS: '7'
-  # App registration Azure AD (client_credentials) — credentials globales à l'app, pas secrètes en
-  # elles-mêmes (identifiants publics d'un client OAuth) ; AZURE_CLIENT_SECRET reste dans secret.yaml.
-  AZURE_TENANT_ID: '8b87af7d-8647-4dc7-8df4-5f69a2011bb5'
-  AZURE_CLIENT_ID: '8f4e2b06-c84d-491a-9648-d16a37120027'
-  JIRA_BASE_URL: 'https://jira.constellation.soprasteria.com'
+  # AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET et JIRA_BASE_URL (intégration Jira)
+  # vivent dans le secret imputo-secrets — voir secret.yaml. Rien de spécifique à l'organisation ici.
   # DNS interne au cluster, pas un secret — voir openshift/logging/. Vide/absent = logs stdout
   # uniquement (comportement par défaut de logger.ts). Ne fonctionne que si une NetworkPolicy
   # autorise ce namespace en ingress sur imputo-logs (voir openshift/logging/networkpolicy.yaml).
