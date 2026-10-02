@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, ne } from 'drizzle-orm';
 import { db, user, membership, setupToken, workspace, jiraSyncRun, type Role } from '$lib/server/db';
 import { verifyPassword, hashPassword } from '$lib/server/auth/password';
 import { generateToken, hashToken } from '$lib/server/auth/tokens';
@@ -48,6 +48,26 @@ export async function login(
 }
 
 /**
+ * Un magic link permet de (re)définir le mot de passe : il ne doit jamais être émis par un espace
+ * pour un compte qui appartient aussi à un autre espace (sinon un admin d'un espace créé à la volée
+ * prendrait la main sur n'importe quel compte en l'invitant).
+ */
+async function assertNoForeignMembership(
+	q: Pick<typeof db, 'select'>,
+	workspaceId: string,
+	userId: string
+) {
+	const foreign = await q
+		.select({ id: membership.id })
+		.from(membership)
+		.where(and(eq(membership.userId, userId), ne(membership.workspaceId, workspaceId)))
+		.limit(1);
+	if (foreign.length > 0) {
+		throw new Error('Ce compte appartient déjà à un autre espace : impossible de générer un lien.');
+	}
+}
+
+/**
  * Invite un membre dans un espace (réservé ADMIN).
  * Retourne le token brut (à insérer dans le message à copier).
  */
@@ -68,6 +88,8 @@ export async function inviteMember(input: {
 				.insert(user)
 				.values({ displayName: input.displayName.trim() || email, email, passwordHash: null })
 				.returning();
+		} else {
+			await assertNoForeignMembership(tx, input.workspaceId, u.id);
 		}
 
 		const existingMembership = await tx
@@ -381,6 +403,7 @@ export async function regenerateInvite(
 		.innerJoin(user, eq(membership.userId, user.id))
 		.where(memberWhere(workspaceId, userId));
 	if (!m) throw new Error('Membre introuvable dans cet espace.');
+	await assertNoForeignMembership(db, workspaceId, userId);
 
 	const { token, hash } = generateToken();
 	await db.insert(setupToken).values({

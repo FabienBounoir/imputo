@@ -134,6 +134,30 @@ describe('regenerateInvite pour un membre déjà actif', () => {
 	});
 });
 
+describe('prise de contrôle via un autre espace', () => {
+	it('refuse d’inviter un compte qui appartient à un autre espace', async () => {
+		const victimEmail = `victim-${rnd}@acme.test`;
+		const victim = await createWorkspaceWithOwner({
+			displayName: 'Victime',
+			email: victimEmail,
+			password: 'password123',
+			workspaceName: 'Espace Victime'
+		});
+		const attacker = await createWorkspaceWithOwner({
+			displayName: 'Attaquant',
+			email: `attacker-${rnd}@acme.test`,
+			password: 'password123',
+			workspaceName: 'Espace Attaquant'
+		});
+		wsIds.push(victim.workspaceId, attacker.workspaceId);
+
+		await expect(
+			inviteMember({ workspaceId: attacker.workspaceId, email: victimEmail, displayName: 'x', role: 'USER' })
+		).rejects.toThrow(/autre espace/);
+		expect(await login(victimEmail, 'password123')).toEqual({ userId: victim.userId });
+	});
+});
+
 describe('cancelInvite', () => {
 	it('supprime le compte et la membership d’une invitation encore en attente', async () => {
 		const { workspaceId } = await createWorkspaceWithOwner({
