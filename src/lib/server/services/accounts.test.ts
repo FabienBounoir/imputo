@@ -10,6 +10,7 @@ import {
 	setPasswordWithToken,
 	inviteMember,
 	cancelInvite,
+	ssoLogin,
 	getJiraConfig,
 	setJiraSyncEnabled,
 	saveJiraConfig,
@@ -686,5 +687,36 @@ describe('historique des runs Jira (listJiraSyncRuns / undoJiraSyncRun)', () => 
 		await undoJiraSyncRun(workspaceId, okRun, userId);
 		await expect(undoJiraSyncRun(workspaceId, okRun, userId)).rejects.toThrow(/déjà été annulé/);
 		await expect(undoJiraSyncRun(workspaceId, failedRun, userId)).rejects.toThrow(/réussi/);
+	});
+});
+
+describe('ssoLogin', () => {
+	it('active un invité sans mot de passe : plus annulable comme invitation en attente', async () => {
+		const { workspaceId } = await createWorkspaceWithOwner({
+			displayName: 'Gaston',
+			email: `sso-owner-${rnd}@acme.test`,
+			password: 'password123',
+			workspaceName: 'Espace SSO'
+		});
+		wsIds.push(workspaceId);
+		const email = `sso-invited-${rnd}@acme.test`;
+		await inviteMember({ workspaceId, email, displayName: 'Invité SSO', role: 'USER' });
+
+		const res = await ssoLogin(email.toUpperCase());
+		expect(res).not.toBeNull();
+		await expect(cancelInvite(workspaceId, res!.userId)).rejects.toThrow('déjà activé son compte');
+	});
+
+	it('refuse un email inconnu ou un compte désactivé', async () => {
+		expect(await ssoLogin(`sso-unknown-${rnd}@acme.test`)).toBeNull();
+		const { userId, workspaceId } = await createWorkspaceWithOwner({
+			displayName: 'Hélène',
+			email: `sso-off-${rnd}@acme.test`,
+			password: 'password123',
+			workspaceName: 'Espace SSO off'
+		});
+		wsIds.push(workspaceId);
+		await db.update(user).set({ active: false }).where(eq(user.id, userId));
+		expect(await ssoLogin(`sso-off-${rnd}@acme.test`)).toBeNull();
 	});
 });

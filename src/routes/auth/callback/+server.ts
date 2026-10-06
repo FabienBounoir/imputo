@@ -2,7 +2,7 @@ import { error, redirect } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { ssoEnabled } from '$lib/server/config';
 import { OIDC_COOKIE, exchangeCode, type OidcPending } from '$lib/server/auth/oidc';
-import { findSsoUser } from '$lib/server/services/accounts';
+import { ssoLogin } from '$lib/server/services/accounts';
 import { listMembershipsForUser } from '$lib/server/services/workspaces';
 import { createSession, setSessionCookie } from '$lib/server/auth/session';
 import { logger } from '$lib/server/logger';
@@ -33,7 +33,7 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
 	}
 	if (!email) redirect(303, '/login?sso=error');
 
-	const found = await findSsoUser(email);
+	const found = await ssoLogin(email);
 	if (!found) {
 		logger.warn('sso_unknown_user', { email });
 		redirect(303, '/login?sso=unknown');

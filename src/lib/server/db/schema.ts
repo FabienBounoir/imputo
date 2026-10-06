@@ -199,6 +199,9 @@ export const user = pgTable('user', {
 	// Null = jamais vu le tutoriel de prise en main (déclenche le lancement auto au prochain
 	// chargement). Rejouable depuis Réglages sans repasser par null (juste relancé côté client).
 	tutorialSeenAt: timestamp('tutorial_seen_at'),
+	// Dernière connexion SSO. Un compte est "activé" s'il a un mot de passe OU s'est déjà connecté
+	// en SSO — en mode sso seul, passwordHash reste null pour toujours.
+	ssoLoginAt: timestamp('sso_login_at'),
 	active: boolean('active').notNull().default(true),
 	createdAt: createdAt()
 });

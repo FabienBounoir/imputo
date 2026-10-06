@@ -49,12 +49,21 @@ export async function login(
 
 /**
  * Connexion SSO : l'email vient du fournisseur OIDC, déjà authentifié. Pas de création à la volée —
- * le rattachement aux espaces passe par les invitations, un email inconnu est refusé.
+ * le rattachement aux espaces passe par les invitations, un email inconnu est refusé. Horodate
+ * ssoLoginAt, qui marque le compte comme activé (cf. isActivated).
  */
-export async function findSsoUser(email: string): Promise<{ userId: string } | null> {
-	const [u] = await db.select({ id: user.id, active: user.active }).from(user).where(eq(user.email, email.trim().toLowerCase()));
-	return u?.active ? { userId: u.id } : null;
+export async function ssoLogin(email: string): Promise<{ userId: string } | null> {
+	const [u] = await db
+		.update(user)
+		.set({ ssoLoginAt: new Date() })
+		.where(and(eq(user.email, email.trim().toLowerCase()), eq(user.active, true)))
+		.returning({ id: user.id });
+	return u ? { userId: u.id } : null;
 }
+
+/** Un compte est activé dès qu'il a un mot de passe ou s'est connecté une fois en SSO. */
+export const isActivated = (u: { passwordHash: string | null; ssoLoginAt: Date | null }) =>
+	u.passwordHash !== null || u.ssoLoginAt !== null;
 
 /**
  * Un magic link permet de (re)définir le mot de passe : il ne doit jamais être émis par un espace
@@ -376,12 +385,12 @@ export async function setMemberFactice(workspaceId: string, userId: string, fact
 /** Annule une invitation en attente (jamais connectée) : supprime le membre et son compte. */
 export async function cancelInvite(workspaceId: string, userId: string) {
 	const [m] = await db
-		.select({ passwordHash: user.passwordHash })
+		.select({ passwordHash: user.passwordHash, ssoLoginAt: user.ssoLoginAt })
 		.from(membership)
 		.innerJoin(user, eq(membership.userId, user.id))
 		.where(memberWhere(workspaceId, userId));
 	if (!m) throw new Error('Membre introuvable dans cet espace.');
-	if (m.passwordHash !== null) throw new Error('Ce membre a déjà activé son compte, il ne peut plus être annulé.');
+	if (isActivated(m)) throw new Error('Ce membre a déjà activé son compte, il ne peut plus être annulé.');
 	await db.transaction(async (tx) => {
 		await tx.delete(membership).where(memberWhere(workspaceId, userId));
 		await tx.delete(user).where(eq(user.id, userId));
