@@ -25,4 +25,14 @@ describe('buildAbsencesWorkbook', () => {
 		expect(namesWithout).not.toContain('absxls-factice');
 		expect(namesWithout).toContain('absxls owner');
 	});
+
+	it('colore en rouge pâle la colonne d\'un jour férié (1er mai 2026), pas un jour ouvré normal', async () => {
+		const ws = await makeWorkspace('absxls-ferie');
+		const wb = new ExcelJS.Workbook();
+		await wb.xlsx.load(await buildAbsencesWorkbook(ws.workspaceId, '2026-05-01', 1));
+		const sheet = wb.worksheets[0];
+		const fg = (day: number) => (sheet.getRow(3).getCell(1 + day).fill as ExcelJS.FillPattern).fgColor?.argb;
+		expect(fg(1)).toBe('FFF6E1DF'); // 1er mai, vendredi férié
+		expect(fg(4)).not.toBe('FFF6E1DF'); // lundi 4 mai, ouvré
+	});
 });

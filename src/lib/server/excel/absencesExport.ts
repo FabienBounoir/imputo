@@ -12,7 +12,7 @@ import {
 	type AbsenceSpan
 } from '$lib/absenceTypes';
 import { hexToArgb } from './export';
-import { formatMonthLabel, formatMonthShortLabel, toISODate, parseISODate, addDays } from '$lib/utils/date';
+import { formatMonthLabel, formatMonthShortLabel, toISODate, parseISODate, addDays, isPublicHolidayFR } from '$lib/utils/date';
 
 const WHITE = 'FFFFFFFF';
 const EXTERNAL_TINT = 'FFF1F5F9'; // très léger, distingue une ligne "membre externe"
@@ -20,6 +20,9 @@ const WEEKEND_FILL = 'FFEFF1F4';
 const ZEBRA_FILL = 'FFFAFAFB'; // à peine plus foncé que blanc, une ligne membre sur deux
 const HEADER_FILL = 'FFEFEFEF';
 const HEADER_WEEKEND_FILL = 'FFE2E4E8';
+const HOLIDAY_FILL = 'FFF6E1DF'; // même teinte rouge pâle que la grille en ligne (td.holiday)
+const HOLIDAY_HEADER_FILL = 'FFEFC9C5';
+const HOLIDAY_TEXT = 'FFC0392B';
 
 // Trois niveaux de bordure : fine entre deux jours, plus marquée au lundi (semaine), nette au 1er du mois.
 const THIN_GREY = { style: 'thin' as const, color: { argb: 'FFD9D9D9' } };
@@ -109,9 +112,11 @@ export async function buildAbsencesWorkbook(workspaceId: string, anchorISO: stri
 	}
 	monthRow.getCell(1).fill = solidFill(HEADER_FILL);
 	days.forEach((d, i) => {
-		const fill = solidFill(isWeekend(d) ? HEADER_WEEKEND_FILL : HEADER_FILL);
+		const holiday = isPublicHolidayFR(d);
+		const fill = solidFill(holiday ? HOLIDAY_HEADER_FILL : isWeekend(d) ? HEADER_WEEKEND_FILL : HEADER_FILL);
 		monthRow.getCell(2 + i).fill = fill;
 		dayRow.getCell(2 + i).fill = fill;
+		if (holiday) dayRow.getCell(2 + i).font = { bold: true, color: { argb: HOLIDAY_TEXT } };
 	});
 
 	rows.forEach((m, r) => {
@@ -123,6 +128,7 @@ export async function buildAbsencesWorkbook(workspaceId: string, anchorISO: stri
 			const c = row.getCell(2 + i); // touche chaque cellule pour que la bordure s'applique même sans absence
 			const cell = grid[m.id]?.[d];
 			if (cell) c.fill = fillFor(cell);
+			else if (isPublicHolidayFR(d)) c.fill = solidFill(HOLIDAY_FILL);
 			else if (m.external) c.fill = solidFill(EXTERNAL_TINT);
 			else if (isWeekend(d)) c.fill = solidFill(WEEKEND_FILL);
 			else if (zebra) c.fill = solidFill(ZEBRA_FILL);
