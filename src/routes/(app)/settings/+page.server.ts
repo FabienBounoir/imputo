@@ -95,7 +95,12 @@ export const actions: Actions = {
 		if (!locals.user) return fail(401);
 		const parsed = changePasswordSchema.safeParse(Object.fromEntries(await request.formData()));
 		if (!parsed.success) return fail(400, { pwError: parsed.error.issues[0].message });
-		const ok = await changePassword(locals.user.id, parsed.data.currentPassword, parsed.data.password);
+		const ok = await changePassword(
+			locals.user.id,
+			parsed.data.currentPassword,
+			parsed.data.password,
+			locals.sessionToken ?? undefined
+		);
 		if (!ok) return fail(400, { pwError: 'Mot de passe actuel incorrect.' });
 		return { pwOk: true };
 	}

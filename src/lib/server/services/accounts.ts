@@ -1,5 +1,5 @@
 import { and, desc, eq, ne } from 'drizzle-orm';
-import { db, user, membership, setupToken, workspace, jiraSyncRun, type Role } from '$lib/server/db';
+import { db, user, membership, setupToken, workspace, jiraSyncRun, session, type Role } from '$lib/server/db';
 import { verifyPassword, hashPassword } from '$lib/server/auth/password';
 import { generateToken, hashToken } from '$lib/server/auth/tokens';
 import { encryptSecret } from '$lib/server/auth/secretCrypto';
@@ -179,6 +179,8 @@ export async function setPasswordWithToken(rawToken: string, password: string): 
 	const passwordHash = await hashPassword(password);
 	await db.transaction(async (tx) => {
 		await tx.update(user).set({ passwordHash, active: true }).where(eq(user.id, target.userId));
+		// Un reset doit couper tout accès existant (cookie volé, compte pris avant un correctif).
+		await tx.delete(session).where(eq(session.userId, target.userId));
 		await tx.update(setupToken).set({ usedAt: new Date() }).where(eq(setupToken.id, target.tokenId));
 	});
 	return true;
@@ -188,7 +190,8 @@ export async function setPasswordWithToken(rawToken: string, password: string): 
 export async function changePassword(
 	userId: string,
 	currentPassword: string,
-	newPassword: string
+	newPassword: string,
+	keepSessionToken?: string
 ): Promise<boolean> {
 	const [u] = await db.select().from(user).where(eq(user.id, userId));
 	if (!u || !u.passwordHash) return false;
@@ -196,6 +199,14 @@ export async function changePassword(
 	if (!ok) return false;
 	const passwordHash = await hashPassword(newPassword);
 	await db.update(user).set({ passwordHash }).where(eq(user.id, userId));
+	// Coupe les autres sessions (appareils/cookies volés), garde celle de l'utilisateur courant.
+	await db
+		.delete(session)
+		.where(
+			keepSessionToken
+				? and(eq(session.userId, userId), ne(session.id, hashToken(keepSessionToken)))
+				: eq(session.userId, userId)
+		);
 	return true;
 }
 
