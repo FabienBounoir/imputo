@@ -48,6 +48,15 @@ export async function login(
 }
 
 /**
+ * Connexion SSO : l'email vient du fournisseur OIDC, déjà authentifié. Pas de création à la volée —
+ * le rattachement aux espaces passe par les invitations, un email inconnu est refusé.
+ */
+export async function findSsoUser(email: string): Promise<{ userId: string } | null> {
+	const [u] = await db.select({ id: user.id, active: user.active }).from(user).where(eq(user.email, email.trim().toLowerCase()));
+	return u?.active ? { userId: u.id } : null;
+}
+
+/**
  * Un magic link permet de (re)définir le mot de passe : il ne doit jamais être émis par un espace
  * pour un compte qui appartient aussi à un autre espace (sinon un admin d'un espace créé à la volée
  * prendrait la main sur n'importe quel compte en l'invitant).

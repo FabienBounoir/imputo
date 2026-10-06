@@ -26,7 +26,10 @@ Choix retenus :
      `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` (app registration Azure AD),
      `JIRA_BASE_URL` et `JIRA_PAT_ENCRYPTION_KEY`
      (`openssl rand -base64 32` — chiffre les PAT Jira saisis par espace, à ne jamais faire
-     tourner sans re-chiffrer les PAT existants).
+     tourner sans re-chiffrer les PAT existants). Mode de connexion : `AUTH_MODE` (`classic` par
+     défaut, `sso` ou `both`) et, si SSO, `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`
+     (redirect URI chez le fournisseur : `<BASE_URL>/auth/callback`) — choisi par namespace,
+     puisque ce secret n'est pas appliqué par la CI.
    - `db-secret.yaml` : mot de passe Postgres (`imputo-db-secret`) — doit correspondre à
      `DATABASE_URL` ci-dessus.
    - `deployment.yaml` : le namespace dans `spec.template.spec.containers[0].image` (valeur de

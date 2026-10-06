@@ -24,10 +24,26 @@ export const config = {
 	azureClientSecret: env.AZURE_CLIENT_SECRET ?? '',
 	jiraBaseUrl: env.JIRA_BASE_URL ?? '',
 	jiraPatEncryptionKey: env.JIRA_PAT_ENCRYPTION_KEY ?? '',
+	// Mode de connexion, choisi par environnement : `classic` (email + mot de passe, défaut),
+	// `sso` (OIDC uniquement) ou `both`. Fournisseur OIDC générique (Entra, Keycloak, GitLab…) :
+	// aucune valeur propre à l'organisation dans le code, tout vient du secret.
+	authMode: parseAuthMode(env.AUTH_MODE),
+	oidcIssuerUrl: (env.OIDC_ISSUER_URL ?? '').replace(/\/$/, ''),
+	oidcClientId: env.OIDC_CLIENT_ID ?? '',
+	oidcClientSecret: env.OIDC_CLIENT_SECRET ?? '',
 	// Force le wrapped visible/accessible à tout le monde toute l'année (démo, QA) — jamais mis en
 	// préprod/prod, absent de l'env par défaut donc la fenêtre du 1 déc → 5 jan s'applique normalement.
 	wrappedForceOpen: env.WRAPPED_FORCE_OPEN === '1'
 };
+
+export type AuthMode = 'classic' | 'sso' | 'both';
+
+function parseAuthMode(raw: string | undefined): AuthMode {
+	return raw === 'sso' || raw === 'both' ? raw : 'classic';
+}
+
+export const ssoEnabled = () => config.authMode !== 'classic';
+export const passwordEnabled = () => config.authMode !== 'sso';
 
 export function emailDomain(email: string): string {
 	return email.trim().toLowerCase().split('@')[1] ?? '';
