@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { db, user } from '$lib/server/db';
-import { config } from '$lib/server/config';
+import { config, passwordEnabled } from '$lib/server/config';
 import { parseNotifPrefs } from '$lib/server/services/notifications';
 import {
 	setAccentPref,
@@ -43,7 +43,8 @@ export const load: PageServerLoad = async ({ locals }) => {
 		rememberTicketSearch: u?.rememberTicketSearch ?? true,
 		compactTicketActivity: u?.compactTicketActivity ?? true,
 		motivationBanner: locals.user.motivationBanner,
-		role: locals.role
+		role: locals.role,
+		passwordEnabled: passwordEnabled()
 	};
 };
 
@@ -93,6 +94,7 @@ export const actions: Actions = {
 
 	changePassword: async ({ request, locals }) => {
 		if (!locals.user) return fail(401);
+		if (!passwordEnabled()) return fail(403, { pwError: 'Connexion par SSO : pas de mot de passe à changer.' });
 		const parsed = changePasswordSchema.safeParse(Object.fromEntries(await request.formData()));
 		if (!parsed.success) return fail(400, { pwError: parsed.error.issues[0].message });
 		const ok = await changePassword(
