@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { browser } from '$app/environment';
-	import { page, navigating } from '$app/state';
+	import { page, navigating, updated } from '$app/state';
 	import { invalidateAll, goto } from '$app/navigation';
 	import { beep } from '$lib/sound';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
@@ -40,6 +40,8 @@
 		let lastRefresh = Date.now();
 		const refresh = () => {
 			if (document.visibilityState !== 'visible') return;
+			// Un GET minuscule (version.json, sans cache) : pas besoin du délai minimum des données.
+			updated.check();
 			if (Date.now() - lastRefresh < REFRESH_COOLDOWN_MS) return;
 			lastRefresh = Date.now();
 			invalidateAll();
@@ -47,6 +49,22 @@
 		document.addEventListener('visibilitychange', refresh);
 		return () => document.removeEventListener('visibilitychange', refresh);
 	});
+
+	// Nouvelle version déployée depuis l'ouverture de l'onglet : pastille qui recharge la page (jamais
+	// de rechargement automatique, une saisie d'imputation en cours serait perdue). `data-sveltekit-reload`
+	// sur un lien vers la page courante = rechargement complet.
+	const pills = $derived(
+		updated.current
+			? [
+					...data.pills,
+					{
+						href: page.url.pathname + page.url.search,
+						label: 'Nouvelle version',
+						reload: true
+					}
+				]
+			: data.pills
+	);
 
 	// Page de l'app demandée depuis l'extérieur (clic sur une notif push, raccourci de l'icône de l'app
 	// installée) alors qu'une fenêtre existe déjà : navigation côté app dans cette fenêtre, sans
@@ -387,7 +405,7 @@
 		{/if}
 
 		<div class="side-foot">
-			<SidebarPills pills={data.pills} />
+			<SidebarPills {pills} />
 			<div class="user-card">
 				<a class="user-main" href="/settings" title="Réglages" data-tour="user-menu">
 					<UserAvatar userId={data.user?.id} name={data.user?.displayName ?? '?'} />

@@ -14,6 +14,13 @@ export default defineConfig({
 	},
 	plugins: [
 		sveltekit({
+			// Nom de version = APP_VERSION (SHA/tag) plutôt qu'un timestamp : deux builds du même commit ne
+			// déclenchent pas la pastille « nouvelle version ». Sondage toutes les heures (+ au retour sur
+			// l'onglet, cf. +layout.svelte) ; `updated` est inactif en dev.
+			version: {
+				name: process.env.APP_VERSION ?? String(Date.now()),
+				pollInterval: 60 * 60 * 1000
+			},
 			compilerOptions: {
 				// Force runes mode for the project, except for libraries.
 				runes: ({ filename }) =>

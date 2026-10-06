@@ -10,7 +10,9 @@
 	 * tap sur un écran tactile (pas de survol).
 	 * ponytail: pas d'icône par sujet tant qu'il n'y en a qu'un (RAE) ; ajouter un champ `icon` au 2e.
 	 */
-	type Pill = { href: string; label: string; count: number; tone?: 'warn' };
+	// `reload` = pastille « nouvelle version » : lien vers la page courante en rechargement complet, icône au
+	// lieu d'un compteur, et teinte d'accent (pas `warn` : ce n'est pas une alerte, et l'ambre est déjà le RAE).
+	type Pill = { href: string; label: string; count?: number; tone?: 'warn'; reload?: boolean };
 	let { pills }: { pills: Pill[] } = $props();
 
 	let open = $state(false);
@@ -64,17 +66,25 @@
 		aria-label="À faire"
 		onmouseleave={() => (open = false)}
 	>
-		{#each pills as pill, i (pill.href)}
+		{#each pills as pill, i (pill.label)}
 			<a
 				class="todo-pill"
 				class:warn={pill.tone === 'warn'}
+				class:update={pill.reload}
 				href={pill.href}
+				data-sveltekit-reload={pill.reload ? '' : undefined}
 				style="--i: {i}"
-				aria-current={page.url.pathname === pill.href ? 'page' : undefined}
+				aria-current={!pill.reload && page.url.pathname === pill.href ? 'page' : undefined}
 				onclick={onPillClick}
 			>
 				<span class="label">{pill.label}</span>
-				<span class="n">{pill.count}</span>
+				<span class="n">
+					{#if pill.reload}
+						<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7" /><path d="M20 4v7h-7" /></svg>
+					{:else}
+						{pill.count}
+					{/if}
+				</span>
 			</a>
 		{/each}
 	</nav>
@@ -127,6 +137,30 @@
 	.todo-pill.warn:hover {
 		border-color: var(--warn);
 	}
+	.todo-pill.update {
+		border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+		background: var(--accent-tint);
+		color: var(--accent-ink);
+	}
+	.todo-pill.update:hover {
+		border-color: var(--accent);
+	}
+	.update .n {
+		display: grid;
+		place-items: center;
+		width: 22px;
+		height: 22px;
+		padding: 0;
+		background: var(--accent);
+		color: #fff;
+	}
+	.update .n svg {
+		transition: transform 0.4s ease;
+	}
+	.update:hover .n svg,
+	.update:focus-visible .n svg {
+		transform: rotate(180deg);
+	}
 	.todo-pill[aria-current='page'] {
 		box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 30%, transparent);
 	}
@@ -165,7 +199,8 @@
 
 	@media (prefers-reduced-motion: reduce) {
 		.todo-pill,
-		.todo-pill > * {
+		.todo-pill > *,
+		.update .n svg {
 			transition: none;
 		}
 	}
