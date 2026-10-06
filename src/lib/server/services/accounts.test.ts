@@ -435,7 +435,7 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 			regexReplacement: '',
 			linkEnabled: true,
 			linkRegexPattern: '^',
-			linkRegexReplacement: 'CARTEJEUNE_',
+			linkRegexReplacement: 'ACME_',
 			pat: '',
 			updatedSinceDate: '',
 			createdSinceDate: '',
@@ -445,7 +445,7 @@ describe('config Jira (getJiraConfig / setJiraSyncEnabled / saveJiraConfig)', ()
 		const cfg = await getJiraConfig(workspaceId);
 		expect(cfg.linkEnabled).toBe(true);
 		expect(cfg.linkRegexPattern).toBe('^');
-		expect(cfg.linkRegexReplacement).toBe('CARTEJEUNE_');
+		expect(cfg.linkRegexReplacement).toBe('ACME_');
 	});
 
 	it('saveJiraConfig avec une date minimum : parse en minuit UTC', async () => {

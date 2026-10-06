@@ -288,7 +288,7 @@ async function seedOneWorkspace(db: ReturnType<typeof getDb>, wsName: string, pe
 	const activityByLabel = new Map(insertedActivities.map((a) => [a.label, a]));
 	const categoryByLabel = new Map(insertedCategories.map((c) => [c.label, c]));
 
-	// Codes SSP réalistes (format Sopra Steria) — la plupart des tickets en portent un désormais
+	// Codes SSP réalistes (format d'un vrai référentiel) — la plupart des tickets en portent un désormais
 	// qu'il s'agit d'un référentiel : la clôture mensuelle n'a rien à montrer sans eux.
 	const insertedSsps = await db
 		.insert(ssp)

@@ -202,7 +202,7 @@ ADMIN d'un workspace et simple USER d'un autre.
 - **Intégration Jira** : création de cartes et synchronisation des statuts depuis l'app.
   → Le modèle de données réserve la clé Jira comme identifiant pour faciliter ce branchement
   ultérieur (one-way push puis sync bidirectionnel).
-- SSO Sopra Steria (cible), notifications, historique/audit avancé.
+- SSO d'entreprise (cible), notifications, historique/audit avancé.
 
 ---
 
@@ -404,9 +404,9 @@ Navigateur (Svelte) ──cookie session──► SvelteKit (Node)
   l'équipe ne migrera pas) : édition inline, raccourcis, pré-remplissage.
 - Multi-année (le format actuel couvre 2024→2026).
 - ~11 utilisateurs, faible charge ⇒ pas de contrainte de scalabilité forte.
-- Données internes Sopra Steria ⇒ hébergement maîtrisé, mots de passe hashés, HTTPS.
+- Données internes à l'entreprise ⇒ hébergement maîtrisé, mots de passe hashés, HTTPS.
   **À valider** : l'hébergement interne et l'auth maison sont-ils autorisés, ou le SSO
-  Sopra devient-il un prérequis ? (impacte le Lot 1).
+  d'entreprise devient-il un prérequis ? (impacte le Lot 1).
 - **Concurrence** : le tableau Tickets est partagé. Stratégie MVP = *last-write-wins* avec
   `updatedAt` + avertissement si la ligne a changé depuis le chargement. L'imputation est
   cloisonnée par utilisateur ⇒ peu de conflits.
@@ -488,7 +488,7 @@ Navigateur (Svelte) ──cookie session──► SvelteKit (Node)
   Synthèse par personne, par projet/sprint, Hors-projet/absences, Paramétrage).
 
 ## 13. Points encore ouverts
-- **Auth/hébergement** : auth maison + hébergement interne autorisés, ou SSO Sopra requis ?
+- **Auth/hébergement** : auth maison + hébergement interne autorisés, ou SSO d'entreprise requis ?
   (peut transformer le SSO en prérequis du Lot 1).
 - **Durée de rétention** avant purge des archives (90 j proposé, à confirmer).
 - **Capacité par défaut / temps partiels** : confirmer qui est < 1 j/jour (Françoise, Fanny ?).
