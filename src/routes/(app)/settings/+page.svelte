@@ -155,6 +155,8 @@
 		{ key: 'securite', label: 'Sécurité' }
 	] as const;
 	type Tab = (typeof TABS)[number]['key'];
+	// En SSO l'onglet Sécurité ne contient que le mot de passe : inutile de l'afficher.
+	const tabs = $derived(data.passwordEnabled ? TABS : TABS.filter((t) => t.key !== 'securite'));
 	// Repli sur l'onglet concerné après un POST sans JS (use:enhance ne remonte pas le composant).
 	let tab = $state<Tab>(
 		form?.pwOk || form?.pwError
@@ -175,7 +177,7 @@
 
 <div class="content settings">
 	<div class="tabs">
-		{#each TABS as t (t.key)}
+		{#each tabs as t (t.key)}
 			<button type="button" class:on={tab === t.key} onclick={() => (tab = t.key)}>{t.label}</button>
 		{/each}
 	</div>

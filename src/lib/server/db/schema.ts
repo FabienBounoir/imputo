@@ -112,7 +112,7 @@ export const workspace = pgTable('workspace', {
 	jiraSyncEnabled: boolean('jira_sync_enabled').notNull().default(false),
 	// Chiffré (AES-256-GCM, voir auth/secretCrypto.ts) — jamais en clair, jamais réaffiché.
 	jiraPatEncrypted: text('jira_pat_encrypted'),
-	// JQL libre, ex. "project = CARTEJEUNE_BLM". Ne doit jamais contenir ORDER BY (voir
+	// JQL libre, ex. "project = ACME_BLM". Ne doit jamais contenir ORDER BY (voir
 	// hasOrderByClause dans jiraClient.ts) — incompatible avec le wrapping fait pour jiraUpdatedSince.
 	jiraJql: text('jira_jql'),
 	// Plancher + watermark incrémental : ne redemander à Jira que les tickets dont `updated` est
@@ -133,8 +133,8 @@ export const workspace = pgTable('workspace', {
 	// fichier), voir aussi la note sur entityId dans changeLog pour la même contrainte d'ordre.
 	jiraPatUpdatedByUserId: uuid('jira_pat_updated_by_user_id'),
 	jiraPatUpdatedAt: timestamp('jira_pat_updated_at', { withTimezone: true }),
-	// Réconciliation de clé : ex. pattern "^CARTEJEUNE_" + remplacement "" pour faire correspondre
-	// une clé Jira réelle (CARTEJEUNE_BLM-123) à une clé déjà utilisée localement (BLM-123).
+	// Réconciliation de clé : ex. pattern "^ACME_" + remplacement "" pour faire correspondre
+	// une clé Jira réelle (ACME_BLM-123) à une clé déjà utilisée localement (BLM-123).
 	// Remplace la 1ère occurrence uniquement (pas de flag global) ; appliqué à key ET parentKey.
 	jiraKeyRegexPattern: text('jira_key_regex_pattern'),
 	jiraKeyRegexReplacement: text('jira_key_regex_replacement'),
@@ -199,6 +199,9 @@ export const user = pgTable('user', {
 	// Null = jamais vu le tutoriel de prise en main (déclenche le lancement auto au prochain
 	// chargement). Rejouable depuis Réglages sans repasser par null (juste relancé côté client).
 	tutorialSeenAt: timestamp('tutorial_seen_at'),
+	// Dernière connexion SSO. Un compte est "activé" s'il a un mot de passe OU s'est déjà connecté
+	// en SSO — en mode sso seul, passwordHash reste null pour toujours.
+	ssoLoginAt: timestamp('sso_login_at'),
 	active: boolean('active').notNull().default(true),
 	createdAt: createdAt()
 });

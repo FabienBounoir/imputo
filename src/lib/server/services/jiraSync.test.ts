@@ -184,9 +184,9 @@ describe('jiraSync / syncWorkspace', () => {
 
 	describe('mapping de clé par regex', () => {
 		it('transforme la clé (cas nominal) et laisse inchangée une clé qui ne matche pas', async () => {
-			const ws = await makeJiraWorkspace({ regexPattern: '^CARTEJEUNE_', regexReplacement: '' });
+			const ws = await makeJiraWorkspace({ regexPattern: '^ACME_', regexReplacement: '' });
 			await syncWorkspace(db, cfg, ws.workspaceId, {
-				fetchImpl: fakeFetch({ issues: [rawIssue('CARTEJEUNE_BLM-1', 'Réconcilié'), rawIssue('AUTRE-5', 'Pas concerné')] })
+				fetchImpl: fakeFetch({ issues: [rawIssue('ACME_BLM-1', 'Réconcilié'), rawIssue('AUTRE-5', 'Pas concerné')] })
 			});
 
 			const keys = (await ticketsOf(ws.workspaceId)).map((r) => r.key).sort();

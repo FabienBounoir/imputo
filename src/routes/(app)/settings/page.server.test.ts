@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { config } from '$lib/server/config';
 import { actions } from './+page.server';
 import { makeWorkspace } from '$lib/server/services/test-helpers';
 import { fakeLocals, formRequest } from '$lib/server/test-helpers/http';
@@ -73,6 +74,22 @@ describe('settings changePassword action', () => {
 		};
 		const res = await actions.changePassword(event as never);
 		expect(res).toEqual({ pwOk: true });
+	});
+
+	it('refuse en mode SSO (pas de mot de passe)', async () => {
+		const { userId } = await makeWorkspace('set3sso');
+		const locals = await fakeLocals(userId);
+		const event = {
+			locals,
+			request: formRequest({ currentPassword: 'password123', password: 'newpassword456', confirm: 'newpassword456' })
+		};
+		const before = config.authMode;
+		config.authMode = 'sso';
+		try {
+			expect((await actions.changePassword(event as never))?.status).toBe(403);
+		} finally {
+			config.authMode = before;
+		}
 	});
 
 	it('mauvais ancien mot de passe -> fail 400', async () => {

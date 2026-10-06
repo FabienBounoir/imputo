@@ -2,7 +2,7 @@
 	import { enhance } from '$app/forms';
 	import { toast } from 'svelte-sonner';
 	import PasswordField from '$lib/components/PasswordField.svelte';
-	let { form } = $props();
+	let { data, form } = $props();
 
 	// Décompte du blocage anti brute-force : le serveur donne le délai restant à chaque tentative
 	// refusée, le client l'affiche en direct plutôt qu'un message statique qui se périme.
@@ -34,7 +34,9 @@
 				? { title: 'Trop de tentatives', description: `Réessayez dans ${countdown}.` }
 				: form?.error
 					? { title: form.error, description: undefined }
-					: null
+					: data.ssoError
+						? { title: data.ssoError, description: undefined }
+						: null
 	);
 	// Même id à chaque appel : un toast déjà affiché est mis à jour en place (le compte à rebours
 	// avance dans le même toast) plutôt que d'en empiler un nouveau à chaque tick.
@@ -61,25 +63,41 @@
 		<h2>Bon retour 👋</h2>
 		<p class="sub">Connectez-vous à votre espace Imputo.</p>
 
-		<form method="POST" use:enhance>
-			<div class="field">
-				<label for="em">Email</label>
-				<input
-					id="em"
-					name="email"
-					type="email"
-					value={form?.values?.email ?? ''}
-					oninput={onEmailInput}
-					placeholder="vous@entreprise.com"
-					required
-				/>
-			</div>
-			<PasswordField id="pw" name="password" label="Mot de passe" autocomplete="current-password" required />
-			<button class="btn btn-primary" type="submit" disabled={locked}>
-				{locked ? `Réessayer dans ${countdown}` : 'Se connecter'}
-			</button>
-		</form>
+		{#if data.ssoEnabled}
+			<!-- Endpoint serveur qui redirige vers le fournisseur : navigation complète, pas le routeur client. -->
+			<a class="btn {data.passwordEnabled ? 'btn-ghost' : 'btn-primary'} sso-btn" href="/login/sso" data-sveltekit-reload>
+				Se connecter avec le SSO
+			</a>
+		{/if}
+		{#if data.passwordEnabled}
+			<form method="POST" use:enhance>
+				<div class="field">
+					<label for="em">Email</label>
+					<input
+						id="em"
+						name="email"
+						type="email"
+						value={form?.values?.email ?? ''}
+						oninput={onEmailInput}
+						placeholder="vous@entreprise.com"
+						required
+					/>
+				</div>
+				<PasswordField id="pw" name="password" label="Mot de passe" autocomplete="current-password" required />
+				<button class="btn btn-primary" type="submit" disabled={locked}>
+					{locked ? `Réessayer dans ${countdown}` : 'Se connecter'}
+				</button>
+			</form>
 
-		<div class="auth-foot">Pas encore d'espace ? <a href="/register">Créer un espace</a></div>
+			<div class="auth-foot">Pas encore d'espace ? <a href="/register">Créer un espace</a></div>
+		{/if}
 	</div>
 </div>
+
+<style>
+	.sso-btn {
+		width: 100%;
+		justify-content: center;
+		margin-bottom: 16px;
+	}
+</style>

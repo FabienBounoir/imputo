@@ -1,4 +1,4 @@
-import { and, count, desc, eq, inArray, isNotNull, lt, sql } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, isNotNull, lt, or, sql } from 'drizzle-orm';
 import { db, workspace, moodVote, membership, user, type MoodPeriodKind } from '$lib/server/db';
 import { previousMoodPeriodStart } from '$lib/utils/date';
 
@@ -24,7 +24,7 @@ export async function getPeriodParticipation(
 					eq(membership.workspaceId, workspaceId),
 					eq(membership.active, true),
 					eq(user.active, true),
-					isNotNull(user.passwordHash)
+					or(isNotNull(user.passwordHash), isNotNull(user.ssoLoginAt))
 				)
 			)
 	]);

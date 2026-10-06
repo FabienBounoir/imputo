@@ -5,13 +5,26 @@ import { login } from '$lib/server/services/accounts';
 import { listMembershipsForUser } from '$lib/server/services/workspaces';
 import { createSession, setSessionCookie } from '$lib/server/auth/session';
 import { logger } from '$lib/server/logger';
+import { passwordEnabled, ssoEnabled } from '$lib/server/config';
 
-export const load: PageServerLoad = async ({ locals }) => {
+export const load: PageServerLoad = async ({ locals, url }) => {
 	if (locals.user) redirect(303, '/imputation');
+	const sso = url.searchParams.get('sso');
+	return {
+		passwordEnabled: passwordEnabled(),
+		ssoEnabled: ssoEnabled(),
+		ssoError:
+			sso === 'unknown'
+				? "Ce compte n'a pas d'accès à Imputo. Demandez une invitation à l'admin de votre espace."
+				: sso === 'error'
+					? 'La connexion SSO a échoué. Réessayez.'
+					: null
+	};
 };
 
 export const actions: Actions = {
 	default: async ({ request, cookies }) => {
+		if (!passwordEnabled()) return fail(403, { error: 'Connexion par mot de passe désactivée.', values: { email: '' } });
 		const form = Object.fromEntries(await request.formData());
 		const parsed = loginSchema.safeParse(form);
 		if (!parsed.success)
