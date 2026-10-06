@@ -18,7 +18,9 @@ export default defineConfig({
 			// déclenchent pas la pastille « nouvelle version ». Sondage toutes les heures (+ au retour sur
 			// l'onglet, cf. +layout.svelte) ; `updated` est inactif en dev.
 			version: {
-				name: process.env.APP_VERSION ?? String(Date.now()),
+				// `||` et pas `??` : un build OpenShift binaire (`--from-dir`) laisse APP_VERSION vide, ce qui donnerait
+				// une version "" identique à chaque déploiement, donc aucune pastille. Repli : horodatage du build.
+				name: process.env.APP_VERSION || String(Date.now()),
 				pollInterval: 60 * 60 * 1000
 			},
 			compilerOptions: {
