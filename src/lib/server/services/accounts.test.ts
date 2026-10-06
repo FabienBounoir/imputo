@@ -134,6 +134,30 @@ describe('regenerateInvite pour un membre déjà actif', () => {
 	});
 });
 
+describe('sessions après changement de mot de passe', () => {
+	it('un reset par lien coupe les sessions existantes, un compte désactivé n’en valide plus', async () => {
+		const { createSession, validateSession } = await import('$lib/server/auth/session');
+		const { userId, workspaceId } = await createWorkspaceWithOwner({
+			displayName: 'Sophie',
+			email: `sess-${rnd}@acme.test`,
+			password: 'password123',
+			workspaceName: 'Espace Sessions'
+		});
+		wsIds.push(workspaceId);
+
+		const { token: sessionToken } = await createSession(userId, workspaceId);
+		expect((await validateSession(sessionToken)).session).not.toBeNull();
+
+		const { token } = await regenerateInvite(workspaceId, userId);
+		await setPasswordWithToken(token, 'resetpassword789');
+		expect((await validateSession(sessionToken)).session).toBeNull();
+
+		const { token: s2 } = await createSession(userId, workspaceId);
+		await db.update(user).set({ active: false }).where(eq(user.id, userId));
+		expect((await validateSession(s2)).session).toBeNull();
+	});
+});
+
 describe('prise de contrôle via un autre espace', () => {
 	it('refuse d’inviter un compte qui appartient à un autre espace', async () => {
 		const victimEmail = `victim-${rnd}@acme.test`;

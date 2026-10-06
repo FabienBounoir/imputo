@@ -1,11 +1,21 @@
 import { error, json } from '@sveltejs/kit';
+import { timingSafeEqual } from 'node:crypto';
 import { config } from '$lib/server/config';
 import { logger } from '$lib/server/logger';
 
+// Comparaison en temps constant (longueurs différentes = faux, timingSafeEqual lèverait sinon).
+function safeEqual(a: string | null, b: string): boolean {
+	if (a === null) return false;
+	const x = Buffer.from(a);
+	const y = Buffer.from(b);
+	return x.length === y.length && timingSafeEqual(x, y);
+}
+
 function authorized(request: Request, url: URL): boolean {
 	if (!config.cronSecret) return false;
-	if (request.headers.get('authorization') === `Bearer ${config.cronSecret}`) return true;
-	return url.searchParams.get('secret') === config.cronSecret;
+	if (safeEqual(request.headers.get('authorization'), `Bearer ${config.cronSecret}`)) return true;
+	// ponytail: ?secret= finit dans les logs d'accès du routeur — retirer quand tous les appelants passent par le header.
+	return safeEqual(url.searchParams.get('secret'), config.cronSecret);
 }
 
 /** Point d'entrée commun aux jobs cron HTTP (cleanup/notify/snapshot/wrapped/support-duty) : ce

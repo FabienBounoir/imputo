@@ -1,5 +1,5 @@
 import type { Cookies } from '@sveltejs/kit';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { db, session, user } from '$lib/server/db';
 import { generateToken, hashToken } from './tokens';
 
@@ -19,7 +19,7 @@ export async function validateSession(token: string) {
 		.select({ session, user })
 		.from(session)
 		.innerJoin(user, eq(session.userId, user.id))
-		.where(eq(session.id, id));
+		.where(and(eq(session.id, id), eq(user.active, true)));
 	const row = rows[0];
 	if (!row) return { session: null, user: null };
 	if (row.session.expiresAt.getTime() < Date.now()) {
