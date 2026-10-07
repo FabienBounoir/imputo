@@ -81,8 +81,10 @@
 				? (data.user?.displayName ?? 'Moi')
 				: (data.ref.members.find((m) => m.id === data.filters.assigneeId)?.displayName ?? 'Ancien membre')
 	);
-	// Préférence de compte (Réglages) : nom du critère à côté de chaque icône de filtre.
-	const labels = $derived(data.ticketFilterLabels);
+	// Nom du critère à côté de chaque icône de filtre : préférence de compte (Réglages) en vue tableau,
+	// toujours en vue kanban — le board ne s'affiche qu'une fois un sprint ou une version choisi, ces
+	// deux filtres doivent s'y lire sans avoir à deviner une icône.
+	const labels = $derived(data.ticketFilterLabels || data.view === 'kanban');
 	type FilterParam = 'state' | 'project' | 'sprint' | 'version';
 	const SORTS = [
 		['created', 'plus ancien'],
@@ -323,6 +325,34 @@
 	// jeu de résultats aux rows déjà réinitialisées et corrompt hasMore (scroll infini qui se bloque
 	// ou qui s'arrête trop tôt en fin de liste).
 	let loadGeneration = 0;
+	// URL (filtres, tri, vue) pour laquelle `rows` a été chargé. Tant qu'elle diffère de l'URL courante,
+	// ce qu'on a en mémoire appartient à une autre requête : le kanban montre un squelette plutôt que
+	// d'anciennes cartes. Un rechargement de la même URL (carte déplacée, retour sur l'onglet) garde
+	// au contraire les cartes en place, sans rien afficher par-dessus.
+	let rowsFor = $state<string | null>(null);
+	const kanbanSkeleton = $derived(isNavigating || (ticketsLoading && rowsFor !== page.url.search));
+	// Squelette du kanban : quelques emplacements répartis irrégulièrement entre les colonnes. Entre deux
+	// écueils constatés : trop fidèle à une vraie carte, on croyait voir des cartes disparaître à
+	// l'arrivée des données ; un simple bloc pâle était trop neutre. D'où un emplacement en pointillés,
+	// deux traits et un reflet qui passe — vivant, mais qu'on ne prend pas pour un ticket.
+	// Pseudo-aléatoire déterministe (colonne + graine) et non Math.random() : le rendu serveur et
+	// l'hydratation doivent dessiner le même squelette. La graine ne change qu'aux chargements
+	// suivants, côté client, pour que le motif varie d'un filtre à l'autre.
+	let skeletonSeed = $state(0);
+	const hash01 = (a: number, b: number) => {
+		let x = Math.imul(a + 1, 0x9e3779b1) ^ Math.imul(b + 1, 0x85ebca6b);
+		x = Math.imul(x ^ (x >>> 15), 0x2c1b3c6d);
+		x ^= x >>> 12;
+		return (x >>> 0) / 4294967296; // [0, 1[
+	};
+	function skeletonBlocks(col: number): { height: number; line: number }[] {
+		const h = hash01(col, skeletonSeed);
+		const count = h < 0.3 ? 0 : h < 0.62 ? 1 : h < 0.86 ? 2 : 3;
+		return Array.from({ length: count }, (_, j) => {
+			const k = hash01(col * 7 + j, skeletonSeed + 3);
+			return { height: 58 + Math.round(k * 30), line: 45 + Math.round(k * 40) }; // px, %
+		});
+	}
 
 	// (Re)synchronise quand les données serveur changent (filtre, vue, recherche, arrivée sur la page)
 	// — `data.ticketsPage` est une nouvelle promesse à chaque nouveau `load`, ce qui redéclenche cet
@@ -331,6 +361,7 @@
 	$effect(() => {
 		ticketsLoading = true;
 		loadGeneration++;
+		if (loadGeneration > 1) skeletonSeed = loadGeneration; // jamais au premier rendu (hydratation)
 		let cancelled = false;
 		data.ticketsPage.then(async (r) => {
 			if (cancelled) return;
@@ -339,9 +370,11 @@
 			pageCount = r.pageCount;
 			loadedPage = data.page;
 			hasMore = data.view === 'table' && data.page < r.pageCount;
+			const fresh = rowsFor !== page.url.search; // premières données pour cette URL
+			rowsFor = page.url.search;
 			ticketsLoading = false;
 			await tick(); // les cartes sont dans le DOM
-			if (!cancelled) scrollKanbanToFirstFilled();
+			if (!cancelled && fresh) scrollKanbanToFirstFilled();
 		});
 		return () => {
 			cancelled = true;
@@ -588,15 +621,13 @@
 	let kanbanEl = $state<HTMLElement | null>(null);
 	// Kanban : à l'arrivée et à chaque changement de filtre, on amène la première colonne qui contient
 	// un ticket vers le bord gauche (les premiers états du workflow sont souvent vides). Une seule fois
-	// par URL : un rechargement des mêmes données (carte déplacée, « Tout déplier », retour sur l'onglet)
-	// ne doit pas faire perdre la position où l'on travaillait.
-	let kanbanScrolledFor: string | null = null;
+	// par URL (cf. `rowsFor`) : un rechargement des mêmes données (carte déplacée, « Tout déplier »,
+	// retour sur l'onglet) ne doit pas faire perdre la position où l'on travaillait.
 	/** Ce qu'on laisse dépasser de la colonne précédente : sans ce bout de colonne, on prendrait la
 	 *  première colonne remplie pour le début du tableau et on ne penserait pas à revenir en arrière. */
 	const KANBAN_PEEK = 48;
 	function scrollKanbanToFirstFilled() {
-		if (!kanbanEl || kanbanScrolledFor === page.url.search) return;
-		kanbanScrolledFor = page.url.search;
+		if (!kanbanEl) return;
 		const firstFilled = [...kanbanEl.querySelectorAll('.kcol')].find((col) => col.querySelector('.kcard'));
 		const left = firstFilled
 			? Math.max(0, kanbanEl.scrollLeft + firstFilled.getBoundingClientRect().left - kanbanEl.getBoundingClientRect().left - KANBAN_PEEK)
@@ -1349,15 +1380,22 @@
 	{:else}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div class="kanban" bind:this={kanbanEl} ondragover={onKanbanDragOver}>
-		{#each kanbanCols as col (col.id ?? 'none')}
+		{#each kanbanCols as col, colIndex (col.id ?? 'none')}
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<div class="kcol" ondragover={(e) => e.preventDefault()} ondrop={() => onColumnDrop(col.id)}>
 				<div class="kcol-head">
 					<span class="kdot" style={col.color ? `background:${col.color}` : 'background:var(--text-mute)'}></span>
 					<span class="klabel">{col.emoji ?? ''} {col.label}</span>
-					<span class="kcount">{colTickets(col.id).length}</span>
+					{#if !kanbanSkeleton}<span class="kcount">{colTickets(col.id).length}</span>{/if}
 				</div>
 				<div class="kcards">
+					{#if kanbanSkeleton}
+						{#each skeletonBlocks(colIndex) as sk, j (j)}
+							<div class="kskel" style="height:{sk.height}px; --o:{1 - j * 0.25}" aria-hidden="true">
+								<i style="width:28%"></i><i style="width:{sk.line}%"></i>
+							</div>
+						{/each}
+					{:else}
 					{#each colTickets(col.id) as t (t.id)}
 						<div
 							class="kcard"
@@ -1415,7 +1453,8 @@
 							{/if}
 						</div>
 					{/each}
-					{#if ticketsLoading}<div class="kempty">Chargement…</div>{:else if colTickets(col.id).length === 0}<div class="kempty">Aucun ticket</div>{/if}
+					{#if colTickets(col.id).length === 0 && !ticketsLoading}<div class="kempty">Aucun ticket</div>{/if}
+					{/if}
 				</div>
 			</div>
 		{/each}
@@ -2876,6 +2915,39 @@
 		color: var(--text-soft);
 		min-width: 30px;
 		text-align: right;
+	}
+	.kskel {
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
+		gap: 9px;
+		padding: 0 12px;
+		border-radius: var(--r-md);
+		border: 1px dashed color-mix(in srgb, var(--text) 16%, transparent);
+		/* Reflet teinté qui traverse l'emplacement, sur un fond à peine marqué. */
+		background:
+			linear-gradient(100deg, transparent 30%, color-mix(in srgb, var(--accent) 14%, transparent) 50%, transparent 70%) 120% 0 / 220% 100% no-repeat,
+			color-mix(in srgb, var(--text) 4%, transparent);
+		opacity: var(--o, 1);
+		animation: kskel-sweep 1.5s ease-in-out infinite;
+	}
+	.kskel i {
+		display: block;
+		height: 8px;
+		border-radius: 4px;
+		background: color-mix(in srgb, var(--text) 13%, transparent);
+	}
+	@keyframes kskel-sweep {
+		to {
+			background-position:
+				-120% 0,
+				0 0;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.kskel {
+			animation: none;
+		}
 	}
 	.kempty {
 		font-size: 12px;

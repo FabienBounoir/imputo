@@ -388,7 +388,7 @@
 			<div class="opt">
 				<div class="opt-t">
 					<b>Barre de filtres</b>
-					<span class="hint">Un filtre vide n'est qu'une icône, pour gagner de la place. « Icônes et noms » affiche aussi le nom de chaque critère.</span>
+					<span class="hint">Un filtre vide n'est qu'une icône, pour gagner de la place. « Icônes et noms » affiche aussi le nom de chaque critère. En vue kanban, les noms sont toujours affichés.</span>
 				</div>
 				<form method="POST" action="?/ticketFilterLabelsPref" use:enhance>
 					<div class="seg">
