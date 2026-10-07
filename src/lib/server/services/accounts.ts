@@ -250,14 +250,22 @@ export async function setRememberTicketSearchPref(userId: string, value: boolean
 	await db.update(user).set({ rememberTicketSearch: value }).where(eq(user.id, userId));
 }
 
-/** Détail par activité replié par défaut sous chaque ticket (vue tableau) — préférence de compte. */
-export async function getCompactTicketActivityPref(userId: string): Promise<boolean> {
-	const [row] = await db.select({ v: user.compactTicketActivity }).from(user).where(eq(user.id, userId));
-	return row?.v ?? true;
+/** Préférences d'affichage de la page Tickets (compte) : détail par activité replié par défaut sous
+ *  chaque ticket (vue tableau), et nom des filtres affiché à côté de leur icône. */
+export async function getTicketDisplayPrefs(userId: string): Promise<{ compactTicketActivity: boolean; ticketFilterLabels: boolean }> {
+	const [row] = await db
+		.select({ compactTicketActivity: user.compactTicketActivity, ticketFilterLabels: user.ticketFilterLabels })
+		.from(user)
+		.where(eq(user.id, userId));
+	return { compactTicketActivity: row?.compactTicketActivity ?? true, ticketFilterLabels: row?.ticketFilterLabels ?? false };
 }
 
 export async function setCompactTicketActivityPref(userId: string, value: boolean) {
 	await db.update(user).set({ compactTicketActivity: value }).where(eq(user.id, userId));
+}
+
+export async function setTicketFilterLabelsPref(userId: string, value: boolean) {
+	await db.update(user).set({ ticketFilterLabels: value }).where(eq(user.id, userId));
 }
 
 /** Bandeau de citations motivantes en haut des pages — préférence de compte. */

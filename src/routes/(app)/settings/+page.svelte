@@ -53,6 +53,7 @@
 	let rememberTicketFilters = $state(data.rememberTicketFilters);
 	let rememberTicketSearch = $state(data.rememberTicketSearch);
 	let compactTicketActivity = $state(data.compactTicketActivity);
+	let ticketFilterLabels = $state(data.ticketFilterLabels);
 	let motivationBanner = $state(data.motivationBanner);
 	const activeSeasonal = $derived(activeSeasonalEffects());
 
@@ -380,6 +381,19 @@
 					<div class="seg">
 						<button type="submit" name="value" value="true" class:on={compactTicketActivity} onclick={() => (compactTicketActivity = true)}>Masquer</button>
 						<button type="submit" name="value" value="false" class:on={!compactTicketActivity} onclick={() => (compactTicketActivity = false)}>Afficher</button>
+					</div>
+				</form>
+			</div>
+
+			<div class="opt">
+				<div class="opt-t">
+					<b>Barre de filtres</b>
+					<span class="hint">Un filtre vide n'est qu'une icône, pour gagner de la place. « Icônes et noms » affiche aussi le nom de chaque critère.</span>
+				</div>
+				<form method="POST" action="?/ticketFilterLabelsPref" use:enhance>
+					<div class="seg">
+						<button type="submit" name="value" value="false" class:on={!ticketFilterLabels} onclick={() => (ticketFilterLabels = false)}>Icônes</button>
+						<button type="submit" name="value" value="true" class:on={ticketFilterLabels} onclick={() => (ticketFilterLabels = true)}>Icônes et noms</button>
 					</div>
 				</form>
 			</div>
