@@ -20,7 +20,10 @@ export default defineConfig({
 			version: {
 				// `||` et pas `??` : un build OpenShift binaire (`--from-dir`) laisse APP_VERSION vide, ce qui donnerait
 				// une version "" identique à chaque déploiement, donc aucune pastille. Repli : horodatage du build.
-				name: process.env.APP_VERSION || String(Date.now()),
+				// Figé dans l'env du process (`||=`) : le plugin recharge ce fichier pour le build client, un
+				// `Date.now()` réévalué donnerait deux versions serveur/client, donc `__sveltekit_<hash>` introuvable
+				// au boot et plus aucune hydratation.
+				name: process.env.APP_VERSION || (process.env.BUILD_TIMESTAMP ||= String(Date.now())),
 				pollInterval: 60 * 60 * 1000
 			},
 			compilerOptions: {
