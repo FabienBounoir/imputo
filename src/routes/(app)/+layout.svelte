@@ -402,6 +402,10 @@
 				<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>
 				Historique
 			</a>
+			<a class="nav-item" class:active={isActive('/admin/import')} href="/admin/import">
+				<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
+				Import de tickets
+			</a>
 		{/if}
 
 		<div class="side-foot">

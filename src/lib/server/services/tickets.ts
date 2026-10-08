@@ -580,6 +580,9 @@ export type TicketFilters = {
 	/** Lien direct depuis l'historique de sync Jira (onglet admin) : URL-only comme exactKey, jamais
 	 *  exposé comme filtre dans la barre (cf. tickets/+page.server.ts, param ?jiraRun=). */
 	syncRunId?: string;
+	/** Lien direct depuis /admin/import (« Voir les tickets ») : même principe que syncRunId, pour un
+	 *  lot d'import de fichier (param ?import=). URL-only, jamais dans la barre de filtres. */
+	importId?: string;
 	/** Tickets sans code SSP. URL-only comme les deux ci-dessus (param ?ssp=none) : lien depuis la
 	 *  colonne « Sans code SSP » de la clôture mensuelle, pour aller les corriger. */
 	noSsp?: boolean;
@@ -636,6 +639,9 @@ export function ticketFiltersFromUrl(url: URL, selfId: string): { filters: Ticke
 			// Lien direct depuis l'historique de sync Jira (Admin > Jira) : même principe que exactKey,
 			// URL-only — jamais un champ du formulaire de filtres (cf. TicketFilters#syncRunId).
 			syncRunId: p.get('jiraRun') ?? undefined,
+			// Lien direct depuis le résultat d'un import de fichier. Une valeur qui n'est pas un uuid est
+			// ignorée (Postgres la refuserait).
+			importId: isUuid(p.get('import') ?? '') ? p.get('import')! : undefined,
 			// Lien depuis la clôture mensuelle (colonne « Sans code SSP ») : ces tickets ne remontent
 			// dans aucun code budgétaire, on vient les corriger.
 			noSsp: p.get('ssp') === 'none',
@@ -701,6 +707,7 @@ function ticketFilterConditions(workspaceId: string, filters: TicketFilters) {
 	if (filters.unassigned) conditions.push(isNull(ticket.assigneeId));
 	if (filters.exactKey) conditions.push(eq(ticket.key, filters.exactKey));
 	if (filters.syncRunId) conditions.push(eq(ticket.createdBySyncRunId, filters.syncRunId));
+	if (filters.importId) conditions.push(eq(ticket.createdByImportId, filters.importId));
 	if (filters.noSsp) conditions.push(isNull(ticket.sspId));
 	if (filters.keys?.length) conditions.push(inArray(ticket.key, filters.keys));
 	if (filters.query?.trim()) {

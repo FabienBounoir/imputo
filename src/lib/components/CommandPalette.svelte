@@ -201,6 +201,7 @@
 			nav('Clôture mensuelle', '/admin/cloture', '📁');
 			nav('Suivi annuel', '/admin/suivi-annuel', '📈');
 			nav('Historique', '/admin/history', '🕘');
+			nav('Import de tickets', '/admin/import', '📥');
 		}
 		nav('Réglages', '/settings', '👤');
 

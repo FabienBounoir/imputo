@@ -473,6 +473,28 @@ export const jiraSyncRun = pgTable(
 	(t) => [index('jira_sync_run_ws_started_idx').on(t.workspaceId, t.startedAt)]
 );
 
+// Un import de fichier validé depuis /admin/import (cf. ticketImport.ts) — pendant de jiraSyncRun
+// pour le sync Jira : sert de portée à « Annuler ce lot ». Une ligne n'est écrite que si l'import a
+// créé au moins un ticket.
+export const ticketImport = pgTable(
+	'ticket_import',
+	{
+		id: id(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspace.id, { onDelete: 'cascade' }),
+		fileName: text('file_name').notNull(),
+		ticketsCreated: integer('tickets_created').notNull(),
+		createdById: uuid('created_by_id').references(() => user.id, { onDelete: 'set null' }),
+		// Posés ensemble par « Annuler ce lot » (cf. undoImport) — ne supprime que les tickets du lot
+		// restés tels qu'importés.
+		undoneAt: timestamp('undone_at', { withTimezone: true }),
+		undoneById: uuid('undone_by_id').references(() => user.id, { onDelete: 'set null' }),
+		createdAt: createdAt()
+	},
+	(t) => [index('ticket_import_ws_created_idx').on(t.workspaceId, t.createdAt)]
+);
+
 export const ticket = pgTable(
 	'ticket',
 	{
@@ -515,6 +537,8 @@ export const ticket = pgTable(
 		// "Annuler ce lot" (deleteUntouchedSyncedTickets) : seuls les tickets encore vierges de toute
 		// trace humaine, d'un run donné, peuvent être supprimés en masse depuis l'onglet admin Jira.
 		createdBySyncRunId: uuid('created_by_sync_run_id').references(() => jiraSyncRun.id, { onDelete: 'set null' }),
+		// Même rôle pour un import de fichier : renseigné à la création, jamais réécrit (cf. undoImport).
+		createdByImportId: uuid('created_by_import_id').references(() => ticketImport.id, { onDelete: 'set null' }),
 		archivedAt: archivedAt(),
 		createdAt: createdAt(),
 		updatedAt: updatedAt()
@@ -522,7 +546,8 @@ export const ticket = pgTable(
 	(t) => [
 		index('ticket_ws_idx').on(t.workspaceId),
 		uniqueIndex('ticket_ws_key_uq').on(t.workspaceId, t.key),
-		index('ticket_sync_run_idx').on(t.createdBySyncRunId)
+		index('ticket_sync_run_idx').on(t.createdBySyncRunId),
+		index('ticket_import_idx').on(t.createdByImportId)
 	]
 );
 
