@@ -783,7 +783,12 @@
 					</div>
 				{:else if refSection === 'ssp'}
 					{@const filtered = data.ssps.filter((s) => refMatch(`${s.code} ${s.label}`))}
-					<h3>Codes SSP</h3>
+					<div class="block-head">
+						<h3>Codes SSP</h3>
+						<!-- Même filtre que la colonne « Sans code SSP » de la clôture mensuelle : droit aux
+						     tickets à qui il manque un code, pour leur en affecter un. -->
+						<a class="btn btn-ghost" href="/tickets?ssp=none">Tickets sans code SSP ↗</a>
+					</div>
 					<p class="hint">
 						Codes budgétaires portés par les tickets. Le libellé est ce qu'on lit partout ailleurs
 						(synthèse, clôture mensuelle) — le code reste la clé côté compta. Le budget est en jours.
