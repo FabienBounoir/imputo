@@ -257,7 +257,7 @@ export async function getTicketDisplayPrefs(userId: string): Promise<{ compactTi
 		.select({ compactTicketActivity: user.compactTicketActivity, ticketFilterLabels: user.ticketFilterLabels })
 		.from(user)
 		.where(eq(user.id, userId));
-	return { compactTicketActivity: row?.compactTicketActivity ?? true, ticketFilterLabels: row?.ticketFilterLabels ?? false };
+	return { compactTicketActivity: row?.compactTicketActivity ?? true, ticketFilterLabels: row?.ticketFilterLabels ?? true };
 }
 
 export async function setCompactTicketActivityPref(userId: string, value: boolean) {

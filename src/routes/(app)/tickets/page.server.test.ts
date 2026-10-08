@@ -309,14 +309,14 @@ describe('tickets +page.server actions.groupToggle / actions.flag', () => {
 });
 
 describe('tickets +page.server — préférence "détail par activité"', () => {
-	it('load renvoie ticketFilterLabels : icônes seules par défaut, noms affichés une fois le réglage activé', async () => {
+	it('load renvoie ticketFilterLabels : noms affichés par défaut, icônes seules une fois le réglage désactivé', async () => {
 		const { userId } = await makeWorkspace('ticketslabels');
 		const url = new URL('http://localhost/tickets?page=1');
-		expect((await load({ locals: await fakeLocals(userId), url } as never)).ticketFilterLabels).toBe(false);
+		expect((await load({ locals: await fakeLocals(userId), url } as never)).ticketFilterLabels).toBe(true);
 
 		const { actions: settingsActions } = await import('../settings/+page.server');
-		await settingsActions.ticketFilterLabelsPref({ request: formRequest({ value: 'true' }), locals: await fakeLocals(userId) } as never);
-		expect((await load({ locals: await fakeLocals(userId), url } as never)).ticketFilterLabels).toBe(true);
+		await settingsActions.ticketFilterLabelsPref({ request: formRequest({ value: 'false' }), locals: await fakeLocals(userId) } as never);
+		expect((await load({ locals: await fakeLocals(userId), url } as never)).ticketFilterLabels).toBe(false);
 	});
 
 	// Le board kanban se charge sans pagination : le détail par activité n'y est joint que déplié.
