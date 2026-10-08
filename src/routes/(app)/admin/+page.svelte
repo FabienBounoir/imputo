@@ -1,11 +1,12 @@
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import { postOrToast } from '$lib/postAction';
 	import { enhance, deserialize } from '$app/forms';
 	import { toast } from 'svelte-sonner';
 	import { invalidateAll, replaceState } from '$app/navigation';
 	import { page } from '$app/state';
 	import { formatDateTime } from '$lib/utils/date';
+	import { appendJiraTestPage, type JiraTestIssue } from '$lib/jiraTestPage';
 	import ExportModal from '$lib/components/ExportModal.svelte';
 	import AccentPicker from '$lib/components/AccentPicker.svelte';
 	import MemberAccessModal from '$lib/components/MemberAccessModal.svelte';
@@ -317,13 +318,15 @@
 	let jiraSyncing = $state(false);
 
 	// ---------- Test JQL (modale avec pagination au scroll) ----------
-	type JiraTestIssue = { key: string; summary: string; isNew: boolean };
 	let jiraJqlValue = $state(data.jira.jql);
 	let jiraTesting = $state(false);
 	let jiraTestModalOpen = $state(false);
 	let jiraTestResults = $state<JiraTestIssue[]>([]);
 	let jiraTestTotal = $state(0);
+	// Position Jira de la page suivante, distincte de la longueur de la liste (cf. appendJiraTestPage).
+	let jiraTestNextStart = $state(0);
 	let jiraTestLoadingMore = $state(false);
+	let jiraTestListEl = $state<HTMLElement>();
 	const jiraTestNewCount = $derived(jiraTestResults.filter((i) => i.isNew).length);
 
 	async function jiraTestFetchPage(startAt: number): Promise<{ issues: JiraTestIssue[]; total: number }> {
@@ -345,12 +348,18 @@
 		return { issues: resultData.jiraTestIssues, total: resultData.jiraTestTotal };
 	}
 
+	async function jiraTestShowPage(startAt: number) {
+		const page = await jiraTestFetchPage(startAt);
+		const { issues, nextStart } = appendJiraTestPage(startAt === 0 ? [] : jiraTestResults, startAt, page);
+		jiraTestResults = issues;
+		jiraTestTotal = page.total;
+		jiraTestNextStart = nextStart;
+	}
+
 	async function jiraTestStart() {
 		jiraTesting = true;
 		try {
-			const { issues, total } = await jiraTestFetchPage(0);
-			jiraTestResults = issues;
-			jiraTestTotal = total;
+			await jiraTestShowPage(0);
 			jiraTestModalOpen = true;
 		} catch (e) {
 			toast.error(e instanceof Error ? e.message : 'Erreur.');
@@ -360,12 +369,10 @@
 	}
 
 	async function jiraTestLoadMore() {
-		if (jiraTestLoadingMore || jiraTestResults.length >= jiraTestTotal) return;
+		if (jiraTestLoadingMore || jiraTestNextStart >= jiraTestTotal) return;
 		jiraTestLoadingMore = true;
 		try {
-			const { issues, total } = await jiraTestFetchPage(jiraTestResults.length);
-			jiraTestResults = [...jiraTestResults, ...issues];
-			jiraTestTotal = total;
+			await jiraTestShowPage(jiraTestNextStart);
 		} catch (e) {
 			toast.error(e instanceof Error ? e.message : 'Erreur.');
 		} finally {
@@ -373,10 +380,17 @@
 		}
 	}
 
-	function jiraTestOnScroll(e: Event) {
-		const el = e.currentTarget as HTMLElement;
-		if (el.scrollHeight - el.scrollTop - el.clientHeight < 150) jiraTestLoadMore();
+	function jiraTestMaybeLoadMore() {
+		const el = jiraTestListEl;
+		if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 150) jiraTestLoadMore();
 	}
+
+	// Sans barre de défilement (grand écran : une page ne remplit pas la liste), aucun scroll ne viendrait
+	// jamais demander la suite : on revérifie à l'ouverture et après chaque page affichée.
+	$effect(() => {
+		void jiraTestNextStart;
+		if (jiraTestListEl) untrack(jiraTestMaybeLoadMore);
+	});
 
 	// Une fois JQL + PAT renseignés, la configuration se replie derrière un bouton "Éditer" — seule
 	// l'activation (toggle + statut + sync manuel) reste visible en permanence.
@@ -1459,11 +1473,12 @@
 								<span class="jira-test-stat-label">nouveau{jiraTestNewCount > 1 ? 'x' : ''}</span>
 							</div>
 						</div>
-						<ul class="jira-test-list-modal" onscroll={jiraTestOnScroll}>
+						<ul class="jira-test-list-modal" bind:this={jiraTestListEl} onscroll={jiraTestMaybeLoadMore}>
 							{#each jiraTestResults as issue (issue.key)}
 								<li class:is-new={issue.isNew}>
 									<span class="jira-test-badge">{issue.isNew ? 'Nouveau' : 'Existe déjà'}</span>
-									<b>{issue.key}</b> — {issue.summary}
+									<b>{issue.key}</b>
+									<span class="jira-test-summary">{issue.summary}</span>
 								</li>
 							{/each}
 							{#if jiraTestLoadingMore}
@@ -2691,6 +2706,7 @@
 	.modal-lg {
 		max-width: 720px;
 		height: 85vh;
+		height: 85dvh;
 		display: flex;
 		flex-direction: column;
 	}
@@ -2746,6 +2762,19 @@
 		border-radius: 6px;
 		font-size: 0.92em;
 	}
+	/* La clé ne se coupe jamais (elle se cassait après le tiret) : c'est le titre qui prend le reste. */
+	.jira-test-list-modal b {
+		flex: 0 0 auto;
+		white-space: nowrap;
+	}
+	.jira-test-summary {
+		flex: 1 1 0;
+		min-width: 0;
+		overflow-wrap: anywhere;
+	}
+	.jira-test-summary::before {
+		content: '— ';
+	}
 	.jira-test-list-modal li.is-new {
 		background: color-mix(in srgb, var(--accent, #3a7) 12%, transparent);
 	}
@@ -2767,6 +2796,38 @@
 		color: var(--text-soft);
 		font-size: 0.85em;
 		padding: 10px 0;
+	}
+	/* Téléphone : la modale prend toute la hauteur laissée par le fond, et chaque ticket passe sur deux
+	   lignes (pastille + clé, puis titre) au lieu de tasser le titre dans une colonne de 100 px. */
+	@media (max-width: 560px) {
+		.modal-lg {
+			height: 100%;
+			padding: 16px;
+		}
+		.jira-test-stat {
+			padding: 10px 12px;
+		}
+		.jira-test-stat-value {
+			font-size: 22px;
+		}
+		.jira-test-list-modal li {
+			flex-wrap: wrap;
+			row-gap: 2px;
+			padding: 8px;
+		}
+		.jira-test-summary {
+			flex-basis: 100%;
+		}
+		.jira-test-summary::before {
+			content: none;
+		}
+		.modal-lg .modal-actions {
+			margin-top: 12px;
+		}
+		.modal-lg .modal-actions .btn {
+			flex: 1;
+			justify-content: center;
+		}
 	}
 	.jira-sync-fields {
 		display: flex;
