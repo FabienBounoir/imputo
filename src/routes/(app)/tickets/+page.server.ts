@@ -11,6 +11,7 @@ import {
 	deleteTicket,
 	parseTicketFiltersSnapshot,
 	parseTicketSort,
+	ticketFiltersFromUrl,
 	type TicketFilters
 } from '$lib/server/services/tickets';
 import { setTicketInGroup } from '$lib/server/services/ticketGroups';
@@ -18,7 +19,7 @@ import { isManagerOrAdmin } from '$lib/server/services/workspaces';
 import {
 	getTicketFiltersPref,
 	setTicketFiltersSnapshot,
-	getCompactTicketActivityPref,
+	getTicketDisplayPrefs,
 	setCompactTicketActivityPref
 } from '$lib/server/services/accounts';
 
@@ -76,6 +77,9 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 			if (snapshot.projectId && ref.projects.some((p) => p.id === snapshot.projectId)) target.set('project', snapshot.projectId);
 			if (snapshot.sprintId && ref.sprints.some((s) => s.id === snapshot.sprintId)) target.set('sprint', snapshot.sprintId);
 			if (snapshot.versionId && ref.versions.some((v) => v.id === snapshot.versionId)) target.set('version', snapshot.versionId);
+			// `me` et `none` valent dans tous les espaces ; l'id d'un collègue seulement là où il est membre.
+			if (snapshot.assignee === 'me' || snapshot.assignee === 'none' || ref.members.some((m) => m.id === snapshot.assignee))
+				target.set('assignee', snapshot.assignee!);
 			// `created` est le défaut de la page : ne poser le paramètre que pour les autres valeurs,
 			// sinon une simple arrivée à blanc déclencherait une redirection qui n'affiche rien de
 			// différent.
@@ -86,26 +90,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
 	const view = url.searchParams.get('view') === 'kanban' ? 'kanban' : 'table';
 	const page = Math.max(1, Number(url.searchParams.get('page')) || 1);
-	const sort = parseTicketSort(url.searchParams.get('sort'));
-	const filters: TicketFilters = {
-		query: url.searchParams.get('q') ?? undefined,
-		stateId: url.searchParams.get('state') ?? undefined,
-		projectId: url.searchParams.get('project') ?? undefined,
-		sprintId: url.searchParams.get('sprint') ?? undefined,
-		versionId: url.searchParams.get('version') ?? undefined,
-		// Lien direct depuis un dashboard sprint/version (SprintDashboardPanel) : clé exacte,
-		// pas de recherche substring — sinon "SBX-3" isolerait aussi SBX-30..39.
-		exactKey: url.searchParams.get('ticket') ?? undefined,
-		// Lien direct depuis l'historique de sync Jira (Admin > Jira) : même principe que exactKey,
-		// URL-only — jamais un champ du formulaire de filtres (cf. TicketFilters#syncRunId).
-		syncRunId: url.searchParams.get('jiraRun') ?? undefined,
-		// Lien depuis la clôture mensuelle (colonne « Sans code SSP ») : ces tickets ne remontent
-		// dans aucun code budgétaire, on vient les corriger.
-		noSsp: url.searchParams.get('ssp') === 'none',
-		// Lot de tickets tout juste créés (popover « Nouveau ticket ») : accumulé côté client à
-		// chaque création réussie (cf. +page.svelte) pour les retrouver et les traiter à la suite.
-		keys: url.searchParams.get('created')?.split(',').filter(Boolean)
-	};
+	const { filters, sort } = ticketFiltersFromUrl(url, locals.user!.id);
 	// Lien depuis l'imputation (clic sur le sprint/version d'une ligne) : filtre sur le sprint ou la
 	// version (liste complète, pas juste ce ticket) + surbrillance du ticket d'origine dans la liste.
 	const highlightKey = url.searchParams.get('highlight') ?? undefined;
@@ -126,6 +111,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	// `ticketsPage` n'est PAS awaité : la requête (jointures + enrichissement par activité) est la
 	// partie lente de la page — on la laisse streamer après le shell (filtres, chrome) pendant que
 	// `ref` (petites tables de référence) est prêt tout de suite (§ retour utilisateur, page trop lente).
+	const prefs = await getTicketDisplayPrefs(locals.user!.id);
 	const ticketsPage = kanbanNeedsScope
 		? Promise.resolve({ tickets: [], total: 0, pageCount: 1 })
 		: listTicketsPage(
@@ -134,9 +120,10 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 				isAdmin,
 				queryFilters,
 				view === 'table' ? { pageSize: PAGE_SIZE, page } : undefined,
-				// Le détail par activité n'est rendu que dans les lignes fines de la vue tableau — le
-				// kanban charge tout le board sans pagination, l'économiser y compte double (cf. audit).
-				view === 'table',
+				// Détail par activité : toujours en vue tableau (lignes fines, dépliables ticket par ticket) ;
+				// en kanban seulement s'il est déplié — le board se charge sans pagination, l'économiser y
+				// compte double (cf. audit). Le bouton « Tout déplier » recharge la page pour l'obtenir.
+				view === 'table' || !prefs.compactTicketActivity,
 				sort
 			).then(({ rows: tickets, total }) => ({
 				tickets,
@@ -164,7 +151,8 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		selfId: locals.user!.id,
 		// Édition de la clé / suppression de ticket : créateur de l'espace (super admin) ou ADMIN, cf. deleteTicket().
 		isOwner: locals.user!.id === ws.createdByUserId || locals.role === 'ADMIN',
-		compactTicketActivity: await getCompactTicketActivityPref(locals.user!.id)
+		// compactTicketActivity + ticketFilterLabels (préférences de compte, cf. Réglages).
+		...prefs
 	};
 };
 
@@ -301,6 +289,7 @@ export const actions: Actions = {
 			projectId: (f.get('project') as string) || null,
 			sprintId: (f.get('sprint') as string) || null,
 			versionId: (f.get('version') as string) || null,
+			assignee: (f.get('assignee') as string) || null,
 			sort: parseTicketSort(f.get('sort'))
 		});
 		return { ok: true };

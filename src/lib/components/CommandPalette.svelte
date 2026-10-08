@@ -193,6 +193,7 @@
 		nav('Synthèse', '/dashboard', '📊');
 		nav('Synthèse par version', '/dashboard/version', '📦');
 		nav('Synthèse par sprint', '/dashboard/sprint', '🏃');
+		nav('Synthèse par activité', '/dashboard/activite', '🗂️');
 		if (data.workspace?.objectivesEnabled) nav('Objectifs de la semaine', '/admin/objectifs', '🎯');
 		if (data.role === 'ADMIN' && data.workspace?.moodEnabled) nav('Résultats Team mood', '/admin/mood', '🙂');
 		if (data.role === 'ADMIN') {

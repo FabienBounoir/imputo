@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { db, user } from '$lib/server/db';
-import { config } from '$lib/server/config';
+import { config, passwordEnabled } from '$lib/server/config';
 import { parseNotifPrefs } from '$lib/server/services/notifications';
 import {
 	setAccentPref,
@@ -11,6 +11,7 @@ import {
 	setRememberTicketFiltersPref,
 	setRememberTicketSearchPref,
 	setCompactTicketActivityPref,
+	setTicketFilterLabelsPref,
 	setMotivationBannerPref,
 	changePassword
 } from '$lib/server/services/accounts';
@@ -28,7 +29,8 @@ export const load: PageServerLoad = async ({ locals }) => {
 			notifPrefs: user.notifPrefs,
 			rememberTicketFilters: user.rememberTicketFilters,
 			rememberTicketSearch: user.rememberTicketSearch,
-			compactTicketActivity: user.compactTicketActivity
+			compactTicketActivity: user.compactTicketActivity,
+			ticketFilterLabels: user.ticketFilterLabels
 		})
 		.from(user)
 		.where(eq(user.id, locals.user.id));
@@ -42,8 +44,10 @@ export const load: PageServerLoad = async ({ locals }) => {
 		rememberTicketFilters: u?.rememberTicketFilters ?? true,
 		rememberTicketSearch: u?.rememberTicketSearch ?? true,
 		compactTicketActivity: u?.compactTicketActivity ?? true,
+		ticketFilterLabels: u?.ticketFilterLabels ?? false,
 		motivationBanner: locals.user.motivationBanner,
-		role: locals.role
+		role: locals.role,
+		passwordEnabled: passwordEnabled()
 	};
 };
 
@@ -84,6 +88,13 @@ export const actions: Actions = {
 		return { compactActivityOk: true };
 	},
 
+	ticketFilterLabelsPref: async ({ request, locals }) => {
+		if (!locals.user) return fail(401);
+		const f = await request.formData();
+		await setTicketFilterLabelsPref(locals.user.id, f.get('value') === 'true');
+		return { ticketFilterLabelsOk: true };
+	},
+
 	motivationBannerPref: async ({ request, locals }) => {
 		if (!locals.user) return fail(401);
 		const f = await request.formData();
@@ -93,9 +104,15 @@ export const actions: Actions = {
 
 	changePassword: async ({ request, locals }) => {
 		if (!locals.user) return fail(401);
+		if (!passwordEnabled()) return fail(403, { pwError: 'Connexion par SSO : pas de mot de passe à changer.' });
 		const parsed = changePasswordSchema.safeParse(Object.fromEntries(await request.formData()));
 		if (!parsed.success) return fail(400, { pwError: parsed.error.issues[0].message });
-		const ok = await changePassword(locals.user.id, parsed.data.currentPassword, parsed.data.password);
+		const ok = await changePassword(
+			locals.user.id,
+			parsed.data.currentPassword,
+			parsed.data.password,
+			locals.sessionToken ?? undefined
+		);
 		if (!ok) return fail(400, { pwError: 'Mot de passe actuel incorrect.' });
 		return { pwOk: true };
 	}

@@ -4,13 +4,17 @@ import { registerSchema } from '$lib/server/validation/auth';
 import { createWorkspaceWithOwner } from '$lib/server/services/workspaces';
 import { createSession, setSessionCookie } from '$lib/server/auth/session';
 import { logger } from '$lib/server/logger';
+import { passwordEnabled } from '$lib/server/config';
 
 export const load: PageServerLoad = async ({ locals }) => {
 	if (locals.user) redirect(303, '/imputation');
+	// En mode SSO seul, un compte naît d'une invitation, jamais d'un mot de passe.
+	if (!passwordEnabled()) redirect(303, '/login');
 };
 
 export const actions: Actions = {
 	default: async ({ request, cookies }) => {
+		if (!passwordEnabled()) return fail(403, { error: 'Création de compte désactivée (SSO).', values: { workspaceName: '', displayName: '', email: '' } });
 		const raw = await request.formData();
 		const values = {
 			workspaceName: String(raw.get('workspaceName') ?? ''),

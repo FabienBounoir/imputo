@@ -20,6 +20,7 @@ import {
 	type Role
 } from '$lib/server/db';
 import { isManagerOrAdmin } from './workspaces';
+import { isUuid } from './activitySynthesis';
 import { logChange } from './changeLog';
 import { config } from '$lib/server/config';
 import type { AbsenceType } from '$lib/absenceTypes';
@@ -570,6 +571,10 @@ export type TicketFilters = {
 	projectId?: string;
 	sprintId?: string;
 	versionId?: string;
+	/** Responsable du ticket (filtre « Assigné à », param ?assignee=me ou ?assignee=<id d'un membre>). */
+	assigneeId?: string;
+	/** Tickets sans responsable (même filtre, param ?assignee=none). */
+	unassigned?: boolean;
 	/** Lien direct (ex. depuis un dashboard sprint/version) : isole une clé exacte, pas de substring. */
 	exactKey?: string;
 	/** Lien direct depuis l'historique de sync Jira (onglet admin) : URL-only comme exactKey, jamais
@@ -600,6 +605,47 @@ export function parseTicketSort(raw: unknown): TicketSort {
 	return TICKET_SORTS.includes(raw as TicketSort) ? (raw as TicketSort) : 'created';
 }
 
+function assigneeFromParam(raw: string | null, selfId: string): string | undefined {
+	if (raw === 'me') return selfId;
+	return raw && isUuid(raw) ? raw : undefined;
+}
+
+/**
+ * Filtres + tri lus depuis l'URL. Source unique pour la page /tickets et pour son scroll infini
+ * (/api/tickets) : tenues à la main des deux côtés, les deux listes avaient divergé (le tri n'était
+ * pas transmis, donc la page 2 arrivait dans l'ordre par défaut).
+ */
+export function ticketFiltersFromUrl(url: URL, selfId: string): { filters: TicketFilters; sort: TicketSort } {
+	const p = url.searchParams;
+	return {
+		sort: parseTicketSort(p.get('sort')),
+		filters: {
+			query: p.get('q') ?? undefined,
+			stateId: p.get('state') ?? undefined,
+			projectId: p.get('project') ?? undefined,
+			sprintId: p.get('sprint') ?? undefined,
+			versionId: p.get('version') ?? undefined,
+			// `me` plutôt que son propre id : le lien et l'instantané mémorisé restent « mes tickets »
+			// pour quiconque les ouvre. Sinon l'id d'un membre ; une valeur qui n'est pas un uuid est
+			// ignorée (Postgres la refuserait). Pas de fuite possible : la requête reste bornée à l'espace.
+			assigneeId: assigneeFromParam(p.get('assignee'), selfId),
+			unassigned: p.get('assignee') === 'none',
+			// Lien direct depuis un dashboard sprint/version (SprintDashboardPanel) : clé exacte,
+			// pas de recherche substring — sinon "SBX-3" isolerait aussi SBX-30..39.
+			exactKey: p.get('ticket') ?? undefined,
+			// Lien direct depuis l'historique de sync Jira (Admin > Jira) : même principe que exactKey,
+			// URL-only — jamais un champ du formulaire de filtres (cf. TicketFilters#syncRunId).
+			syncRunId: p.get('jiraRun') ?? undefined,
+			// Lien depuis la clôture mensuelle (colonne « Sans code SSP ») : ces tickets ne remontent
+			// dans aucun code budgétaire, on vient les corriger.
+			noSsp: p.get('ssp') === 'none',
+			// Lot de tickets tout juste créés (popover « Nouveau ticket ») : accumulé côté client à
+			// chaque création réussie (cf. +page.svelte) pour les retrouver et les traiter à la suite.
+			keys: p.get('created')?.split(',').filter(Boolean)
+		}
+	};
+}
+
 export type TicketFiltersSnapshot = {
 	view: 'table' | 'kanban';
 	query: string | null;
@@ -607,6 +653,9 @@ export type TicketFiltersSnapshot = {
 	projectId: string | null;
 	sprintId: string | null;
 	versionId: string | null;
+	/** Filtre « Assigné à », même vocabulaire que le param d'URL : `me`, `none` ou l'id d'un membre.
+	 *  Optionnel : absent des instantanés enregistrés avant l'ajout du filtre. */
+	assignee?: string | null;
 	/** Tri de la barre de filtres ("Trier par"). Mémorisé comme le reste : c'est un choix d'affichage
 	 *  persistant au même titre qu'un filtre, et l'oublier revenait à le réinitialiser à chaque
 	 *  arrivée à blanc sur la page. */
@@ -632,6 +681,7 @@ export function parseTicketFiltersSnapshot(raw: string | null): TicketFiltersSna
 			projectId: str(p.projectId),
 			sprintId: str(p.sprintId),
 			versionId: str(p.versionId),
+			assignee: str(p.assignee),
 			// Instantané enregistré avant l'ajout du tri : `sort` absent, on retombe sur le défaut
 			// de la page plutôt que d'invalider tout l'instantané.
 			sort: parseTicketSort(p.sort)
@@ -647,6 +697,8 @@ function ticketFilterConditions(workspaceId: string, filters: TicketFilters) {
 	if (filters.projectId) conditions.push(eq(ticket.projectId, filters.projectId));
 	if (filters.sprintId) conditions.push(eq(ticket.sprintId, filters.sprintId));
 	if (filters.versionId) conditions.push(eq(ticket.versionId, filters.versionId));
+	if (filters.assigneeId) conditions.push(eq(ticket.assigneeId, filters.assigneeId));
+	if (filters.unassigned) conditions.push(isNull(ticket.assigneeId));
 	if (filters.exactKey) conditions.push(eq(ticket.key, filters.exactKey));
 	if (filters.syncRunId) conditions.push(eq(ticket.createdBySyncRunId, filters.syncRunId));
 	if (filters.noSsp) conditions.push(isNull(ticket.sspId));

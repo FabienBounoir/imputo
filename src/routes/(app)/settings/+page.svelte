@@ -53,6 +53,7 @@
 	let rememberTicketFilters = $state(data.rememberTicketFilters);
 	let rememberTicketSearch = $state(data.rememberTicketSearch);
 	let compactTicketActivity = $state(data.compactTicketActivity);
+	let ticketFilterLabels = $state(data.ticketFilterLabels);
 	let motivationBanner = $state(data.motivationBanner);
 	const activeSeasonal = $derived(activeSeasonalEffects());
 
@@ -155,6 +156,8 @@
 		{ key: 'securite', label: 'Sécurité' }
 	] as const;
 	type Tab = (typeof TABS)[number]['key'];
+	// En SSO l'onglet Sécurité ne contient que le mot de passe : inutile de l'afficher.
+	const tabs = $derived(data.passwordEnabled ? TABS : TABS.filter((t) => t.key !== 'securite'));
 	// Repli sur l'onglet concerné après un POST sans JS (use:enhance ne remonte pas le composant).
 	let tab = $state<Tab>(
 		form?.pwOk || form?.pwError
@@ -175,7 +178,7 @@
 
 <div class="content settings">
 	<div class="tabs">
-		{#each TABS as t (t.key)}
+		{#each tabs as t (t.key)}
 			<button type="button" class:on={tab === t.key} onclick={() => (tab = t.key)}>{t.label}</button>
 		{/each}
 	</div>
@@ -378,6 +381,19 @@
 					<div class="seg">
 						<button type="submit" name="value" value="true" class:on={compactTicketActivity} onclick={() => (compactTicketActivity = true)}>Masquer</button>
 						<button type="submit" name="value" value="false" class:on={!compactTicketActivity} onclick={() => (compactTicketActivity = false)}>Afficher</button>
+					</div>
+				</form>
+			</div>
+
+			<div class="opt">
+				<div class="opt-t">
+					<b>Barre de filtres</b>
+					<span class="hint">Un filtre vide n'est qu'une icône, pour gagner de la place. « Icônes et noms » affiche aussi le nom de chaque critère. En vue kanban, les noms sont toujours affichés.</span>
+				</div>
+				<form method="POST" action="?/ticketFilterLabelsPref" use:enhance>
+					<div class="seg">
+						<button type="submit" name="value" value="false" class:on={!ticketFilterLabels} onclick={() => (ticketFilterLabels = false)}>Icônes</button>
+						<button type="submit" name="value" value="true" class:on={ticketFilterLabels} onclick={() => (ticketFilterLabels = true)}>Icônes et noms</button>
 					</div>
 				</form>
 			</div>

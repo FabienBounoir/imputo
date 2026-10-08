@@ -1,5 +1,5 @@
-import { and, desc, eq } from 'drizzle-orm';
-import { db, user, membership, setupToken, workspace, jiraSyncRun, type Role } from '$lib/server/db';
+import { and, desc, eq, ne } from 'drizzle-orm';
+import { db, user, membership, setupToken, workspace, jiraSyncRun, session, type Role } from '$lib/server/db';
 import { verifyPassword, hashPassword } from '$lib/server/auth/password';
 import { generateToken, hashToken } from '$lib/server/auth/tokens';
 import { encryptSecret } from '$lib/server/auth/secretCrypto';
@@ -48,6 +48,44 @@ export async function login(
 }
 
 /**
+ * Connexion SSO : l'email vient du fournisseur OIDC, déjà authentifié. Pas de création à la volée —
+ * le rattachement aux espaces passe par les invitations, un email inconnu est refusé. Horodate
+ * ssoLoginAt, qui marque le compte comme activé (cf. isActivated).
+ */
+export async function ssoLogin(email: string): Promise<{ userId: string } | null> {
+	const [u] = await db
+		.update(user)
+		.set({ ssoLoginAt: new Date() })
+		.where(and(eq(user.email, email.trim().toLowerCase()), eq(user.active, true)))
+		.returning({ id: user.id });
+	return u ? { userId: u.id } : null;
+}
+
+/** Un compte est activé dès qu'il a un mot de passe ou s'est connecté une fois en SSO. */
+export const isActivated = (u: { passwordHash: string | null; ssoLoginAt: Date | null }) =>
+	u.passwordHash !== null || u.ssoLoginAt !== null;
+
+/**
+ * Un magic link permet de (re)définir le mot de passe : il ne doit jamais être émis par un espace
+ * pour un compte qui appartient aussi à un autre espace (sinon un admin d'un espace créé à la volée
+ * prendrait la main sur n'importe quel compte en l'invitant).
+ */
+async function assertNoForeignMembership(
+	q: Pick<typeof db, 'select'>,
+	workspaceId: string,
+	userId: string
+) {
+	const foreign = await q
+		.select({ id: membership.id })
+		.from(membership)
+		.where(and(eq(membership.userId, userId), ne(membership.workspaceId, workspaceId)))
+		.limit(1);
+	if (foreign.length > 0) {
+		throw new Error('Ce compte appartient déjà à un autre espace : impossible de générer un lien.');
+	}
+}
+
+/**
  * Invite un membre dans un espace (réservé ADMIN).
  * Retourne le token brut (à insérer dans le message à copier).
  */
@@ -68,6 +106,8 @@ export async function inviteMember(input: {
 				.insert(user)
 				.values({ displayName: input.displayName.trim() || email, email, passwordHash: null })
 				.returning();
+		} else {
+			await assertNoForeignMembership(tx, input.workspaceId, u.id);
 		}
 
 		const existingMembership = await tx
@@ -139,6 +179,8 @@ export async function setPasswordWithToken(rawToken: string, password: string): 
 	const passwordHash = await hashPassword(password);
 	await db.transaction(async (tx) => {
 		await tx.update(user).set({ passwordHash, active: true }).where(eq(user.id, target.userId));
+		// Un reset doit couper tout accès existant (cookie volé, compte pris avant un correctif).
+		await tx.delete(session).where(eq(session.userId, target.userId));
 		await tx.update(setupToken).set({ usedAt: new Date() }).where(eq(setupToken.id, target.tokenId));
 	});
 	return true;
@@ -148,7 +190,8 @@ export async function setPasswordWithToken(rawToken: string, password: string): 
 export async function changePassword(
 	userId: string,
 	currentPassword: string,
-	newPassword: string
+	newPassword: string,
+	keepSessionToken?: string
 ): Promise<boolean> {
 	const [u] = await db.select().from(user).where(eq(user.id, userId));
 	if (!u || !u.passwordHash) return false;
@@ -156,6 +199,14 @@ export async function changePassword(
 	if (!ok) return false;
 	const passwordHash = await hashPassword(newPassword);
 	await db.update(user).set({ passwordHash }).where(eq(user.id, userId));
+	// Coupe les autres sessions (appareils/cookies volés), garde celle de l'utilisateur courant.
+	await db
+		.delete(session)
+		.where(
+			keepSessionToken
+				? and(eq(session.userId, userId), ne(session.id, hashToken(keepSessionToken)))
+				: eq(session.userId, userId)
+		);
 	return true;
 }
 
@@ -199,14 +250,22 @@ export async function setRememberTicketSearchPref(userId: string, value: boolean
 	await db.update(user).set({ rememberTicketSearch: value }).where(eq(user.id, userId));
 }
 
-/** Détail par activité replié par défaut sous chaque ticket (vue tableau) — préférence de compte. */
-export async function getCompactTicketActivityPref(userId: string): Promise<boolean> {
-	const [row] = await db.select({ v: user.compactTicketActivity }).from(user).where(eq(user.id, userId));
-	return row?.v ?? true;
+/** Préférences d'affichage de la page Tickets (compte) : détail par activité replié par défaut sous
+ *  chaque ticket (vue tableau), et nom des filtres affiché à côté de leur icône. */
+export async function getTicketDisplayPrefs(userId: string): Promise<{ compactTicketActivity: boolean; ticketFilterLabels: boolean }> {
+	const [row] = await db
+		.select({ compactTicketActivity: user.compactTicketActivity, ticketFilterLabels: user.ticketFilterLabels })
+		.from(user)
+		.where(eq(user.id, userId));
+	return { compactTicketActivity: row?.compactTicketActivity ?? true, ticketFilterLabels: row?.ticketFilterLabels ?? false };
 }
 
 export async function setCompactTicketActivityPref(userId: string, value: boolean) {
 	await db.update(user).set({ compactTicketActivity: value }).where(eq(user.id, userId));
+}
+
+export async function setTicketFilterLabelsPref(userId: string, value: boolean) {
+	await db.update(user).set({ ticketFilterLabels: value }).where(eq(user.id, userId));
 }
 
 /** Bandeau de citations motivantes en haut des pages — préférence de compte. */
@@ -345,12 +404,12 @@ export async function setMemberFactice(workspaceId: string, userId: string, fact
 /** Annule une invitation en attente (jamais connectée) : supprime le membre et son compte. */
 export async function cancelInvite(workspaceId: string, userId: string) {
 	const [m] = await db
-		.select({ passwordHash: user.passwordHash })
+		.select({ passwordHash: user.passwordHash, ssoLoginAt: user.ssoLoginAt })
 		.from(membership)
 		.innerJoin(user, eq(membership.userId, user.id))
 		.where(memberWhere(workspaceId, userId));
 	if (!m) throw new Error('Membre introuvable dans cet espace.');
-	if (m.passwordHash !== null) throw new Error('Ce membre a déjà activé son compte, il ne peut plus être annulé.');
+	if (isActivated(m)) throw new Error('Ce membre a déjà activé son compte, il ne peut plus être annulé.');
 	await db.transaction(async (tx) => {
 		await tx.delete(membership).where(memberWhere(workspaceId, userId));
 		await tx.delete(user).where(eq(user.id, userId));
@@ -381,6 +440,7 @@ export async function regenerateInvite(
 		.innerJoin(user, eq(membership.userId, user.id))
 		.where(memberWhere(workspaceId, userId));
 	if (!m) throw new Error('Membre introuvable dans cet espace.');
+	await assertNoForeignMembership(db, workspaceId, userId);
 
 	const { token, hash } = generateToken();
 	await db.insert(setupToken).values({

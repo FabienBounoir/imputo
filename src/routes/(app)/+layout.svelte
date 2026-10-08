@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { browser } from '$app/environment';
-	import { page, navigating } from '$app/state';
+	import { page, navigating, updated } from '$app/state';
 	import { invalidateAll, goto } from '$app/navigation';
 	import { beep } from '$lib/sound';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
@@ -40,6 +40,8 @@
 		let lastRefresh = Date.now();
 		const refresh = () => {
 			if (document.visibilityState !== 'visible') return;
+			// Un GET minuscule (version.json, sans cache) : pas besoin du délai minimum des données.
+			updated.check();
 			if (Date.now() - lastRefresh < REFRESH_COOLDOWN_MS) return;
 			lastRefresh = Date.now();
 			invalidateAll();
@@ -47,6 +49,22 @@
 		document.addEventListener('visibilitychange', refresh);
 		return () => document.removeEventListener('visibilitychange', refresh);
 	});
+
+	// Nouvelle version déployée depuis l'ouverture de l'onglet : pastille qui recharge la page (jamais
+	// de rechargement automatique, une saisie d'imputation en cours serait perdue). `data-sveltekit-reload`
+	// sur un lien vers la page courante = rechargement complet.
+	const pills = $derived(
+		updated.current
+			? [
+					...data.pills,
+					{
+						href: page.url.pathname + page.url.search,
+						label: 'Nouvelle version',
+						reload: true
+					}
+				]
+			: data.pills
+	);
 
 	// Page de l'app demandée depuis l'extérieur (clic sur une notif push, raccourci de l'icône de l'app
 	// installée) alors qu'une fenêtre existe déjà : navigation côté app dans cette fenêtre, sans
@@ -340,6 +358,10 @@
 				<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg>
 				Par sprint
 			</a>
+			<a class="nav-item" class:active={isActive('/dashboard/activite')} href="/dashboard/activite">
+				<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+				Par activité
+			</a>
 		</div>
 		{#if data.workspace?.objectivesEnabled}
 			<a class="nav-item" class:active={isActive('/admin/objectifs')} href="/admin/objectifs">
@@ -383,7 +405,7 @@
 		{/if}
 
 		<div class="side-foot">
-			<SidebarPills pills={data.pills} />
+			<SidebarPills {pills} />
 			<div class="user-card">
 				<a class="user-main" href="/settings" title="Réglages" data-tour="user-menu">
 					<UserAvatar userId={data.user?.id} name={data.user?.displayName ?? '?'} />
@@ -416,8 +438,10 @@
 		{/if}
 		<!-- data.motivationQuotes est streamé (non awaité côté load, cf. +layout.server.ts) : rien ne
 		     s'affiche tant qu'il n'est pas résolu, plutôt que de retarder tout le reste de la page. -->
+		<!-- Certaines phrases de l'API portent un placeholder `*name*` (« Votre résilience est votre
+		     force, *name*. ») : substitué ici au prénom, le cache serveur étant commun à tous. -->
 		{#await data.motivationQuotes then quotes}
-			<MotivationBanner {quotes} />
+			<MotivationBanner quotes={quotes.map((q) => q.replaceAll('*name*', data.user.displayName.split(' ')[0]))} />
 		{/await}
 		{@render children()}
 	</main>

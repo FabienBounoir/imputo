@@ -1,0 +1,1 @@
+ALTER TABLE "user" ADD COLUMN "sso_login_at" timestamp;

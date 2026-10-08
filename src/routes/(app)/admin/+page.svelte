@@ -291,7 +291,7 @@
 	// ---------- Jira (onglet) ----------
 	let jiraRegexPattern = $state(data.jira.regexPattern);
 	let jiraRegexReplacement = $state(data.jira.regexReplacement);
-	let jiraSampleKey = $state('CARTEJEUNE_BLM-123');
+	let jiraSampleKey = $state('ACME_BLM-123');
 	const jiraSampleResult = $derived.by(() => {
 		if (!jiraRegexPattern) return jiraSampleKey;
 		try {
@@ -1251,7 +1251,7 @@
 							<div class="field">
 								<label for="jira-jql">Filtre JQL</label>
 								<div class="jira-jql-row">
-									<input id="jira-jql" name="jql" bind:value={jiraJqlValue} placeholder="project = CARTEJEUNE_BLM" />
+									<input id="jira-jql" name="jql" bind:value={jiraJqlValue} placeholder="project = ACME_BLM" />
 									<button
 										type="button"
 										class="jira-test-icon-btn"
@@ -1355,12 +1355,12 @@
 								<summary>Réconciliation des clés <span class="step-optional">optionnel</span></summary>
 								<p class="hint">
 									Si la clé renvoyée par Jira ne correspond pas à celle déjà utilisée dans l'app (ex.
-									<code>CARTEJEUNE_BLM-123</code> côté Jira vs <code>BLM-123</code> ici), un motif à
+									<code>ACME_BLM-123</code> côté Jira vs <code>BLM-123</code> ici), un motif à
 									rechercher/remplacer les fait correspondre avant tout rapprochement.
 								</p>
 								<div class="field">
 									<label for="jira-regex-pattern">Motif à rechercher (regex)</label>
-									<input id="jira-regex-pattern" name="regexPattern" bind:value={jiraRegexPattern} placeholder="^CARTEJEUNE_" />
+									<input id="jira-regex-pattern" name="regexPattern" bind:value={jiraRegexPattern} placeholder="^ACME_" />
 								</div>
 								<div class="field">
 									<label for="jira-regex-replacement">Remplacement</label>
@@ -1390,7 +1390,7 @@
 									Affiche un lien vers le ticket Jira à côté de sa clé, dans l'écran ticket et les
 									synthèses. Si la clé locale n'est pas la clé Jira réelle (cf. réconciliation
 									ci-dessus), indiquez ici le motif à rechercher/remplacer dans l'AUTRE sens
-									(<code>BLM-123</code> ici vers <code>CARTEJEUNE_BLM-123</code> côté Jira) pour
+									(<code>BLM-123</code> ici vers <code>ACME_BLM-123</code> côté Jira) pour
 									reconstruire la bonne URL.
 								</p>
 								<label class="jira-sync-field">
@@ -1408,7 +1408,7 @@
 								</div>
 								<div class="field">
 									<label for="jira-link-regex-replacement">Remplacement</label>
-									<input id="jira-link-regex-replacement" name="linkRegexReplacement" bind:value={jiraLinkRegexReplacement} placeholder="CARTEJEUNE_" />
+									<input id="jira-link-regex-replacement" name="linkRegexReplacement" bind:value={jiraLinkRegexReplacement} placeholder="ACME_" />
 								</div>
 								<div class="field">
 									<label for="jira-link-regex-sample">Tester avec une clé exemple</label>

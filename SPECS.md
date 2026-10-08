@@ -118,7 +118,7 @@ ADMIN d'un workspace et simple USER d'un autre.
   tickets, catégories, sprints, états, activités, imputations, membres).
 - **Auto-inscription** : s'inscrire **crée un nouveau workspace** dont l'inscrit devient
   **ADMIN**. Le workspace conserve le domaine de l'email du fondateur comme simple libellé
-  informatif (ex. `soprasteria.com`), sans effet restrictif.
+  informatif (ex. `example.com`), sans effet restrictif.
 - **Aucune restriction de domaine** : ni à l'auto-inscription, ni à l'invitation — un admin
   peut inviter n'importe quelle adresse email, quel que soit son domaine. *(Retiré : les
   anciens réglages `ALLOW_PUBLIC_EMAIL_DOMAINS`/`ALLOWED_SIGNUP_DOMAINS` et la restriction
@@ -202,7 +202,7 @@ ADMIN d'un workspace et simple USER d'un autre.
 - **Intégration Jira** : création de cartes et synchronisation des statuts depuis l'app.
   → Le modèle de données réserve la clé Jira comme identifiant pour faciliter ce branchement
   ultérieur (one-way push puis sync bidirectionnel).
-- SSO Sopra Steria (cible), notifications, historique/audit avancé.
+- SSO d'entreprise (cible), notifications, historique/audit avancé.
 
 ---
 
@@ -223,7 +223,7 @@ le workspace de l'utilisateur courant (isolation stricte). L'identité (`User`) 
 **globale** (une personne peut appartenir à plusieurs workspaces) ; le rôle et la capacité
 sont portés par l'appartenance (`Membership`).
 
-- **Workspace** : `id, name, allowedDomain (ex. soprasteria.com), accentColor (hex, défaut
+- **Workspace** : `id, name, allowedDomain (ex. example.com), accentColor (hex, défaut
   vert `#16A34A`), createdByUserId, createdAt`.
 - **User** (identité globale) : `id, displayName, email (unique global),
   passwordHash (nullable tant que non défini), themePref (LIGHT|DARK|SYSTEM, défaut SYSTEM),
@@ -404,9 +404,9 @@ Navigateur (Svelte) ──cookie session──► SvelteKit (Node)
   l'équipe ne migrera pas) : édition inline, raccourcis, pré-remplissage.
 - Multi-année (le format actuel couvre 2024→2026).
 - ~11 utilisateurs, faible charge ⇒ pas de contrainte de scalabilité forte.
-- Données internes Sopra Steria ⇒ hébergement maîtrisé, mots de passe hashés, HTTPS.
+- Données internes à l'entreprise ⇒ hébergement maîtrisé, mots de passe hashés, HTTPS.
   **À valider** : l'hébergement interne et l'auth maison sont-ils autorisés, ou le SSO
-  Sopra devient-il un prérequis ? (impacte le Lot 1).
+  d'entreprise devient-il un prérequis ? (impacte le Lot 1).
 - **Concurrence** : le tableau Tickets est partagé. Stratégie MVP = *last-write-wins* avec
   `updatedAt` + avertissement si la ligne a changé depuis le chargement. L'imputation est
   cloisonnée par utilisateur ⇒ peu de conflits.
@@ -488,7 +488,7 @@ Navigateur (Svelte) ──cookie session──► SvelteKit (Node)
   Synthèse par personne, par projet/sprint, Hors-projet/absences, Paramétrage).
 
 ## 13. Points encore ouverts
-- **Auth/hébergement** : auth maison + hébergement interne autorisés, ou SSO Sopra requis ?
+- **Auth/hébergement** : auth maison + hébergement interne autorisés, ou SSO d'entreprise requis ?
   (peut transformer le SSO en prérequis du Lot 1).
 - **Durée de rétention** avant purge des archives (90 j proposé, à confirmer).
 - **Capacité par défaut / temps partiels** : confirmer qui est < 1 j/jour (Françoise, Fanny ?).

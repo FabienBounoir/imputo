@@ -4,8 +4,11 @@ import { setPasswordSchema } from '$lib/server/validation/auth';
 import { getTokenTarget, setPasswordWithToken } from '$lib/server/services/accounts';
 import { listMembershipsForUser } from '$lib/server/services/workspaces';
 import { createSession, setSessionCookie } from '$lib/server/auth/session';
+import { passwordEnabled } from '$lib/server/config';
 
 export const load: PageServerLoad = async ({ params }) => {
+	// En mode SSO seul, le compte invité existe déjà : il suffit de se connecter via le fournisseur.
+	if (!passwordEnabled()) redirect(303, '/login');
 	const target = await getTokenTarget(params.token);
 	if (!target) return { invalid: true, email: null };
 	return { invalid: false, email: target.email };
@@ -13,6 +16,7 @@ export const load: PageServerLoad = async ({ params }) => {
 
 export const actions: Actions = {
 	default: async ({ request, params, cookies }) => {
+		if (!passwordEnabled()) return fail(403, { error: 'Mot de passe désactivé (SSO).' });
 		const target = await getTokenTarget(params.token);
 		if (!target) return fail(400, { error: 'Lien invalide ou expiré.' });
 

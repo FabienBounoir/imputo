@@ -128,7 +128,16 @@
 	//    ambiguïté puisque chaque cellule correspond à un mois précis. Son coin en bas à droite suit
 	//    la portée de la colonne « Cumul » (tous SSP, depuis l'origine), pas celle de la ligne.
 	const round2 = (n: number) => Math.round(n * 100) / 100;
-	function monthTotal(month: string, field: 'conso' | 'prod' | 'tnf'): number {
+	type Field = 'conso' | 'consoReal' | 'prod' | 'tnf' | 'tnfReal';
+	const TOTAL_KEY = {
+		conso: 'totalConso',
+		consoReal: 'totalConsoReal',
+		prod: 'totalProd',
+		tnf: 'totalTnf',
+		tnfReal: 'totalTnfReal'
+	} as const;
+	const isTnf = (field: Field) => field === 'tnf' || field === 'tnfReal';
+	function monthTotal(month: string, field: Field): number {
 		return round2(
 			view.rows.reduce((a, row) => {
 				const c = row.cells.find((c) => c.month === month);
@@ -136,9 +145,8 @@
 			}, 0)
 		);
 	}
-	function grandTotal(field: 'conso' | 'prod' | 'tnf'): number {
-		const totalKey = field === 'conso' ? 'totalConso' : field === 'prod' ? 'totalProd' : 'totalTnf';
-		return round2(view.rows.reduce((a, row) => a + row[totalKey], 0));
+	function grandTotal(field: Field): number {
+		return round2(view.rows.reduce((a, row) => a + row[TOTAL_KEY[field]], 0));
 	}
 </script>
 
@@ -172,20 +180,21 @@
 
 <!-- TNF = conso − prod : positif = dérapage (rouge), négatif = marge (vert). Même convention que
      l'écart vs budget des tickets et du dashboard sprint — surtout pas l'inverse. -->
-{#snippet totalCell(t: number, field: 'conso' | 'prod' | 'tnf')}
+{#snippet totalCell(t: number, field: Field)}
 	<td
 		class="num tabnum total-col computed"
-		class:warn={field === 'tnf' && t > 0}
-		class:ok-cell={field === 'tnf' && t < 0}>{t}</td
+		class:warn={isTnf(field) && t > 0}
+		class:ok-cell={isTnf(field) && t < 0}
+		title={isTnf(field) ? 'Somme des TNF mensuels, sur les seuls mois où une Prod est saisie' : undefined}>{t}</td
 	>
 {/snippet}
 
-{#snippet monthsTotalRow(field: 'conso' | 'prod' | 'tnf', label: string)}
+{#snippet monthsTotalRow(field: Field, label: string)}
 	<tr class="total-row">
 		<td>{label}</td>
 		{#each view.windowMonths as m (m)}
 			{@const t = monthTotal(m, field)}
-			<td class="num tabnum" class:warn={field === 'tnf' && t > 0} class:ok-cell={field === 'tnf' && t < 0}>{t}</td>
+			<td class="num tabnum" class:warn={isTnf(field) && t > 0} class:ok-cell={isTnf(field) && t < 0}>{t}</td>
 		{/each}
 		{@render totalCell(grandTotal(field), field)}
 	</tr>
@@ -214,8 +223,16 @@
 		class:current-month={c.month === view.cursorMonth}
 		class:conso-live={!c.consoIntegrated}
 		title={c.consoIntegrated
-			? `Conso figée à l'intégration du ${formatDateTime(c.consoIntegratedAt!)}${c.consoIntegratedBy ? ` par ${c.consoIntegratedBy}` : ''}`
+			? `Détail d'intégration GPS (réel figé + complément) du ${formatDateTime(c.consoIntegratedAt!)}${c.consoIntegratedBy ? ` par ${c.consoIntegratedBy}` : ''}`
 			: "Conso réelle — ce mois n'a pas encore été intégré dans GPS"}>{c.conso}</td
+	>
+{/snippet}
+
+{#snippet consoRealCell(c: AnnualTrackingMonthCell)}
+	<td
+		class="num tabnum computed"
+		class:current-month={c.month === view.cursorMonth}
+		title="Imputations réelles du mois, à date — sans complément">{c.consoReal}</td
 	>
 {/snippet}
 
@@ -236,12 +253,12 @@
 	</td>
 {/snippet}
 
-{#snippet tnfCell(c: AnnualTrackingMonthCell)}
+{#snippet tnfCell(c: AnnualTrackingMonthCell, v: number | null = c.tnf)}
 	<td
 		class="num tabnum computed"
 		class:current-month={c.month === view.cursorMonth}
-		class:warn={c.tnf !== null && c.tnf > 0}
-		class:ok-cell={c.tnf !== null && c.tnf < 0}>{fmt(c.tnf)}</td
+		class:warn={v !== null && v > 0}
+		class:ok-cell={v !== null && v < 0}>{fmt(v)}</td
 	>
 {/snippet}
 
@@ -306,9 +323,14 @@
 									<td class="num total-col computed">—</td>
 								</tr>
 								<tr>
-									<td>Conso</td>
+									<td>Conso GPS</td>
 									{#each row.cells as c (c.month)}{@render consoCell(c)}{/each}
 									{@render totalCell(row.totalConso, 'conso')}
+								</tr>
+								<tr>
+									<td>Conso réelle</td>
+									{#each row.cells as c (c.month)}{@render consoRealCell(c)}{/each}
+									{@render totalCell(row.totalConsoReal, 'consoReal')}
 								</tr>
 								<tr>
 									<td>Prod</td>
@@ -316,9 +338,14 @@
 									{@render totalCell(row.totalProd, 'prod')}
 								</tr>
 								<tr>
-									<td>TNF</td>
+									<td>TNF GPS</td>
 									{#each row.cells as c (c.month)}{@render tnfCell(c)}{/each}
 									{@render totalCell(row.totalTnf, 'tnf')}
+								</tr>
+								<tr>
+									<td>TNF réel</td>
+									{#each row.cells as c (c.month)}{@render tnfCell(c, c.tnfReal)}{/each}
+									{@render totalCell(row.totalTnfReal, 'tnfReal')}
 								</tr>
 							</tbody>
 						</table>
@@ -348,7 +375,7 @@
 		</section>
 
 		<section class="card block">
-			{@render cardHead('ind-conso', 'Conso')}
+			{@render cardHead('ind-conso', 'Conso GPS')}
 			{#if !collapsed['ind-conso']}
 				<div class="scroll" use:scrollToEnd>
 					<table class="weekly-table annual-table by-indicator">
@@ -362,6 +389,28 @@
 								</tr>
 							{/each}
 							{@render monthsTotalRow('conso', 'Total')}
+						</tbody>
+					</table>
+				</div>
+			{/if}
+		</section>
+
+
+		<section class="card block">
+			{@render cardHead('ind-conso-real', 'Conso réelle')}
+			{#if !collapsed['ind-conso-real']}
+				<div class="scroll" use:scrollToEnd>
+					<table class="weekly-table annual-table by-indicator">
+						<thead>{@render monthHeadRow('Code SSP', true)}</thead>
+						<tbody>
+							{#each view.rows as row (row.sspId)}
+								<tr>
+									{@render sspLabelCell(row)}
+									{#each row.cells as c (c.month)}{@render consoRealCell(c)}{/each}
+									{@render totalCell(row.totalConsoReal, 'consoReal')}
+								</tr>
+							{/each}
+							{@render monthsTotalRow('consoReal', 'Total')}
 						</tbody>
 					</table>
 				</div>
@@ -390,7 +439,7 @@
 		</section>
 
 		<section class="card block">
-			{@render cardHead('ind-tnf', 'TNF')}
+			{@render cardHead('ind-tnf', 'TNF GPS')}
 			{#if !collapsed['ind-tnf']}
 				<div class="scroll" use:scrollToEnd>
 					<table class="weekly-table annual-table by-indicator">
@@ -404,6 +453,27 @@
 								</tr>
 							{/each}
 							{@render monthsTotalRow('tnf', 'Total')}
+						</tbody>
+					</table>
+				</div>
+			{/if}
+		</section>
+
+		<section class="card block">
+			{@render cardHead('ind-tnf-real', 'TNF réel')}
+			{#if !collapsed['ind-tnf-real']}
+				<div class="scroll" use:scrollToEnd>
+					<table class="weekly-table annual-table by-indicator">
+						<thead>{@render monthHeadRow('Code SSP', true)}</thead>
+						<tbody>
+							{#each view.rows as row (row.sspId)}
+								<tr>
+									{@render sspLabelCell(row)}
+									{#each row.cells as c (c.month)}{@render tnfCell(c, c.tnfReal)}{/each}
+									{@render totalCell(row.totalTnfReal, 'tnfReal')}
+								</tr>
+							{/each}
+							{@render monthsTotalRow('tnfReal', 'Total')}
 						</tbody>
 					</table>
 				</div>

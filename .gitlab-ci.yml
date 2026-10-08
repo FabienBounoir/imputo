@@ -9,6 +9,8 @@
 #   OPENSHIFT_TOKEN_PROD           token d'un ServiceAccount avec accès edit sur imputo (namespace
 #                                  séparé du token preprod — moindre privilège, chaque SA n'a accès
 #                                  qu'à son propre namespace)
+#   GIT_SOURCE_URI                 URL Git clonée par les BuildConfig (substitue CHANGEME-git-uri dans
+#                                  openshift/buildconfig*.yaml) — le sourceSecret reste sur le cluster
 #   OPENSHIFT_NAMESPACE_PREPROD    (optionnel, défaut imputo-preprod)
 #   OPENSHIFT_NAMESPACE_PROD       (optionnel, défaut imputo)
 #   OPENSHIFT_TOKEN_LOGS           token d'un ServiceAccount avec accès edit sur imputo-logs
@@ -77,6 +79,12 @@ test:e2e:
     - npm run dev &
     - node -e "const t=Date.now();(async()=>{while(Date.now()-t<60000){try{if((await fetch('http://localhost:5173/login')).ok)process.exit(0)}catch{}await new Promise(r=>setTimeout(r,1000))}process.exit(1)})()"
     - npx cypress run
+  # Captures prises par Cypress sur échec : sans elles, un « never found » en CI ne se diagnostique pas.
+  artifacts:
+    when: on_failure
+    expire_in: 7 days
+    paths:
+      - cypress/screenshots/
 
 # Ni l'un ni l'autre n'était vérifié en CI jusqu'ici — une erreur de type ou un build cassé ne se
 # découvrait qu'en local (ou pire, pendant le déploiement OpenShift lui-même pour le build).
@@ -122,9 +130,15 @@ audit:
 # Manifestes communs aux deux environnements — jamais secret.yaml / db-secret.yaml (vraies
 # valeurs uniquement sur le cluster, voir openshift/README.md).
 .apply_base_manifests: &apply_base_manifests
-  - oc apply -f openshift/imagestream.yaml -f openshift/buildconfig.yaml -f openshift/configmap.yaml
+  - sed "s#CHANGEME-git-uri#${GIT_SOURCE_URI}#" openshift/buildconfig.yaml | oc apply -f -
+  - oc apply -f openshift/imagestream.yaml -f openshift/configmap.yaml
     -f openshift/deployment.yaml -f openshift/service.yaml -f openshift/route.yaml
     -f openshift/db-statefulset.yaml -f openshift/cronjobs.yaml
+  # BASE_URL/ORIGIN ne sont jamais versionnés (configmap.yaml = placeholder) : on les dérive du host
+  # réel de la Route, avant le rollout, pour que l'app démarre avec la bonne valeur (sinon "Cross-site
+  # POST form submissions are forbidden", voir openshift/README.md).
+  - HOST=$(oc get route imputo -o jsonpath='{.spec.host}')
+  - oc patch configmap imputo-config --type merge -p "{\"data\":{\"BASE_URL\":\"https://${HOST}\",\"ORIGIN\":\"https://${HOST}\"}}"
 
 deploy:preprod:
   extends: .oc_base
@@ -143,12 +157,7 @@ deploy:preprod:
     - NS="${OPENSHIFT_NAMESPACE_PREPROD:-imputo-preprod}"
     - oc project "$NS"
     - *apply_base_manifests
-    - oc apply -f openshift/buildconfig-tools.yaml
-    # Route hébergée sur un host auto-généré différent du prod : on corrige le ConfigMap avant
-    # le rollout pour que l'app démarre avec la bonne BASE_URL/ORIGIN (sinon "Cross-site
-    # POST form submissions are forbidden", voir openshift/README.md).
-    - HOST=$(oc get route imputo -o jsonpath='{.spec.host}')
-    - oc patch configmap imputo-config --type merge -p "{\"data\":{\"BASE_URL\":\"https://${HOST}\",\"ORIGIN\":\"https://${HOST}\"}}"
+    - sed "s#CHANGEME-git-uri#${GIT_SOURCE_URI}#" openshift/buildconfig-tools.yaml | oc apply -f -
     # --commit : le BuildConfig a sa source Git figée sur `main` (voir buildconfig.yaml), donc sans
     # ça `oc start-build` build toujours main peu importe la branche du pipeline qui l'a déclenché —
     # seul APP_VERSION reflétait alors la vraie branche, ce qui donnait un site affichant le bon SHA
@@ -160,8 +169,10 @@ deploy:preprod:
     # main. `|| true` : optionnel, ne doit jamais faire échouer un déploiement par ailleurs réussi.
     - |
       if [ -n "$GRAFANA_ANNOTATIONS_TOKEN" ]; then
+        # Domaine des routes dérivé de l'API du cluster (https://api.<domaine>:6443) : aucun host versionné.
+        APPS="${OPENSHIFT_SERVER#*://api.}"; APPS="${APPS%%[:/]*}"
         curl -s -o /dev/null -H "Authorization: Bearer $GRAFANA_ANNOTATIONS_TOKEN" -H "Content-Type: application/json" \
-          -X POST "https://grafana-imputo-logs.apps.ocp4.innershift.sodigital.io/api/annotations" \
+          -X POST "https://grafana-imputo-logs.apps.${APPS}/api/annotations" \
           -d "{\"text\":\"Deploiement preprod v$CI_COMMIT_SHORT_SHA\",\"tags\":[\"deploy\",\"env:${NS}\"],\"time\":$(($(date +%s%N)/1000000))}" || true
       fi
     # `rollout status` ne garantit que le scale-down de l'ancien ReplicaSet, pas la disparition
@@ -261,14 +272,16 @@ deploy:production:
     - oc rollout status deployment/imputo --timeout=5m
     - |
       if [ -n "$GRAFANA_ANNOTATIONS_TOKEN" ]; then
+        # Domaine des routes dérivé de l'API du cluster (https://api.<domaine>:6443) : aucun host versionné.
+        APPS="${OPENSHIFT_SERVER#*://api.}"; APPS="${APPS%%[:/]*}"
         curl -s -o /dev/null -H "Authorization: Bearer $GRAFANA_ANNOTATIONS_TOKEN" -H "Content-Type: application/json" \
-          -X POST "https://grafana-imputo-logs.apps.ocp4.innershift.sodigital.io/api/annotations" \
+          -X POST "https://grafana-imputo-logs.apps.${APPS}/api/annotations" \
           -d "{\"text\":\"Deploiement production $CI_COMMIT_TAG\",\"tags\":[\"deploy\",\"env:${NS}\"],\"time\":$(($(date +%s%N)/1000000))}" || true
       fi
     # imputo:tools n'existait jusqu'ici qu'en preprod (seed de démo) — nécessaire ici pour le
     # CronJob de sync Jira récurrent, qui tourne isolé du pod web (voir cronjob-jira-sync.yaml).
     # Pas d'imputo-seed en prod : ça reste strictement un outil de démo preprod.
-    - oc apply -f openshift/buildconfig-tools.yaml
+    - sed "s#CHANGEME-git-uri#${GIT_SOURCE_URI}#" openshift/buildconfig-tools.yaml | oc apply -f -
     - oc start-build imputo-tools --commit="$CI_COMMIT_TAG" --follow
     - sed "s#CHANGEME-namespace#${NS}#" openshift/cronjob-jira-sync.yaml | oc apply -f -
 

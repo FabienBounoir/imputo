@@ -9,12 +9,22 @@ import {
 	skipCurrentTurn
 } from '$lib/server/services/support';
 import { notifySupportDutyChanged } from '$lib/server/services/notifications';
-import { listOwnTimeEntries, updateTimeEntry, deleteTimeEntry } from '$lib/server/services/supportTime';
+import { listOwnTimeEntries, getOwnDailyRecap, updateTimeEntry, deleteTimeEntry } from '$lib/server/services/supportTime';
 import { parseDuration } from '$lib/supportDuration';
-import { todayInParis } from '$lib/utils/date';
+import { todayInParis, lastWorkdayOnOrBefore, previousWorkday } from '$lib/utils/date';
 import { logger } from '$lib/server/logger';
 
 const CALENDAR_WEEKS = 6;
+const RECAP_DAYS = 5;
+
+/** Les RECAP_DAYS derniers jours ouvrés, aujourd'hui compris, du plus récent au plus ancien.
+ * ponytail: lun→ven seulement — une saisie faite un samedi de support n'apparaît pas au récap
+ * (elle reste dans la liste). Suivre le réglage « samedi inclus » du support si ça gêne. */
+function recapDays(today: string): string[] {
+	const days = [lastWorkdayOnOrBefore(today)];
+	while (days.length < RECAP_DAYS) days.push(previousWorkday(days[days.length - 1]));
+	return days;
+}
 
 export const load: PageServerLoad = async ({ locals }) => {
 	const ws = locals.workspace!;
@@ -25,11 +35,14 @@ export const load: PageServerLoad = async ({ locals }) => {
 
 	const canManage = locals.role === 'ADMIN' || locals.role === 'MANAGER';
 	const isAdmin = locals.role === 'ADMIN';
-	const [current, calendar, members, ownTimeEntries] = await Promise.all([
+	const [current, calendar, members, ownTimeEntries, dailyRecap] = await Promise.all([
 		ws.supportEnabled ? getCurrentDuty(ws.workspaceId) : Promise.resolve(null),
 		ws.supportEnabled ? listDutyCalendar(ws.workspaceId, CALENDAR_WEEKS) : Promise.resolve([]),
 		ws.supportEnabled && canManage ? listRotationMembers(ws.workspaceId) : Promise.resolve([]),
-		ws.supportTimeTrackingEnabled ? listOwnTimeEntries(ws.workspaceId, locals.user!.id, 20) : Promise.resolve([])
+		ws.supportTimeTrackingEnabled ? listOwnTimeEntries(ws.workspaceId, locals.user!.id, 20) : Promise.resolve([]),
+		ws.supportTimeTrackingEnabled
+			? getOwnDailyRecap(ws.workspaceId, locals.user!.id, recapDays(todayInParis()))
+			: Promise.resolve([])
 	]);
 
 	return {
@@ -41,6 +54,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		todayISO: todayInParis(),
 		timeTrackingEnabled: ws.supportTimeTrackingEnabled,
 		ownTimeEntries,
+		dailyRecap,
 		// L'historique complet (toutes périodes, filtrable, stats) vit sur sa propre page
 		// /support/historique — juste un bouton d'accès ici, pas de données à charger pour ça.
 		canViewHistory: isAdmin && ws.supportTimeTrackingEnabled

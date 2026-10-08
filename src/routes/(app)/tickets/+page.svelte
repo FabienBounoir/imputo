@@ -68,6 +68,31 @@
 		clearTimeout(searchDebounce);
 		searchDebounce = setTimeout(() => navigateWith({ q: queryInput }), 350);
 	}
+	// `me` plutôt que son propre id dans l'URL (cf. ticketFiltersFromUrl) : un lien partagé ou un
+	// instantané mémorisé reste « mes tickets » pour qui l'ouvre.
+	const assigneeParam = $derived(
+		data.filters.unassigned ? 'none' : data.filters.assigneeId === data.selfId ? 'me' : (data.filters.assigneeId ?? '')
+	);
+	// Nom affiché dans la pastille « personne » : « Moi » pour soi, sinon le collègue filtré.
+	const assigneeName = $derived(
+		data.filters.unassigned
+			? 'Non assigné'
+			: !data.filters.assigneeId || data.filters.assigneeId === data.selfId
+				? (data.user?.displayName ?? 'Moi')
+				: (data.ref.members.find((m) => m.id === data.filters.assigneeId)?.displayName ?? 'Ancien membre')
+	);
+	// Nom du critère à côté de chaque icône de filtre : préférence de compte (Réglages) en vue tableau,
+	// toujours en vue kanban — le board ne s'affiche qu'une fois un sprint ou une version choisi, ces
+	// deux filtres doivent s'y lire sans avoir à deviner une icône.
+	const labels = $derived(data.ticketFilterLabels || data.view === 'kanban');
+	type FilterParam = 'state' | 'project' | 'sprint' | 'version';
+	const SORTS = [
+		['created', 'plus ancien'],
+		['created_desc', 'plus récent'],
+		['priority', 'plus prioritaire'],
+		['priority_desc', 'moins prioritaire']
+	] as const;
+	const sortLabel = $derived(SORTS.find(([v]) => v === data.sort)?.[1] ?? SORTS[0][1]);
 	function navigateWith(partial: Record<string, string>) {
 		const merged: Record<string, string> = {
 			q: data.filters.query ?? '',
@@ -75,6 +100,7 @@
 			project: data.filters.projectId ?? '',
 			sprint: data.filters.sprintId ?? '',
 			version: data.filters.versionId ?? '',
+			assignee: assigneeParam,
 			view: data.view,
 			sort: data.sort,
 			page: '1', // tout changement de filtre/vue revient en page 1 (sauf override explicite)
@@ -86,7 +112,7 @@
 		// Mémorisation (préférence de compte, § réglages) : même forme que ci-dessus, `page` exclue
 		// (jamais "remembered") — fire-and-forget comme ?/groupReorder plus haut dans ce fichier.
 		const body = new FormData();
-		for (const k of ['q', 'state', 'project', 'sprint', 'version', 'view', 'sort'] as const) {
+		for (const k of ['q', 'state', 'project', 'sprint', 'version', 'assignee', 'view', 'sort'] as const) {
 			if (merged[k]) body.set(k, merged[k]);
 		}
 		fetch('?/rememberFilters', { method: 'POST', body });
@@ -95,7 +121,7 @@
 	// historique de sync Jira ?jiraRun=…, clôture mensuelle ?ssp=none) — sans ça le bouton
 	// Réinitialiser reste invisible et on ne peut plus revenir à la liste complète. Aucun de ces
 	// trois n'est reconstruit par navigateWith, donc n'importe quelle navigation les efface.
-	const hasFilters = $derived(!!(data.filters.query || data.filters.stateId || data.filters.projectId || data.filters.sprintId || data.filters.versionId || data.filters.exactKey || data.filters.syncRunId || data.filters.noSsp || data.filters.keys?.length));
+	const hasFilters = $derived(!!(data.filters.query || data.filters.stateId || data.filters.projectId || data.filters.sprintId || data.filters.versionId || data.filters.assigneeId || data.filters.unassigned || data.filters.exactKey || data.filters.syncRunId || data.filters.noSsp || data.filters.keys?.length));
 	// Filtres/vue/pagination naviguent tous via goto() (rechargement serveur) : un fieldset désactive
 	// la barre d'un coup pendant le trajet, pour qu'on ne confonde jamais l'ancienne liste avec la nouvelle.
 	const isNavigating = $derived(!!navigating.to);
@@ -108,7 +134,7 @@
 			goto('/tickets');
 			return;
 		}
-		navigateWith({ q: '', state: '', project: '', sprint: '', version: '' });
+		navigateWith({ q: '', state: '', project: '', sprint: '', version: '', assignee: '' });
 	}
 
 	// Détail par activité (vue tableau) : `compact` est le défaut de compte (persisté, cf.
@@ -125,12 +151,18 @@
 		else expandedOverrides.add(ticketId);
 		expandedOverrides = new Set(expandedOverrides); // réassignation : mutation seule ne redéclenche pas $state
 	}
-	function toggleCompactGlobal() {
+	async function toggleCompactGlobal() {
 		compact = !compact;
 		expandedOverrides = new Set(); // un "tout déplier/replier" écrase les dérogations en cours
 		const body = new FormData();
 		body.set('value', String(compact));
-		fetch('?/compactActivityPref', { method: 'POST', body });
+		const saved = fetch('?/compactActivityPref', { method: 'POST', body });
+		// Kanban : le détail par activité n'est chargé que déplié (cf. +page.server.ts). On attend que
+		// la préférence soit enregistrée, puis on recharge pour l'obtenir.
+		if (data.view === 'kanban' && !compact) {
+			await saved;
+			invalidateAll();
+		}
 	}
 
 	// Tableau responsive : sous cette largeur, les colonnes les moins essentielles se masquent
@@ -293,6 +325,34 @@
 	// jeu de résultats aux rows déjà réinitialisées et corrompt hasMore (scroll infini qui se bloque
 	// ou qui s'arrête trop tôt en fin de liste).
 	let loadGeneration = 0;
+	// URL (filtres, tri, vue) pour laquelle `rows` a été chargé. Tant qu'elle diffère de l'URL courante,
+	// ce qu'on a en mémoire appartient à une autre requête : le kanban montre un squelette plutôt que
+	// d'anciennes cartes. Un rechargement de la même URL (carte déplacée, retour sur l'onglet) garde
+	// au contraire les cartes en place, sans rien afficher par-dessus.
+	let rowsFor = $state<string | null>(null);
+	const kanbanSkeleton = $derived(isNavigating || (ticketsLoading && rowsFor !== page.url.search));
+	// Squelette du kanban : quelques emplacements répartis irrégulièrement entre les colonnes. Entre deux
+	// écueils constatés : trop fidèle à une vraie carte, on croyait voir des cartes disparaître à
+	// l'arrivée des données ; un simple bloc pâle était trop neutre. D'où un emplacement en pointillés,
+	// deux traits et un reflet qui passe — vivant, mais qu'on ne prend pas pour un ticket.
+	// Pseudo-aléatoire déterministe (colonne + graine) et non Math.random() : le rendu serveur et
+	// l'hydratation doivent dessiner le même squelette. La graine ne change qu'aux chargements
+	// suivants, côté client, pour que le motif varie d'un filtre à l'autre.
+	let skeletonSeed = $state(0);
+	const hash01 = (a: number, b: number) => {
+		let x = Math.imul(a + 1, 0x9e3779b1) ^ Math.imul(b + 1, 0x85ebca6b);
+		x = Math.imul(x ^ (x >>> 15), 0x2c1b3c6d);
+		x ^= x >>> 12;
+		return (x >>> 0) / 4294967296; // [0, 1[
+	};
+	function skeletonBlocks(col: number): { height: number; line: number }[] {
+		const h = hash01(col, skeletonSeed);
+		const count = h < 0.3 ? 0 : h < 0.62 ? 1 : h < 0.86 ? 2 : 3;
+		return Array.from({ length: count }, (_, j) => {
+			const k = hash01(col * 7 + j, skeletonSeed + 3);
+			return { height: 58 + Math.round(k * 30), line: 45 + Math.round(k * 40) }; // px, %
+		});
+	}
 
 	// (Re)synchronise quand les données serveur changent (filtre, vue, recherche, arrivée sur la page)
 	// — `data.ticketsPage` est une nouvelle promesse à chaque nouveau `load`, ce qui redéclenche cet
@@ -301,6 +361,7 @@
 	$effect(() => {
 		ticketsLoading = true;
 		loadGeneration++;
+		if (loadGeneration > 1) skeletonSeed = loadGeneration; // jamais au premier rendu (hydratation)
 		let cancelled = false;
 		data.ticketsPage.then((r) => {
 			if (cancelled) return;
@@ -309,6 +370,10 @@
 			pageCount = r.pageCount;
 			loadedPage = data.page;
 			hasMore = data.view === 'table' && data.page < r.pageCount;
+			// Premières données pour cette URL : le kanban devra se placer sur sa première colonne remplie,
+			// une fois les cartes réellement affichées (cf. l'effet qui lit `kanbanScrollPending`).
+			if (rowsFor !== page.url.search && data.view === 'kanban') kanbanScrollPending = true;
+			rowsFor = page.url.search;
 			ticketsLoading = false;
 		});
 		return () => {
@@ -321,12 +386,9 @@
 		loadingMore = true;
 		const generation = loadGeneration;
 		try {
-			const p = new URLSearchParams();
-			if (data.filters.query) p.set('q', data.filters.query);
-			if (data.filters.stateId) p.set('state', data.filters.stateId);
-			if (data.filters.projectId) p.set('project', data.filters.projectId);
-			if (data.filters.sprintId) p.set('sprint', data.filters.sprintId);
-			if (data.filters.versionId) p.set('version', data.filters.versionId);
+			// Mêmes paramètres que la page affichée (filtres ET tri), lus par le même parseur côté serveur
+			// (ticketFiltersFromUrl) : une liste recopiée ici oubliait le tri.
+			const p = new URLSearchParams(page.url.search);
 			p.set('page', String(loadedPage + 1));
 			const res = await fetch(`/api/tickets?${p}`);
 			if (!res.ok || generation !== loadGeneration) return;
@@ -375,6 +437,8 @@
 		if (te <= 0) return tr <= 0 && r.consumed > 0 ? 1 : 0;
 		return Math.min(1, Math.max(0, (te - tr) / te));
 	};
+	const activityConso = (ar: ActivityBreakdownRow) => round(ar.contributors.reduce((s, c) => s + c.consumed, 0));
+	const activityRae = (ar: ActivityBreakdownRow) => round(ar.raeReal + (data.testPhase ? ar.raeTest : 0));
 	const raeSugg = (r: Row) => round(Math.max(0, totalEst(r) - r.consumed));
 	const pct = (x: number) => Math.round(x * 100);
 
@@ -555,6 +619,55 @@
 
 	// Auto-scroll horizontal du board quand on drague une carte près d'un bord.
 	let kanbanEl = $state<HTMLElement | null>(null);
+	// Kanban : à l'arrivée et à chaque changement de filtre, on amène la première colonne qui contient
+	// un ticket vers le bord gauche (les premiers états du workflow sont souvent vides). Une seule fois
+	// par URL (cf. `rowsFor`) : un rechargement des mêmes données (carte déplacée, « Tout déplier »,
+	// retour sur l'onglet) ne doit pas faire perdre la position où l'on travaillait.
+	/** Ce qu'on laisse dépasser de la colonne précédente : sans ce bout de colonne, on prendrait la
+	 *  première colonne remplie pour le début du tableau et on ne penserait pas à revenir en arrière. */
+	const KANBAN_PEEK = 48;
+	const KANBAN_SLIDE_MS = 420;
+	let kanbanScrollPending = $state(false);
+	let kanbanSlide: AbortController | null = null;
+	// Le défilement part quand les cartes sont réellement dans le DOM (squelette retiré), pas à
+	// l'arrivée des données : selon l'ordre des mises à jour, les cartes n'y étaient pas toujours
+	// encore, et le board restait alors au début.
+	$effect(() => {
+		if (!kanbanScrollPending || kanbanSkeleton || !kanbanEl) return;
+		kanbanScrollPending = false;
+		scrollKanbanToFirstFilled(kanbanEl);
+	});
+	function scrollKanbanToFirstFilled(el: HTMLElement) {
+		const firstFilled = [...el.querySelectorAll('.kcol')].find((col) => col.querySelector('.kcard'));
+		const from = el.scrollLeft;
+		const to = firstFilled
+			? Math.max(0, from + firstFilled.getBoundingClientRect().left - el.getBoundingClientRect().left - KANBAN_PEEK)
+			: 0;
+		kanbanSlide?.abort();
+		// Saut direct si le système demande de réduire les animations, ou si l'onglet est en
+		// arrière-plan (aucune image n'y est dessinée, l'animation resterait en suspens).
+		if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || document.hidden || Math.abs(to - from) < 2) {
+			el.scrollLeft = to;
+			return;
+		}
+		// Glissement animé à la main plutôt que `scrollTo({ behavior: 'smooth' })` : le défilement doux
+		// du navigateur s'interrompt quand la mise en page bouge pendant le trajet (avatars qui finissent
+		// de charger), et le board s'arrêtait alors en route, une fois sur plusieurs.
+		const slide = (kanbanSlide = new AbortController());
+		// L'utilisateur reprend la main (molette, clic, doigt) : on n'insiste pas.
+		for (const type of ['wheel', 'pointerdown', 'touchstart']) {
+			el.addEventListener(type, () => slide.abort(), { passive: true, signal: slide.signal });
+		}
+		const start = performance.now();
+		const step = (now: number) => {
+			if (slide.signal.aborted) return;
+			const t = Math.min(1, (now - start) / KANBAN_SLIDE_MS);
+			el.scrollLeft = from + (to - from) * (1 - Math.pow(1 - t, 3)); // décélération
+			if (t < 1) requestAnimationFrame(step);
+			else slide.abort(); // retire les écouteurs
+		};
+		requestAnimationFrame(step);
+	}
 	let scrollDir = 0;
 	let rafId = 0;
 	const EDGE = 90; // zone sensible (px) à gauche/droite
@@ -799,11 +912,134 @@
 	</div>
 </div>
 
+<!-- Barre de filtres : un filtre vide n'est qu'une icône (les cinq menus débordaient sur trois lignes
+     dès qu'un filtre était posé) ; posé, il devient une pastille avec sa valeur et une croix. La
+     préférence de compte « Icônes et noms » (Réglages) affiche aussi le nom du critère. Chaque
+     pastille est recouverte par un <select> natif au texte transparent : le menu reste celui du
+     système, et la pastille prend la largeur de sa valeur, pas celle de sa plus longue option. -->
+{#snippet chevron()}
+	<svg class="fchip-chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+{/snippet}
+{#snippet cross()}
+	<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
+{/snippet}
+{#snippet filterIcon(kind: FilterParam)}
+	<!-- Sprint et Version : mêmes pictos que le menu Synthèse (cf. (app)/+layout.svelte). -->
+	<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+		{#if kind === 'state'}
+			<circle cx="12" cy="12" r="9" /><path d="M12 12V3a9 9 0 0 1 9 9z" fill="currentColor" stroke="none" />
+		{:else if kind === 'project'}
+			<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+		{:else if kind === 'sprint'}
+			<path d="M13 2 3 14h7l-1 8 10-12h-7z" />
+		{:else}
+			<rect x="3" y="11" width="4" height="8" /><rect x="10" y="6" width="4" height="13" /><rect x="17" y="3" width="4" height="16" />
+		{/if}
+	</svg>
+{/snippet}
+{#snippet filterPick(param: FilterParam, label: string, allLabel: string, options: { id: string; text: string }[])}
+	{@const current = options.find((o) => o.id === data.filters[`${param}Id`])}
+	<Tooltip text={current || !labels ? label : ''}>
+		<span
+			class="fchip"
+			class:on={!!current}
+			class:bare={!current && !labels}
+			class:hint={data.kanbanNeedsScope && (param === 'sprint' || param === 'version')}
+		>
+			{@render filterIcon(param)}
+			{#if current}
+				<span class="fchip-v">{current.text}</span>
+			{:else if labels}
+				<span class="fchip-v">{label}</span>{@render chevron()}
+			{/if}
+			<select value={current?.id ?? ''} onchange={(e) => navigateWith({ [param]: e.currentTarget.value })} aria-label="Filtrer par {label.toLowerCase()}">
+				<option value="">{allLabel}</option>
+				{#each options as o (o.id)}<option value={o.id}>{o.text}</option>{/each}
+			</select>
+			{#if current}
+				<button type="button" class="fchip-x" onclick={() => navigateWith({ [param]: '' })} aria-label="Retirer le filtre {label.toLowerCase()}">{@render cross()}</button>
+			{/if}
+		</span>
+	</Tooltip>
+{/snippet}
+
 <div class="content">
 	<div class="filters">
-		<!-- Recherche exclue du fieldset : elle reste tapable pendant qu'une frappe précédente
+		<!-- Recherche exclue des fieldsets : elle reste tapable pendant qu'une frappe précédente
 		     est encore en vol (le goto suivant, debouncé, remplace l'ancien de toute façon). -->
+		<!-- Petite au repos, élargie dès qu'on y tape : `:focus-within` ne convient pas, le champ a le
+		     focus dès l'arrivée sur la page (autofocus) et serait donc toujours large. -->
+		<div class="search" class:filled={!!queryInput}>
+			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+			<!-- svelte-ignore a11y_autofocus -->
+			<input placeholder="Rechercher…" aria-label="Rechercher une US" bind:value={queryInput} oninput={onSearchInput} autofocus />
+		</div>
 		<fieldset class="filter-fields" disabled={isNavigating}>
+			<!-- Personne : un clic sur l'avatar = « mes tickets » (ou retire le filtre posé) ; le chevron
+			     choisit quelqu'un d'autre, soi en premier. -->
+			<span class="fchip split" class:on={!!assigneeParam}>
+				<Tooltip text={assigneeParam ? 'Retirer le filtre par personne' : labels ? '' : 'Mes tickets'}>
+					<button
+						type="button"
+						class="split-l"
+						aria-label={assigneeParam ? `Retirer le filtre par personne (${assigneeName})` : 'Mes tickets'}
+						onclick={() => navigateWith({ assignee: assigneeParam ? '' : 'me' })}
+					>
+						{#if data.filters.unassigned}
+							<!-- Personne : silhouette en pointillés, pas d'avatar (il afficherait des initiales « NA »). -->
+							<svg class="nobody" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-dasharray="2.6 2.6" aria-hidden="true"><circle cx="12" cy="12" r="9.5" /></svg>
+						{:else}
+							<UserAvatar userId={data.filters.assigneeId ?? data.selfId} name={assigneeName} size={20} />
+						{/if}
+						{#if assigneeParam}{assigneeParam === 'me' ? 'Moi' : assigneeName}{:else if labels}Mes tickets{/if}
+					</button>
+				</Tooltip>
+				<Tooltip text="Choisir une personne">
+					<span class="split-r">
+						{@render chevron()}
+						<select value={assigneeParam} onchange={(e) => navigateWith({ assignee: e.currentTarget.value })} aria-label="Filtrer par personne assignée">
+							<option value="">Tout le monde</option>
+							<option value="me">Moi</option>
+							<option value="none">Non assigné</option>
+							{#each data.ref.members.filter((m) => !m.factice && m.id !== data.selfId) as m (m.id)}<option value={m.id}>{m.displayName}</option>{/each}
+						</select>
+					</span>
+				</Tooltip>
+			</span>
+			{#if data.view !== 'kanban'}
+				{@render filterPick('state', 'État', 'Tous les états', data.ref.states.map((x) => ({ id: x.id, text: `${x.emoji} ${x.label}` })))}
+			{/if}
+			{@render filterPick('project', 'Projet', 'Tous les projets', data.ref.projects.map((x) => ({ id: x.id, text: x.name })))}
+			{@render filterPick('sprint', 'Sprint', 'Tous les sprints', data.ref.sprints.map((x) => ({ id: x.id, text: x.name })))}
+			{@render filterPick('version', 'Version', 'Toutes les versions', data.ref.versions.map((x) => ({ id: x.id, text: x.name })))}
+			{#if hasFilters}
+				{#if data.filters.keys?.length}
+					<button class="reset-btn" onclick={resetFilters}>✕ Quitter « créés »</button>
+				{:else}
+					<Tooltip text={labels ? '' : 'Réinitialiser les filtres'}>
+						<button type="button" class="fchip reset" class:bare={!labels} onclick={resetFilters}>
+							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></svg>
+							<span class:sr-only={!labels}>Réinitialiser</span>
+						</button>
+					</Tooltip>
+				{/if}
+			{/if}
+		</fieldset>
+		{#if isNavigating}<span class="loading-hint">Chargement…</span>{/if}
+		<!-- Affichage (tri, vue, déplier) : à droite et en boutons carrés, pour ne pas le confondre avec
+		     les filtres, ronds. -->
+		<fieldset class="filter-fields tools" disabled={isNavigating}>
+			<!-- Le tri a toujours une valeur : comme un filtre posé, il l'affiche en clair, même en mode
+			     icônes (sans ça, rien ne disait quel tri était actif). -->
+			<Tooltip text="Trier par">
+				<span class="fchip square">
+					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4v16M3 16l4 4 4-4M17 20V4M13 8l4-4 4 4" /></svg>
+					<span class="fchip-v sort-v">{sortLabel}</span>
+					<select value={data.sort} onchange={(e) => navigateWith({ sort: e.currentTarget.value })} aria-label="Trier par">
+						{#each SORTS as [value, text] (value)}<option {value}>Trier : {text}</option>{/each}
+					</select>
+				</span>
+			</Tooltip>
 			<div class="seg2" data-active={data.view}>
 				<span class="seg2-thumb"></span>
 				<button
@@ -835,59 +1071,21 @@
 					</svg>
 				</button>
 			</div>
-			{#if data.view === 'table'}
-				<button
-					type="button"
-					class="btn btn-ghost icon-toggle"
-					class:open={!compact}
-					onclick={toggleCompactGlobal}
-					aria-label={compact ? 'Tout déplier' : 'Tout replier'}
-					title={compact ? 'Tout déplier' : 'Tout replier'}
-				>
-					<!-- Chevrons vers le bas = "déplier" ; la même icône tourne à 180° (donc vers le haut) pour
-					     "replier" — pas deux icônes séparées à permuter. Les deux chevrons pointent dans le
-					     MÊME sens (pas en miroir) : une paire en miroir serait symétrique par rotation de
-					     180°, donc visuellement identique une fois tournée — inutile pour cet usage. -->
-					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 8 5 5 5-5" /><path d="m7 15 5 5 5-5" /></svg>
-				</button>
-			{/if}
-			{#if data.view !== 'kanban'}
-				<select class="filter-sel" value={data.filters.stateId ?? ''} onchange={(e) => navigateWith({ state: e.currentTarget.value })} aria-label="Filtrer par état">
-					<option value="">Tous les états</option>
-					{#each data.ref.states as s (s.id)}<option value={s.id}>{s.emoji} {s.label}</option>{/each}
-				</select>
-			{/if}
-			<select class="filter-sel" value={data.filters.projectId ?? ''} onchange={(e) => navigateWith({ project: e.currentTarget.value })} aria-label="Filtrer par projet">
-				<option value="">Tous les projets</option>
-				{#each data.ref.projects as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
-			</select>
-			<select class="filter-sel" value={data.filters.sprintId ?? ''} onchange={(e) => navigateWith({ sprint: e.currentTarget.value })} aria-label="Filtrer par sprint">
-				<option value="">Tous les sprints</option>
-				{#each data.ref.sprints as s (s.id)}<option value={s.id}>{s.name}</option>{/each}
-			</select>
-			<select class="filter-sel" value={data.filters.versionId ?? ''} onchange={(e) => navigateWith({ version: e.currentTarget.value })} aria-label="Filtrer par version">
-				<option value="">Toutes les versions</option>
-				{#each data.ref.versions as v (v.id)}<option value={v.id}>{v.name}</option>{/each}
-			</select>
-			<select class="filter-sel" value={data.sort} onchange={(e) => navigateWith({ sort: e.currentTarget.value })} aria-label="Trier par">
-				<option value="created">Trier : plus ancien</option>
-				<option value="created_desc">Trier : plus récent</option>
-				<option value="priority">Trier : plus prioritaire</option>
-				<option value="priority_desc">Trier : moins prioritaire</option>
-			</select>
-			{#if hasFilters}
-				<button class="reset-btn" onclick={resetFilters}>
-					{data.filters.keys?.length ? '✕ Quitter « créés »' : '✕ Réinitialiser'}
-				</button>
-			{/if}
+			<button
+				type="button"
+				class="btn btn-ghost icon-toggle"
+				class:open={!compact}
+				onclick={toggleCompactGlobal}
+				aria-label={compact ? 'Tout déplier' : 'Tout replier'}
+				title={compact ? 'Tout déplier' : 'Tout replier'}
+			>
+				<!-- Chevrons vers le bas = "déplier" ; la même icône tourne à 180° (donc vers le haut) pour
+				     "replier" — pas deux icônes séparées à permuter. Les deux chevrons pointent dans le
+				     MÊME sens (pas en miroir) : une paire en miroir serait symétrique par rotation de
+				     180°, donc visuellement identique une fois tournée — inutile pour cet usage. -->
+				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 8 5 5 5-5" /><path d="m7 15 5 5 5-5" /></svg>
+			</button>
 		</fieldset>
-		{#if hasFilters && !ticketsLoading}<span class="count">{total} résultat{total > 1 ? 's' : ''}</span>{/if}
-		{#if isNavigating}<span class="loading-hint">Chargement…</span>{/if}
-		<div class="search">
-			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-			<!-- svelte-ignore a11y_autofocus -->
-			<input placeholder="Rechercher une US…" bind:value={queryInput} oninput={onSearchInput} autofocus />
-		</div>
 	</div>
 
 	{#if data.view === 'table'}
@@ -1184,22 +1382,51 @@
 		{/if}
 	</div>
 	{:else if data.kanbanNeedsScope}
-	<div class="kanban-scope-prompt">
-		<p>Choisis un sprint ou une version ci-dessus pour afficher le kanban.</p>
-		<p class="hint">Sans ce filtre, le board chargerait l'ensemble des tickets de l'espace.</p>
+	<!-- Ni sprint ni version : le board n'est pas chargé (cf. +page.server.ts). On dessine quand même
+	     ses colonnes, vides et estompées, pour montrer ce qui attend ; le message se pose dessus et les
+	     deux filtres concernés sont mis en évidence dans la barre (cf. `.fchip.hint`). -->
+	<div class="kanban-ghost-wrap">
+		<div class="kanban ghost" aria-hidden="true">
+			{#each kanbanCols as col (col.id ?? 'none')}
+				<div class="kcol">
+					<div class="kcol-head">
+						<span class="kdot" style={col.color ? `background:${col.color}` : 'background:var(--text-mute)'}></span>
+						<span class="klabel">{col.emoji ?? ''} {col.label}</span>
+						<span class="kcount">0</span>
+					</div>
+				</div>
+			{/each}
+		</div>
+		<div class="kanban-scope-prompt">
+			<div class="scope-card">
+				<p class="scope-title">Quel sprint ou quelle version ?</p>
+				<p>
+					Le kanban affiche un sprint ou une version à la fois. Choisis-le avec
+					<span class="scope-ico">{@render filterIcon('sprint')}</span> ou
+					<span class="scope-ico">{@render filterIcon('version')}</span> dans la barre.
+				</p>
+			</div>
+		</div>
 	</div>
 	{:else}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div class="kanban" bind:this={kanbanEl} ondragover={onKanbanDragOver}>
-		{#each kanbanCols as col (col.id ?? 'none')}
+		{#each kanbanCols as col, colIndex (col.id ?? 'none')}
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<div class="kcol" ondragover={(e) => e.preventDefault()} ondrop={() => onColumnDrop(col.id)}>
 				<div class="kcol-head">
 					<span class="kdot" style={col.color ? `background:${col.color}` : 'background:var(--text-mute)'}></span>
 					<span class="klabel">{col.emoji ?? ''} {col.label}</span>
-					<span class="kcount">{colTickets(col.id).length}</span>
+					{#if !kanbanSkeleton}<span class="kcount">{colTickets(col.id).length}</span>{/if}
 				</div>
 				<div class="kcards">
+					{#if kanbanSkeleton}
+						{#each skeletonBlocks(colIndex) as sk, j (j)}
+							<div class="kskel" style="height:{sk.height}px; --o:{1 - j * 0.25}" aria-hidden="true">
+								<i style="width:28%"></i><i style="width:{sk.line}%"></i>
+							</div>
+						{/each}
+					{:else}
 					{#each colTickets(col.id) as t (t.id)}
 						<div
 							class="kcard"
@@ -1235,9 +1462,30 @@
 								<span class="kbar"><i style="width:{pct(avancement(t))}%"></i></span>
 								<span class="kpct tabnum">{pct(avancement(t))}%</span>
 							</div>
+							{#if !compact && t.activityBreakdown.length > 0}
+								<!-- Détail par activité (bouton « Tout déplier ») : en lecture seule ici, l'édition
+								     reste dans la modale du ticket ou la vue tableau. -->
+								<div class="kacts">
+									<span></span><span></span><span class="kact-h">Conso.</span><span class="kact-h">RAE</span>
+									{#each t.activityBreakdown as ar (ar.activityId)}
+										{@const conso = activityConso(ar)}
+										{@const rae = activityRae(ar)}
+										<span class="kact-l">{ar.label}</span>
+										<span class="kact-who">
+											{#each ar.contributors.slice(0, 3) as c (c.userId)}
+												<Tooltip text="{c.displayName} · {c.consumed} j"><UserAvatar userId={c.userId} name={c.displayName} size={15} /></Tooltip>
+											{/each}
+											{#if ar.contributors.length > 3}<span class="kact-more">+{ar.contributors.length - 3}</span>{/if}
+										</span>
+										<span class="kact-n tabnum" class:zero={conso === 0}>{conso}</span>
+										<span class="kact-n tabnum" class:zero={rae === 0}>{rae}</span>
+									{/each}
+								</div>
+							{/if}
 						</div>
 					{/each}
-					{#if ticketsLoading}<div class="kempty">Chargement…</div>{:else if colTickets(col.id).length === 0}<div class="kempty">Aucun ticket</div>{/if}
+					{#if colTickets(col.id).length === 0 && !ticketsLoading}<div class="kempty">Aucun ticket</div>{/if}
+					{/if}
 				</div>
 			</div>
 		{/each}
@@ -1579,7 +1827,7 @@
 	.filter-fields:disabled {
 		opacity: 0.6;
 	}
-	.filter-fields:disabled .filter-sel,
+	.filter-fields:disabled .fchip select,
 	.filter-fields:disabled .seg2 button {
 		cursor: wait;
 	}
@@ -1587,19 +1835,184 @@
 		font-size: 12.5px;
 		color: var(--text-mute);
 	}
-	.filter-sel {
-		padding: 7px 11px;
+	.filter-fields.tools {
+		margin-left: auto;
+	}
+	/* Pastille de filtre. `.bare` = icône seule (34 px) ; `.on` = filtre posé ; `.square` = réglage
+	   d'affichage (tri) plutôt que filtre ; `.reset` = tout réinitialiser, en contraste fort. */
+	.fchip {
+		position: relative;
+		display: inline-flex;
+		align-items: center;
+		gap: 7px;
+		height: 34px;
+		padding: 0 12px;
 		border-radius: 30px;
 		border: 1px solid var(--border);
 		background: var(--surface);
 		color: var(--text);
 		font-size: 12.5px;
+		white-space: nowrap;
 		box-shadow: var(--shadow-sm);
-		max-width: 170px;
+		transition: border-color 0.15s, color 0.15s;
 	}
-	.filter-sel:focus {
-		outline: none;
+	.fchip:hover {
+		border-color: var(--border-strong);
+	}
+	.fchip:focus-within {
 		border-color: var(--accent);
+	}
+	.fchip.bare {
+		width: 34px;
+		padding: 0;
+		justify-content: center;
+		color: var(--text-soft);
+	}
+	.fchip.bare:hover {
+		color: var(--text);
+	}
+	.fchip.on {
+		background: var(--accent-tint);
+		border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+		color: var(--accent-ink);
+		font-weight: 600;
+		box-shadow: none;
+	}
+	/* « C'est ici qu'il faut cliquer » : le kanban attend un sprint ou une version. */
+	.fchip.hint {
+		border-color: var(--accent);
+		color: var(--accent-ink);
+		box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent);
+		animation: fchip-hint 1.6s ease-in-out infinite;
+	}
+	@keyframes fchip-hint {
+		50% {
+			box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 10%, transparent);
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.fchip.hint {
+			animation: none;
+		}
+	}
+	.fchip.square {
+		border-radius: var(--r-md);
+		color: var(--text-soft);
+	}
+	.fchip.reset,
+	.fchip.reset.bare {
+		background: var(--text);
+		border-color: var(--text);
+		color: var(--surface);
+		font-weight: 600;
+	}
+	.fchip.reset:hover {
+		opacity: 0.85;
+	}
+	.fchip svg {
+		flex: none;
+		pointer-events: none;
+	}
+	.fchip-chev {
+		color: var(--text-mute);
+	}
+	.fchip-v {
+		max-width: 180px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		pointer-events: none;
+	}
+	.sort-v {
+		color: var(--text);
+		font-weight: 600;
+	}
+	.sort-v::first-letter {
+		text-transform: uppercase;
+	}
+	/* Le <select> couvre la pastille. Texte transparent plutôt qu'`opacity: 0` : l'élément reste
+	   visible pour les lecteurs d'écran et les tests, seul son libellé natif est masqué. */
+	.fchip select {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		margin: 0;
+		padding: 0;
+		border: 0;
+		border-radius: inherit;
+		appearance: none;
+		background: transparent;
+		color: transparent;
+		font: inherit;
+		cursor: pointer;
+	}
+	.fchip select:focus {
+		outline: none;
+	}
+	.fchip select option {
+		color: var(--text);
+		background: var(--surface);
+	}
+	.fchip-x {
+		position: relative;
+		z-index: 1;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 18px;
+		height: 18px;
+		margin-right: -5px;
+		border-radius: 50%;
+	}
+	.fchip-x:hover {
+		background: color-mix(in srgb, var(--accent) 18%, transparent);
+	}
+	.fchip.split {
+		padding: 0;
+		gap: 0;
+	}
+	.split-l {
+		display: inline-flex;
+		align-items: center;
+		gap: 7px;
+		height: 32px;
+		padding: 0 6px;
+		border-radius: 30px 0 0 30px;
+		font-weight: inherit;
+	}
+	.split-l:not(:has(:global(.avatar):only-child)) {
+		padding-right: 9px;
+	}
+	.split-l .nobody {
+		flex: none;
+	}
+	.fchip.split:not(.on) .split-l :global(.avatar) {
+		filter: grayscale(1);
+		opacity: 0.6;
+	}
+	.split-r {
+		position: relative;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 24px;
+		height: 32px;
+		border-left: 1px solid var(--border);
+		border-radius: 0 30px 30px 0;
+	}
+	.fchip.split.on .split-r {
+		border-left-color: color-mix(in srgb, var(--accent) 35%, transparent);
+	}
+	.fchip.split.on .fchip-chev {
+		color: inherit;
+	}
+	.sr-only {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
 	}
 	.reset-btn {
 		font-size: 12.5px;
@@ -1614,14 +2027,10 @@
 		border-color: var(--border-strong);
 		color: var(--text);
 	}
-	.count {
-		font-size: 12.5px;
-		font-weight: 600;
-		color: var(--text-mute);
-		font-variant-numeric: tabular-nums;
-	}
 	.search {
-		margin-left: auto;
+		flex: none;
+		width: 132px;
+		transition: width 0.2s ease;
 		display: flex;
 		align-items: center;
 		gap: 8px;
@@ -1631,7 +2040,9 @@
 		border: 1px solid var(--border);
 		box-shadow: var(--shadow-sm);
 		color: var(--text-mute);
-		min-width: 240px;
+	}
+	.search.filled {
+		width: 280px;
 	}
 	.search input {
 		border: none;
@@ -2310,20 +2721,64 @@
 		   Le débordement vertical est repris colonne par colonne (.kcards). */
 		height: calc(100dvh - 13rem);
 	}
+	.kanban-ghost-wrap {
+		position: relative;
+	}
+	/* Décor seulement : pas de défilement ni de clic, et un fondu vers le bas pour qu'il reste derrière. */
+	.kanban.ghost {
+		overflow: hidden;
+		opacity: 0.5;
+		pointer-events: none;
+		-webkit-mask-image: linear-gradient(to bottom, #000 35%, transparent 96%);
+		mask-image: linear-gradient(to bottom, #000 35%, transparent 96%);
+	}
 	.kanban-scope-prompt {
+		position: absolute;
+		inset: 0;
+		display: grid;
+		place-items: center;
+		padding: 16px;
+	}
+	.scope-card {
+		width: min(440px, 100%);
 		display: flex;
 		flex-direction: column;
+		gap: 6px;
+		padding: 20px 22px;
+		background: var(--surface);
+		border: 1px solid var(--border-strong);
+		border-radius: var(--r-lg);
+		box-shadow: var(--shadow-lg);
+		font-size: 13.5px;
+		line-height: 1.9;
+		color: var(--text-soft);
+	}
+	.scope-title {
+		font-family: var(--font-display);
+		font-size: 19px;
+		font-weight: 600;
+		letter-spacing: -0.02em;
+		line-height: 1.25;
+		color: var(--text);
+	}
+	/* Mêmes couleurs que les deux filtres entourés dans la barre (`.fchip.hint`) : on fait le lien d'un
+	   coup d'œil entre la phrase et l'endroit où cliquer. */
+	.scope-ico {
+		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		gap: 6px;
-		height: calc(100dvh - 13rem);
-		text-align: center;
-		color: var(--text-mute);
+		width: 24px;
+		height: 24px;
+		margin: 0 1px;
+		vertical-align: middle;
+		border-radius: 50%;
+		border: 1px solid var(--accent);
+		background: var(--accent-tint);
+		color: var(--accent-ink);
 	}
-	.kanban-scope-prompt p:first-child {
-		font-size: 15px;
-		font-weight: 600;
-		color: var(--text);
+	.scope-ico :global(svg) {
+		width: 13px;
+		height: 13px;
 	}
 	.kcol {
 		flex: 0 0 280px;
@@ -2434,12 +2889,96 @@
 		border-radius: 20px;
 		background: var(--accent);
 	}
+	/* Mini-tableau : activité, personnes qui ont imputé, consommé, reste à faire. */
+	.kacts {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto 38px 38px;
+		align-items: center;
+		gap: 4px 8px;
+		margin-top: 9px;
+		padding-top: 8px;
+		border-top: 1px solid var(--border);
+		font-size: 11.5px;
+	}
+	.kact-h {
+		font-size: 9.5px;
+		font-weight: 700;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--text-mute);
+		text-align: right;
+	}
+	.kact-l {
+		color: var(--text-soft);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.kact-who {
+		display: inline-flex;
+		align-items: center;
+		padding-left: 4px;
+	}
+	.kact-who :global(.tt-wrap) {
+		margin-left: -4px;
+	}
+	.kact-who :global(.avatar) {
+		box-shadow: 0 0 0 1.5px var(--surface);
+		font-size: 7px;
+	}
+	.kact-more {
+		margin-left: 3px;
+		font-size: 10px;
+		font-weight: 600;
+		color: var(--text-mute);
+	}
+	.kact-n {
+		text-align: right;
+		font-weight: 600;
+	}
+	.kact-n.zero {
+		color: var(--text-mute);
+		font-weight: 400;
+	}
 	.kpct {
 		font-size: 11.5px;
 		font-weight: 700;
 		color: var(--text-soft);
 		min-width: 30px;
 		text-align: right;
+	}
+	.kskel {
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
+		gap: 9px;
+		padding: 0 12px;
+		border-radius: var(--r-md);
+		border: 1px dashed color-mix(in srgb, var(--text) 16%, transparent);
+		/* Reflet teinté qui traverse l'emplacement, sur un fond à peine marqué. */
+		background:
+			linear-gradient(100deg, transparent 30%, color-mix(in srgb, var(--accent) 14%, transparent) 50%, transparent 70%) 120% 0 / 220% 100% no-repeat,
+			color-mix(in srgb, var(--text) 4%, transparent);
+		opacity: var(--o, 1);
+		animation: kskel-sweep 1.5s ease-in-out infinite;
+	}
+	.kskel i {
+		display: block;
+		height: 8px;
+		border-radius: 4px;
+		background: color-mix(in srgb, var(--text) 13%, transparent);
+	}
+	@keyframes kskel-sweep {
+		to {
+			background-position:
+				-120% 0,
+				0 0;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.kskel {
+			animation: none;
+		}
 	}
 	.kempty {
 		font-size: 12px;

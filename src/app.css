@@ -564,21 +564,14 @@ select {
 	background: var(--accent);
 	z-index: 1;
 }
-/* Chaîne visuelle : "Par version" / "Par sprint" descendent de la Synthèse. */
+/* Chaîne visuelle : les sous-entrées descendent de la Synthèse. Chaque entrée dessine son propre coude
+   (trait vertical depuis le milieu de la précédente, puis tiret jusqu'à elle) : la chaîne reste
+   raccordée quel que soit le nombre d'entrées. L'ancien trait unique à hauteur fixe (75 %) n'était
+   juste que pour deux entrées — à la troisième, le dernier tiret flottait sous le trait. */
 .nav-sub-group {
 	position: relative;
 	margin-left: 20px;
 	padding-left: 12px;
-}
-.nav-sub-group::before {
-	content: '';
-	position: absolute;
-	left: 0;
-	top: 0;
-	/* s'arrête au milieu de la dernière entrée (2 items, sans gap entre eux) : (n-0.5)/n */
-	height: 75%;
-	width: 2px;
-	background: var(--border);
 }
 .nav-sub-group .nav-item {
 	font-size: 13px;
@@ -591,10 +584,20 @@ select {
 	content: '';
 	position: absolute;
 	left: -12px;
-	top: 50%;
+	top: -50%;
 	width: 10px;
-	height: 2px;
-	background: var(--border);
+	height: 100%;
+	box-sizing: border-box;
+	border-left: 2px solid var(--border);
+	border-bottom: 2px solid var(--border);
+}
+/* La première part du haut du groupe (rien au-dessus à rejoindre) ; la dernière finit en coude arrondi. */
+.nav-sub-group .nav-item:first-child::after {
+	top: 0;
+	height: 50%;
+}
+.nav-sub-group .nav-item:last-child::after {
+	border-bottom-left-radius: 7px;
 }
 .nav-item .badge {
 	margin-left: auto;

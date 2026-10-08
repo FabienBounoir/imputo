@@ -9,7 +9,7 @@ import {
 	type AbsenceType,
 	type AbsencePeriod
 } from '$lib/absenceTypes';
-import { formatDayRange, toISODate, parseISODate, addDays } from '$lib/utils/date';
+import { formatDayRange, toISODate, parseISODate, addDays, isPublicHolidayFR } from '$lib/utils/date';
 
 const DAY_W = 30;
 const NAME_W = 190;
@@ -26,6 +26,9 @@ const WEEKEND_FILL = '#EFF1F4';
 const ZEBRA_FILL = '#FAFAFB';
 const HEADER_FILL = '#EFEFEF';
 const HEADER_WEEKEND_FILL = '#E2E4E8';
+const HOLIDAY_FILL = '#F6E1DF'; // même teinte rouge pâle que la grille en ligne (td.holiday)
+const HOLIDAY_HEADER_FILL = '#EFC9C5';
+const HOLIDAY_TEXT = '#C0392B';
 const GRID_LINE = '#D9D9D9';
 const WEEK_LINE = '#ADB5BD';
 const MONTH_LINE = '#475569';
@@ -165,10 +168,10 @@ export async function buildAbsencesSvg(
 		const x = dayX(i);
 		const y = gridTop + ROW_H;
 		parts.push(
-			`<rect x="${x}" y="${y}" width="${DAY_W}" height="${ROW_H}" fill="${isWeekend(d) ? HEADER_WEEKEND_FILL : HEADER_FILL}" stroke="${GRID_LINE}"/>`
+			`<rect x="${x}" y="${y}" width="${DAY_W}" height="${ROW_H}" fill="${isPublicHolidayFR(d) ? HOLIDAY_HEADER_FILL : isWeekend(d) ? HEADER_WEEKEND_FILL : HEADER_FILL}" stroke="${GRID_LINE}"/>`
 		);
 		parts.push(
-			`<text x="${x + DAY_W / 2}" y="${y + ROW_H / 2 + 4}" font-size="11" font-weight="700" text-anchor="middle" fill="${TEXT_MUTE}" ${FONT}>${parseISODate(d).getUTCDate()}</text>`
+			`<text x="${x + DAY_W / 2}" y="${y + ROW_H / 2 + 4}" font-size="11" font-weight="700" text-anchor="middle" fill="${isPublicHolidayFR(d) ? HOLIDAY_TEXT : TEXT_MUTE}" ${FONT}>${parseISODate(d).getUTCDate()}</text>`
 		);
 	});
 	parts.push(`<rect x="${MARGIN}" y="${gridTop}" width="${NAME_W}" height="${headerH}" fill="${HEADER_FILL}" stroke="${GRID_LINE}"/>`);
@@ -196,6 +199,7 @@ export async function buildAbsencesSvg(
 					cell.period === 'FULL'
 						? `fill="${ABSENCE_TYPE_COLORS[cell.type]}"`
 						: `fill="url(#grad-${cell.type}-${cell.period === 'AM' ? 'am' : 'pm'})"`;
+			else if (isPublicHolidayFR(d)) fillAttr = `fill="${HOLIDAY_FILL}"`;
 			else if (m.external) fillAttr = `fill="${EXTERNAL_TINT}" fill-opacity="0.12"`;
 			else if (isWeekend(d)) fillAttr = `fill="${WEEKEND_FILL}"`;
 			else if (zebra) fillAttr = `fill="${ZEBRA_FILL}"`;

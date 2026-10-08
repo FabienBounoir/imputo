@@ -88,14 +88,19 @@
 		objectives;
 		carried = [];
 	});
-	// Non faits en S-1 pour cette personne, moins ce qui est déjà repris cette semaine (même ticket, ou
-	// même libellé de tâche) : reporté, il disparaît de la liste ; retiré de la semaine, il revient.
+	// Non faits en S-1 pour cette personne, moins ce qui est déjà repris cette semaine (même ticket
+	// ET même activité, ou même libellé de tâche) : reporté, il disparaît de la liste ; retiré de la
+	// semaine, il revient. L'activité compte dans la comparaison : un même ticket peut avoir plusieurs
+	// objectifs non faits sur des activités différentes, et n'en reporter qu'un ne doit pas faire
+	// disparaître l'autre.
 	const toCarry = $derived(
 		carryover.filter(
 			(o) =>
 				o.userId === userId &&
 				!carried.includes(o.id) &&
-				!mine.some((m) => (o.kind === 'TICKET' ? m.ticketId === o.ticketId : m.kind === 'CUSTOM' && m.label === o.label))
+				!mine.some((m) =>
+					o.kind === 'TICKET' ? m.ticketId === o.ticketId && m.activityId === o.activityId : m.kind === 'CUSTOM' && m.label === o.label
+				)
 		)
 	);
 	// Maj enfoncée : le pied de palette annonce Maj+Tab (personne précédente) au lieu de Tab.

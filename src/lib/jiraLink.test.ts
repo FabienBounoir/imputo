@@ -13,8 +13,8 @@ describe('jiraTicketUrl', () => {
 	});
 
 	it('applique la regex inverse pour reconstruire la clé Jira réelle', () => {
-		const cfg = { ...base, jiraLinkKeyRegexPattern: '^', jiraLinkKeyRegexReplacement: 'CARTEJEUNE_' };
-		expect(jiraTicketUrl(cfg, 'BLM-123')).toBe('https://jira.example.com/browse/CARTEJEUNE_BLM-123');
+		const cfg = { ...base, jiraLinkKeyRegexPattern: '^', jiraLinkKeyRegexReplacement: 'ACME_' };
+		expect(jiraTicketUrl(cfg, 'BLM-123')).toBe('https://jira.example.com/browse/ACME_BLM-123');
 	});
 
 	it('null si la regex est invalide plutôt que de planter', () => {

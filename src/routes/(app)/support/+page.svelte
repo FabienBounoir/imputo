@@ -88,6 +88,13 @@
 
 	const gameWon = $derived(isWon(game));
 
+	// Récap des 5 derniers jours ouvrés (du plus récent au plus ancien, cf. +page.server.ts).
+	const recapTotal = $derived(data.dailyRecap.reduce((a, d) => a + d.minutes, 0));
+	const fmtRecapDay = (iso: string) =>
+		new Intl.DateTimeFormat('fr-FR', { weekday: 'short', day: 'numeric', timeZone: 'UTC' }).format(
+			new Date(iso + 'T00:00:00Z')
+		);
+
 	// Le nombre de jours par semaine dans la grille reflète déjà le réglage "samedi inclus" (cf.
 	// listDutyCalendar côté serveur) — on en déduit l'entête plutôt que de dupliquer le réglage ici.
 	const WEEKDAYS = $derived(
@@ -256,6 +263,25 @@
 					<kbd class="shortcut-kbd"><KeyIcon name="shift" />T</kbd>
 				</button>
 			</div>
+			<div class="time-body">
+			<!-- Avant la liste dans le DOM : sur mobile le résumé passe au-dessus du détail ; sur grand
+			     écran la grille le range à droite. -->
+			<aside class="recap" aria-label="Récapitulatif des 5 derniers jours ouvrés">
+				<div class="recap-head">
+					<span>5 derniers jours</span>
+					<b class="tabnum">{recapTotal ? formatDuration(recapTotal) : '—'}</b>
+				</div>
+				<ol class="recap-days">
+					{#each data.dailyRecap as d (d.day)}
+						<li class="recap-day" class:today={d.day === data.todayISO} class:empty={d.minutes === 0 && d.tickets === 0}>
+							<span class="recap-label">{fmtRecapDay(d.day)}</span>
+							<span class="recap-time tabnum">{d.minutes ? formatDuration(d.minutes) : '—'}</span>
+							<span class="recap-tickets">{d.tickets} ticket{d.tickets > 1 ? 's' : ''}</span>
+						</li>
+					{/each}
+				</ol>
+			</aside>
+			<div class="time-list">
 			{#if data.ownTimeEntries.length === 0}
 				<p class="empty-hint">Aucune saisie pour l'instant.</p>
 			{:else}
@@ -297,6 +323,8 @@
 					</table>
 				</div>
 			{/if}
+			</div>
+			</div>
 		</section>
 	{/if}
 </div>
@@ -828,6 +856,119 @@
 	}
 	.time-table-wrap {
 		overflow-x: auto;
+	}
+
+	/* Liste + récap : récap à droite sur grand écran, au-dessus de la liste sur mobile. */
+	.time-body {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) 210px;
+		grid-template-areas: 'list recap';
+		gap: 24px;
+		align-items: start;
+	}
+	.time-list {
+		grid-area: list;
+		min-width: 0;
+	}
+	.recap {
+		grid-area: recap;
+		padding-left: 20px;
+		border-left: 1px solid var(--border);
+	}
+	.recap-head {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 8px;
+		font-size: 11px;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		color: var(--text-mute);
+		margin-bottom: 10px;
+	}
+	.recap-head b {
+		font-size: 13px;
+		letter-spacing: 0;
+		text-transform: none;
+		color: var(--text);
+	}
+	.recap-days {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+	.recap-day {
+		display: grid;
+		grid-template-columns: 1fr auto;
+		grid-template-areas: 'label time' 'tickets tickets';
+		column-gap: 8px;
+		row-gap: 3px;
+		padding: 8px 10px;
+		border-radius: var(--r-md);
+		background: var(--surface-sunk);
+		border: 1px solid transparent;
+	}
+	.recap-day.today {
+		border-color: var(--accent);
+	}
+	.recap-label {
+		grid-area: label;
+		font-size: 12.5px;
+		font-weight: 600;
+		color: var(--text-soft);
+		text-transform: capitalize;
+	}
+	.recap-day.today .recap-label {
+		color: var(--accent);
+	}
+	.recap-time {
+		grid-area: time;
+		font-size: 13px;
+		font-weight: 700;
+	}
+	.recap-tickets {
+		grid-area: tickets;
+		font-size: 11.5px;
+		color: var(--text-mute);
+	}
+	.recap-day.empty .recap-time,
+	.recap-day.empty .recap-tickets {
+		color: var(--text-mute);
+		font-weight: 500;
+	}
+
+	@media (max-width: 760px) {
+		.time-body {
+			grid-template-columns: minmax(0, 1fr);
+			grid-template-areas: 'recap' 'list';
+			gap: 18px;
+		}
+		.recap {
+			padding-left: 0;
+			border-left: none;
+		}
+		/* Une ligne par jour (jour · temps · tickets) : des tuiles côte à côte tronquaient les
+		   libellés dès 320 px de large. */
+		.recap-days {
+			gap: 4px;
+		}
+		.recap-day {
+			grid-template-columns: minmax(0, 1fr) 52px 64px;
+			grid-template-areas: 'label time tickets';
+			align-items: center;
+			padding: 7px 10px;
+		}
+		.recap-time {
+			text-align: right;
+		}
+		.recap-tickets {
+			text-align: right;
+			white-space: nowrap;
+		}
 	}
 	.time-table {
 		width: 100%;

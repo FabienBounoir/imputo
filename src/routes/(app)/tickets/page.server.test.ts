@@ -5,8 +5,13 @@ import { load as loadUntyped, actions } from './+page.server';
 const load = loadUntyped as (event: unknown) => Promise<Record<string, any>>;
 import { makeWorkspace, addMember } from '$lib/server/services/test-helpers';
 import { fakeLocals, formRequest } from '$lib/server/test-helpers/http';
-import { db, project } from '$lib/server/db';
-import { setTicketFiltersSnapshot, setRememberTicketFiltersPref, setRememberTicketSearchPref } from '$lib/server/services/accounts';
+import { db, project, sprint, ticket, activity, ticketActivityRae } from '$lib/server/db';
+import {
+	setTicketFiltersSnapshot,
+	setRememberTicketFiltersPref,
+	setRememberTicketSearchPref,
+	setCompactTicketActivityPref
+} from '$lib/server/services/accounts';
 
 describe('tickets +page.server load', () => {
 	it('isAdmin/canEditEstimation sont false pour un USER, true pour un ADMIN', async () => {
@@ -55,6 +60,22 @@ describe('tickets +page.server load — mémorisation des filtres (arrivée à b
 			status: 303,
 			location: expect.stringContaining(`project=${p.id}`)
 		});
+	});
+
+	it('le filtre « assigné à » est mémorisé : `me` et `none` partout, un collègue seulement dans son espace', async () => {
+		const { userId, workspaceId } = await makeWorkspace('ticketsremember');
+		const { userId: colleagueId } = await addMember(workspaceId, 'USER', 'ticketsremember-colleague');
+		const { userId: strangerId } = await makeWorkspace('ticketsremember-ailleurs');
+		const arrive = async (assignee: string) => {
+			await setTicketFiltersSnapshot(userId, { view: 'table', query: null, stateId: null, projectId: null, sprintId: null, versionId: null, assignee, sort: 'priority' });
+			return load({ locals: await fakeLocals(userId), url: new URL('http://localhost/tickets') } as never);
+		};
+
+		await expect(arrive('me')).rejects.toMatchObject({ status: 303, location: expect.stringContaining('assignee=me') });
+		await expect(arrive('none')).rejects.toMatchObject({ status: 303, location: expect.stringContaining('assignee=none') });
+		await expect(arrive(colleagueId)).rejects.toMatchObject({ status: 303, location: expect.stringContaining(`assignee=${colleagueId}`) });
+		// Hors de l'espace courant : ignoré, comme un état/projet d'un autre espace (pas de « 0 résultat » muet).
+		await expect(arrive(strangerId)).rejects.toMatchObject({ status: 303, location: expect.not.stringContaining('assignee') });
 	});
 
 	it('le tri "priorité" est mémorisé et réappliqué à une arrivée à blanc', async () => {
@@ -288,6 +309,31 @@ describe('tickets +page.server actions.groupToggle / actions.flag', () => {
 });
 
 describe('tickets +page.server — préférence "détail par activité"', () => {
+	it('load renvoie ticketFilterLabels : icônes seules par défaut, noms affichés une fois le réglage activé', async () => {
+		const { userId } = await makeWorkspace('ticketslabels');
+		const url = new URL('http://localhost/tickets?page=1');
+		expect((await load({ locals: await fakeLocals(userId), url } as never)).ticketFilterLabels).toBe(false);
+
+		const { actions: settingsActions } = await import('../settings/+page.server');
+		await settingsActions.ticketFilterLabelsPref({ request: formRequest({ value: 'true' }), locals: await fakeLocals(userId) } as never);
+		expect((await load({ locals: await fakeLocals(userId), url } as never)).ticketFilterLabels).toBe(true);
+	});
+
+	// Le board kanban se charge sans pagination : le détail par activité n'y est joint que déplié.
+	it('kanban : le détail par activité n’est chargé que si la préférence est « déplié »', async () => {
+		const { userId, workspaceId } = await makeWorkspace('ticketskanbandetail');
+		const [sp] = await db.insert(sprint).values({ workspaceId, name: 'Sprint K' }).returning({ id: sprint.id });
+		const [tk] = await db.insert(ticket).values({ workspaceId, key: 'KAN-1', title: 'Carte', sprintId: sp.id }).returning({ id: ticket.id });
+		const [act] = await db.insert(activity).values({ workspaceId, label: 'Recette kanban' }).returning({ id: activity.id });
+		await db.insert(ticketActivityRae).values({ ticketId: tk.id, activityId: act.id, raeReal: '1', estimation: '2' });
+		const url = new URL(`http://localhost/tickets?view=kanban&sprint=${sp.id}`);
+		const breakdown = async () => (await (await load({ locals: await fakeLocals(userId), url } as never)).ticketsPage).tickets[0].activityBreakdown;
+
+		expect(await breakdown()).toEqual([]);
+		await setCompactTicketActivityPref(userId, false);
+		expect(await breakdown()).toMatchObject([{ label: 'Recette kanban', raeReal: 1, estimation: 2 }]);
+	});
+
 	it('load renvoie compactTicketActivity (true par défaut sur un compte neuf)', async () => {
 		const { userId } = await makeWorkspace('ticketscompact');
 		const result = await load({ locals: await fakeLocals(userId), url: new URL('http://localhost/tickets?view=table') } as never);

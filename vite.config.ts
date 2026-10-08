@@ -14,6 +14,18 @@ export default defineConfig({
 	},
 	plugins: [
 		sveltekit({
+			// Nom de version = APP_VERSION (SHA/tag) plutôt qu'un timestamp : deux builds du même commit ne
+			// déclenchent pas la pastille « nouvelle version ». Sondage toutes les heures (+ au retour sur
+			// l'onglet, cf. +layout.svelte) ; `updated` est inactif en dev.
+			version: {
+				// `||` et pas `??` : un build OpenShift binaire (`--from-dir`) laisse APP_VERSION vide, ce qui donnerait
+				// une version "" identique à chaque déploiement, donc aucune pastille. Repli : horodatage du build.
+				// Figé dans l'env du process (`||=`) : le plugin recharge ce fichier pour le build client, un
+				// `Date.now()` réévalué donnerait deux versions serveur/client, donc `__sveltekit_<hash>` introuvable
+				// au boot et plus aucune hydratation.
+				name: process.env.APP_VERSION || (process.env.BUILD_TIMESTAMP ||= String(Date.now())),
+				pollInterval: 60 * 60 * 1000
+			},
 			compilerOptions: {
 				// Force runes mode for the project, except for libraries.
 				runes: ({ filename }) =>

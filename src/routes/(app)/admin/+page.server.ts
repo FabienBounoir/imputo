@@ -26,7 +26,8 @@ import {
 	resetJiraUpdatedSince,
 	resetJiraCreatedSince,
 	listJiraSyncRuns,
-	undoJiraSyncRun
+	undoJiraSyncRun,
+	isActivated
 } from '$lib/server/services/accounts';
 import { syncWorkspace } from '$lib/server/services/jiraSync';
 import { getAzureToken, searchJiraIssuesPage } from '$lib/server/services/jiraClient';
@@ -159,7 +160,8 @@ export const load: PageServerLoad = async ({ locals }) => {
 			capacity: membership.capacityPerDay,
 			canViewImputations: membership.canViewImputations,
 			canViewMoodResults: membership.canViewMoodResults,
-			pending: user.passwordHash
+			passwordHash: user.passwordHash,
+			ssoLoginAt: user.ssoLoginAt
 		})
 		.from(membership)
 		.innerJoin(user, eq(membership.userId, user.id))
@@ -184,7 +186,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		]);
 
 	return {
-		members: members.map((m) => ({ ...m, pending: m.pending === null, isOwner: m.id === ws.createdByUserId })),
+		members: members.map(({ passwordHash, ssoLoginAt, ...m }) => ({ ...m, pending: !isActivated({ passwordHash, ssoLoginAt }), isOwner: m.id === ws.createdByUserId })),
 		selfId: locals.user!.id,
 		isOwner: locals.user!.id === ws.createdByUserId,
 		allowedDomain: ws.allowedDomain,
