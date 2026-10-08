@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	getAzureToken,
 	searchJiraIssues,
+	searchJiraIssuesPage,
 	formatJqlDateTime,
 	hasOrderByClause,
 	JiraAuthError,
@@ -297,6 +298,26 @@ describe('jiraClient / searchJiraIssues', () => {
 		await expect(searchJiraIssues(baseCfg, 'azure-tok', 'pat', 'project = BLM', fetchImpl)).rejects.toBeInstanceOf(
 			JiraApiError
 		);
+	});
+});
+
+describe('jiraClient / searchJiraIssuesPage', () => {
+	it('ne lit qu’une page (startAt/maxResults transmis tels quels) et renvoie le total Jira', async () => {
+		const requested: URLSearchParams[] = [];
+		const fetchImpl = (async (input: RequestInfo | URL) => {
+			requested.push(new URL(input.toString()).searchParams);
+			return jsonResponse(200, { startAt: 20, total: 42, issues: [{ key: 'BLM-21', fields: { summary: 'Ticket 21' } }] });
+		}) as typeof fetch;
+
+		const page = await searchJiraIssuesPage(baseCfg, 'azure-tok', 'pat', 'project = BLM', 20, 20, fetchImpl);
+
+		// Une seule requête alors que Jira annonce 42 tickets : c'est l'appelant (modale d'aperçu de
+		// l'admin) qui demande la suite, contrairement à searchJiraIssues qui pagine jusqu'au bout.
+		expect(requested).toHaveLength(1);
+		expect(requested[0].get('startAt')).toBe('20');
+		expect(requested[0].get('maxResults')).toBe('20');
+		expect(page.total).toBe(42);
+		expect(page.issues.map((i) => i.key)).toEqual(['BLM-21']);
 	});
 });
 

@@ -1,5 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { eq } from 'drizzle-orm';
 import { actions } from './+page.server';
+import { db, ticket, workspace } from '$lib/server/db';
+import { config } from '$lib/server/config';
+import { encryptSecret } from '$lib/server/auth/secretCrypto';
 import { makeWorkspace, addMember } from '$lib/server/services/test-helpers';
 import { fakeLocals, formRequest } from '$lib/server/test-helpers/http';
 import { getJiraConfig } from '$lib/server/services/accounts';
@@ -413,5 +417,163 @@ describe('admin jiraToggleEnabled / jiraSave / jiraSyncNow', () => {
 
 		expect(res).toEqual({ jiraResetCreatedSinceOk: true });
 		expect((await getJiraConfig(workspaceId)).createdSince).toBeNull();
+	});
+});
+
+// Le refus d'un rôle USER (403) est déjà couvert par « garde ADMIN » en tête de fichier.
+describe('admin jiraTestQuery (aperçu du filtre JQL)', () => {
+	// Clé et identifiants posés ici plutôt que lus dans l'environnement (absents en CI, réels sur un
+	// poste de dev) : l'action lit `config`, remplacé le temps du test comme `authMode` dans
+	// settings/page.server.test.ts. Le réseau est toujours simulé, jamais le vrai Jira.
+	const encKey = Buffer.alloc(32, 7).toString('base64');
+	const before = { ...config };
+	let jiraCalls: { url: URL; jtoken: string | null }[];
+
+	beforeEach(() => {
+		Object.assign(config, {
+			jiraPatEncryptionKey: encKey,
+			azureTenantId: 'tenant-test',
+			azureClientId: 'client-jira-test-query',
+			azureClientSecret: 'secret-test',
+			jiraBaseUrl: 'https://jira.example.test'
+		});
+		jiraCalls = [];
+	});
+	afterEach(() => {
+		Object.assign(config, before);
+		vi.unstubAllGlobals();
+	});
+
+	const jsonResponse = (status: number, body: unknown) => new Response(JSON.stringify(body), { status });
+	const rawIssue = (key: string, summary: string) => ({ key, fields: { summary } });
+
+	/** Simule Azure AD et /rest/api/2/search ; `search` reçoit l'URL demandée à Jira. */
+	function stubJira(search: (url: URL) => Response) {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+				const url = new URL(input.toString());
+				if (url.hostname === 'login.microsoftonline.com') {
+					return jsonResponse(200, { access_token: 'azure-tok', expires_in: 3600 });
+				}
+				jiraCalls.push({ url, jtoken: new Headers(init?.headers).get('JTOKEN') });
+				return search(url);
+			})
+		);
+	}
+
+	/** Espace avec un token Jira enregistré (chiffré), et au besoin une regex de clé. */
+	async function makeJiraWorkspace(prefix: string, regex?: { pattern: string; replacement: string }) {
+		const ws = await makeWorkspace(prefix);
+		await db
+			.update(workspace)
+			.set({
+				jiraPatEncrypted: encryptSecret('fake-pat', encKey),
+				jiraKeyRegexPattern: regex?.pattern ?? null,
+				jiraKeyRegexReplacement: regex?.replacement ?? null
+			})
+			.where(eq(workspace.id, ws.workspaceId));
+		return ws;
+	}
+
+	const errorOf = (res: unknown) => (res as { data?: { error?: string } })?.data?.error ?? '';
+
+	it('JQL vide -> fail 400, sans appel réseau', async () => {
+		stubJira(() => jsonResponse(200, { startAt: 0, total: 0, issues: [] }));
+		const { userId } = await makeJiraWorkspace('jira-test-empty');
+		const locals = await fakeLocals(userId);
+
+		const res = await actions.jiraTestQuery({ locals, request: formRequest({ jql: '   ' }) } as never);
+
+		expect(res?.status).toBe(400);
+		expect(fetch).not.toHaveBeenCalled();
+	});
+
+	it('espace sans token Jira -> fail 400 explicite, sans appel réseau', async () => {
+		stubJira(() => jsonResponse(200, { startAt: 0, total: 0, issues: [] }));
+		const { userId } = await makeWorkspace('jira-test-nopat');
+		const locals = await fakeLocals(userId);
+
+		const res = await actions.jiraTestQuery({ locals, request: formRequest({ jql: 'project = X' }) } as never);
+
+		expect(res?.status).toBe(400);
+		expect(errorOf(res)).toContain('Token Jira');
+		expect(fetch).not.toHaveBeenCalled();
+	});
+
+	it('renvoie une page avec le total Jira et distingue nouveau / déjà présent comme la synchro', async () => {
+		// Regex de clé de l'espace : ACME_BLM-1 côté Jira correspond à BLM-1 en local.
+		const { userId, workspaceId } = await makeJiraWorkspace('jira-test-ok', { pattern: '^ACME_', replacement: '' });
+		const other = await makeWorkspace('jira-test-other');
+		await db.insert(ticket).values([
+			{ workspaceId, key: 'BLM-1', title: 'Déjà là' },
+			// Même clé dans un autre espace : ne doit pas faire passer BLM-2 pour « déjà présent » ici.
+			{ workspaceId: other.workspaceId, key: 'BLM-2', title: "Ticket d'un autre espace" }
+		]);
+		stubJira(() =>
+			jsonResponse(200, { startAt: 20, total: 42, issues: [rawIssue('ACME_BLM-1', 'Un'), rawIssue('ACME_BLM-2', 'Deux')] })
+		);
+		const locals = await fakeLocals(userId);
+
+		const res = await actions.jiraTestQuery({
+			locals,
+			request: formRequest({ jql: 'project = ACME_BLM', startAt: '20' })
+		} as never);
+
+		expect(res).toEqual({
+			jiraTestOk: true,
+			jiraTestTotal: 42,
+			jiraTestIssues: [
+				{ key: 'ACME_BLM-1', summary: 'Un', isNew: false },
+				{ key: 'ACME_BLM-2', summary: 'Deux', isNew: true }
+			]
+		});
+		// Le JQL tapé (pas forcément enregistré), une seule page de 20 depuis la position demandée,
+		// avec le token de l'espace.
+		expect(jiraCalls).toHaveLength(1);
+		expect(jiraCalls[0].url.searchParams.get('jql')).toBe('project = ACME_BLM');
+		expect(jiraCalls[0].url.searchParams.get('startAt')).toBe('20');
+		expect(jiraCalls[0].url.searchParams.get('maxResults')).toBe('20');
+		expect(jiraCalls[0].jtoken).toBe('Bearer fake-pat');
+		// Aperçu seulement : rien n'est créé en base, contrairement à jiraSyncNow.
+		const rows = await db.select({ key: ticket.key }).from(ticket).where(eq(ticket.workspaceId, workspaceId));
+		expect(rows.map((r) => r.key)).toEqual(['BLM-1']);
+	});
+
+	it('position de départ absente ou invalide -> première page', async () => {
+		const { userId } = await makeJiraWorkspace('jira-test-start');
+		stubJira(() => jsonResponse(200, { startAt: 0, total: 0, issues: [] }));
+		const locals = await fakeLocals(userId);
+
+		for (const startAt of [undefined, '-5', 'abc']) {
+			const fields: Record<string, string> = { jql: 'project = X' };
+			if (startAt !== undefined) fields.startAt = startAt;
+			const res = await actions.jiraTestQuery({ locals, request: formRequest(fields) } as never);
+			expect(res).toEqual({ jiraTestOk: true, jiraTestTotal: 0, jiraTestIssues: [] });
+		}
+
+		expect(jiraCalls.map((c) => c.url.searchParams.get('startAt'))).toEqual(['0', '0', '0']);
+	});
+
+	it('JQL refusé par Jira -> fail 400 avec le message de Jira', async () => {
+		const { userId } = await makeJiraWorkspace('jira-test-badjql');
+		stubJira(() => jsonResponse(400, { errorMessages: ["Le champ 'projet' n'existe pas."] }));
+		const locals = await fakeLocals(userId);
+
+		const res = await actions.jiraTestQuery({ locals, request: formRequest({ jql: 'projet = X' }) } as never);
+
+		expect(res?.status).toBe(400);
+		expect(errorOf(res)).toContain("n'existe pas");
+	});
+
+	it('token Jira expiré (401) -> fail 400 qui le dit', async () => {
+		const { userId } = await makeJiraWorkspace('jira-test-expired');
+		stubJira(() => jsonResponse(401, {}));
+		const locals = await fakeLocals(userId);
+
+		const res = await actions.jiraTestQuery({ locals, request: formRequest({ jql: 'project = X' }) } as never);
+
+		expect(res?.status).toBe(400);
+		expect(errorOf(res)).toContain('PAT Jira invalide ou expiré');
 	});
 });
