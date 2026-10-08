@@ -363,18 +363,18 @@
 		loadGeneration++;
 		if (loadGeneration > 1) skeletonSeed = loadGeneration; // jamais au premier rendu (hydratation)
 		let cancelled = false;
-		data.ticketsPage.then(async (r) => {
+		data.ticketsPage.then((r) => {
 			if (cancelled) return;
 			rows = r.tickets.map(toRow);
 			total = r.total;
 			pageCount = r.pageCount;
 			loadedPage = data.page;
 			hasMore = data.view === 'table' && data.page < r.pageCount;
-			const fresh = rowsFor !== page.url.search; // premières données pour cette URL
+			// Premières données pour cette URL : le kanban devra se placer sur sa première colonne remplie,
+			// une fois les cartes réellement affichées (cf. l'effet qui lit `kanbanScrollPending`).
+			if (rowsFor !== page.url.search && data.view === 'kanban') kanbanScrollPending = true;
 			rowsFor = page.url.search;
 			ticketsLoading = false;
-			await tick(); // les cartes sont dans le DOM
-			if (!cancelled && fresh) scrollKanbanToFirstFilled();
 		});
 		return () => {
 			cancelled = true;
@@ -626,16 +626,47 @@
 	/** Ce qu'on laisse dépasser de la colonne précédente : sans ce bout de colonne, on prendrait la
 	 *  première colonne remplie pour le début du tableau et on ne penserait pas à revenir en arrière. */
 	const KANBAN_PEEK = 48;
-	function scrollKanbanToFirstFilled() {
-		if (!kanbanEl) return;
-		const firstFilled = [...kanbanEl.querySelectorAll('.kcol')].find((col) => col.querySelector('.kcard'));
-		const left = firstFilled
-			? Math.max(0, kanbanEl.scrollLeft + firstFilled.getBoundingClientRect().left - kanbanEl.getBoundingClientRect().left - KANBAN_PEEK)
+	const KANBAN_SLIDE_MS = 420;
+	let kanbanScrollPending = $state(false);
+	let kanbanSlide: AbortController | null = null;
+	// Le défilement part quand les cartes sont réellement dans le DOM (squelette retiré), pas à
+	// l'arrivée des données : selon l'ordre des mises à jour, les cartes n'y étaient pas toujours
+	// encore, et le board restait alors au début.
+	$effect(() => {
+		if (!kanbanScrollPending || kanbanSkeleton || !kanbanEl) return;
+		kanbanScrollPending = false;
+		scrollKanbanToFirstFilled(kanbanEl);
+	});
+	function scrollKanbanToFirstFilled(el: HTMLElement) {
+		const firstFilled = [...el.querySelectorAll('.kcol')].find((col) => col.querySelector('.kcard'));
+		const from = el.scrollLeft;
+		const to = firstFilled
+			? Math.max(0, from + firstFilled.getBoundingClientRect().left - el.getBoundingClientRect().left - KANBAN_PEEK)
 			: 0;
-		// Glissement plutôt que saut : on voit d'où l'on part. Saut direct si le système demande de
-		// réduire les animations.
-		const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-		kanbanEl.scrollTo({ left, behavior: reduced ? 'auto' : 'smooth' });
+		kanbanSlide?.abort();
+		// Saut direct si le système demande de réduire les animations, ou si l'onglet est en
+		// arrière-plan (aucune image n'y est dessinée, l'animation resterait en suspens).
+		if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || document.hidden || Math.abs(to - from) < 2) {
+			el.scrollLeft = to;
+			return;
+		}
+		// Glissement animé à la main plutôt que `scrollTo({ behavior: 'smooth' })` : le défilement doux
+		// du navigateur s'interrompt quand la mise en page bouge pendant le trajet (avatars qui finissent
+		// de charger), et le board s'arrêtait alors en route, une fois sur plusieurs.
+		const slide = (kanbanSlide = new AbortController());
+		// L'utilisateur reprend la main (molette, clic, doigt) : on n'insiste pas.
+		for (const type of ['wheel', 'pointerdown', 'touchstart']) {
+			el.addEventListener(type, () => slide.abort(), { passive: true, signal: slide.signal });
+		}
+		const start = performance.now();
+		const step = (now: number) => {
+			if (slide.signal.aborted) return;
+			const t = Math.min(1, (now - start) / KANBAN_SLIDE_MS);
+			el.scrollLeft = from + (to - from) * (1 - Math.pow(1 - t, 3)); // décélération
+			if (t < 1) requestAnimationFrame(step);
+			else slide.abort(); // retire les écouteurs
+		};
+		requestAnimationFrame(step);
 	}
 	let scrollDir = 0;
 	let rafId = 0;
