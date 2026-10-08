@@ -40,6 +40,11 @@ describe('formatDuration', () => {
 		expect(formatDuration(2 * 8 * 60)).toBe('2d');
 		expect(formatDuration(5 * 8 * 60)).toBe('1w');
 	});
+	it("weeks: false s'arrête au jour (totaux)", () => {
+		expect(formatDuration(5 * 8 * 60, { weeks: false })).toBe('5d');
+		expect(formatDuration(12 * 8 * 60 + 150, { weeks: false })).toBe('12d 2h 30m');
+		expect(formatDuration(90, { weeks: false })).toBe('1h 30m');
+	});
 	it('0 ou négatif -> "0m"', () => {
 		expect(formatDuration(0)).toBe('0m');
 		expect(formatDuration(-5)).toBe('0m');

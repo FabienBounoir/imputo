@@ -1,7 +1,7 @@
 import { redirect } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 import { getSupportTimeStats, listTimeEntriesPage, listPeopleWithEntries } from '$lib/server/services/supportTime';
-import { todayInParis } from '$lib/utils/date';
+import { parseISODate, toISODate, todayInParis } from '$lib/utils/date';
 
 const isISODate = (s: string | null): s is string => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s);
 const PAGE_SIZE = 50;
@@ -20,8 +20,23 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	const qFrom = url.searchParams.get('from');
 	const qTo = url.searchParams.get('to');
 	const preset = url.searchParams.get('preset') ?? 'month';
-	const from = isISODate(qFrom) ? qFrom : preset === 'all' ? undefined : preset === 'year' ? `${today.slice(0, 4)}-01-01` : `${today.slice(0, 7)}-01`;
-	const to = isISODate(qTo) ? qTo : preset === 'all' ? undefined : today;
+	// Mois précédent : du 1er au dernier jour, calculé depuis la date de Paris (le jour 0 du mois en
+	// cours est le dernier du précédent). Sert quand l'URL ne porte que ?preset=lastmonth.
+	const t = parseISODate(today);
+	const lastMonth = {
+		from: toISODate(new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() - 1, 1))),
+		to: toISODate(new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), 0)))
+	};
+	const from = isISODate(qFrom)
+		? qFrom
+		: preset === 'all'
+			? undefined
+			: preset === 'year'
+				? `${today.slice(0, 4)}-01-01`
+				: preset === 'lastmonth'
+					? lastMonth.from
+					: `${today.slice(0, 7)}-01`;
+	const to = isISODate(qTo) ? qTo : preset === 'all' ? undefined : preset === 'lastmonth' ? lastMonth.to : today;
 	const userId = url.searchParams.get('userId') || undefined;
 	const filter = { from, to, userId };
 

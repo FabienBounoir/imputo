@@ -33,12 +33,16 @@ export function parseDuration(raw: string): number | null {
 	return Math.round(total);
 }
 
-/** Formate des minutes en chaîne façon Jira, unité la plus grosse d'abord ("1h 30m", "45m"). */
-export function formatDuration(minutes: number): string {
+/**
+ * Formate des minutes en chaîne façon Jira, unité la plus grosse d'abord ("1h 30m", "45m").
+ * `weeks: false` s'arrête au jour ("7d 2h" plutôt que "1w 2d 2h") : pour les totaux, où une
+ * semaine de 40 h à convertir de tête se lit moins bien qu'un nombre de jours.
+ */
+export function formatDuration(minutes: number, opts: { weeks?: boolean } = {}): string {
 	if (minutes <= 0) return '0m';
 	let rest = Math.round(minutes);
 	const parts: string[] = [];
-	const w = Math.floor(rest / UNIT_MINUTES.w);
+	const w = opts.weeks === false ? 0 : Math.floor(rest / UNIT_MINUTES.w);
 	if (w) {
 		parts.push(`${w}w`);
 		rest -= w * UNIT_MINUTES.w;
