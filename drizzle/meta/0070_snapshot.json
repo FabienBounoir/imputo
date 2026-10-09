@@ -4503,7 +4503,7 @@
           "type": "boolean",
           "primaryKey": false,
           "notNull": true,
-          "default": false
+          "default": true
         },
         "motivation_banner": {
           "name": "motivation_banner",

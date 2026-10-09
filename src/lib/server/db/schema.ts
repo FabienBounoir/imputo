@@ -194,9 +194,9 @@ export const user = pgTable('user', {
 	ticketFiltersSnapshot: text('ticket_filters_snapshot'), // JSON { view, query, stateId, projectId, sprintId, versionId }
 	// Détail par activité sous chaque ticket (vue tableau) : true = masqué par défaut (compact).
 	compactTicketActivity: boolean('compact_ticket_activity').notNull().default(true),
-	// Barre de filtres de la page Tickets : false (défaut) = un filtre vide n'est qu'une icône (gain de
-	// place) ; true = icône + nom du critère, pour qui préfère lire que deviner.
-	ticketFilterLabels: boolean('ticket_filter_labels').notNull().default(false),
+	// Barre de filtres de la page Tickets : true (défaut) = icône + nom du critère ; false = un filtre
+	// vide n'est qu'une icône (gain de place).
+	ticketFilterLabels: boolean('ticket_filter_labels').notNull().default(true),
 	// Bandeau de citations motivantes en haut des pages (rotation toutes les 30 s).
 	motivationBanner: boolean('motivation_banner').notNull().default(true),
 	// Null = jamais vu le tutoriel de prise en main (déclenche le lancement auto au prochain

@@ -1,1 +1,1 @@
-ALTER TABLE "user" ADD COLUMN "ticket_filter_labels" boolean DEFAULT false NOT NULL;
+ALTER TABLE "user" ADD COLUMN "ticket_filter_labels" boolean DEFAULT true NOT NULL;

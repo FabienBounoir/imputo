@@ -44,7 +44,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		rememberTicketFilters: u?.rememberTicketFilters ?? true,
 		rememberTicketSearch: u?.rememberTicketSearch ?? true,
 		compactTicketActivity: u?.compactTicketActivity ?? true,
-		ticketFilterLabels: u?.ticketFilterLabels ?? false,
+		ticketFilterLabels: u?.ticketFilterLabels ?? true,
 		motivationBanner: locals.user.motivationBanner,
 		role: locals.role,
 		passwordEnabled: passwordEnabled()
