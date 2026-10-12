@@ -10,7 +10,9 @@ import {
 	numeric,
 	jsonb,
 	index,
-	uniqueIndex
+	uniqueIndex,
+	check,
+	type AnyPgColumn
 } from 'drizzle-orm/pg-core';
 import { relations, sql } from 'drizzle-orm';
 
@@ -483,7 +485,9 @@ export const ticket = pgTable(
 		key: text('key').notNull(),
 		title: text('title').notNull(),
 		projectId: uuid('project_id').references(() => project.id, { onDelete: 'set null' }),
-		parentId: uuid('parent_id'),
+		// set null : supprimer le parent fait de ses sous-tâches des tickets ordinaires (le sync Jira les
+		// rattache à nouveau si le parent revient dans son périmètre).
+		parentId: uuid('parent_id').references((): AnyPgColumn => ticket.id, { onDelete: 'set null' }),
 		sprintId: uuid('sprint_id').references(() => sprint.id, { onDelete: 'set null' }),
 		versionId: uuid('version_id').references(() => sprint.id, { onDelete: 'set null' }),
 		stateId: uuid('state_id').references(() => state.id, { onDelete: 'set null' }),
@@ -492,9 +496,6 @@ export const ticket = pgTable(
 		estimationTest: numeric('estimation_test', { precision: 7, scale: 2 }),
 		prepa: numeric('prepa', { precision: 7, scale: 2 }),
 		raeTest: numeric('rae_test', { precision: 7, scale: 2 }),
-		// ponytail: plus lue ni écrite depuis que le RAE périmé suit ticket_activity_rae.updated_at —
-		// à supprimer avec la prochaine migration.
-		raeUpdatedAt: timestamp('rae_updated_at', { withTimezone: true }),
 		// Admin only, invisible pour un USER standard.
 		estimationPrev: numeric('estimation_prev', { precision: 7, scale: 2 }),
 		// Admin only, invisible pour un USER standard.
@@ -690,7 +691,15 @@ export const timeEntry = pgTable(
 	(t) => [
 		index('time_entry_ws_user_day_idx').on(t.workspaceId, t.userId, t.day),
 		index('time_entry_ticket_idx').on(t.ticketId),
-		index('time_entry_absence_idx').on(t.absenceId)
+		index('time_entry_absence_idx').on(t.absenceId),
+		// La colonne renseignée suit target_type. OBJECTIVE n'a ni ticket ni catégorie, et son
+		// objective_id peut redevenir NULL (set null ci-dessus) : pas exigé.
+		check(
+			'time_entry_target_ck',
+			sql`(${t.targetType} = 'TICKET' and ${t.ticketId} is not null and ${t.categoryId} is null)
+				or (${t.targetType} = 'CATEGORY' and ${t.categoryId} is not null and ${t.ticketId} is null)
+				or (${t.targetType} = 'OBJECTIVE' and ${t.ticketId} is null and ${t.categoryId} is null)`
+		)
 	]
 );
 
@@ -742,8 +751,8 @@ export const externalMember = pgTable(
 
 // Une ligne par déclaration (plage de dates + type). `period` ne vaut AM/PM que pour une
 // plage d'un seul jour (startDate = endDate) ; sinon toujours FULL.
-// Sujet = soit un membre réel (userId), soit un membre externe (externalMemberId) — jamais les
-// deux, appliqué en app (pas de contrainte SQL, même convention que timeEntry.ticketId/categoryId).
+// Sujet = soit un membre réel (userId), soit un membre externe (externalMemberId) — exactement un
+// des deux (absence_subject_ck).
 export const absence = pgTable(
 	'absence',
 	{
@@ -767,7 +776,8 @@ export const absence = pgTable(
 	(t) => [
 		index('absence_ws_user_idx').on(t.workspaceId, t.userId),
 		index('absence_ws_external_idx').on(t.workspaceId, t.externalMemberId),
-		index('absence_ws_range_idx').on(t.workspaceId, t.startDate, t.endDate)
+		index('absence_ws_range_idx').on(t.workspaceId, t.startDate, t.endDate),
+		check('absence_subject_ck', sql`num_nonnulls(${t.userId}, ${t.externalMemberId}) = 1`)
 	]
 );
 

@@ -24,7 +24,7 @@
 	import ImputationMobile from '$lib/components/ImputationMobile.svelte';
 	import UserAvatar from '$lib/components/UserAvatar.svelte';
 	import { ABSENCE_TYPE_COLORS, ABSENCE_TYPE_LABELS, ABSENCE_PERIOD_LABELS } from '$lib/absenceTypes';
-	import { mergeRecurringObjectiveRows, type Row } from '$lib/imputationRow';
+	import { amountKey, mergeRecurringObjectiveRows, type Row } from '$lib/imputationRow';
 	import { jiraTicketUrl } from '$lib/jiraLink';
 	import { buildCycle, cycleNext } from '$lib/utils/imputationCycle';
 
@@ -450,13 +450,14 @@
 	function onCellKey(e: KeyboardEvent, ri: number, di: number, row: Row, day: string) {
 		// Verrouillée (lien <a> natif, cf. absenceHref) : les touches d'édition ne font rien — Enter
 		// suit le lien nativement, la navigation (flèches) reste normale, gérée plus bas.
-		if (row.lockedDays[day] && (e.key in KEYMAP || e.key === 'Backspace' || e.key === 'Delete')) {
+		const k = amountKey(e);
+		if (row.lockedDays[day] && (k in KEYMAP || e.key === 'Backspace' || e.key === 'Delete')) {
 			e.preventDefault();
 			return;
 		}
-		if (e.key in KEYMAP) {
+		if (k in KEYMAP) {
 			e.preventDefault();
-			setAmount(row, day, KEYMAP[e.key]);
+			setAmount(row, day, KEYMAP[k]);
 		} else if (e.key === 'Backspace' || e.key === 'Delete') {
 			e.preventDefault();
 			setAmount(row, day, 0);
@@ -608,6 +609,26 @@
 	// principe que l'onglet « Tickets & chiffrage »).
 	const pendingRaeSaves = new Map<string, ReturnType<typeof setTimeout>>();
 
+	// RAE/Estimé par paire (ticket, activité) tels que le serveur les a renvoyés : envoyés en `expected`
+	// pour que le serveur refuse d'écraser ce qu'un collègue a écrit entre-temps (cf. tickets.ts
+	// TicketConflictError). Par paire et non par ligne : une paire peut figurer sur deux lignes (avec et
+	// sans tâche assignée). Paire absente (ligne ajoutée, jamais imputée) : valeur inconnue, pas de contrôle.
+	const pairBase = $derived(
+		new Map(
+			data.sheet.rows
+				.filter((r) => r.targetType === 'TICKET' && r.activityId)
+				.map((r) => [`${r.targetId}-${r.activityId}`, { raeReal: r.raeReal ?? 0, estimation: r.estimation ?? 0 }])
+		)
+	);
+	/** Lu au départ de la requête (pas à chaque frappe de la rafale), puis avancé à la valeur envoyée. */
+	function takeExpected(key: string, field: 'raeReal' | 'estimation', value: number): number | undefined {
+		const base = pairBase.get(key);
+		if (!base) return undefined;
+		const expected = base[field];
+		base[field] = value;
+		return expected;
+	}
+
 	/** RAE d'une ligne ticket + activité — même endpoint que l'onglet « Tickets & chiffrage ». */
 	async function saveRae(row: Row, value: number) {
 		if (!row.activityId) return;
@@ -619,10 +640,11 @@
 			key,
 			setTimeout(async () => {
 				pendingRaeSaves.delete(key);
+				const expected = takeExpected(key, 'raeReal', value);
 				await submit(`/api/tickets/${row.targetId}/activity-rae`, {
 					method: 'POST',
 					headers: { 'content-type': 'application/json' },
-					body: JSON.stringify({ activityId: row.activityId, field: 'raeReal', value })
+					body: JSON.stringify({ activityId: row.activityId, field: 'raeReal', value, expected })
 				});
 			}, 600)
 		);
@@ -641,10 +663,11 @@
 			key,
 			setTimeout(async () => {
 				pendingEstimationSaves.delete(key);
+				const expected = takeExpected(key, 'estimation', value);
 				await submit(`/api/tickets/${row.targetId}/activity-rae`, {
 					method: 'POST',
 					headers: { 'content-type': 'application/json' },
-					body: JSON.stringify({ activityId: row.activityId, field: 'estimation', value })
+					body: JSON.stringify({ activityId: row.activityId, field: 'estimation', value, expected })
 				});
 			}, 600)
 		);

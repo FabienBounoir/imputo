@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { eq } from 'drizzle-orm';
 import { load as loadUntyped, actions } from './+page.server';
 // `load` peut renvoyer `void` côté types (branches sans retour explicite) ; en pratique il
 // renvoie toujours des données ici, donc on retype pour éviter un cast répété à chaque accès.
@@ -229,6 +230,22 @@ describe('tickets +page.server load — mémorisation des filtres (arrivée à b
 
 		const result = await load({ locals, url: new URL('http://localhost/tickets') } as never);
 		expect(result.filters.projectId).toBeUndefined();
+	});
+});
+
+describe('tickets +page.server actions.update — écriture concurrente', () => {
+	it('valeur affichée périmée → 409 avec le message, rien écrit ; valeur à jour → enregistrée', async () => {
+		const { userId, workspaceId } = await makeWorkspace('ticketsupdate');
+		const [t] = await db.insert(ticket).values({ workspaceId, key: `TUP-${Date.now()}`, title: 'Avant' }).returning();
+		const locals = await fakeLocals(userId);
+		const update = (fields: Record<string, string>) =>
+			actions.update({ locals, request: formRequest({ ticketId: t.id, field: 'title', ...fields }) } as never);
+
+		expect(await update({ value: 'Alice', expected: 'Avant' })).toEqual({ ok: true });
+		const stale = await update({ value: 'Bob', expected: 'Avant' });
+		expect(stale?.status).toBe(409);
+		expect((stale as { data: { error: string } }).data.error).toMatch(/Modifié entre-temps/);
+		expect((await db.select().from(ticket).where(eq(ticket.id, t.id)))[0].title).toBe('Alice');
 	});
 });
 

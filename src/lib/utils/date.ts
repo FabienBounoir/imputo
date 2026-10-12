@@ -51,17 +51,17 @@ export function formatDateTime(d: Date): string {
 		.replace(',', ' à');
 }
 
-/** True si la date ISO est un jour ouvré (lundi→vendredi). */
+/** True si la date ISO est un jour ouvré : lundi→vendredi hors jours fériés FR (aucune saisie attendue ces jours-là). */
 export function isWorkday(dateISO: string): boolean {
 	const dow = parseISODate(dateISO).getUTCDay();
-	return dow !== 0 && dow !== 6;
+	return dow !== 0 && dow !== 6 && !isPublicHolidayFR(dateISO);
 }
 
-/** Jour ouvré précédent (ISO) — saute le week-end. */
+/** Jour ouvré précédent (ISO) — saute le week-end et les fériés. */
 export function previousWorkday(dateISO: string): string {
-	let d = addDays(parseISODate(dateISO), -1);
-	while (d.getUTCDay() === 0 || d.getUTCDay() === 6) d = addDays(d, -1);
-	return toISODate(d);
+	let d = toISODate(addDays(parseISODate(dateISO), -1));
+	while (!isWorkday(d)) d = toISODate(addDays(parseISODate(d), -1));
+	return d;
 }
 
 /**

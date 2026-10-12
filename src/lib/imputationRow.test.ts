@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mergeRecurringObjectiveRows, type Row } from './imputationRow';
+import { amountKey, mergeRecurringObjectiveRows, type Row } from './imputationRow';
 import { addDays, mondayOf, parseISODate, toISODate } from './utils/date';
 
 // Deux semaines ouvrées consécutives, dérivées et non écrites en dur : le test porte sur la
@@ -128,5 +128,33 @@ describe('fusion des objectifs reconduits (Mon imputation, quinzaine / mois)', (
 			DAYS
 		);
 		expect(merged[0].amounts[DAYS[0]]).toBe(0.375);
+	});
+});
+
+describe('amountKey', () => {
+	const ev = (key: string, code: string, mods: Partial<Record<'ctrlKey' | 'metaKey' | 'altKey', boolean>> = {}) => ({
+		key,
+		code,
+		ctrlKey: false,
+		metaKey: false,
+		altKey: false,
+		...mods
+	});
+
+	it('rangée du haut lue par position, quelle que soit la disposition', () => {
+		expect(amountKey(ev('&', 'Digit1'))).toBe('1'); // AZERTY sans Maj
+		expect(amountKey(ev('é', 'Digit2'))).toBe('2');
+		expect(amountKey(ev('1', 'Digit1'))).toBe('1'); // QWERTY, ou AZERTY avec Maj
+	});
+
+	it('pavé numérique et autres touches lus par leur valeur', () => {
+		expect(amountKey(ev('3', 'Numpad3'))).toBe('3');
+		expect(amountKey(ev('Backspace', 'Backspace'))).toBe('Backspace');
+	});
+
+	it('jamais avec Ctrl/Cmd/Alt (raccourcis du navigateur, AltGr)', () => {
+		expect(amountKey(ev('&', 'Digit1', { metaKey: true }))).toBe('');
+		expect(amountKey(ev('1', 'Digit1', { ctrlKey: true }))).toBe('');
+		expect(amountKey(ev('~', 'Digit2', { ctrlKey: true, altKey: true }))).toBe('');
 	});
 });

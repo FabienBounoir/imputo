@@ -7,6 +7,7 @@ import {
 	getRefData,
 	createTicket,
 	updateTicketField,
+	TicketConflictError,
 	setTicketFlag,
 	deleteTicket,
 	parseTicketFiltersSnapshot,
@@ -203,6 +204,7 @@ export const actions: Actions = {
 		const ticketId = String(f.get('ticketId') ?? '');
 		const field = String(f.get('field') ?? '');
 		const value = String(f.get('value') ?? '');
+		const expected = f.get('expected');
 		if (!ticketId || !field) return fail(400, { error: 'Données invalides.' });
 		try {
 			await updateTicketField(
@@ -212,9 +214,11 @@ export const actions: Actions = {
 				value,
 				locals.role,
 				locals.user?.id ?? null,
-				locals.user!.id === ws.createdByUserId || locals.role === 'ADMIN'
+				locals.user!.id === ws.createdByUserId || locals.role === 'ADMIN',
+				expected === null ? undefined : String(expected)
 			);
 		} catch (e) {
+			if (e instanceof TicketConflictError) return fail(409, { error: e.message });
 			if (!isUniqueViolation(e))
 				logger.error('ticket_update_failed', e, { workspaceId: ws.workspaceId, ticketId, field });
 			return fail(400, {

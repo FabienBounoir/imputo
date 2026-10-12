@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { eq } from 'drizzle-orm';
+import { db, ticket } from '$lib/server/db';
 import { createTicket, updateTicketField, upsertTicketActivityRae } from './tickets';
 import { setCell } from './imputation';
 import { createRef, listRefs } from './referentials';
@@ -92,6 +94,23 @@ describe('getSprintDashboard', () => {
 
 		const asUser = await getSprintDashboard(ws.workspaceId, version.id, true, false);
 		expect(asUser.kpis.ecartVsBudgetTotal).toBeNull();
+	});
+
+	it('version : ni les tickets d’une autre version, ni les archivés (filtre en SQL, cf. listTicketsPage)', async () => {
+		const ws = await makeWorkspace('versionscope');
+		await createRef(ws.workspaceId, 'version', `V1 ${ws.id}`);
+		await createRef(ws.workspaceId, 'version', `V2 ${ws.id}`);
+		const versions = await listRefs(ws.workspaceId, 'version');
+		const v1 = versions.find((v) => v.name === `V1 ${ws.id}`)!;
+		const v2 = versions.find((v) => v.name === `V2 ${ws.id}`)!;
+
+		await createTicket(ws.workspaceId, { key: `IN-${ws.id}`, title: 'Dans V1', versionId: v1.id });
+		await createTicket(ws.workspaceId, { key: `V2-${ws.id}`, title: 'Dans V2', versionId: v2.id });
+		const archived = await createTicket(ws.workspaceId, { key: `ARC-${ws.id}`, title: 'Archivé', versionId: v1.id });
+		await db.update(ticket).set({ archivedAt: new Date() }).where(eq(ticket.id, archived.id));
+
+		const dash = await getSprintDashboard(ws.workspaceId, v1.id);
+		expect(dash.tickets.map((t) => t.key)).toEqual([`IN-${ws.id}`]);
 	});
 
 	it('lève une erreur pour un sprint/version inexistant dans cet espace', async () => {

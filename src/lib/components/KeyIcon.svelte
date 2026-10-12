@@ -7,11 +7,14 @@
 		shift: { label: 'Maj', d: 'M9 18v-6H5l7-7 7 7h-4v6H9z' },
 		up: { label: 'Haut', d: 'M12 19V5M5 12l7-7 7 7' },
 		down: { label: 'Bas', d: 'M12 5v14M19 12l-7 7-7-7' },
+		left: { label: 'Gauche', d: 'M19 12H5M12 19l-7-7 7-7' },
+		right: { label: 'Droite', d: 'M5 12h14M12 5l7 7-7 7' },
 		enter: { label: 'Entrée', d: 'M9 10l-5 5 5 5M20 4v7a4 4 0 0 1-4 4H4' },
 		tab: { label: 'Tab', d: 'M3 12h14M11 6l6 6-6 6M21 5v14' },
 		tabBack: { label: 'Tab', d: 'M3 19V5M13 6l-6 6 6 6M7 12h14' }
 	};
 	export type KeyName = keyof typeof ICONS;
+	export const isKeyName = (k: string): k is KeyName => k in ICONS;
 </script>
 
 <script lang="ts">

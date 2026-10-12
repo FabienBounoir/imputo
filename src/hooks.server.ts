@@ -3,6 +3,7 @@ import {
 	SESSION_COOKIE,
 	validateSession,
 	deleteSessionCookie,
+	setSessionCookie,
 	setSessionWorkspace
 } from '$lib/server/auth/session';
 import { listMembershipsForUser, getDeactivatedWorkspace } from '$lib/server/services/workspaces';
@@ -29,8 +30,9 @@ const handleRequest: Handle = async ({ event, resolve }) => {
 
 	const token = event.cookies.get(SESSION_COOKIE);
 	if (token) {
-		const { session, user } = await validateSession(token);
+		const { session, user, renewed } = await validateSession(token);
 		if (session && user) {
+			if (renewed) setSessionCookie(event.cookies, token, session.expiresAt);
 			event.locals.sessionToken = token;
 			event.locals.user = {
 				id: user.id,

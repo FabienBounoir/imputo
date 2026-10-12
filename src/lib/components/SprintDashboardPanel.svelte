@@ -51,6 +51,7 @@
 		id: string;
 		key: string;
 		title: string;
+		stateId: string | null;
 		stateLabel: string | null;
 		stateEmoji: string | null;
 		stateColor: string | null;
@@ -208,15 +209,22 @@
 		apply(dashboard.tickets);
 		for (const g of dashboard.ticketGroups) apply(g.tickets);
 	}
-	async function ctxUpdate(ticketId: string, field: string, value: string | number | null) {
+	// `expected` = valeur affichée avant le clic : le serveur refuse (409) si un collègue l'a changée
+	// entre-temps, on recharge alors le dashboard pour montrer la sienne.
+	async function ctxUpdate(ticketId: string, field: string, value: string | number | null, expected: string | number | null) {
+		const enc = (v: unknown) => (v == null ? '' : String(v));
 		const body = new FormData();
 		body.set('ticketId', ticketId);
 		body.set('field', field);
-		body.set('value', value == null ? '' : String(value));
+		body.set('value', enc(value));
+		body.set('expected', enc(expected));
 		const res = await fetch('/tickets?/update', { method: 'POST', body });
 		const result = deserialize(await res.text());
 		if (result.type === 'failure') {
-			toast.error((result.data?.error as string) ?? 'Erreur lors de l’enregistrement.');
+			const message = (result.data?.error as string) ?? 'Erreur lors de l’enregistrement.';
+			if (result.status !== 409) return void toast.error(message);
+			toast.warning(message);
+			await invalidateAll();
 		} else {
 			toast.success('Enregistré ✓');
 		}
@@ -224,19 +232,22 @@
 	function ctxSetState(row: SprintDashboardTicket, stateId: string | null) {
 		closeContextMenu();
 		const s = stateId ? states.find((x) => x.id === stateId) : null;
-		patchTicket(row.id, { stateLabel: s?.label ?? null, stateEmoji: s?.emoji ?? null, stateColor: s?.color ?? null });
-		ctxUpdate(row.id, 'stateId', stateId);
+		const before = row.stateId;
+		patchTicket(row.id, { stateId, stateLabel: s?.label ?? null, stateEmoji: s?.emoji ?? null, stateColor: s?.color ?? null });
+		ctxUpdate(row.id, 'stateId', stateId, before);
 	}
 	function ctxSetPriority(row: SprintDashboardTicket, priority: number) {
 		closeContextMenu();
+		const before = row.priority;
 		patchTicket(row.id, { priority });
-		ctxUpdate(row.id, 'priority', priority);
+		ctxUpdate(row.id, 'priority', priority, before);
 	}
 	function ctxSetAssignee(row: SprintDashboardTicket, assigneeId: string | null) {
 		closeContextMenu();
 		const m = assigneeId ? members.find((x) => x.id === assigneeId) : null;
+		const before = row.assigneeId;
 		patchTicket(row.id, { assigneeId, assigneeName: m?.displayName ?? null });
-		ctxUpdate(row.id, 'assigneeId', assigneeId);
+		ctxUpdate(row.id, 'assigneeId', assigneeId, before);
 	}
 	function ctxEdit(row: SprintDashboardTicket) {
 		closeContextMenu();

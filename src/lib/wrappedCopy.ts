@@ -13,6 +13,15 @@
  * seul le commentaire varie. Ça évite d'avoir à réinjecter du HTML depuis une chaîne.
  */
 
+/**
+ * Musique du Wrapped (5 Mo, l'essentiel du dossier static). Hors du précache du service worker, qui
+ * porte le numéro de version : chaque déploiement la faisait retélécharger à tous, toute l'année.
+ * (app)/+layout.svelte la met dans ce cache à part quand le lien Wrapped apparaît et le vide hors
+ * fenêtre ; service-worker.ts la sert depuis ce cache et ne le supprime pas au changement de version.
+ */
+export const WRAPPED_MUSIC = '/wrapped_music.mp3';
+export const WRAPPED_MUSIC_CACHE = 'imputo-wrapped-music';
+
 /** Sous-ensemble de WrappedPayload réellement utilisé — évite d'importer un type de $lib/server. */
 export type WrappedCopyInput = {
 	totalHours: number;

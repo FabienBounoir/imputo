@@ -55,6 +55,10 @@ describe('isWorkday', () => {
 		expect(isWorkday('2026-06-06')).toBe(false); // samedi
 		expect(isWorkday('2026-06-07')).toBe(false); // dimanche
 	});
+	it('férié en semaine = non ouvré', () => {
+		expect(isWorkday('2026-11-11')).toBe(false); // mercredi, Armistice
+		expect(isWorkday('2026-12-25')).toBe(false); // vendredi, Noël
+	});
 });
 
 describe('previousWorkday', () => {
@@ -63,6 +67,10 @@ describe('previousWorkday', () => {
 	});
 	it('un lundi → le vendredi précédent (saute le week-end)', () => {
 		expect(previousWorkday('2026-06-01')).toBe('2026-05-29');
+	});
+	it('saute les fériés : jeudi 12 novembre → mardi 10, lundi 4 janvier 2027 → jeudi 31 décembre', () => {
+		expect(previousWorkday('2026-11-12')).toBe('2026-11-10');
+		expect(previousWorkday('2027-01-04')).toBe('2026-12-31');
 	});
 });
 

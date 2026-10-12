@@ -106,21 +106,21 @@ check:build:
     - npm ci --cache .npm --prefer-offline
     - npm run build
 
-# `--audit-level=high` : échoue le job (pipeline rouge, visible) sur une faille haute/critique
+# `--audit-level=high` : échoue le job (pipeline rouge, bloquant) sur une faille haute/critique
 # nouvellement introduite ou publiée depuis le dernier run — pas sur les modérées/basses, trop de
-# bruit pour ce niveau de criticité. Tourne à chaque push (attrape une dépendance vulnérable
-# ajoutée dans une MR) et sur schedule (attrape une faille publiée après coup sur une lib déjà en
-# place — voir README.md pour configurer le Pipeline Schedule côté GitLab, pas faisable depuis ce
-# fichier seul).
+# bruit pour ce niveau de criticité. `--omit=dev` : seules les dépendances embarquées dans l'image
+# comptent ; les outils de test (vitest, cypress…) ne tournent jamais en prod et rendraient le job
+# rouge en permanence. Tourne à chaque push (attrape une dépendance vulnérable ajoutée dans une MR)
+# et sur schedule (attrape une faille publiée après coup sur une lib déjà en place — Pipeline
+# Schedule à configurer côté GitLab, pas faisable depuis ce fichier seul).
 audit:
   stage: test
   image: node:22-alpine
-  allow_failure: true
   cache:
     <<: *npm_cache
   script:
     - npm ci --cache .npm --prefer-offline
-    - npm audit --audit-level=high
+    - npm audit --omit=dev --audit-level=high
 
 .oc_base:
   image: quay.io/openshift/origin-cli:latest

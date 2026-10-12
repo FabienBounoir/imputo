@@ -9,6 +9,7 @@
 	import NotificationPromptModal from '$lib/components/NotificationPromptModal.svelte';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
 	import SupportTimePalette from '$lib/components/SupportTimePalette.svelte';
+	import ShortcutsHelp from '$lib/components/ShortcutsHelp.svelte';
 	import Snow from '$lib/components/Snow.svelte';
 	import Hearts from '$lib/components/Hearts.svelte';
 	import Garland from '$lib/components/Garland.svelte';
@@ -24,6 +25,7 @@
 	import SidebarPills from '$lib/components/SidebarPills.svelte';
 	import { seasonalState, initSeasonal, activeSeasonalEffects } from '$lib/seasonal.svelte';
 	import { CROWN_BODY, CROWN_BAND, epiphanyState, initEpiphany } from '$lib/epiphany.svelte';
+	import { WRAPPED_MUSIC, WRAPPED_MUSIC_CACHE } from '$lib/wrappedCopy';
 	let { children, data } = $props();
 	let commandPalette: CommandPalette | undefined = $state();
 
@@ -48,6 +50,20 @@
 		};
 		document.addEventListener('visibilitychange', refresh);
 		return () => document.removeEventListener('visibilitychange', refresh);
+	});
+
+	// Musique du Wrapped (cf. WRAPPED_MUSIC) : téléchargée une fois, en fond, dès que le lien apparaît,
+	// pour qu'elle soit prête au clic ; cache vidé hors fenêtre, donc la musique de l'an prochain ne
+	// tombera pas sur celle de cette année.
+	// ponytail: arrivée directe sur /wrapped sans cache = un double téléchargement (lecteur + ce fetch), une fois.
+	$effect(() => {
+		if (!('caches' in window)) return;
+		if (data.wrappedAvailable)
+			caches
+				.open(WRAPPED_MUSIC_CACHE)
+				.then(async (c) => (await c.match(WRAPPED_MUSIC, { ignoreVary: true })) ?? c.add(WRAPPED_MUSIC))
+				.catch(() => {});
+		else caches.delete(WRAPPED_MUSIC_CACHE).catch(() => {});
 	});
 
 	// Nouvelle version déployée depuis l'ouverture de l'onglet : pastille qui recharge la page (jamais
@@ -458,6 +474,7 @@
 <NotificationPromptModal vapidPublicKey={data.vapidPublicKey} />
 <CommandPalette bind:this={commandPalette} {data} />
 <SupportTimePalette enabled={data.workspace?.supportTimeTrackingEnabled ?? false} />
+<ShortcutsHelp supportTime={data.workspace?.supportTimeTrackingEnabled ?? false} />
 {#if seasonalVisible && seasonalIds.has('christmas')}<Snow />{/if}
 {#if seasonalVisible && seasonalIds.has('valentine')}<Hearts />{/if}
 {#if seasonalVisible && seasonalIds.has('new-year')}<Fireworks />{/if}

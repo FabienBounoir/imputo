@@ -4,12 +4,14 @@
 /// <reference lib="webworker" />
 
 import { build, files, version } from '$service-worker';
+import { WRAPPED_MUSIC, WRAPPED_MUSIC_CACHE } from '$lib/wrappedCopy';
 
 const sw = self as unknown as ServiceWorkerGlobalScope;
 
 const CACHE = `imputo-cache-${version}`;
-// Ressources à précacher : bundles de l'app (build) + fichiers statiques (icônes, manifeste…).
-const PRECACHE = [...build, ...files];
+// Ressources à précacher : bundles de l'app (build) + fichiers statiques (icônes, manifeste…), sauf la
+// musique du Wrapped qui a son propre cache (cf. WRAPPED_MUSIC).
+const PRECACHE = [...build, ...files.filter((f) => f !== WRAPPED_MUSIC)];
 const PRECACHE_SET = new Set(PRECACHE);
 
 sw.addEventListener('install', (event) => {
@@ -24,7 +26,7 @@ sw.addEventListener('install', (event) => {
 sw.addEventListener('activate', (event) => {
 	event.waitUntil(
 		(async () => {
-			for (const key of await caches.keys()) if (key !== CACHE) await caches.delete(key);
+			for (const key of await caches.keys()) if (key !== CACHE && key !== WRAPPED_MUSIC_CACHE) await caches.delete(key);
 			await sw.clients.claim();
 		})()
 	);
@@ -81,6 +83,12 @@ sw.addEventListener('fetch', (event) => {
 	// Assets buildés / statiques : cache d'abord (immuables, versionnés).
 	if (PRECACHE_SET.has(url.pathname)) {
 		event.respondWith(caches.match(request).then((cached) => cached ?? fetch(request)));
+	}
+	// Musique du Wrapped : depuis son cache s'il est rempli, sinon réseau. ignoreVary : en prod, les
+	// fichiers statiques portent « Vary: Accept-Encoding », et le lecteur audio n'envoie pas le même
+	// en-tête que le fetch qui l'a mise en cache.
+	if (url.pathname === WRAPPED_MUSIC) {
+		event.respondWith(caches.match(request, { ignoreVary: true }).then((cached) => cached ?? fetch(request)));
 	}
 	// Tout le reste (HTML / données dynamiques sous auth) : réseau direct, jamais mis en cache.
 });

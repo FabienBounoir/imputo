@@ -116,7 +116,7 @@ sur l'instance sans rien de plus à déclarer côté règle :
 | Échec d'un job cron | LogQL : `sum by (env) (count_over_time({app="imputo"} \| json \| msg="cron_failed" [5m]))` | > 0 | 1m |
 | Circuit breaker Jira déclenché | LogQL : `sum by (env) (count_over_time({app="imputo"} \| json \| msg="jira_sync_circuit_breaker_tripped" [15m]))` | > 0 | 1m |
 | App silencieuse (sonde interne) | LogQL : `sum by (env) (count_over_time({app="imputo"} \| json \| msg="probe" [5m]))` | < 1, **et** `noDataState: Alerting` (l'absence totale de série est elle-même le signal — contrairement aux 3 précédentes où "pas de donnée" = rien de grave) | 2m |
-| Health check externe (par env) | Infinity : `GET https://<route-publique>/api/health`, une règle par environnement (URL fixe, pas dérivée de Loki, donc pas de `by (env)` possible) | `execErrState: Alerting` — un code non-2xx fait échouer la requête Infinity elle-même (`"unsuccessful HTTP response code"`), c'est cet échec qui déclenche, pas un seuil sur une valeur | 1m |
+| Health check externe (par env) | Infinity : `GET https://<route-publique>/api/health` (app **et** base, cf. plus bas), une règle par environnement (URL fixe, pas dérivée de Loki, donc pas de `by (env)` possible) | `execErrState: Alerting` — un code non-2xx fait échouer la requête Infinity elle-même (`"unsuccessful HTTP response code"`), c'est cet échec qui déclenche, pas un seuil sur une valeur | 1m |
 
 Recréées par `scripts/restore-grafana-config.sh` (voir plus haut) — `datasourceUid: "loki"` pour la
 requête, une étape `type: reduce` (`reducer: last`) puis `datasourceUid: "__expr__"` +
@@ -133,7 +133,12 @@ interne au cluster" — pas DNS, TLS, ni le routeur OpenShift devant la Route pu
 datasource provisionnée dans `grafana-provisioning-configmap.yaml`, uid `infinity`). Vérifié en
 direct (app scalée à 0 replica sur preprod, deux fois) : le routeur OpenShift renvoie un vrai `503`
 avec sa propre page HTML quand il n'y a plus de pod — jamais un faux 200 — donc le check déclenche
-correctement dans les deux cas (pod down *et* pod up mais logique cassée). **Une règle par
+correctement dans les deux cas (pod down *et* pod up mais logique cassée). Depuis 2026-10, la route
+fait aussi un `select 1` (2 s max) et répond `503 {"status":"db_down"}` si la base ne suit pas — la
+base preprod éteinte du 5 au 9 septembre (kube-green) n'avait déclenché aucune alerte. Un `curl` sur
+l'URL départage route cassée (page HTML du routeur) et base éteinte (`db_down`). Les sondes du pod
+restent sur `/`, sans base : y brancher `/api/health` redémarrerait l'app en boucle à chaque panne
+Postgres. **Une règle par
 environnement à dupliquer/maintenir manuellement** (URL en dur dans le rule group, pas de variable
 `env` possible ici) — `imputo-preprod` et `imputo` (prod) existent toutes les deux désormais.
 

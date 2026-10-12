@@ -210,6 +210,7 @@
 		cmds.push({ id: 'new-ticket', label: 'Nouveau ticket', icon: '➕', group: 'Actions', run: () => goto('/tickets?new=1') });
 		cmds.push({ id: 'new-absence', label: 'Déclarer une absence', icon: '🌴', group: 'Actions', run: () => goto('/absences?declare=1') });
 		cmds.push({ id: 'replay-tour', label: 'Revoir le tutoriel', icon: '🧭', group: 'Actions', run: requestTourReplay });
+		cmds.push({ id: 'shortcuts', label: 'Raccourcis clavier (?)', icon: '⌨️', group: 'Actions', run: () => window.dispatchEvent(new CustomEvent('shortcutsopen')) });
 		cmds.push({ id: 'roulette', label: 'Roulette (tirer une personne au sort)', icon: '🎲', group: 'Actions', run: openRoulette });
 		cmds.push({
 			id: 'export-month',
@@ -418,7 +419,9 @@
 		} else if (
 			// Ajout rapide d'imputation depuis n'importe quelle page — même mécanique que Shift+N
 			// ci-dessus. Sur /imputation, on laisse la page gérer elle-même le raccourci (cf.
-			// QuickAddPalette.svelte), qui connaît son propre état de palette en cours.
+			// QuickAddPalette.svelte), qui connaît son propre état de palette en cours. Sur
+			// /admin/objectifs, Shift+A ajoute un objectif (ObjectivePalette) : sans cette exclusion, la
+			// palette s'ouvrait et la page partait aussitôt vers /imputation.
 			e.key.toLowerCase() === 'a' &&
 			e.shiftKey &&
 			!e.metaKey &&
@@ -426,6 +429,7 @@
 			!e.altKey &&
 			!open &&
 			page.url.pathname !== '/imputation' &&
+			page.url.pathname !== '/admin/objectifs' &&
 			!isTypingTarget(e.target)
 		) {
 			e.preventDefault();

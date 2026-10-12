@@ -11,6 +11,7 @@ function makeTicket(overrides: Partial<SprintDashboard['tickets'][number]> = {})
 		id: 'the-id',
 		key: 'ABC-1',
 		title: 'Un titre de ticket',
+		stateId: null,
 		stateLabel: 'En cours',
 		stateEmoji: '🔧',
 		stateColor: '#16A34A',

@@ -26,10 +26,12 @@
 		const res = await fetch(`/api/tickets/${p.ticketId}/activity-rae`, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ activityId: p.activityId, field: 'raeReal', value })
+			// expected : refusé (409) si un collègue a modifié ce RAE depuis l'affichage de la page.
+			body: JSON.stringify({ activityId: p.activityId, field: 'raeReal', value, expected: p.raeReal })
 		});
 		if (!res.ok) {
 			toast.error((await res.json().catch(() => null))?.message ?? 'Enregistrement impossible.');
+			if (res.status === 409) await invalidateAll();
 			return;
 		}
 		toast.success(done);

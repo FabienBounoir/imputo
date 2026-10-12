@@ -192,7 +192,7 @@ curl -s "${AUTH[@]}" -H 'Content-Type: application/json' -X PUT "${GRAFANA}/api/
         { "refId": "C", "relativeTimeRange": { "from": 300, "to": 0 }, "datasourceUid": "__expr__", "model": { "type": "threshold", "expression": "R", "conditions": [{ "evaluator": { "type": "lt", "params": [0] } }], "refId": "C" } }
       ],
       "noDataState": "OK", "execErrState": "Alerting", "for": "1m",
-      "annotations": { "summary": "GET /api/health via la vraie Route publique preprod ne repond pas 200 (DNS/TLS/routeur/app) depuis au moins 1 minute" },
+      "annotations": { "summary": "GET /api/health via la vraie Route publique preprod ne repond pas 200 (DNS/TLS/routeur/app/base, voir le champ status de la reponse) depuis au moins 1 minute" },
       "labels": { "env": "imputo-preprod" }
     },
     {
@@ -210,7 +210,7 @@ curl -s "${AUTH[@]}" -H 'Content-Type: application/json' -X PUT "${GRAFANA}/api/
         { "refId": "C", "relativeTimeRange": { "from": 300, "to": 0 }, "datasourceUid": "__expr__", "model": { "type": "threshold", "expression": "R", "conditions": [{ "evaluator": { "type": "lt", "params": [0] } }], "refId": "C" } }
       ],
       "noDataState": "OK", "execErrState": "Alerting", "for": "1m",
-      "annotations": { "summary": "GET /api/health via la vraie Route publique prod ne repond pas 200 (DNS/TLS/routeur/app) depuis au moins 1 minute" },
+      "annotations": { "summary": "GET /api/health via la vraie Route publique prod ne repond pas 200 (DNS/TLS/routeur/app/base, voir le champ status de la reponse) depuis au moins 1 minute" },
       "labels": { "env": "imputo" }
     }
   ]

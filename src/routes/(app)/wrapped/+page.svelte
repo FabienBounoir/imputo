@@ -3,7 +3,7 @@
 	import { gsap } from 'gsap';
 	import UserAvatar from '$lib/components/UserAvatar.svelte';
 	import { beep } from '$lib/sound';
-	import { plural, wrappedCopy } from '$lib/wrappedCopy';
+	import { plural, wrappedCopy, WRAPPED_MUSIC } from '$lib/wrappedCopy';
 
 	let { data } = $props();
 	const w = data.wrapped;
@@ -1375,7 +1375,7 @@
 	<canvas id="exportCanvas" width="900" height="1260" style="display:none"></canvas>
 
 	<!-- Musique d'ambiance : loop natif (relance automatiquement à la fin). -->
-	<audio id="bgm" src="/wrapped_music.mp3" loop preload="auto"></audio>
+	<audio id="bgm" src={WRAPPED_MUSIC} loop preload="auto"></audio>
 {/if}
 
 <style>

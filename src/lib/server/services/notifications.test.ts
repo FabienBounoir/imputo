@@ -18,9 +18,9 @@ vi.mock('./push', () => ({
 function sentTo(userId: string, tagPrefix?: string) {
 	return sendCalls.some((c) => c.userId === userId && (!tagPrefix || c.tag?.startsWith(tagPrefix)));
 }
-// isWorkday/lastWorkdayOnOrBefore neutralisés : sans ça les tests ci-dessous (qui construisent des
-// plages se terminant « aujourd'hui ») échoueraient selon le jour de la semaine où la CI tourne.
-// Le décalage au dernier jour ouvré est couvert par date.test.ts.
+// lastWorkdayOnOrBefore neutralisé : sans ça les tests ci-dessous (qui construisent des plages se
+// terminant « aujourd'hui ») échoueraient selon le jour de la semaine où la CI tourne. Le décalage
+// au dernier jour ouvré est couvert par date.test.ts.
 //
 // todayInParis figé sur un lundi (ANCHOR_TODAY) pour la même raison : currentSupportPeriod (cadence
 // DAY, cf. support.ts) retombe sur le dernier jour actif un week-end, donc « aujourd'hui » n'est
@@ -33,7 +33,7 @@ const ANCHOR_TODAY = '2026-06-22'; // lundi
 let mockedToday = ANCHOR_TODAY;
 vi.mock('$lib/utils/date', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('$lib/utils/date')>();
-	return { ...actual, isWorkday: () => true, lastWorkdayOnOrBefore: (d: string) => d, todayInParis: () => mockedToday };
+	return { ...actual, lastWorkdayOnOrBefore: (d: string) => d, todayInParis: () => mockedToday };
 });
 
 const { runNotifications, notifyAbsencePending, notifyAbsenceValidated, notifySupportDutyChanged, parseNotifPrefs } =
@@ -86,6 +86,35 @@ describe('runNotifications - relances par slot', () => {
 		sendCalls.length = 0;
 		await runNotifications('evening', '1800');
 		expect(sentTo(userId)).toBe(false); // journée complétée → plus de relance
+	});
+});
+
+describe('jours fériés', () => {
+	it('mercredi 11 novembre : aucune relance d’imputation, la perm est annoncée ; jeudi matin relance le 10', async () => {
+		const { userId, workspaceId } = await createWorkspaceWithOwner({
+			displayName: 'Ferie Test',
+			email: `ferie-${rnd}@acme.test`,
+			password: 'password123',
+			workspaceName: 'Espace Ferie'
+		});
+		wsIds.push(workspaceId);
+		await setSupportEnabled(workspaceId, true);
+		await setSupportCadence(workspaceId, 'DAY');
+		await addRotationMember(workspaceId, userId);
+
+		mockedToday = '2026-11-11';
+		sendCalls.length = 0;
+		await runNotifications('evening', '1700');
+		await runNotifications('morning', '0900');
+		expect(sentTo(userId, 'EVENING_MISSING')).toBe(false);
+		expect(sentTo(userId, 'MORNING_YESTERDAY')).toBe(false);
+		expect(sentTo(userId, 'SUPPORT_DUTY')).toBe(true); // la rotation compte le férié
+
+		mockedToday = '2026-11-12';
+		sendCalls.length = 0;
+		await runNotifications('morning', '0900');
+		expect(sentTo(userId, 'MORNING_YESTERDAY:2026-11-10')).toBe(true);
+		expect(sentTo(userId, 'MORNING_YESTERDAY:2026-11-11')).toBe(false);
 	});
 });
 

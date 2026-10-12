@@ -1,7 +1,7 @@
 import { and, eq, inArray, isNull, notInArray, sql } from 'drizzle-orm';
 import { db, sprint, timeEntry, user, activity, ticketActivityRae, ticketSnapshot, ticketGroup } from '$lib/server/db';
 import { num, round, totalEstimation, totalRae, avancement } from './calc';
-import { listTickets } from './tickets';
+import { listTicketsPage } from './tickets';
 
 export type SprintDashboard = {
 	sprintId: string;
@@ -48,6 +48,7 @@ export type SprintDashboardTicket = {
 	id: string;
 	key: string;
 	title: string;
+	stateId: string | null;
 	stateLabel: string | null;
 	stateEmoji: string | null;
 	stateColor: string | null;
@@ -85,11 +86,17 @@ export async function getSprintDashboard(
 		.where(and(eq(sprint.id, sprintId), eq(sprint.workspaceId, workspaceId)));
 	if (!sprintRow) throw new Error('Sprint/version introuvable dans cet espace.');
 
-	const allTickets = await listTickets(workspaceId, testPhase, isAdmin);
-	const tickets =
-		sprintRow.kind === 'VERSION'
-			? allTickets.filter((t) => t.versionId === sprintId)
-			: allTickets.filter((t) => t.sprintId === sprintId);
+	// Filtre en SQL : seuls les tickets du sprint/de la version sont chargés et enrichis, pas tout
+	// l'espace (des milliers avec la synchro Jira). Sans le détail par activité de chaque ticket : la
+	// répartition par activité plus bas se calcule à part, depuis ticket_activity_rae.
+	const { rows: tickets } = await listTicketsPage(
+		workspaceId,
+		testPhase,
+		isAdmin,
+		sprintRow.kind === 'VERSION' ? { versionId: sprintId } : { sprintId },
+		undefined,
+		false
+	);
 	const ticketIds = tickets.map((t) => t.id);
 
 	let estTotal = 0;
@@ -116,6 +123,7 @@ export async function getSprintDashboard(
 			id: t.id,
 			key: t.key,
 			title: t.title,
+			stateId: t.stateId,
 			stateLabel: t.stateLabel,
 			stateEmoji: t.stateEmoji,
 			stateColor: t.stateColor,

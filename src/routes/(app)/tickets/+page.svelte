@@ -266,14 +266,21 @@
 		field: 'raeReal' | 'raeTest' | 'estimation' | 'budget',
 		value: number
 	) {
+		const known = confirmed.get(row.id);
+		const knownActivity = (known?.activityBreakdown as ActivityBreakdownRow[] | undefined)?.find((a) => a.activityId === activityId);
+		const expected = knownActivity?.[field];
+		if (knownActivity) knownActivity[field] = value;
 		const res = await postOrToast(`/api/tickets/${row.id}/activity-rae`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ activityId, field, value })
+			body: JSON.stringify({ activityId, field, value, expected })
 		});
-		// Refus typique : « Budget par activité réservé aux administrateurs » — muet jusqu'ici.
+		// Refus typique : « Budget par activité réservé aux administrateurs », ou valeur modifiée entre-temps
+		// par quelqu'un d'autre (409) — le rechargement remet aussi `confirmed` à jour.
 		if (!res) return invalidateAll();
-		row.activityBreakdown = (await res.json()).rows;
+		const fresh: ActivityBreakdownRow[] = (await res.json()).rows;
+		row.activityBreakdown = fresh;
+		if (known) known.activityBreakdown = fresh.map((a) => ({ ...a }));
 		// RAE Réal/Test et Estimé global = compilation des activités (jamais saisis à la main).
 		if (row.activityBreakdown.length > 0) {
 			row.raeReal = round(row.activityBreakdown.reduce((s, a) => s + a.raeReal, 0));
@@ -283,7 +290,15 @@
 		}
 		flash();
 	}
+	// Dernière valeur connue du serveur, par ticket : envoyée en `expected` pour que le serveur refuse
+	// d'écraser ce qu'un collègue a écrit entre-temps (cf. tickets.ts TicketConflictError). Pas la ligne
+	// affichée : bind:value l'a déjà modifiée quand save() part. Remise à jour à chaque toRow (chargement,
+	// retour sur l'onglet, page suivante).
+	const confirmed = new Map<string, Record<string, unknown>>();
+	const enc = (v: unknown) => (v == null ? '' : String(v));
+
 	function toRow(t: Awaited<typeof data.ticketsPage>['tickets'][number]): Row {
+		confirmed.set(t.id, { ...t, activityBreakdown: t.activityBreakdown.map((a) => ({ ...a })) });
 		return {
 			id: t.id,
 			key: t.key,
@@ -701,11 +716,21 @@
 		const body = new FormData();
 		body.set('ticketId', row.id);
 		body.set('field', field);
-		body.set('value', value == null ? '' : String(value));
+		body.set('value', enc(value));
+		const known = confirmed.get(row.id);
+		const prev = known?.[field];
+		if (known && field in known) {
+			body.set('expected', enc(prev));
+			known[field] = value; // une saisie suivante part de celle-ci, même avant la réponse
+		}
 		const res = await fetch('?/update', { method: 'POST', body });
 		const result = deserialize(await res.text());
 		if (result.type === 'failure') {
-			toast.error((result.data?.error as string) ?? 'Erreur lors de l’enregistrement.');
+			if (known) known[field] = prev;
+			const message = (result.data?.error as string) ?? 'Erreur lors de l’enregistrement.';
+			if (result.status !== 409) return void toast.error(message);
+			toast.warning(message);
+			await invalidateAll(); // recharge la valeur écrite par l'autre personne
 		} else {
 			flash();
 		}

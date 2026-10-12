@@ -453,7 +453,9 @@ export async function setCell(
 		eq(timeEntry.userId, userId),
 		eq(timeEntry.day, input.day),
 		targetMatch,
-		input.activityId ? eq(timeEntry.activityId, input.activityId) : undefined,
+		// Ligne sans activité = activité NULL, pas « n'importe laquelle » : sinon elle écrirait dans la
+		// case « Dev » du même ticket/jour (même piège que objectiveId juste en dessous).
+		input.activityId ? eq(timeEntry.activityId, input.activityId) : isNull(timeEntry.activityId),
 		// Deux objectifs TICKET distincts sur le même ticket ne doivent jamais se confondre — sans
 		// cette condition explicite, `undefined` matcherait n'importe quel objectiveId (y compris un autre).
 		input.targetType === 'TICKET' ? (objectiveIdForTicket ? eq(timeEntry.objectiveId, objectiveIdForTicket) : isNull(timeEntry.objectiveId)) : undefined

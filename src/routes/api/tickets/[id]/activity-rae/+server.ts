@@ -4,6 +4,7 @@ import {
 	canEditActivityField,
 	getTicketActivityBreakdown,
 	upsertTicketActivityRae,
+	TicketConflictError,
 	type TicketActivityField
 } from '$lib/server/services/tickets';
 import { logger } from '$lib/server/logger';
@@ -25,7 +26,9 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
 	const activityId = body?.activityId;
 	const field = body?.field;
 	const value = Number(body?.value);
-	if (typeof activityId !== 'string' || !FIELDS.includes(field) || !Number.isFinite(value))
+	// Valeur affichée avant la saisie : absente (ancien client) = dernier qui écrit gagne.
+	const expected = body?.expected == null ? undefined : Number(body.expected);
+	if (typeof activityId !== 'string' || !FIELDS.includes(field) || !Number.isFinite(value) || (expected !== undefined && !Number.isFinite(expected)))
 		error(400, 'Données invalides.');
 
 	// Point de passage unique des valeurs par activité (RAE, Estimé, Budget — onglet chiffrage ET
@@ -34,10 +37,11 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
 		error(403, DENIED_MESSAGE[field as TicketActivityField]);
 
 	try {
-		await upsertTicketActivityRae(ws.workspaceId, params.id, activityId, field, value, locals.user.id);
+		await upsertTicketActivityRae(ws.workspaceId, params.id, activityId, field, value, locals.user.id, expected);
 		const rows = await getTicketActivityBreakdown(ws.workspaceId, params.id);
 		return json({ rows });
 	} catch (e) {
+		if (e instanceof TicketConflictError) error(409, e.message);
 		logger.error('ticket_activity_rae_failed', e, { workspaceId: ws.workspaceId, ticketId: params.id, activityId, field });
 		error(400, e instanceof Error ? e.message : 'Erreur.');
 	}

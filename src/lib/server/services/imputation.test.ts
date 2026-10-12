@@ -75,6 +75,27 @@ describe('setCell / getWeek', () => {
 		expect(rows[0].amounts[MONDAY]).toBe(3);
 	});
 
+	it('même ticket, avec et sans activité, même jour : chaque ligne garde sa case', async () => {
+		const { workspaceId, userId } = await makeWorkspace();
+		const t = await createTicket(workspaceId, { key: 'A-9', title: 'x' });
+		await createActivity(workspaceId, `Dev-${t.id}`);
+		const [dev] = (await listActivities(workspaceId)).filter((a) => a.label === `Dev-${t.id}`);
+		const cell = { targetType: 'TICKET' as const, targetId: t.id, day: MONDAY };
+
+		await setCell(workspaceId, userId, { ...cell, activityId: dev.id, amount: 1 });
+		await setCell(workspaceId, userId, { ...cell, activityId: null, amount: 0.5 });
+		let rows = (await getWeek(workspaceId, userId, MONDAY)).rows.filter((r) => r.targetId === t.id);
+		expect(rows.find((r) => r.activityId === dev.id)?.amounts[MONDAY]).toBe(1);
+		expect(rows.find((r) => r.activityId === null)?.amounts[MONDAY]).toBe(0.5);
+
+		// Un 0 sur la ligne sans activité ne supprime que la sienne.
+		await setCell(workspaceId, userId, { ...cell, activityId: null, amount: 0 });
+		rows = (await getWeek(workspaceId, userId, MONDAY)).rows.filter((r) => r.targetId === t.id);
+		expect(rows).toHaveLength(1);
+		expect(rows[0].activityId).toBe(dev.id);
+		expect(rows[0].amounts[MONDAY]).toBe(1);
+	});
+
 	it('refuse une cible qui n’existe pas dans l’espace', async () => {
 		const { workspaceId, userId } = await makeWorkspace();
 		await expect(

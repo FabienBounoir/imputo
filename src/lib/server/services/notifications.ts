@@ -270,7 +270,7 @@ async function raeStale(refDate: string, members: Member[]): Promise<number> {
 
 /** Récap hebdo : un jour ouvré de la semaine reste incomplet. */
 async function weeklyRecap(refDate: string, members: Member[]): Promise<number> {
-	const weekDays = workWeek(mondayOf(parseISODate(refDate))).map(toISODate);
+	const weekDays = workWeek(mondayOf(parseISODate(refDate))).map(toISODate).filter(isWorkday);
 	const totals = await db
 		.select({
 			workspaceId: timeEntry.workspaceId,
@@ -519,7 +519,13 @@ export async function runNotifications(
 	if (trigger === 'mood-deadline') return { trigger, sent: await moodDeadline(today) };
 
 	let sent = trigger === 'morning' ? await moodRecap(today) : 0;
-	if (!isWorkday(today)) return { trigger, skipped: 'non-ouvré', sent };
+	const dow = parseISODate(today).getUTCDay();
+	if (dow === 0 || dow === 6) return { trigger, skipped: 'non-ouvré', sent };
+	// La rotation support compte les fériés comme jours de perm (cf. isActiveSupportDay) : une période
+	// qui démarre un férié (lundi de Pâques en cadence WEEK) est annoncée quand même.
+	if (trigger === 'morning') sent += await supportDuty(today);
+	// Férié : aucune saisie attendue (cf. imputation), donc ni relance ni récap.
+	if (!isWorkday(today)) return { trigger, skipped: 'férié', sent };
 
 	const members = await activeMembers();
 	if (trigger === 'evening') {
@@ -527,7 +533,6 @@ export async function runNotifications(
 	} else if (trigger === 'morning') {
 		sent += await dayMissing('MORNING_YESTERDAY', previousWorkday(today), members, slot);
 		sent += await raeStale(today, members);
-		sent += await supportDuty(today);
 	} else if (trigger === 'weekly') {
 		sent += await weeklyRecap(today, members);
 	}

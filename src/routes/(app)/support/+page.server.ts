@@ -18,7 +18,7 @@ const CALENDAR_WEEKS = 6;
 const RECAP_DAYS = 5;
 
 /** Les RECAP_DAYS derniers jours ouvrés, aujourd'hui compris, du plus récent au plus ancien.
- * ponytail: lun→ven seulement — une saisie faite un samedi de support n'apparaît pas au récap
+ * ponytail: lun→ven hors fériés — une saisie faite un samedi ou un férié de support n'apparaît pas au récap
  * (elle reste dans la liste). Suivre le réglage « samedi inclus » du support si ça gêne. */
 function recapDays(today: string): string[] {
 	const days = [lastWorkdayOnOrBefore(today)];

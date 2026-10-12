@@ -1,4 +1,4 @@
-import { and, eq, gt, lt, inArray, isNull, notExists, or, ilike, sql, count, desc } from 'drizzle-orm';
+import { and, eq, gt, lt, inArray, isNull, notExists, or, ilike, sql, count, desc, getTableColumns, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import {
 	db,
@@ -392,10 +392,19 @@ async function enrichTickets(
  * `isAdmin` : masque estimationPrev/enveloppeTotale/tnfBudget pour un USER standard (invisible,
  * pas juste lecture seule — cf. §7 du spec). Par défaut à `true` (non redacté) pour les appelants
  * système sans notion de rôle courant (cron de snapshot, jobs de notification).
+ *
+ * Sans détail par activité par défaut : ses appelants (synthèse « Tout l'espace », snapshot
+ * quotidien) agrègent tout l'espace et ne le lisent jamais — c'était deux requêtes de plus sur
+ * chaque ticket. La liste des tickets passe par listTicketsPage, qui le garde.
  */
-export async function listTickets(workspaceId: string, testPhase = true, isAdmin = true): Promise<TicketRow[]> {
+export async function listTickets(
+	workspaceId: string,
+	testPhase = true,
+	isAdmin = true,
+	includeBreakdown = false
+): Promise<TicketRow[]> {
 	const tickets = await fetchBaseTickets(and(eq(ticket.workspaceId, workspaceId), isNull(ticket.archivedAt)));
-	return enrichTickets(workspaceId, testPhase, isAdmin, tickets);
+	return enrichTickets(workspaceId, testPhase, isAdmin, tickets, includeBreakdown);
 }
 
 /** Un ticket enrichi (consommé, RAE, groupes...) — pour l'éditer depuis n'importe quelle page (ex. Mon imputation). */
@@ -448,8 +457,8 @@ export async function deleteTicket(workspaceId: string, ticketId: string, actorI
  * qu'aucune autre table ne le référence — pas seulement timeEntry (contrairement à deleteTicket) :
  * imputationPin, ticketActivityRae, ticketGroupMember et weeklyObjective sont tous en cascade sur
  * ticket.id (schema.ts), donc une suppression brute effacerait silencieusement des données saisies
- * à la main. Exclut aussi tout ticket parent d'un autre (parentId n'a pas de contrainte FK/cascade —
- * le supprimer laisserait un parentId orphelin). Un ticket touché une seule fois reste hors de portée
+ * à la main. Exclut aussi tout ticket parent d'un autre (le supprimer détacherait ses sous-tâches,
+ * parentId étant en set null). Un ticket touché une seule fois reste hors de portée
  * définitivement : le lot ne "rattrape" jamais un ticket qui a bougé depuis le sync.
  *
  * title/projectId/sprintId/versionId sont volontairement absents de cette liste malgré leur case
@@ -887,6 +896,40 @@ const NUMERIC_FIELDS = new Set([...MANAGER_ONLY_FIELDS, ...ADMIN_ONLY_FIELDS]);
 const OWNER_ONLY_FIELDS = new Set(['key']);
 
 /**
+ * Écriture refusée parce que la valeur a changé en base depuis que l'écran l'a affichée (cf. SPECS
+ * §9) : quelqu'un d'autre (collègue, autre onglet, synchro Jira) a écrit entre-temps. Pas de nom
+ * dans le message : la synchro n'écrit pas dans change_log, la dernière ligne pourrait accuser à tort.
+ */
+export class TicketConflictError extends Error {
+	constructor() {
+		super("Modifié entre-temps par quelqu'un d'autre : ta saisie n'est pas enregistrée, la valeur à jour est rechargée.");
+	}
+}
+
+/** RAE/Estimé affichés = somme des activités dès qu'il y en a (cf. calc.ts resolvedRae) : la colonne du ticket n'est alors pas ce que l'écran montrait. */
+const COMPILED_FIELDS = new Set(['raeReal', 'raeTest', 'estimationReal']);
+
+/**
+ * Condition « la base contient toujours `expected` » pour un champ du ticket, à poser dans le WHERE
+ * de l'UPDATE (atomique). Même encodage que le formulaire : '' = vide, nombres comparés en valeur
+ * ('5' = '5.00', vide = 0). undefined = pas de contrôle possible (champ compilé depuis les activités).
+ */
+async function unchangedCondition(ticketId: string, field: string, expected: string): Promise<SQL | undefined> {
+	if (COMPILED_FIELDS.has(field)) {
+		const [compiled] = await db
+			.select({ id: ticketActivityRae.id })
+			.from(ticketActivityRae)
+			.where(eq(ticketActivityRae.ticketId, ticketId))
+			.limit(1);
+		if (compiled) return undefined;
+	}
+	const col = getTableColumns(ticket)[field as keyof typeof ticket.$inferSelect];
+	return NUMERIC_FIELDS.has(field) || field === 'priority'
+		? sql`coalesce(${col}, 0) = ${Number(expected || 0)}`
+		: sql`coalesce(${col}::text, '') = ${expected}`;
+}
+
+/**
  * Valeur tracée d'un champ : pour une référence (état, sprint/version, SSP, assigné), son libellé au
  * moment du changement plutôt que l'uuid — reste lisible après renommage ou purge du référentiel, et
  * cherchable depuis /admin/history. Retombe sur la valeur brute si la référence est introuvable.
@@ -933,7 +976,9 @@ export async function updateTicketField(
 	rawValue: string,
 	role: Role | null = null,
 	actorId: string | null = null,
-	isOwner = false
+	isOwner = false,
+	/** Valeur affichée avant la saisie (encodage du formulaire) — absente = dernier qui écrit gagne. */
+	expected?: string
 ) {
 	const allowedFields = new Set(EDITABLE_FIELDS);
 	if (isManagerOrAdmin(role))
@@ -967,13 +1012,15 @@ export async function updateTicketField(
 		oldValue = before ? (before as Record<string, unknown>)[field] : undefined;
 	}
 
+	const unchanged = expected === undefined ? undefined : await unchangedCondition(ticketId, field, expected);
 	const patch: Record<string, unknown> = { [field]: value, updatedAt: new Date() };
-	const res = await db
-		.update(ticket)
-		.set(patch)
-		.where(and(eq(ticket.id, ticketId), eq(ticket.workspaceId, workspaceId)))
-		.returning({ id: ticket.id });
-	if (res.length === 0) throw new Error('Ticket introuvable dans cet espace.');
+	const owned = and(eq(ticket.id, ticketId), eq(ticket.workspaceId, workspaceId));
+	const res = await db.update(ticket).set(patch).where(and(owned, unchanged)).returning({ id: ticket.id });
+	if (res.length === 0) {
+		if (unchanged && (await db.select({ id: ticket.id }).from(ticket).where(owned)).length > 0)
+			throw new TicketConflictError();
+		throw new Error('Ticket introuvable dans cet espace.');
+	}
 
 	if (TRACKED_FIELDS.has(field) && String(oldValue ?? '') !== String(value ?? '')) {
 		await logChange({
@@ -1163,7 +1210,9 @@ export async function upsertTicketActivityRae(
 	activityId: string,
 	field: TicketActivityField,
 	value: number,
-	actorId: string | null = null
+	actorId: string | null = null,
+	/** Valeur affichée avant la saisie — absente = dernier qui écrit gagne (cf. TicketConflictError). */
+	expected?: number
 ) {
 	if (!Number.isFinite(value) || value < 0) throw new Error('Valeur numérique invalide.');
 	const [ownedTicket] = await db
@@ -1183,15 +1232,19 @@ export async function upsertTicketActivityRae(
 		.where(and(eq(ticketActivityRae.ticketId, ticketId), eq(ticketActivityRae.activityId, activityId)));
 	const oldValue = before ? (before as Record<string, unknown>)[field] : undefined;
 
-	await db
+	const written = await db
 		.insert(ticketActivityRae)
 		.values({ ticketId, activityId, [field]: String(value) })
 		.onConflictDoUpdate({
 			target: [ticketActivityRae.ticketId, ticketActivityRae.activityId],
 			// updated_at = horloge des rappels « RAE périmé » (notifications.ts raeStale) : réenvoyer
 			// la même valeur la repousse de 7 jours, c'est voulu (confirmer qu'un RAE est toujours bon).
-			set: { [field]: String(value), updatedAt: new Date() }
-		});
+			set: { [field]: String(value), updatedAt: new Date() },
+			// Ligne absente = 0 affiché : l'insertion passe toujours, seule une ligne existante est comparée.
+			where: expected === undefined ? undefined : sql`coalesce(${ticketActivityRae[field]}, 0) = ${expected}`
+		})
+		.returning({ id: ticketActivityRae.id });
+	if (written.length === 0) throw new TicketConflictError();
 
 	if (String(oldValue ?? '0') !== String(value)) {
 		await logChange({

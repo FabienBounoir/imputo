@@ -97,17 +97,28 @@
 		await tick();
 		historyBtn?.focus(); // rend le focus au bouton qui a ouvert la vue, sinon il repart sur <body>
 	}
+	// Valeurs telles que le serveur les a renvoyées, par ticket : envoyées en `expected` pour que le
+	// serveur refuse d'écraser ce qu'un collègue a écrit entre-temps (cf. tickets.ts TicketConflictError).
+	// Pas `ticket` lui-même : bind:value l'a déjà modifié quand save() part.
+	let confirmed: { id: string; values: Record<string, unknown> } | null = null;
+	function load(id: string) {
+		loading = true;
+		return fetch(`/api/tickets/${id}`)
+			.then((r) => (r.ok ? r.json() : null))
+			.then((t) => {
+				if (ticketId !== id) return; // modale refermée ou passée à un autre ticket entre-temps
+				confirmed = t ? { id: t.id, values: { ...t } } : null;
+				ticket = t;
+			})
+			.finally(() => (loading = false));
+	}
 	$effect(() => {
 		const id = ticketId;
 		if (!id) {
 			ticket = null;
 			return;
 		}
-		loading = true;
-		fetch(`/api/tickets/${id}`)
-			.then((r) => (r.ok ? r.json() : null))
-			.then((t) => (ticket = t))
-			.finally(() => (loading = false));
+		load(id);
 	});
 
 	const estTitle = $derived(canEditEstimation ? '' : 'Estimation réservée aux profils Manager et Admin.');
@@ -185,14 +196,25 @@
 	async function save(field: string, value: string | number | null, snapshotArg?: { id: string; title: string; sprintId: string | null; versionId: string | null }) {
 		const snapshot = snapshotArg ?? (ticket ? { id: ticket.id, title: ticket.title, sprintId: ticket.sprintId, versionId: ticket.versionId } : null);
 		if (!snapshot) return;
+		const enc = (v: unknown) => (v == null ? '' : String(v));
 		const body = new FormData();
 		body.set('ticketId', snapshot.id);
 		body.set('field', field);
-		body.set('value', value == null ? '' : String(value));
+		body.set('value', enc(value));
+		const known = confirmed?.id === snapshot.id ? confirmed.values : null;
+		const prev = known?.[field];
+		if (known && field in known) {
+			body.set('expected', enc(prev));
+			known[field] = value; // une saisie suivante part de celle-ci, même avant la réponse
+		}
 		const res = await fetch('/tickets?/update', { method: 'POST', body });
 		const result = deserialize(await res.text());
 		if (result.type === 'failure') {
-			toast.error((result.data?.error as string) ?? 'Erreur lors de l’enregistrement.');
+			if (known) known[field] = prev;
+			const message = (result.data?.error as string) ?? 'Erreur lors de l’enregistrement.';
+			if (result.status !== 409) return void toast.error(message);
+			toast.warning(message);
+			if (ticketId === snapshot.id) await load(snapshot.id); // affiche la valeur écrite par l'autre personne
 		} else {
 			flash(snapshot);
 		}

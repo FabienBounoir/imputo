@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { db, ticket, timeEntry, jiraSyncRun, sprint, ssp } from '$lib/server/db';
+import { db, ticket, timeEntry, jiraSyncRun, sprint, ssp, ticketActivityRae } from '$lib/server/db';
+import { and } from 'drizzle-orm';
 import {
 	createTicket,
 	listTickets,
@@ -16,6 +17,8 @@ import {
 	listRecentTicketSummaries,
 	parseTicketSort,
 	deleteTicket,
+	upsertTicketActivityRae,
+	TicketConflictError,
 	NO_ACTIVITY_ID
 } from './tickets';
 import { makeWorkspace, addMember } from './test-helpers';
@@ -231,6 +234,94 @@ describe('updateTicketField — permissions par rôle', () => {
 	});
 });
 
+describe('écritures concurrentes (SPECS §9) : `expected` = valeur affichée avant la saisie', () => {
+	const read = async (id: string) => (await db.select().from(ticket).where(eq(ticket.id, id)))[0];
+
+	it('refuse si la base a changé depuis l’affichage, sans rien écrire', async () => {
+		const { workspaceId, userId } = await makeWorkspace();
+		const t = await createTicket(workspaceId, { key: 'CC-1', title: 'x' });
+		await updateTicketField(workspaceId, t.id, 'raeReal', '5', 'ADMIN', userId);
+
+		// Alice passe le RAE de 5 à 3, Bob (écran resté sur 5) tente 4.
+		await updateTicketField(workspaceId, t.id, 'raeReal', '3', 'ADMIN', userId, false, '5');
+		await expect(updateTicketField(workspaceId, t.id, 'raeReal', '4', 'ADMIN', userId, false, '5')).rejects.toBeInstanceOf(
+			TicketConflictError
+		);
+		expect(Number((await read(t.id)).raeReal)).toBe(3);
+	});
+
+	it('sans `expected`, le dernier qui écrit gagne (appelants non migrés)', async () => {
+		const { workspaceId, userId } = await makeWorkspace();
+		const t = await createTicket(workspaceId, { key: 'CC-2', title: 'x' });
+		await updateTicketField(workspaceId, t.id, 'title', 'A', 'USER', userId);
+		await updateTicketField(workspaceId, t.id, 'title', 'B', 'USER', userId);
+		expect((await read(t.id)).title).toBe('B');
+	});
+
+	it('compare comme l’écran affiche : nombres en valeur, vide = 0, référence vide = ""', async () => {
+		const { workspaceId, userId } = await makeWorkspace();
+		const t = await createTicket(workspaceId, { key: 'CC-3', title: 'x' });
+		const [s1] = await listStates(workspaceId);
+
+		await updateTicketField(workspaceId, t.id, 'prepa', '2', 'ADMIN', userId, false, ''); // prepa NULL en base, écran 0
+		await updateTicketField(workspaceId, t.id, 'prepa', '2.5', 'ADMIN', userId, false, '2.00');
+		await updateTicketField(workspaceId, t.id, 'stateId', s1.id, 'USER', userId, false, '');
+		await updateTicketField(workspaceId, t.id, 'stateId', '', 'USER', userId, false, s1.id);
+		await updateTicketField(workspaceId, t.id, 'priority', '0', 'USER', userId, false, '2');
+		const row = await read(t.id);
+		expect([Number(row.prepa), row.stateId, row.priority]).toEqual([2.5, null, 0]);
+
+		await expect(updateTicketField(workspaceId, t.id, 'stateId', s1.id, 'USER', userId, false, s1.id)).rejects.toBeInstanceOf(
+			TicketConflictError
+		);
+	});
+
+	it('RAE du ticket compilé depuis ses activités : la colonne n’est pas ce que l’écran montrait, pas de contrôle', async () => {
+		const { workspaceId, userId } = await makeWorkspace();
+		const t = await createTicket(workspaceId, { key: 'CC-4', title: 'x' });
+		const [act] = await listActivities(workspaceId);
+		await upsertTicketActivityRae(workspaceId, t.id, act.id, 'raeTest', 7, userId);
+
+		// L'écran affiche 7 (somme des activités) alors que la colonne vaut NULL puis 1 : jamais un conflit.
+		await updateTicketField(workspaceId, t.id, 'raeTest', '1', 'ADMIN', userId, false, '7');
+		await updateTicketField(workspaceId, t.id, 'raeTest', '2', 'ADMIN', userId, false, '7');
+		expect(Number((await read(t.id)).raeTest)).toBe(2);
+	});
+
+	it('un ticket d’un autre espace reste « introuvable », pas un conflit', async () => {
+		const { workspaceId, userId } = await makeWorkspace();
+		const { workspaceId: otherWs } = await makeWorkspace();
+		const t = await createTicket(otherWs, { key: 'CC-5', title: 'x' });
+		await expect(updateTicketField(workspaceId, t.id, 'title', 'y', 'USER', userId, false, 'x')).rejects.toThrow(
+			'Ticket introuvable dans cet espace.'
+		);
+	});
+
+	it('RAE par activité : ligne absente = 0, valeur périmée refusée, renvoi de la même valeur accepté (« Toujours bon »)', async () => {
+		const { workspaceId, userId } = await makeWorkspace();
+		const t = await createTicket(workspaceId, { key: 'CC-6', title: 'x' });
+		const [act] = await listActivities(workspaceId);
+		const pair = and(eq(ticketActivityRae.ticketId, t.id), eq(ticketActivityRae.activityId, act.id));
+		const raeOf = async () => Number((await db.select().from(ticketActivityRae).where(pair))[0].raeReal);
+
+		await upsertTicketActivityRae(workspaceId, t.id, act.id, 'raeReal', 5, userId, 0); // première saisie
+		await upsertTicketActivityRae(workspaceId, t.id, act.id, 'raeReal', 3, userId, 5);
+		await expect(upsertTicketActivityRae(workspaceId, t.id, act.id, 'raeReal', 4, userId, 5)).rejects.toBeInstanceOf(
+			TicketConflictError
+		);
+		expect(await raeOf()).toBe(3);
+
+		const before = new Date(Date.now() - 86_400_000);
+		await db.update(ticketActivityRae).set({ updatedAt: before }).where(pair);
+		await upsertTicketActivityRae(workspaceId, t.id, act.id, 'raeReal', 3, userId, 3);
+		const [{ updatedAt: after }] = await db.select().from(ticketActivityRae).where(pair);
+		expect(after.getTime()).toBeGreaterThan(before.getTime()); // l'horloge du rappel « RAE périmé » repart
+
+		// Un autre champ de la même paire n'est pas concerné par le RAE modifié par un collègue.
+		await upsertTicketActivityRae(workspaceId, t.id, act.id, 'estimation', 8, userId, 0);
+	});
+});
+
 describe('historique du descriptif ticket (changeLog)', () => {
 	it('un changement d’état trace les libellés (pas les uuid), rien si la valeur ne change pas', async () => {
 		const { workspaceId, userId } = await makeWorkspace();
@@ -253,6 +344,18 @@ describe('historique du descriptif ticket (changeLog)', () => {
 
 		const [h] = await listEntityHistory(workspaceId, 'TICKET', t.id);
 		expect(h).toMatchObject({ action: 'DELETE', oldValue: 'T-HIST-DEL — Doublon', changedByName: 'ws owner' });
+	});
+
+	it('supprimer un parent fait de ses sous-tâches des tickets ordinaires (parent_id en set null)', async () => {
+		const { workspaceId, userId } = await makeWorkspace();
+		const parent = await createTicket(workspaceId, { key: 'T-PARENT', title: 'Epic' });
+		const child = await createTicket(workspaceId, { key: 'T-CHILD', title: 'Sous-tâche' });
+		await db.update(ticket).set({ parentId: parent.id }).where(eq(ticket.id, child.id));
+
+		await deleteTicket(workspaceId, parent.id, userId);
+
+		const [row] = await db.select({ parentId: ticket.parentId }).from(ticket).where(eq(ticket.id, child.id));
+		expect(row.parentId).toBeNull();
 	});
 });
 
@@ -316,7 +419,7 @@ describe('activityBreakdown — bucket "Autre" pour les imputations sans activit
 
 		// enrichTickets/listTickets (chemin batch de la liste des tickets) applique la même règle,
 		// indépendamment de getTicketActivityBreakdown (logique dupliquée, cf. commentaires du code).
-		const [row] = (await listTickets(workspaceId)).filter((r) => r.id === t.id);
+		const [row] = (await listTickets(workspaceId, true, true, true)).filter((r) => r.id === t.id);
 		expect(row.activityBreakdown.find((a) => a.activityId === NO_ACTIVITY_ID)?.label).toBe('Autre');
 		expect(row.consumed).toBe(3); // le total, lui, a toujours compté les deux imputations
 	});

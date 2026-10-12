@@ -55,6 +55,21 @@ describe('POST /api/tickets/[id]/activity-rae', () => {
 		).rejects.toMatchObject({ status: 403 });
 	});
 
+	it('RAE modifié entre-temps → 409, rien écrit ; sans `expected` (ancien client) → écrit', async () => {
+		const { userId, ticketId, activityId } = await setup();
+		const locals = await fakeLocals(userId);
+		const post = (body: object) => POST({ locals, params: { id: ticketId }, request: jsonRequest({ activityId, field: 'raeReal', ...body }) } as never);
+
+		await post({ value: 5, expected: 0 });
+		await expect(post({ value: 4, expected: 0 })).rejects.toMatchObject({ status: 409 });
+		const [row] = await db.select().from(ticketActivityRae).where(eq(ticketActivityRae.ticketId, ticketId));
+		expect(Number(row.raeReal)).toBe(5);
+
+		await post({ value: 4 });
+		const [after] = await db.select().from(ticketActivityRae).where(eq(ticketActivityRae.ticketId, ticketId));
+		expect(Number(after.raeReal)).toBe(4);
+	});
+
 	it('un ADMIN peut éditer le RAE même sans avoir imputé', async () => {
 		const { userId, ticketId, activityId } = await setup();
 		const locals = await fakeLocals(userId); // owner créé par makeWorkspace -> ADMIN
