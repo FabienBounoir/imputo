@@ -48,6 +48,10 @@
 		if (p === 'month') {
 			fromInput = iso(new Date(now.getFullYear(), now.getMonth(), 1));
 			toInput = iso(now);
+		} else if (p === 'lastmonth') {
+			// Jour 0 du mois en cours = dernier jour du mois précédent.
+			fromInput = iso(new Date(now.getFullYear(), now.getMonth() - 1, 1));
+			toInput = iso(new Date(now.getFullYear(), now.getMonth(), 0));
 		} else if (p === 'year') {
 			fromInput = iso(new Date(now.getFullYear(), 0, 1));
 			toInput = iso(now);
@@ -121,7 +125,7 @@
 		sheets={SUPPORT_SHEETS}
 		title="Exporter le temps support"
 		hint="Le tableau ci-dessous ne montre qu'un aperçu — choisis ici la période complète à exporter."
-		presets={['month', 'year', 'all']}
+		presets={['month', 'lastmonth', 'year', 'all']}
 		defaultPreset="year"
 		extraParams={personId ? { userId: personId } : {}}
 	/>
@@ -131,6 +135,7 @@
 	<div class="filters-row">
 		<div class="seg">
 			<button type="button" class:on={preset === 'month'} onclick={() => setPreset('month')}>Mois en cours</button>
+			<button type="button" class:on={preset === 'lastmonth'} onclick={() => setPreset('lastmonth')}>Mois précédent</button>
 			<button type="button" class:on={preset === 'year'} onclick={() => setPreset('year')}>Cette année</button>
 			<button type="button" class:on={preset === 'all'} onclick={() => setPreset('all')}>Tout</button>
 			<button type="button" class:on={preset === 'custom'} onclick={() => setPreset('custom')}>Personnalisé</button>
@@ -152,7 +157,7 @@
 	<div class="kpis">
 		<div class="card kpi">
 			<div class="k">Temps total</div>
-			<div class="v">{formatDuration(data.stats.totalMinutes)}</div>
+			<div class="v">{formatDuration(data.stats.totalMinutes, { weeks: false })}</div>
 		</div>
 		<div class="card kpi">
 			<div class="k">Saisies</div>
@@ -178,7 +183,7 @@
 					<div class="barrow">
 						<span class="lbl" title={p.name}>{p.name}</span>
 						<div class="track"><i style="width:{(p.minutes / maxPersonMinutes) * 100}%"></i></div>
-						<span class="val tabnum">{formatDuration(p.minutes)}</span>
+						<span class="val tabnum">{formatDuration(p.minutes, { weeks: false })}</span>
 					</div>
 				{/each}
 			</div>

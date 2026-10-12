@@ -269,7 +269,7 @@
 			<aside class="recap" aria-label="Récapitulatif des 5 derniers jours ouvrés">
 				<div class="recap-head">
 					<span>5 derniers jours</span>
-					<b class="tabnum">{recapTotal ? formatDuration(recapTotal) : '—'}</b>
+					<b class="tabnum">{recapTotal ? formatDuration(recapTotal, { weeks: false }) : '—'}</b>
 				</div>
 				<ol class="recap-days">
 					{#each data.dailyRecap as d (d.day)}

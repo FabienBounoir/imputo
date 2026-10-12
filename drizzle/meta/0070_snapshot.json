@@ -1,5 +1,5 @@
 {
-  "id": "7708ad76-a597-48ab-8857-48b5c419feae",
+  "id": "293e6e64-1a8b-4ca5-9c55-12e4ba746a83",
   "prevId": "7eb1fe11-0313-4eb8-8d82-ff61ad0cad25",
   "version": "7",
   "dialect": "postgresql",
@@ -215,12 +215,7 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {
-        "absence_subject_ck": {
-          "name": "absence_subject_ck",
-          "value": "num_nonnulls(\"absence\".\"user_id\", \"absence\".\"external_member_id\") = 1"
-        }
-      },
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.activity": {
@@ -3338,6 +3333,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "rae_updated_at": {
+          "name": "rae_updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "estimation_prev": {
           "name": "estimation_prev",
           "type": "numeric(7, 2)",
@@ -3383,6 +3384,12 @@
         },
         "created_by_sync_run_id": {
           "name": "created_by_sync_run_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_by_import_id": {
+          "name": "created_by_import_id",
           "type": "uuid",
           "primaryKey": false,
           "notNull": false
@@ -3459,6 +3466,21 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "ticket_import_idx": {
+          "name": "ticket_import_idx",
+          "columns": [
+            {
+              "expression": "created_by_import_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -3481,19 +3503,6 @@
           "tableTo": "project",
           "columnsFrom": [
             "project_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        },
-        "ticket_parent_id_ticket_id_fk": {
-          "name": "ticket_parent_id_ticket_id_fk",
-          "tableFrom": "ticket",
-          "tableTo": "ticket",
-          "columnsFrom": [
-            "parent_id"
           ],
           "columnsTo": [
             "id"
@@ -3572,6 +3581,19 @@
           "tableTo": "jira_sync_run",
           "columnsFrom": [
             "created_by_sync_run_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "ticket_created_by_import_id_ticket_import_id_fk": {
+          "name": "ticket_created_by_import_id_ticket_import_id_fk",
+          "tableFrom": "ticket",
+          "tableTo": "ticket_import",
+          "columnsFrom": [
+            "created_by_import_id"
           ],
           "columnsTo": [
             "id"
@@ -3863,6 +3885,131 @@
             "id"
           ],
           "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.ticket_import": {
+      "name": "ticket_import",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "workspace_id": {
+          "name": "workspace_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "file_name": {
+          "name": "file_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tickets_created": {
+          "name": "tickets_created",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_by_id": {
+          "name": "created_by_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "undone_at": {
+          "name": "undone_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "undone_by_id": {
+          "name": "undone_by_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "ticket_import_ws_created_idx": {
+          "name": "ticket_import_ws_created_idx",
+          "columns": [
+            {
+              "expression": "workspace_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "ticket_import_workspace_id_workspace_id_fk": {
+          "name": "ticket_import_workspace_id_workspace_id_fk",
+          "tableFrom": "ticket_import",
+          "tableTo": "workspace",
+          "columnsFrom": [
+            "workspace_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "ticket_import_created_by_id_user_id_fk": {
+          "name": "ticket_import_created_by_id_user_id_fk",
+          "tableFrom": "ticket_import",
+          "tableTo": "user",
+          "columnsFrom": [
+            "created_by_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "ticket_import_undone_by_id_user_id_fk": {
+          "name": "ticket_import_undone_by_id_user_id_fk",
+          "tableFrom": "ticket_import",
+          "tableTo": "user",
+          "columnsFrom": [
+            "undone_by_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },
@@ -4257,12 +4404,7 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {
-        "time_entry_target_ck": {
-          "name": "time_entry_target_ck",
-          "value": "(\"time_entry\".\"target_type\" = 'TICKET' and \"time_entry\".\"ticket_id\" is not null and \"time_entry\".\"category_id\" is null)\n\t\t\t\tor (\"time_entry\".\"target_type\" = 'CATEGORY' and \"time_entry\".\"category_id\" is not null and \"time_entry\".\"ticket_id\" is null)\n\t\t\t\tor (\"time_entry\".\"target_type\" = 'OBJECTIVE' and \"time_entry\".\"ticket_id\" is null and \"time_entry\".\"category_id\" is null)"
-        }
-      },
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.user": {

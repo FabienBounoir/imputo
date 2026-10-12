@@ -42,7 +42,7 @@ export const WATERMARK_SAFETY_MARGIN_MS = 3 * 60 * 60 * 1000;
 // dynamique — même choix que SPRINT_CUSTOM_FIELD_ID (jiraClient.ts), YAGNI tant qu'une seule
 // instance Jira est visée. Comparaison insensible à la casse/espaces (noms saisis à la main côté
 // Jira, mieux vaut tolérer une variante que perdre silencieusement le mapping).
-const JIRA_PRIORITY_MAP: Record<string, number> = {
+export const JIRA_PRIORITY_MAP: Record<string, number> = {
 	urgent: 0,
 	haute: 1,
 	normal: 2,

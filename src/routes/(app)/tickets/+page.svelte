@@ -117,11 +117,12 @@
 		}
 		fetch('?/rememberFilters', { method: 'POST', body });
 	}
-	// exactKey/syncRunId/noSsp : arrivée via un lien direct (dashboard sprint/version ?ticket=…,
-	// historique de sync Jira ?jiraRun=…, clôture mensuelle ?ssp=none) — sans ça le bouton
+	// exactKey/syncRunId/importId/noSsp : arrivée via un lien direct (dashboard sprint/version
+	// ?ticket=…, historique de sync Jira ?jiraRun=…, résultat d'un import de fichier ?import=…,
+	// clôture mensuelle ?ssp=none) — sans ça le bouton
 	// Réinitialiser reste invisible et on ne peut plus revenir à la liste complète. Aucun de ces
-	// trois n'est reconstruit par navigateWith, donc n'importe quelle navigation les efface.
-	const hasFilters = $derived(!!(data.filters.query || data.filters.stateId || data.filters.projectId || data.filters.sprintId || data.filters.versionId || data.filters.assigneeId || data.filters.unassigned || data.filters.exactKey || data.filters.syncRunId || data.filters.noSsp || data.filters.keys?.length));
+	// quatre n'est reconstruit par navigateWith, donc n'importe quelle navigation les efface.
+	const hasFilters = $derived(!!(data.filters.query || data.filters.stateId || data.filters.projectId || data.filters.sprintId || data.filters.versionId || data.filters.assigneeId || data.filters.unassigned || data.filters.exactKey || data.filters.syncRunId || data.filters.importId || data.filters.noSsp || data.filters.keys?.length));
 	// Filtres/vue/pagination naviguent tous via goto() (rechargement serveur) : un fieldset désactive
 	// la barre d'un coup pendant le trajet, pour qu'on ne confonde jamais l'ancienne liste avec la nouvelle.
 	const isNavigating = $derived(!!navigating.to);
