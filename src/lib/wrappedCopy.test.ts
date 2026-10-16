@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { plural, tier, wrappedCopy, type WrappedCopyInput } from './wrappedCopy';
+import { readFileSync } from 'node:fs';
+import { plural, tier, wrappedCopy, WRAPPED_MUSIC, WRAPPED_MUSIC_CACHE, type WrappedCopyInput } from './wrappedCopy';
 
 const base: WrappedCopyInput = {
 	totalHours: 0,
@@ -60,5 +61,13 @@ describe('wrappedCopy', () => {
 	it('tient les données absentes (aucun ticket, aucun duo)', () => {
 		const copy = wrappedCopy(base, 2026);
 		for (const value of Object.values(copy)) expect(value).toBeTruthy();
+	});
+});
+
+describe('service worker', () => {
+	it("garde les mêmes noms de musique/cache que wrappedCopy (il ne peut pas l'importer)", () => {
+		const sw = readFileSync('src/service-worker.ts', 'utf8');
+		expect(sw).toContain(`const WRAPPED_MUSIC = '${WRAPPED_MUSIC}';`);
+		expect(sw).toContain(`const WRAPPED_MUSIC_CACHE = '${WRAPPED_MUSIC_CACHE}';`);
 	});
 });

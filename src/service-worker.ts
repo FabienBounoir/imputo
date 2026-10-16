@@ -4,7 +4,10 @@
 /// <reference lib="webworker" />
 
 import { build, files, version } from '$service-worker';
-import { WRAPPED_MUSIC, WRAPPED_MUSIC_CACHE } from '$lib/wrappedCopy';
+// Dupliqué de $lib/wrappedCopy.ts (vérifié par wrappedCopy.test.ts) : un import de $lib dans le service
+// worker casse l'app sous `vite dev` (le SW est servi comme module), donc tous les e2e du CI.
+const WRAPPED_MUSIC = '/wrapped_music.mp3';
+const WRAPPED_MUSIC_CACHE = 'imputo-wrapped-music';
 
 const sw = self as unknown as ServiceWorkerGlobalScope;
 
