@@ -439,7 +439,7 @@
 
 	// --- calculs dérivés (mêmes formules que le serveur) ---
 	const n = (v: number | string | null) => (v == null || v === '' ? 0 : Number(v) || 0);
-	const round = (x: number) => Math.round((x + Number.EPSILON) * 100) / 100;
+	const round = (x: number) => Math.round((x + Number.EPSILON) * 1000) / 1000;
 	const totalEst = (r: Row) => round(n(r.estimationReal) + (data.testPhase ? n(r.estimationTest) : 0));
 	const totalRae = (r: Row) => round(n(r.raeReal) + (data.testPhase ? n(r.raeTest) : 0));
 	// Écarts : Réel uniquement, jamais Test (cf. calc.ts:ecartVsEstime/ecartVsBudget côté serveur).
@@ -1218,7 +1218,7 @@
 								<input
 									class="cell-input num-input"
 									type="number"
-									step="0.25"
+									step="any"
 									min="0"
 									bind:value={r.enveloppeTotale}
 									onchange={() => debouncedSave(`env-${r.id}`, () => save(r, 'enveloppeTotale', r.enveloppeTotale))}
@@ -1229,7 +1229,7 @@
 							<input
 								class="cell-input num-input"
 								type="number"
-								step="0.25"
+								step="any"
 								min="0"
 								bind:value={r.estimationReal}
 								disabled={!data.canEditEstimation || r.hasActivityEstimation}
@@ -1241,7 +1241,7 @@
 							<input
 								class="cell-input num-input"
 								type="number"
-								step="0.25"
+								step="any"
 								min="0"
 								value={r.raeReal}
 								disabled
@@ -1249,8 +1249,8 @@
 							/>
 						</td>
 						{#if data.testPhase}
-							<td class="num col-detail"><input class="cell-input num-input" type="number" step="0.25" min="0" bind:value={r.estimationTest} disabled={!data.canEditEstimation} title={estTitle} onchange={() => debouncedSave(`est-${r.id}-test`, () => saveEst(r, 'test'))} /></td>
-							<td class="num col-detail"><input class="cell-input num-input" type="number" step="0.25" min="0" value={r.raeTest} disabled title="RAE Test = compilation des RAE par activité ci-dessous (non éditable ici)" /></td>
+							<td class="num col-detail"><input class="cell-input num-input" type="number" step="any" min="0" bind:value={r.estimationTest} disabled={!data.canEditEstimation} title={estTitle} onchange={() => debouncedSave(`est-${r.id}-test`, () => saveEst(r, 'test'))} /></td>
+							<td class="num col-detail"><input class="cell-input num-input" type="number" step="any" min="0" value={r.raeTest} disabled title="RAE Test = compilation des RAE par activité ci-dessous (non éditable ici)" /></td>
 						{/if}
 						<td class="num tabnum consumed">{r.consumed || '—'}</td>
 						{#if data.isAdmin}
@@ -1307,7 +1307,7 @@
 										<input
 											class="cell-input num-input"
 											type="number"
-											step="0.25"
+											step="any"
 											min="0"
 											value={ar.budget}
 											disabled={!data.isStrictAdmin}
@@ -1327,7 +1327,7 @@
 									<input
 										class="cell-input num-input"
 										type="number"
-										step="0.25"
+										step="any"
 										min="0"
 										value={ar.estimation}
 										onchange={(e) => {
@@ -1344,7 +1344,7 @@
 									<input
 										class="cell-input num-input"
 										type="number"
-										step="0.25"
+										step="any"
 										min="0"
 										value={ar.raeReal}
 										disabled={!canRae}
@@ -1365,7 +1365,7 @@
 										<input
 											class="cell-input num-input"
 											type="number"
-											step="0.25"
+											step="any"
 											min="0"
 											value={ar.raeTest}
 											disabled={!canRae}
@@ -1666,12 +1666,12 @@
 						<span>Urgent →</span>
 					</div>
 				</div>
-				<label class="dfield"><span>Estimé</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationReal} disabled={!data.canEditEstimation || editRow.hasActivityEstimation} title={editRow.hasActivityEstimation ? "Estimé = compilation des Estimés par activité ci-dessous (non éditable ici)" : estTitle} onchange={() => debouncedSave(`est-${editRow!.id}-real`, () => saveEst(editRow!, 'real'))} /></label>
-				<label class="dfield"><span>RAE Réal</span><input class="cell-input" type="number" step="0.25" min="0" value={editRow.raeReal} disabled title="Compilation des RAE par activité (voir le tableau)" /></label>
+				<label class="dfield"><span>Estimé</span><input class="cell-input" type="number" step="any" min="0" bind:value={editRow.estimationReal} disabled={!data.canEditEstimation || editRow.hasActivityEstimation} title={editRow.hasActivityEstimation ? "Estimé = compilation des Estimés par activité ci-dessous (non éditable ici)" : estTitle} onchange={() => debouncedSave(`est-${editRow!.id}-real`, () => saveEst(editRow!, 'real'))} /></label>
+				<label class="dfield"><span>RAE Réal</span><input class="cell-input" type="number" step="any" min="0" value={editRow.raeReal} disabled title="Compilation des RAE par activité (voir le tableau)" /></label>
 				{#if data.testPhase}
-					<label class="dfield"><span>Est. Test</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationTest} disabled={!data.canEditEstimation} title={estTitle} onchange={() => debouncedSave(`est-${editRow!.id}-test`, () => saveEst(editRow!, 'test'))} /></label>
-					<label class="dfield"><span>Prépa</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.prepa} disabled={!data.canEditEstimation} title={estTitle} onchange={() => debouncedSave(`f-${editRow!.id}-prepa`, () => save(editRow!, 'prepa', editRow!.prepa))} /></label>
-					<label class="dfield"><span>RAE Test</span><input class="cell-input" type="number" step="0.25" min="0" value={editRow.raeTest} disabled title="Compilation des RAE par activité (voir le tableau)" /></label>
+					<label class="dfield"><span>Est. Test</span><input class="cell-input" type="number" step="any" min="0" bind:value={editRow.estimationTest} disabled={!data.canEditEstimation} title={estTitle} onchange={() => debouncedSave(`est-${editRow!.id}-test`, () => saveEst(editRow!, 'test'))} /></label>
+					<label class="dfield"><span>Prépa</span><input class="cell-input" type="number" step="any" min="0" bind:value={editRow.prepa} disabled={!data.canEditEstimation} title={estTitle} onchange={() => debouncedSave(`f-${editRow!.id}-prepa`, () => save(editRow!, 'prepa', editRow!.prepa))} /></label>
+					<label class="dfield"><span>RAE Test</span><input class="cell-input" type="number" step="any" min="0" value={editRow.raeTest} disabled title="Compilation des RAE par activité (voir le tableau)" /></label>
 					{#each FLAG_FIELDS as fl (fl.key)}
 						<label class="dfield"><span>{fl.label}</span>
 							<select class="cell-select" bind:value={editRow.flags[fl.key]} onchange={() => saveFlag(editRow!, fl.key, editRow!.flags[fl.key])}>
@@ -1682,8 +1682,8 @@
 				{/if}
 				<div class="dfield"><span>Code SSP</span><SspPicker ssps={data.ref.ssps} bind:value={() => editRow!.sspId ?? '', (v) => (editRow!.sspId = v || null)} onpick={(v) => save(editRow!, 'sspId', v || null)} /></div>
 				{#if data.isAdmin}
-					<label class="dfield"><span>Estimation prévisionnel</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.estimationPrev} onchange={() => debouncedSave(`f-${editRow!.id}-estimationPrev`, () => save(editRow!, 'estimationPrev', editRow!.estimationPrev))} /></label>
-					<label class="dfield"><span>Enveloppe totale</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={editRow.enveloppeTotale} onchange={() => debouncedSave(`f-${editRow!.id}-enveloppeTotale`, () => save(editRow!, 'enveloppeTotale', editRow!.enveloppeTotale))} /></label>
+					<label class="dfield"><span>Estimation prévisionnel</span><input class="cell-input" type="number" step="any" min="0" bind:value={editRow.estimationPrev} onchange={() => debouncedSave(`f-${editRow!.id}-estimationPrev`, () => save(editRow!, 'estimationPrev', editRow!.estimationPrev))} /></label>
+					<label class="dfield"><span>Enveloppe totale</span><input class="cell-input" type="number" step="any" min="0" bind:value={editRow.enveloppeTotale} onchange={() => debouncedSave(`f-${editRow!.id}-enveloppeTotale`, () => save(editRow!, 'enveloppeTotale', editRow!.enveloppeTotale))} /></label>
 				{/if}
 				<label class="dfield wide"><span>Commentaire</span><input class="cell-input" placeholder="Note libre…" bind:value={editRow.comment} onchange={() => save(editRow!, 'comment', editRow!.comment)} /></label>
 				{#if data.ref.ticketGroups.length > 0}

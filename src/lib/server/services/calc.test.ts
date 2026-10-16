@@ -32,8 +32,9 @@ describe('calc', () => {
 		expect(sum([0.1, 0.2])).toBe(0.3);
 	});
 
-	it('round: 2 décimales', () => {
+	it('round: 3 décimales', () => {
 		expect(round(0.1 + 0.2)).toBe(0.3);
+		expect(round(0.125 + 0.25)).toBe(0.375);
 	});
 
 	it('totalEstimation / totalRae: somme Réal + Test', () => {

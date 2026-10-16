@@ -127,7 +127,7 @@
 	//  - ligne du bas (« Total ») : uniquement les 12 mois affichés, un mois réel par colonne — sans
 	//    ambiguïté puisque chaque cellule correspond à un mois précis. Son coin en bas à droite suit
 	//    la portée de la colonne « Cumul » (tous SSP, depuis l'origine), pas celle de la ligne.
-	const round2 = (n: number) => Math.round(n * 100) / 100;
+	const round2 = (n: number) => Math.round(n * 1000) / 1000;
 	type Field = 'conso' | 'consoReal' | 'prod' | 'tnf' | 'tnfReal';
 	const TOTAL_KEY = {
 		conso: 'totalConso',
@@ -206,7 +206,7 @@
 			<input
 				class="grid-input tabnum"
 				type="number"
-				step="0.25"
+				step="any"
 				value={raeEdits[key(row.sspId, c.month)] ?? ''}
 				placeholder={c.rae === null ? '—' : String(c.rae)}
 				onchange={(e) => onRae(row.sspId, c.month, e.currentTarget.value)}
@@ -242,7 +242,7 @@
 			<input
 				class="grid-input tabnum"
 				type="number"
-				step="0.25"
+				step="any"
 				value={prodEdits[key(row.sspId, c.month)] ?? ''}
 				placeholder="—"
 				onchange={(e) => onProd(row.sspId, c.month, e.currentTarget.value)}

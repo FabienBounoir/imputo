@@ -148,7 +148,7 @@ describe('jiraSync / syncWorkspace', () => {
 
 		const [row] = await db.select().from(ticket).where(and(eq(ticket.workspaceId, ws.workspaceId), eq(ticket.key, 'T-1')));
 		expect(row.title).toBe('Titre Jira'); // écrasé (dans le périmètre)
-		expect(row.estimationReal).toBe('5.00'); // jamais touché (formatage numeric Postgres)
+		expect(row.estimationReal).toBe('5.000'); // jamais touché (formatage numeric Postgres)
 		expect(row.comment).toBe('note manuelle'); // jamais touché
 	});
 

@@ -11,9 +11,9 @@ export function sum(values: Array<string | number | null | undefined>): number {
 	return round(values.reduce<number>((acc, v) => acc + num(v), 0));
 }
 
-/** Arrondi à 2 décimales (évite les artefacts de virgule flottante sur des pas de 0,25). */
+/** Arrondi à 3 décimales (évite les artefacts de virgule flottante sur des pas de 0,125). */
 export function round(n: number): number {
-	return Math.round((n + Number.EPSILON) * 100) / 100;
+	return Math.round((n + Number.EPSILON) * 1000) / 1000;
 }
 
 export function clamp(n: number, min: number, max: number): number {

@@ -101,7 +101,7 @@
 	// (calc.ts plannedDays/toAllocate/round) : la grille doit réagir à la frappe sans aller-retour,
 	// et $lib/server n'est pas importable côté client. Même duplication assumée que le % de
 	// capacité dans imputation/+page.svelte — si l'une des deux formules bouge, bouger l'autre.
-	const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+	const round2 = (n: number) => Math.round((n + Number.EPSILON) * 1000) / 1000;
 	const cell = (userId: string, sspId: string) => complements[`${userId}:${sspId}`] ?? 0;
 
 	function complementTotal(userId: string) {
@@ -476,7 +476,7 @@
 											<input
 												class="grid-input complement-input tabnum"
 												type="number"
-												step="0.25"
+												step="any"
 												value={cell(m.userId, c.id) || ''}
 												onchange={(e) => onComplement(m.userId, c.id, e.currentTarget.value)}
 											/>
@@ -491,7 +491,7 @@
 										<input
 											class="grid-input planned-input tabnum"
 											type="number"
-											step="0.25"
+											step="any"
 											min="0"
 											placeholder={String(round2(Math.max(0, effectiveWorkdays - m.absenceDays)))}
 											value={plannedEdits[m.userId] ?? ''}

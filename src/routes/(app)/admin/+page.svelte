@@ -800,7 +800,7 @@
 								<div class="modal-form-row">
 									<input class="ref-input ssp-code" name="code" placeholder="8364BEB5354" required />
 									<input class="ref-input" name="label" placeholder="Site Internet" />
-									<input class="ref-input ssp-budget" name="budgetDays" type="number" step="0.01" min="0" placeholder="budget (j)" />
+									<input class="ref-input ssp-budget" name="budgetDays" type="number" step="any" min="0" placeholder="budget (j)" />
 								</div>
 								<div class="modal-actions">
 									<button type="button" class="btn btn-ghost" onclick={() => (refAddOpen = false)}>Annuler</button>
@@ -860,7 +860,7 @@
 										class="ref-name ssp-budget tabnum"
 										name="budgetDays"
 										type="number"
-										step="0.01"
+										step="any"
 										min="0"
 										value={s.budgetDays ?? ''}
 										disabled={s.archived}

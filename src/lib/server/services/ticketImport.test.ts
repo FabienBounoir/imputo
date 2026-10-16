@@ -232,8 +232,8 @@ describe('applyImport (base réelle)', () => {
 		expect(child).toMatchObject({
 			parentId: parent.id,
 			sprintId: null,
-			estimationReal: '3.50',
-			raeReal: '3.50',
+			estimationReal: '3.500',
+			raeReal: '3.500',
 			priority: 2,
 			flags: '{"cypress":"Oui"}'
 		});

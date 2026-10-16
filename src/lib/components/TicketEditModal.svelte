@@ -129,7 +129,7 @@
 	);
 
 	const n = (v: number | string | null) => (v == null || v === '' ? 0 : Number(v) || 0);
-	const round = (x: number) => Math.round((x + Number.EPSILON) * 100) / 100;
+	const round = (x: number) => Math.round((x + Number.EPSILON) * 1000) / 1000;
 	const totalEst = $derived(ticket ? round(n(ticket.estimationReal) + (testPhase ? n(ticket.estimationTest) : 0)) : 0);
 	const totalRae = $derived(ticket ? round(n(ticket.raeReal) + (testPhase ? n(ticket.raeTest) : 0)) : 0);
 	const ecartVsEstime = $derived(ticket ? round(n(ticket.raeReal) + ticket.consumed - n(ticket.estimationReal)) : 0);
@@ -381,12 +381,12 @@
 							<span>Urgent →</span>
 						</div>
 					</div>
-					<label class="dfield"><span>Estimé</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={ticket.estimationReal} disabled={!canEditEstimation || ticket.hasActivityEstimation} title={estRealTitle} onchange={() => { const v = ticket!.estimationReal; const snapshot = { id: ticket!.id, title: ticket!.title, sprintId: ticket!.sprintId, versionId: ticket!.versionId }; debouncedSave(`est-${ticket!.id}-real`, () => saveEst('real', v, snapshot)); }} /></label>
-					<label class="dfield"><span>RAE Réal</span><input class="cell-input" type="number" step="0.25" min="0" value={ticket.raeReal} disabled title="Compilation des RAE par activité (voir le tableau)" /></label>
+					<label class="dfield"><span>Estimé</span><input class="cell-input" type="number" step="any" min="0" bind:value={ticket.estimationReal} disabled={!canEditEstimation || ticket.hasActivityEstimation} title={estRealTitle} onchange={() => { const v = ticket!.estimationReal; const snapshot = { id: ticket!.id, title: ticket!.title, sprintId: ticket!.sprintId, versionId: ticket!.versionId }; debouncedSave(`est-${ticket!.id}-real`, () => saveEst('real', v, snapshot)); }} /></label>
+					<label class="dfield"><span>RAE Réal</span><input class="cell-input" type="number" step="any" min="0" value={ticket.raeReal} disabled title="Compilation des RAE par activité (voir le tableau)" /></label>
 					{#if testPhase}
-						<label class="dfield"><span>Est. Test</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={ticket.estimationTest} disabled={!canEditEstimation} title={estTitle} onchange={() => { const v = ticket!.estimationTest; const snapshot = { id: ticket!.id, title: ticket!.title, sprintId: ticket!.sprintId, versionId: ticket!.versionId }; debouncedSave(`est-${ticket!.id}-test`, () => saveEst('test', v, snapshot)); }} /></label>
-						<label class="dfield"><span>Prépa</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={ticket.prepa} disabled={!canEditEstimation} title={estTitle} onchange={() => { const v = ticket!.prepa; const snapshot = { id: ticket!.id, title: ticket!.title, sprintId: ticket!.sprintId, versionId: ticket!.versionId }; debouncedSave(`f-${ticket!.id}-prepa`, () => save('prepa', v, snapshot)); }} /></label>
-						<label class="dfield"><span>RAE Test</span><input class="cell-input" type="number" step="0.25" min="0" value={ticket.raeTest} disabled title="Compilation des RAE par activité (voir le tableau)" /></label>
+						<label class="dfield"><span>Est. Test</span><input class="cell-input" type="number" step="any" min="0" bind:value={ticket.estimationTest} disabled={!canEditEstimation} title={estTitle} onchange={() => { const v = ticket!.estimationTest; const snapshot = { id: ticket!.id, title: ticket!.title, sprintId: ticket!.sprintId, versionId: ticket!.versionId }; debouncedSave(`est-${ticket!.id}-test`, () => saveEst('test', v, snapshot)); }} /></label>
+						<label class="dfield"><span>Prépa</span><input class="cell-input" type="number" step="any" min="0" bind:value={ticket.prepa} disabled={!canEditEstimation} title={estTitle} onchange={() => { const v = ticket!.prepa; const snapshot = { id: ticket!.id, title: ticket!.title, sprintId: ticket!.sprintId, versionId: ticket!.versionId }; debouncedSave(`f-${ticket!.id}-prepa`, () => save('prepa', v, snapshot)); }} /></label>
+						<label class="dfield"><span>RAE Test</span><input class="cell-input" type="number" step="any" min="0" value={ticket.raeTest} disabled title="Compilation des RAE par activité (voir le tableau)" /></label>
 						{#each FLAG_FIELDS as fl (fl.key)}
 							<label class="dfield"><span>{fl.label}</span>
 								<select class="cell-select" bind:value={ticket.flags[fl.key]} onchange={() => saveFlag(fl.key, ticket!.flags[fl.key])}>
@@ -397,8 +397,8 @@
 					{/if}
 					<div class="dfield"><span>Code SSP</span><SspPicker {ssps} bind:value={() => ticket!.sspId ?? '', (v) => (ticket!.sspId = v || null)} onpick={(v) => save('sspId', v || null)} /></div>
 					{#if isAdmin}
-						<label class="dfield"><span>Estimation prévisionnel</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={ticket.estimationPrev} onchange={() => { const v = ticket!.estimationPrev; const snapshot = { id: ticket!.id, title: ticket!.title, sprintId: ticket!.sprintId, versionId: ticket!.versionId }; debouncedSave(`f-${ticket!.id}-estimationPrev`, () => save('estimationPrev', v, snapshot)); }} /></label>
-						<label class="dfield"><span>Enveloppe totale</span><input class="cell-input" type="number" step="0.25" min="0" bind:value={ticket.enveloppeTotale} onchange={() => { const v = ticket!.enveloppeTotale; const snapshot = { id: ticket!.id, title: ticket!.title, sprintId: ticket!.sprintId, versionId: ticket!.versionId }; debouncedSave(`f-${ticket!.id}-enveloppeTotale`, () => save('enveloppeTotale', v, snapshot)); }} /></label>
+						<label class="dfield"><span>Estimation prévisionnel</span><input class="cell-input" type="number" step="any" min="0" bind:value={ticket.estimationPrev} onchange={() => { const v = ticket!.estimationPrev; const snapshot = { id: ticket!.id, title: ticket!.title, sprintId: ticket!.sprintId, versionId: ticket!.versionId }; debouncedSave(`f-${ticket!.id}-estimationPrev`, () => save('estimationPrev', v, snapshot)); }} /></label>
+						<label class="dfield"><span>Enveloppe totale</span><input class="cell-input" type="number" step="any" min="0" bind:value={ticket.enveloppeTotale} onchange={() => { const v = ticket!.enveloppeTotale; const snapshot = { id: ticket!.id, title: ticket!.title, sprintId: ticket!.sprintId, versionId: ticket!.versionId }; debouncedSave(`f-${ticket!.id}-enveloppeTotale`, () => save('enveloppeTotale', v, snapshot)); }} /></label>
 					{/if}
 					<label class="dfield wide"><span>Commentaire</span><input class="cell-input" placeholder="Note libre…" bind:value={ticket.comment} onchange={() => save('comment', ticket!.comment)} /></label>
 					{#if ticketGroups.length > 0}

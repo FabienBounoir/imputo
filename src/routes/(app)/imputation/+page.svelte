@@ -1210,7 +1210,7 @@
 									<input
 										class="rae-input tabnum"
 										type="number"
-										step="0.25"
+										step="any"
 										min="0"
 										value={row.estimation ?? 0}
 										aria-label="Estimé"
@@ -1230,7 +1230,7 @@
 									<input
 										class="rae-input tabnum rae-age-{row.raeAge}"
 										type="number"
-										step="0.25"
+										step="any"
 										min="0"
 										value={row.raeReal ?? 0}
 										aria-label="RAE"

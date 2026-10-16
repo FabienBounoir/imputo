@@ -31,8 +31,8 @@
 		goto(`?${p.toString()}`, { keepFocus: true, noScroll: true, invalidateAll: true });
 	}
 
-	const round2 = (n: number) => Math.round(n * 100) / 100;
-	const fmt = (n: number) => n.toLocaleString('fr-FR', { maximumFractionDigits: 2 });
+	const round2 = (n: number) => Math.round(n * 1000) / 1000;
+	const fmt = (n: number) => n.toLocaleString('fr-FR', { maximumFractionDigits: 3 });
 
 	// Lignes Absences / Sans activité incluses ou non dans les totaux (pastilles au-dessus du tableau).
 	// Exclues, elles restent affichées (grisées) : on voit ce qu'on a mis de côté. Défaut = temps

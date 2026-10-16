@@ -13,7 +13,7 @@
 	import TicketEditModal from './TicketEditModal.svelte';
 
 	function round2(n: number) {
-		return Math.round((n + Number.EPSILON) * 100) / 100;
+		return Math.round((n + Number.EPSILON) * 1000) / 1000;
 	}
 
 	type SprintDashboard = {

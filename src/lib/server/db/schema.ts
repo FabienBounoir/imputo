@@ -306,7 +306,7 @@ export const ssp = pgTable(
 		label: text('label').notNull(),
 		// Budget alloué, en jours. Posé dès maintenant pour le suivi annuel (RAE mensuel), pas
 		// encore exploité par la clôture mensuelle.
-		budgetDays: numeric('budget_days', { precision: 8, scale: 2 }),
+		budgetDays: numeric('budget_days', { precision: 8, scale: 3 }),
 		archivedAt: archivedAt(),
 		createdAt: createdAt()
 	},
@@ -333,7 +333,7 @@ export const sspAnnualProd = pgTable(
 			.notNull()
 			.references(() => ssp.id, { onDelete: 'cascade' }),
 		month: date('month').notNull(), // 1er du mois
-		value: numeric('value', { precision: 8, scale: 2 }).notNull(), // même précision que ssp.budgetDays
+		value: numeric('value', { precision: 8, scale: 3 }).notNull(), // même précision que ssp.budgetDays
 		updatedAt: updatedAt()
 	},
 	(t) => [uniqueIndex('ssp_annual_prod_ssp_month_uq').on(t.sspId, t.month)]
@@ -353,7 +353,7 @@ export const sspAnnualRaeOverride = pgTable(
 			.notNull()
 			.references(() => ssp.id, { onDelete: 'cascade' }),
 		month: date('month').notNull(),
-		value: numeric('value', { precision: 8, scale: 2 }).notNull(),
+		value: numeric('value', { precision: 8, scale: 3 }).notNull(),
 		updatedAt: updatedAt()
 	},
 	(t) => [uniqueIndex('ssp_annual_rae_override_ssp_month_uq').on(t.sspId, t.month)]
@@ -513,15 +513,15 @@ export const ticket = pgTable(
 		sprintId: uuid('sprint_id').references(() => sprint.id, { onDelete: 'set null' }),
 		versionId: uuid('version_id').references(() => sprint.id, { onDelete: 'set null' }),
 		stateId: uuid('state_id').references(() => state.id, { onDelete: 'set null' }),
-		estimationReal: numeric('estimation_real', { precision: 7, scale: 2 }),
-		raeReal: numeric('rae_real', { precision: 7, scale: 2 }),
-		estimationTest: numeric('estimation_test', { precision: 7, scale: 2 }),
-		prepa: numeric('prepa', { precision: 7, scale: 2 }),
-		raeTest: numeric('rae_test', { precision: 7, scale: 2 }),
+		estimationReal: numeric('estimation_real', { precision: 7, scale: 3 }),
+		raeReal: numeric('rae_real', { precision: 7, scale: 3 }),
+		estimationTest: numeric('estimation_test', { precision: 7, scale: 3 }),
+		prepa: numeric('prepa', { precision: 7, scale: 3 }),
+		raeTest: numeric('rae_test', { precision: 7, scale: 3 }),
 		// Admin only, invisible pour un USER standard.
-		estimationPrev: numeric('estimation_prev', { precision: 7, scale: 2 }),
+		estimationPrev: numeric('estimation_prev', { precision: 7, scale: 3 }),
 		// Admin only, invisible pour un USER standard.
-		enveloppeTotale: numeric('enveloppe_totale', { precision: 7, scale: 2 }),
+		enveloppeTotale: numeric('enveloppe_totale', { precision: 7, scale: 3 }),
 		sspId: uuid('ssp_id').references(() => ssp.id, { onDelete: 'set null' }),
 		// Personne responsable du ticket — optionnel, jamais synchronisé depuis Jira (contrairement à
 		// priority/sprint/version) : purement local à l'espace. set null si le membre est retiré, pas
@@ -566,12 +566,12 @@ export const ticketActivityRae = pgTable(
 		activityId: uuid('activity_id')
 			.notNull()
 			.references(() => activity.id, { onDelete: 'restrict' }),
-		raeReal: numeric('rae_real', { precision: 7, scale: 2 }).notNull().default('0'),
-		raeTest: numeric('rae_test', { precision: 7, scale: 2 }).notNull().default('0'),
+		raeReal: numeric('rae_real', { precision: 7, scale: 3 }).notNull().default('0'),
+		raeTest: numeric('rae_test', { precision: 7, scale: 3 }).notNull().default('0'),
 		// Estimé par activité — champ unique (pas de déclinaison Réel/Test), modifiable par tout membre.
-		estimation: numeric('estimation', { precision: 7, scale: 2 }).notNull().default('0'),
+		estimation: numeric('estimation', { precision: 7, scale: 3 }).notNull().default('0'),
 		// Budget par activité — indépendant du budget ticket (enveloppeTotale), ADMIN only.
-		budget: numeric('budget', { precision: 7, scale: 2 }).notNull().default('0'),
+		budget: numeric('budget', { precision: 7, scale: 3 }).notNull().default('0'),
 		updatedAt: updatedAt()
 	},
 	(t) => [uniqueIndex('ticket_activity_rae_uq').on(t.ticketId, t.activityId)]
@@ -624,10 +624,10 @@ export const ticketSnapshot = pgTable(
 			.notNull()
 			.references(() => ticket.id, { onDelete: 'cascade' }),
 		date: date('date').notNull(),
-		estimationReal: numeric('estimation_real', { precision: 7, scale: 2 }).notNull().default('0'),
-		raeReal: numeric('rae_real', { precision: 7, scale: 2 }).notNull().default('0'),
-		raeTest: numeric('rae_test', { precision: 7, scale: 2 }).notNull().default('0'),
-		consumed: numeric('consumed', { precision: 7, scale: 2 }).notNull().default('0'),
+		estimationReal: numeric('estimation_real', { precision: 7, scale: 3 }).notNull().default('0'),
+		raeReal: numeric('rae_real', { precision: 7, scale: 3 }).notNull().default('0'),
+		raeTest: numeric('rae_test', { precision: 7, scale: 3 }).notNull().default('0'),
+		consumed: numeric('consumed', { precision: 7, scale: 3 }).notNull().default('0'),
 		createdAt: createdAt()
 	},
 	(t) => [

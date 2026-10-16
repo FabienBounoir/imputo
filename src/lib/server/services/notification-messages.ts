@@ -32,7 +32,7 @@ export type NotifCtx = {
 };
 
 /** « 0,5 j » — les capacités sont en décimales de journée, jamais en heures. */
-const jours = (n: number) => `${String(Math.round(n * 100) / 100).replace('.', ',')} j`;
+const jours = (n: number) => `${String(Math.round(n * 1000) / 1000).replace('.', ',')} j`;
 const plural = (n: number, s = 's') => (n > 1 ? s : '');
 /** Élision devant un prénom : « d'Alice », « de Bob ». */
 const de = (name: string) => (/^[aeiouyàâäéèêëîïôöûüh]/i.test(name) ? `d'${name}` : `de ${name}`);

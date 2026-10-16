@@ -88,7 +88,7 @@
 								<input
 									class="rae-input rae-age-{p.step}"
 									type="number"
-									step="0.25"
+									step="any"
 									min="0"
 									value={p.raeReal}
 									aria-label="RAE {p.activityLabel}, {g.key}"
