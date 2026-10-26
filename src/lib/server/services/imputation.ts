@@ -208,7 +208,7 @@ export async function getTimesheet(
 		if (!rows.has(key)) rows.set(key, rowSkeleton(e, targetId, key));
 		const r = rows.get(key)!;
 		const amount = num(e.amount);
-		r.amounts[e.day] = amount;
+		r.amounts[e.day] = round((r.amounts[e.day] ?? 0) + amount);
 		if (e.absenceId) r.lockedDays[e.day] = e.absenceId;
 		r.total = round(r.total + amount);
 		dayTotals[e.day] = round(dayTotals[e.day] + amount);
@@ -260,7 +260,7 @@ export async function getTeamTimesheet(workspaceId: string, days: string[]): Pro
 		if (!m.rows.has(key)) m.rows.set(key, rowSkeleton(e, targetId, key));
 		const r = m.rows.get(key)!;
 		const amount = num(e.amount);
-		r.amounts[e.day] = amount;
+		r.amounts[e.day] = round((r.amounts[e.day] ?? 0) + amount);
 		if (e.absenceId) r.lockedDays[e.day] = e.absenceId;
 		r.total = round(r.total + amount);
 		m.dayTotals[e.day] = round(m.dayTotals[e.day] + amount);
@@ -477,17 +477,34 @@ export async function setCell(
 			.set({ amount: amountStr, updatedAt: new Date() })
 			.where(eq(timeEntry.id, existing[0].id));
 	} else {
-		await db.insert(timeEntry).values({
-			workspaceId,
-			userId,
-			targetType: input.targetType,
-			ticketId,
-			categoryId,
-			objectiveId,
-			activityId: input.activityId,
-			day: input.day,
-			amount: amountStr
-		});
+		// Atomique : deux écritures simultanées sur la même case ne créent plus deux lignes (time_entry_cell_uq).
+		await db
+			.insert(timeEntry)
+			.values({
+				workspaceId,
+				userId,
+				targetType: input.targetType,
+				ticketId,
+				categoryId,
+				objectiveId,
+				activityId: input.activityId,
+				day: input.day,
+				amount: amountStr
+			})
+			.onConflictDoUpdate({
+				target: [
+					timeEntry.workspaceId,
+					timeEntry.userId,
+					timeEntry.day,
+					timeEntry.ticketId,
+					timeEntry.categoryId,
+					timeEntry.objectiveId,
+					timeEntry.activityId
+				],
+				set: { amount: amountStr, updatedAt: new Date() },
+				setWhere: isNull(timeEntry.absenceId)
+			});
+
 	}
 }
 

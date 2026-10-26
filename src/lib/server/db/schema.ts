@@ -10,6 +10,7 @@ import {
 	numeric,
 	jsonb,
 	index,
+	unique,
 	uniqueIndex,
 	check,
 	type AnyPgColumn
@@ -717,6 +718,12 @@ export const timeEntry = pgTable(
 		index('time_entry_ws_user_day_idx').on(t.workspaceId, t.userId, t.day),
 		index('time_entry_ticket_idx').on(t.ticketId),
 		index('time_entry_absence_idx').on(t.absenceId),
+		// Une case = une ligne : sans ça, deux écritures simultanées (setCell lit puis insère) créaient
+		// un doublon que la vue perso masquait et que la vue équipe additionnait. NULLS NOT DISTINCT
+		// car ticket/catégorie/objectif/activité sont tour à tour NULL selon la cible.
+		unique('time_entry_cell_uq')
+			.on(t.workspaceId, t.userId, t.day, t.ticketId, t.categoryId, t.objectiveId, t.activityId)
+			.nullsNotDistinct(),
 		// La colonne renseignée suit target_type. OBJECTIVE n'a ni ticket ni catégorie, et son
 		// objective_id peut redevenir NULL (set null ci-dessus) : pas exigé.
 		check(

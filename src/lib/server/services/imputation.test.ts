@@ -14,6 +14,7 @@ import { listCategories, createActivity, listActivities, setCategoryAllowManual 
 import { createAbsenceFor } from './absences';
 import { addObjective, listObjectivesForUser } from './weeklyObjectives';
 import { makeWorkspace } from './test-helpers';
+import { eq } from 'drizzle-orm';
 import { db, timeEntry } from '$lib/server/db';
 
 const MONDAY = '2026-06-22'; // lundi (même date que isolation.test.ts)
@@ -73,6 +74,17 @@ describe('setCell / getWeek', () => {
 		const rows = week.rows.filter((r) => r.targetId === category.id);
 		expect(rows).toHaveLength(1);
 		expect(rows[0].amounts[MONDAY]).toBe(3);
+	});
+
+	it('deux setCell simultanés sur la même case ne créent qu’une seule ligne', async () => {
+		const { workspaceId, userId } = await makeWorkspace();
+		const category = (await listCategories(workspaceId)).find((c) => c.label === 'MCO')!;
+		const cell = { targetType: 'CATEGORY' as const, targetId: category.id, activityId: null, day: MONDAY };
+
+		await Promise.all([setCell(workspaceId, userId, { ...cell, amount: 0.75 }), setCell(workspaceId, userId, { ...cell, amount: 0.125 })]);
+
+		const entries = await db.select().from(timeEntry).where(eq(timeEntry.userId, userId));
+		expect(entries).toHaveLength(1);
 	});
 
 	it('même ticket, avec et sans activité, même jour : chaque ligne garde sa case', async () => {
