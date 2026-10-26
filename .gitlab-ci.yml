@@ -134,6 +134,7 @@ audit:
   - oc apply -f openshift/imagestream.yaml -f openshift/configmap.yaml
     -f openshift/deployment.yaml -f openshift/service.yaml -f openshift/route.yaml
     -f openshift/db-statefulset.yaml -f openshift/cronjobs.yaml
+    -f openshift/networkpolicy-db-from-grafana.yaml
   # BASE_URL/ORIGIN ne sont jamais versionnés (configmap.yaml = placeholder) : on les dérive du host
   # réel de la Route, avant le rollout, pour que l'app démarre avec la bonne valeur (sinon "Cross-site
   # POST form submissions are forbidden", voir openshift/README.md).

@@ -43,6 +43,14 @@ spec:
             # Sert au check santé externe (voir /api/health côté appli et README.md).
             - name: GF_INSTALL_PLUGINS
               value: yesoreyeram-infinity-datasource
+            # Mots de passe du rôle grafana_ro (datasources Postgres). optional : Grafana démarre
+            # sans le secret, seules les datasources Postgres sont alors en erreur.
+            - name: GRAFANA_PG_PROD_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: grafana-pg, key: prod, optional: true }
+            - name: GRAFANA_PG_PREPROD_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: grafana-pg, key: preprod, optional: true }
           resources:
             requests:
               cpu: 100m

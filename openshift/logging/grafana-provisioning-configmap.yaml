@@ -29,6 +29,34 @@ data:
         type: yesoreyeram-infinity-datasource
         uid: infinity
         isDefault: false
+      # Base métier en lecture seule (rôle grafana_ro, droits par colonne — voir grafana-pg-
+      # readonly.sql). Mot de passe injecté depuis le secret `grafana-pg` via les variables d'env
+      # de grafana-deployment.yaml. Une datasource par environnement : même logique que les deux
+      # dossiers de dashboards, impossible d'interroger la prod en croyant regarder la preprod.
+      - name: Postgres Prod
+        type: grafana-postgresql-datasource
+        uid: postgres-prod
+        url: imputo-db.imputo.svc.cluster.local:5432
+        user: grafana_ro
+        isDefault: false
+        jsonData:
+          database: imputo
+          sslmode: disable
+          postgresVersion: 1600
+        secureJsonData:
+          password: ${GRAFANA_PG_PROD_PASSWORD}
+      - name: Postgres Preprod
+        type: grafana-postgresql-datasource
+        uid: postgres-preprod
+        url: imputo-db.imputo-preprod.svc.cluster.local:5432
+        user: grafana_ro
+        isDefault: false
+        jsonData:
+          database: imputo
+          sslmode: disable
+          postgresVersion: 1600
+        secureJsonData:
+          password: ${GRAFANA_PG_PREPROD_PASSWORD}
   dashboards.yaml: |
     apiVersion: 1
     providers:

@@ -158,6 +158,18 @@ données de prod et preprod, alertes réellement déclenchées (`cron_failed` pr
 l'app scalée à 0 replica deux fois sur preprod pour la sonde interne et le health check externe) et
 reçues dans Teams à chaque fois.
 
+## Dashboard « Activité & stockage » (Postgres)
+
+6e dashboard de chaque dossier (`06-activite.json`, uid `imputo-activity-{prod,preprod}`) : comptes, espaces, tickets (par origine : manuel / sync Jira / import), saisies d'imputation, activité par espace, taille de la base. Les cartes « période » suivent le sélecteur de temps (défaut 30 j). Source : datasources `postgres-prod` / `postgres-preprod` (rôle `grafana_ro`), pas Loki.
+
+**Mise en place (une fois, à la main — rien de ceci n'est appliqué par la CI sauf la NetworkPolicy)** :
+
+1. Par environnement, créer le rôle lecture seule (droits par colonne, voir l'en-tête de `grafana-pg-readonly.sql`).
+2. `oc create secret generic grafana-pg --from-literal=prod='...' --from-literal=preprod='...' -n imputo-logs`.
+3. Déployer `openshift/networkpolicy-db-from-grafana.yaml` dans `imputo` et `imputo-preprod` (inclus dans `.apply_base_manifests`), puis relancer `deploy:logging`.
+
+**Limite connue** : pas d'historique de la taille de la base (Postgres ne garde pas de série temporelle, et Loki ne la contient pas). « Volume utilisé » compare à la PVC de 5 Gi codée en dur dans la requête, WAL non compté.
+
 ## Annotations de déploiement
 
 Chaque `deploy:preprod`/`deploy:production` réussi pose une ligne verticale sur tous les graphes

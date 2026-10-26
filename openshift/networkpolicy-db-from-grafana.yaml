@@ -1,0 +1,25 @@
+# Ouvre le port Postgres à Grafana (namespace imputo-logs) uniquement — le template de projet
+# bloque tout ingress hors same-namespace/ingress/monitoring. Appliqué dans imputo ET
+# imputo-preprod. Le rôle `grafana_ro` (openshift/logging/grafana-pg-readonly.sql) ne lit que
+# quelques colonnes ; sans lui, ce port ouvert ne donne rien.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-grafana-to-db
+spec:
+  podSelector:
+    matchLabels:
+      app: imputo-db
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: imputo-logs
+          podSelector:
+            matchLabels:
+              app: grafana
+      ports:
+        - protocol: TCP
+          port: 5432
