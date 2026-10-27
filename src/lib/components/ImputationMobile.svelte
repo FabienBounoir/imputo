@@ -19,7 +19,7 @@
 		readOnly = false,
 		canManageObjectives = false,
 		onCycle,
-		onSetAmount,
+		onLongPress,
 		onDelete,
 		onPickActivity,
 		activityLabel,
@@ -36,7 +36,8 @@
 		 * message du cadenas sur une ligne issue d'un objectif (cf. objectifs de la semaine). */
 		canManageObjectives?: boolean;
 		onCycle: (row: Row, day: string) => void;
-		onSetAmount: (row: Row, day: string, value: number) => void;
+		/** Appui long sur une case : la page ouvre le choix direct des valeurs (et « Détailler… »). */
+		onLongPress: (row: Row, day: string, rect: DOMRect) => void;
 		onDelete: (row: Row) => void;
 		onPickActivity: (row: Row) => void;
 		activityLabel: (row: Row) => string | null;
@@ -98,6 +99,33 @@
 
 	function rowTotal(row: Row) {
 		return round(days.reduce((a, d) => a + (row.amounts[d] ?? 0), 0));
+	}
+
+	// Appui long (~450 ms) = choix direct des valeurs / détail. Geste maison plutôt que oncontextmenu :
+	// iOS Safari ne l'émet pas sur un bouton. Le doigt qui bouge (défilement) annule l'appui, et le clic
+	// qui suit un appui long est avalé pour ne pas faire avancer la valeur en plus.
+	const LONG_PRESS_MS = 450;
+	let pressTimer: ReturnType<typeof setTimeout> | undefined;
+	let pressFrom = { x: 0, y: 0 };
+	let longPressed = false;
+	function pressDown(e: PointerEvent, row: Row) {
+		longPressed = false;
+		pressFrom = { x: e.clientX, y: e.clientY };
+		const el = e.currentTarget as HTMLElement;
+		clearTimeout(pressTimer);
+		pressTimer = setTimeout(() => {
+			longPressed = true;
+			navigator.vibrate?.(12);
+			onLongPress(row, selected, el.getBoundingClientRect());
+		}, LONG_PRESS_MS);
+	}
+	function pressMove(e: PointerEvent) {
+		if (Math.hypot(e.clientX - pressFrom.x, e.clientY - pressFrom.y) > 10) clearTimeout(pressTimer);
+	}
+	function cellTap(row: Row) {
+		clearTimeout(pressTimer);
+		if (longPressed) longPressed = false;
+		else onCycle(row, selected);
 	}
 </script>
 
@@ -163,7 +191,7 @@
 					</span>
 				</div>
 				{#if readOnly}
-					<span class="mcell ro" class:val={v > 0}>{fmt(v)}</span>
+					<span class="mcell ro" class:val={v > 0}>{fmt(v)}{#if row.parts?.[selected]}<span class="mbadge">{row.parts[selected].length > 1 ? row.parts[selected].length : ''}</span>{/if}</span>
 				{:else if locked}
 					<a
 						class="mcell locked"
@@ -172,18 +200,17 @@
 						title="Imputé depuis une absence validée — à modifier depuis la page Absences.">{fmt(v)}</a
 					>
 				{:else}
-					<!-- ponytail: appui long = remise à zéro (oncontextmenu), pas de geste custom — ça ne
-					     marche pas sur iOS Safari, mais le tap cyclique repasse de toute façon par 0. -->
 					<button
 						type="button"
 						class="mcell"
 						class:val={v > 0}
-						onclick={() => onCycle(row, selected)}
-						oncontextmenu={(e) => {
-							e.preventDefault();
-							onSetAmount(row, selected, 0);
-						}}
-						aria-label="Imputation de {row.label}">{fmt(v)}</button
+						onpointerdown={(e) => pressDown(e, row)}
+						onpointermove={pressMove}
+						onpointerup={() => clearTimeout(pressTimer)}
+						onpointercancel={() => clearTimeout(pressTimer)}
+						onclick={() => cellTap(row)}
+						oncontextmenu={(e) => e.preventDefault()}
+						aria-label="Imputation de {row.label}">{fmt(v)}{#if row.parts?.[selected]}<span class="mbadge">{row.parts[selected].length > 1 ? row.parts[selected].length : ''}</span>{/if}</button
 					>
 				{/if}
 				{#if !readOnly}
@@ -424,8 +451,13 @@
 
 	/* Cible tactile : 44px minimum, contrairement aux 38px de la grille desktop (souris). */
 	.mcell {
+		position: relative;
 		width: 52px;
 		height: 44px;
+		/* L'appui long ouvre le choix des valeurs : pas de menu natif ni de sélection de texte. */
+		-webkit-touch-callout: none;
+		-webkit-user-select: none;
+		user-select: none;
 		border-radius: 12px;
 		display: grid;
 		place-items: center;
@@ -453,6 +485,31 @@
 	}
 	.mcell:active {
 		transform: scale(0.96);
+	}
+	/* Case détaillée : pastille avec le nombre d'entrées (point si une seule, avec un détail). */
+	.mbadge {
+		position: absolute;
+		top: -6px;
+		right: -6px;
+		min-width: 16px;
+		height: 16px;
+		box-sizing: border-box;
+		padding: 0 4px;
+		border-radius: 999px;
+		background: var(--text);
+		color: var(--surface);
+		font-size: 10px;
+		font-weight: 700;
+		line-height: 16px;
+		text-align: center;
+	}
+	.mbadge:empty {
+		min-width: 9px;
+		width: 9px;
+		height: 9px;
+		top: -3px;
+		right: -3px;
+		padding: 0;
 	}
 	.mdel {
 		width: 32px;

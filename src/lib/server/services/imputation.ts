@@ -1,8 +1,9 @@
-import { and, eq, gte, inArray, lte, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, lte, isNotNull, isNull, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import {
 	db,
 	timeEntry,
+	timeEntryPart,
 	ticket,
 	category,
 	activity,
@@ -18,6 +19,9 @@ import { toISODate, workWeek, parseISODate } from '$lib/utils/date';
 import type { AbsenceType } from '$lib/absenceTypes';
 
 export type ImputationCell = { day: string; amount: number };
+/** Une entrée d'une case découpée : un montant et ce qui a été fait avec. */
+export type EntryPart = { amount: number; note: string | null };
+
 export type ImputationRow = {
 	rowKey: string;
 	targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE';
@@ -45,6 +49,11 @@ export type ImputationRow = {
 	raeAge: number;
 	amounts: Record<string, number>; // day ISO → amount
 	/**
+	 * Cases découpées en plusieurs entrées (day ISO → parts, dans l'ordre de saisie). Absent pour un
+	 * jour sans découpage ; quand présent, la somme des parts est égale à `amounts[day]`.
+	 */
+	parts?: Record<string, EntryPart[]>;
+	/**
 	 * Jours verrouillés : day ISO → id de l'absence source (cf. absences.ts syncAbsenceEntries).
 	 * Non modifiable/supprimable depuis "Mon imputation" — seule l'absence source y change quelque
 	 * chose (cf. setCell/deleteRow/reassignActivity ci-dessous).
@@ -70,6 +79,7 @@ function rowKey(targetType: string, targetId: string, activityId: string | null,
 }
 
 type RawEntry = {
+	entryId: string;
 	userId: string;
 	userName: string;
 	targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE';
@@ -106,6 +116,7 @@ async function queryEntries(workspaceId: string, firstDay: string, lastDay: stri
 
 	return db
 		.select({
+			entryId: timeEntry.id,
 			userId: timeEntry.userId,
 			userName: user.displayName,
 			targetType: timeEntry.targetType,
@@ -180,6 +191,25 @@ function rowSkeleton(e: RawEntry, targetId: string, key: string): ImputationRow 
 }
 
 /**
+ * Renseigne `row.parts[day]` pour les cases découpées en plusieurs entrées (cf. timeEntryPart).
+ * `cells` relie chaque time_entry de la feuille à sa ligne et à son jour.
+ */
+async function attachParts(cells: Map<string, { row: ImputationRow; day: string }>) {
+	if (cells.size === 0) return;
+	const found = await db
+		.select({ entryId: timeEntryPart.timeEntryId, amount: timeEntryPart.amount, note: timeEntryPart.note })
+		.from(timeEntryPart)
+		.where(inArray(timeEntryPart.timeEntryId, [...cells.keys()]))
+		.orderBy(asc(timeEntryPart.position));
+	for (const p of found) {
+		const cell = cells.get(p.entryId);
+		if (!cell) continue;
+		const byDay = (cell.row.parts ??= {});
+		(byDay[cell.day] ??= []).push({ amount: num(p.amount), note: p.note });
+	}
+}
+
+/**
  * Feuille de temps d'un utilisateur sur une liste de jours ouvrés ordonnée. Le découpage de la
  * période (semaine / quinzaine / mois, fixe ou glissant) est calculé par `buildPeriod` dans
  * `$lib/utils/date` — ce service ne connaît qu'une plage de jours.
@@ -194,6 +224,7 @@ export async function getTimesheet(
 	const entries = await queryEntries(workspaceId, firstDay, lastDay, userId);
 
 	const rows = new Map<string, ImputationRow>();
+	const cells = new Map<string, { row: ImputationRow; day: string }>();
 	const dayTotals: Record<string, number> = Object.fromEntries(days.map((d) => [d, 0]));
 
 	for (const e of entries) {
@@ -209,11 +240,13 @@ export async function getTimesheet(
 		const r = rows.get(key)!;
 		const amount = num(e.amount);
 		r.amounts[e.day] = round((r.amounts[e.day] ?? 0) + amount);
+		cells.set(e.entryId, { row: r, day: e.day });
 		if (e.absenceId) r.lockedDays[e.day] = e.absenceId;
 		r.total = round(r.total + amount);
 		dayTotals[e.day] = round(dayTotals[e.day] + amount);
 	}
 
+	await attachParts(cells);
 	await attachActivityRae([...rows.values()]);
 
 	const total = round(Object.values(dayTotals).reduce((a, b) => a + b, 0));
@@ -245,6 +278,7 @@ export async function getTeamTimesheet(workspaceId: string, days: string[]): Pro
 	const entries = await queryEntries(workspaceId, firstDay, lastDay);
 
 	const members = new Map<string, { userId: string; name: string; rows: Map<string, ImputationRow>; dayTotals: Record<string, number> }>();
+	const cells = new Map<string, { row: ImputationRow; day: string }>();
 	const dayTotals: Record<string, number> = Object.fromEntries(days.map((d) => [d, 0]));
 
 	for (const e of entries) {
@@ -261,11 +295,14 @@ export async function getTeamTimesheet(workspaceId: string, days: string[]): Pro
 		const r = m.rows.get(key)!;
 		const amount = num(e.amount);
 		r.amounts[e.day] = round((r.amounts[e.day] ?? 0) + amount);
+		cells.set(e.entryId, { row: r, day: e.day });
 		if (e.absenceId) r.lockedDays[e.day] = e.absenceId;
 		r.total = round(r.total + amount);
 		m.dayTotals[e.day] = round(m.dayTotals[e.day] + amount);
 		dayTotals[e.day] = round(dayTotals[e.day] + amount);
 	}
+
+	await attachParts(cells);
 
 	const memberList = [...members.values()]
 		.map((m) => ({
@@ -417,20 +454,21 @@ async function assertTargetInWorkspace(
 	}
 }
 
-/** Définit (ou supprime si 0) une cellule d'imputation. */
-export async function setCell(
-	workspaceId: string,
-	userId: string,
-	input: {
-		targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE';
-		targetId: string;
-		activityId: string | null;
-		day: string;
-		amount: number;
-		/** Objectif hebdo TICKET à l'origine de la ligne — ignoré hors targetType==='TICKET'. */
-		objectiveId?: string | null;
-	}
-) {
+type CellInput = {
+	targetType: 'TICKET' | 'CATEGORY' | 'OBJECTIVE';
+	targetId: string;
+	activityId: string | null;
+	day: string;
+	/** Objectif hebdo TICKET à l'origine de la ligne — ignoré hors targetType==='TICKET'. */
+	objectiveId?: string | null;
+};
+
+/**
+ * Écrit une case : `amount` (supprimée si <= 0) et, selon `parts`, son découpage en entrées — `null`
+ * l'efface (montant simple), un tableau le remplace. Le montant de la case est toujours passé par
+ * l'appelant (somme des parts le cas échéant), jamais recalculé ici.
+ */
+async function writeCell(workspaceId: string, userId: string, input: CellInput, amount: number, parts: EntryPart[] | null) {
 	const objectiveIdForTicket = input.targetType === 'TICKET' ? (input.objectiveId ?? null) : null;
 	await assertTargetInWorkspace(workspaceId, userId, input.targetType, input.targetId, {
 		blockLinkedCategory: true,
@@ -466,46 +504,80 @@ export async function setCell(
 	// modifier uniquement depuis la page Absences — sinon la prochaine modif de l'absence l'écraserait.
 	if (existing[0]?.absenceId) throw new Error("Cette case vient d'une absence validée — modifiez-la depuis la page Absences.");
 
-	if (input.amount <= 0) {
+	if (amount <= 0) {
+		// Les parts partent avec la case (ON DELETE CASCADE).
 		if (existing[0]) await db.delete(timeEntry).where(eq(timeEntry.id, existing[0].id));
 		return;
 	}
-	const amountStr = String(input.amount);
-	if (existing[0]) {
-		await db
-			.update(timeEntry)
-			.set({ amount: amountStr, updatedAt: new Date() })
-			.where(eq(timeEntry.id, existing[0].id));
-	} else {
-		// Atomique : deux écritures simultanées sur la même case ne créent plus deux lignes (time_entry_cell_uq).
-		await db
-			.insert(timeEntry)
-			.values({
-				workspaceId,
-				userId,
-				targetType: input.targetType,
-				ticketId,
-				categoryId,
-				objectiveId,
-				activityId: input.activityId,
-				day: input.day,
-				amount: amountStr
-			})
-			.onConflictDoUpdate({
-				target: [
-					timeEntry.workspaceId,
-					timeEntry.userId,
-					timeEntry.day,
-					timeEntry.ticketId,
-					timeEntry.categoryId,
-					timeEntry.objectiveId,
-					timeEntry.activityId
-				],
-				set: { amount: amountStr, updatedAt: new Date() },
-				setWhere: isNull(timeEntry.absenceId)
-			});
+	const amountStr = String(amount);
 
-	}
+	await db.transaction(async (tx) => {
+		let entryId: string | undefined;
+		if (existing[0]) {
+			entryId = existing[0].id;
+			await tx.update(timeEntry).set({ amount: amountStr, updatedAt: new Date() }).where(eq(timeEntry.id, entryId));
+		} else {
+			// Atomique : deux écritures simultanées sur la même case ne créent plus deux lignes (time_entry_cell_uq).
+			const [written] = await tx
+				.insert(timeEntry)
+				.values({
+					workspaceId,
+					userId,
+					targetType: input.targetType,
+					ticketId,
+					categoryId,
+					objectiveId,
+					activityId: input.activityId,
+					day: input.day,
+					amount: amountStr
+				})
+				.onConflictDoUpdate({
+					target: [
+						timeEntry.workspaceId,
+						timeEntry.userId,
+						timeEntry.day,
+						timeEntry.ticketId,
+						timeEntry.categoryId,
+						timeEntry.objectiveId,
+						timeEntry.activityId
+					],
+					set: { amount: amountStr, updatedAt: new Date() },
+					setWhere: isNull(timeEntry.absenceId)
+				})
+				.returning({ id: timeEntry.id });
+			entryId = written?.id;
+		}
+		if (!entryId) return;
+		await tx.delete(timeEntryPart).where(eq(timeEntryPart.timeEntryId, entryId));
+		if (parts && parts.length > 0) {
+			await tx
+				.insert(timeEntryPart)
+				.values(parts.map((p, position) => ({ timeEntryId: entryId, amount: String(p.amount), note: p.note, position })));
+		}
+	});
+}
+
+/** Définit (ou supprime si 0) une cellule d'imputation — un montant simple, sans découpage. */
+export async function setCell(workspaceId: string, userId: string, input: CellInput & { amount: number }) {
+	await writeCell(workspaceId, userId, input, input.amount, null);
+}
+
+const MAX_PARTS = 20;
+const MAX_NOTE = 200;
+
+/**
+ * Définit une case découpée en plusieurs entrées (« 0.75 réunion cadrage » + « 0.125 bug export »).
+ * Le montant de la case est la somme des entrées. Une seule entrée sans détail n'est pas un
+ * découpage : elle redevient un montant simple.
+ */
+export async function setCellParts(workspaceId: string, userId: string, input: CellInput & { parts: EntryPart[] }) {
+	if (input.parts.length > MAX_PARTS) throw new Error(`Au plus ${MAX_PARTS} entrées par case.`);
+	const parts = input.parts
+		.map((p) => ({ amount: round(Number(p.amount)), note: p.note?.trim().slice(0, MAX_NOTE) || null }))
+		.filter((p) => Number.isFinite(p.amount) && p.amount > 0);
+	const total = round(parts.reduce((a, p) => a + p.amount, 0));
+	const split = parts.length >= 2 || (parts.length === 1 && parts[0].note !== null);
+	await writeCell(workspaceId, userId, input, total, split ? parts : null);
 }
 
 /**
@@ -618,9 +690,26 @@ export async function reassignActivity(
 					)
 				);
 			if (dest) {
+				// Si l'une des deux cases est découpée, la case fusionnée l'est aussi : les entrées de la
+				// source s'ajoutent à celles de la destination (un montant simple devient une entrée sans détail).
+				const asParts = async (id: string, amount: string | number | null): Promise<EntryPart[]> => {
+					const found = await tx
+						.select({ amount: timeEntryPart.amount, note: timeEntryPart.note })
+						.from(timeEntryPart)
+						.where(eq(timeEntryPart.timeEntryId, id))
+						.orderBy(asc(timeEntryPart.position));
+					return found.length > 0 ? found.map((p) => ({ amount: num(p.amount), note: p.note })) : [{ amount: num(amount), note: null }];
+				};
+				const [hasSrcParts] = await tx.select({ id: timeEntryPart.id }).from(timeEntryPart).where(eq(timeEntryPart.timeEntryId, r.id)).limit(1);
+				const [hasDestParts] = await tx.select({ id: timeEntryPart.id }).from(timeEntryPart).where(eq(timeEntryPart.timeEntryId, dest.id)).limit(1);
+				if (hasSrcParts || hasDestParts) {
+					const merged = [...(await asParts(dest.id, dest.amount)), ...(await asParts(r.id, r.amount))];
+					await tx.delete(timeEntryPart).where(eq(timeEntryPart.timeEntryId, dest.id));
+					await tx.insert(timeEntryPart).values(merged.map((p, position) => ({ timeEntryId: dest.id, amount: String(p.amount), note: p.note, position })));
+				}
 				await tx
 					.update(timeEntry)
-					.set({ amount: String(num(dest.amount) + num(r.amount)), updatedAt: new Date() })
+					.set({ amount: String(round(num(dest.amount) + num(r.amount))), updatedAt: new Date() })
 					.where(eq(timeEntry.id, dest.id));
 				await tx.delete(timeEntry).where(eq(timeEntry.id, r.id));
 			} else {

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
 	setCell,
+	setCellParts,
 	getWeek,
 	deleteRow,
 	reassignActivity,
@@ -119,6 +120,96 @@ describe('setCell / getWeek', () => {
 				amount: 1
 			})
 		).rejects.toThrow('Catégorie introuvable dans cet espace.');
+	});
+});
+
+describe('setCellParts (case découpée en plusieurs entrées)', () => {
+	const cellOf = async (workspaceId: string, userId: string, categoryId: string) => {
+		const week = await getWeek(workspaceId, userId, MONDAY);
+		return week.rows.find((r) => r.targetId === categoryId)!;
+	};
+
+	it('le montant de la case est la somme des entrées, et chacune garde son détail', async () => {
+		const { workspaceId, userId } = await makeWorkspace();
+		const category = (await listCategories(workspaceId)).find((c) => c.label === 'MCO')!;
+		const cell = { targetType: 'CATEGORY' as const, targetId: category.id, activityId: null, day: MONDAY };
+
+		await setCellParts(workspaceId, userId, {
+			...cell,
+			parts: [
+				{ amount: 0.75, note: 'Réunion cadrage' },
+				{ amount: 0.125, note: ' Bug export PDF ' }
+			]
+		});
+
+		const row = await cellOf(workspaceId, userId, category.id);
+		expect(row.amounts[MONDAY]).toBe(0.875);
+		expect(row.parts?.[MONDAY]).toEqual([
+			{ amount: 0.75, note: 'Réunion cadrage' },
+			{ amount: 0.125, note: 'Bug export PDF' }
+		]);
+		const entries = await db.select().from(timeEntry).where(eq(timeEntry.userId, userId));
+		expect(entries).toHaveLength(1);
+	});
+
+	it('une seule entrée sans détail redevient un montant simple ; avec détail, elle est conservée', async () => {
+		const { workspaceId, userId } = await makeWorkspace();
+		const category = (await listCategories(workspaceId)).find((c) => c.label === 'MCO')!;
+		const cell = { targetType: 'CATEGORY' as const, targetId: category.id, activityId: null, day: MONDAY };
+
+		await setCellParts(workspaceId, userId, { ...cell, parts: [{ amount: 0.5, note: '' }] });
+		let row = await cellOf(workspaceId, userId, category.id);
+		expect(row.amounts[MONDAY]).toBe(0.5);
+		expect(row.parts).toBeUndefined();
+
+		await setCellParts(workspaceId, userId, { ...cell, parts: [{ amount: 0.5, note: 'Astreinte' }] });
+		row = await cellOf(workspaceId, userId, category.id);
+		expect(row.parts?.[MONDAY]).toEqual([{ amount: 0.5, note: 'Astreinte' }]);
+	});
+
+	it('un setCell simple efface le découpage ; sans aucune entrée, la case est supprimée', async () => {
+		const { workspaceId, userId } = await makeWorkspace();
+		const category = (await listCategories(workspaceId)).find((c) => c.label === 'MCO')!;
+		const cell = { targetType: 'CATEGORY' as const, targetId: category.id, activityId: null, day: MONDAY };
+
+		await setCellParts(workspaceId, userId, { ...cell, parts: [{ amount: 0.25, note: 'a' }, { amount: 0.25, note: 'b' }] });
+		await setCell(workspaceId, userId, { ...cell, amount: 1 });
+		const row = await cellOf(workspaceId, userId, category.id);
+		expect(row.amounts[MONDAY]).toBe(1);
+		expect(row.parts).toBeUndefined();
+
+		await setCellParts(workspaceId, userId, { ...cell, parts: [{ amount: 0, note: 'rien' }] });
+		const week = await getWeek(workspaceId, userId, MONDAY);
+		expect(week.rows.filter((r) => r.targetId === category.id)).toHaveLength(0);
+	});
+
+	it('la fusion de deux activités additionne les montants et réunit les entrées', async () => {
+		const { workspaceId, userId } = await makeWorkspace();
+		const t = await createTicket(workspaceId, { key: 'P-1', title: 'x' });
+		await createActivity(workspaceId, `Dev-${t.id}`);
+		const [dev] = (await listActivities(workspaceId)).filter((a) => a.label === `Dev-${t.id}`);
+		const cell = { targetType: 'TICKET' as const, targetId: t.id, day: MONDAY };
+
+		await setCellParts(workspaceId, userId, { ...cell, activityId: null, parts: [{ amount: 0.25, note: 'a' }, { amount: 0.125, note: 'b' }] });
+		await setCell(workspaceId, userId, { ...cell, activityId: dev.id, amount: 0.5 });
+		await reassignActivity(workspaceId, userId, {
+			targetType: 'TICKET',
+			targetId: t.id,
+			fromActivityId: null,
+			toActivityId: dev.id,
+			fromISO: MONDAY,
+			toISO: MONDAY
+		});
+
+		const week = await getWeek(workspaceId, userId, MONDAY);
+		const rows = week.rows.filter((r) => r.targetId === t.id);
+		expect(rows).toHaveLength(1);
+		expect(rows[0].amounts[MONDAY]).toBe(0.875);
+		expect(rows[0].parts?.[MONDAY]).toEqual([
+			{ amount: 0.5, note: null },
+			{ amount: 0.25, note: 'a' },
+			{ amount: 0.125, note: 'b' }
+		]);
 	});
 });
 

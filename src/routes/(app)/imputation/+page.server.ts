@@ -4,6 +4,7 @@ import { logger } from '$lib/server/logger';
 import {
 	getTimesheet,
 	getTeamTimesheet,
+	setCellParts,
 	setCell,
 	deleteRow,
 	reassignActivity,
@@ -203,6 +204,46 @@ export const actions: Actions = {
 			});
 		} catch (e) {
 			logger.error('imputation_set_cell_failed', e, { workspaceId: ws.workspaceId, subjectId, targetType, targetId, day });
+			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
+		}
+		return { ok: true };
+	},
+
+	/** Case découpée en plusieurs entrées (montant + détail chacune) — cf. setCellParts. */
+	setCellParts: async ({ request, locals }) => {
+		const ws = locals.workspace;
+		if (!ws || !locals.user) return fail(401, { error: 'Non authentifié.' });
+		const f = await request.formData();
+		const targetType = String(f.get('targetType')) as 'TICKET' | 'CATEGORY' | 'OBJECTIVE';
+		const targetId = String(f.get('targetId'));
+		const activityId = (f.get('activityId') as string) || null;
+		const day = String(f.get('day'));
+		const objectiveId = targetType === 'TICKET' ? (f.get('objectiveId') as string) || null : null;
+
+		let parts: { amount: number; note: string | null }[];
+		try {
+			const raw = JSON.parse(String(f.get('parts') ?? '[]'));
+			if (!Array.isArray(raw)) throw new Error('parts');
+			parts = raw.map((p) => ({ amount: Number(p?.amount), note: typeof p?.note === 'string' ? p.note : null }));
+		} catch {
+			return fail(400, { error: 'Données invalides.' });
+		}
+
+		if (!['TICKET', 'CATEGORY', 'OBJECTIVE'].includes(targetType) || !targetId || !day)
+			return fail(400, { error: 'Données invalides.' });
+
+		const subjectId = await resolveSubjectId(
+			ws.workspaceId,
+			locals.user.id,
+			locals.role,
+			String(f.get('targetUserId') ?? '')
+		);
+		if (!subjectId) return fail(403, { error: 'Accès refusé.' });
+
+		try {
+			await setCellParts(ws.workspaceId, subjectId, { targetType, targetId, activityId, day, objectiveId, parts });
+		} catch (e) {
+			logger.error('imputation_set_cell_parts_failed', e, { workspaceId: ws.workspaceId, subjectId, targetType, targetId, day });
 			return fail(400, { error: e instanceof Error ? e.message : 'Erreur.' });
 		}
 		return { ok: true };

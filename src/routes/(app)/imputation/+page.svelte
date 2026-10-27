@@ -24,7 +24,7 @@
 	import ImputationMobile from '$lib/components/ImputationMobile.svelte';
 	import UserAvatar from '$lib/components/UserAvatar.svelte';
 	import { ABSENCE_TYPE_COLORS, ABSENCE_TYPE_LABELS, ABSENCE_PERIOD_LABELS } from '$lib/absenceTypes';
-	import { amountKey, mergeRecurringObjectiveRows, type Row } from '$lib/imputationRow';
+	import { amountKey, mergeRecurringObjectiveRows, type EntryPart, type Row } from '$lib/imputationRow';
 	import { jiraTicketUrl } from '$lib/jiraLink';
 	import { buildCycle, cycleNext } from '$lib/utils/imputationCycle';
 
@@ -116,7 +116,7 @@
 	// cette période"), pas des cibles d'imputation — sinon leurs heures échapperaient à la clôture
 	// (cf. getConsoBySsp, qui ne peut attribuer un SSP qu'à une imputation liée à un ticket).
 	function syncedRows(): Row[] {
-		const next: Row[] = data.sheet.rows.map((r) => ({ ...r, amounts: { ...r.amounts } }));
+		const next: Row[] = data.sheet.rows.map((r) => ({ ...r, amounts: { ...r.amounts }, parts: r.parts ? { ...r.parts } : undefined }));
 		if (!data.readOnly) {
 			for (const o of data.weeklyObjectives) {
 				if (o.kind !== 'TICKET' || !o.ticketId || next.some((r) => r.rowKey === objectiveRowKey(o))) continue;
@@ -309,6 +309,7 @@
 
 	async function setAmount(row: Row, day: string, value: number) {
 		row.amounts[day] = value; // optimiste
+		clearParts(row, day); // un montant simple remplace le découpage (cf. setCell côté serveur)
 		const body = new FormData();
 		body.set('targetType', row.targetType);
 		body.set('targetId', row.targetId);
@@ -323,18 +324,128 @@
 		await submit('?/setCell', { method: 'POST', body });
 	}
 
+	function clearParts(row: Row, day: string) {
+		if (!row.parts?.[day]) return;
+		const { [day]: _removed, ...rest } = row.parts;
+		row.parts = Object.keys(rest).length > 0 ? rest : undefined;
+	}
+
+	/** Survol d'une case découpée : une entrée par ligne, « montant · détail ». */
+	function partsTitle(row: Row, day: string): string | undefined {
+		const parts = row.parts?.[day];
+		if (!parts) return undefined;
+		return parts.map((p) => (p.note ? `${p.amount} · ${p.note}` : String(p.amount))).join('\n');
+	}
+
+	// Éditeur d'une case découpée : une entrée = un montant + ce qui a été fait. Le montant de la case
+	// est la somme des entrées (cf. setCellParts) ; une seule entrée sans détail n'est pas un découpage.
+	type PartDraft = { amount: string; note: string };
+	type AnchorRect = { top: number; bottom: number; left: number; width: number };
+	let partsEditor = $state<{ row: Row; day: string; rect: AnchorRect | null; drafts: PartDraft[] } | null>(null);
+	const draftAmount = (d: PartDraft) => Number(d.amount.replace(',', '.')) || 0;
+	const draftsTotal = $derived(partsEditor ? round(partsEditor.drafts.reduce((a, d) => a + draftAmount(d), 0)) : 0);
+
+	function openPartsEditor(row: Row, day: string, rect: AnchorRect | null) {
+		const existing = row.parts?.[day];
+		const current = row.amounts[day] ?? 0;
+		const drafts: PartDraft[] = existing?.length
+			? existing.map((p) => ({ amount: String(p.amount), note: p.note ?? '' }))
+			: [{ amount: String(current > 0 ? current : CYCLE[1]), note: '' }];
+		partsEditor = { row, day, rect: rect ? { top: rect.top, bottom: rect.bottom, left: rect.left, width: rect.width } : null, drafts };
+		tick().then(() => document.querySelector<HTMLInputElement>('.parts-pop [data-part-amount]')?.focus());
+	}
+	const dayLabel = (d: string) => `${dayName(parseISODate(d))} ${dayNum(parseISODate(d))}`;
+
+	// Sur mobile le clavier recouvre le bas de l'écran sans déplacer un panneau fixé en bas : on suit la
+	// zone réellement visible (visualViewport) pour que le champ de détail reste au-dessus du clavier.
+	let kbOffset = $state(0);
+	let vvHeight = $state(0);
+	$effect(() => {
+		const vv = window.visualViewport;
+		if (!vv || !isMobile || !partsEditor) return;
+		const sync = () => {
+			kbOffset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+			vvHeight = vv.height;
+		};
+		sync();
+		vv.addEventListener('resize', sync);
+		vv.addEventListener('scroll', sync);
+		return () => {
+			vv.removeEventListener('resize', sync);
+			vv.removeEventListener('scroll', sync);
+			kbOffset = 0;
+			vvHeight = 0;
+		};
+	});
+
+	// Sous la case, ou au-dessus quand il y a plus de place. La hauteur est bornée à la place disponible :
+	// la liste défile (titre, « Ajouter » et OK restent visibles) au lieu de déborder de l'écran.
+	function partsPopStyle(rect: AnchorRect) {
+		const left = Math.min(Math.max(rect.left + rect.width / 2, 196), innerWidth - 196);
+		const below = window.innerHeight - rect.bottom - 16;
+		const above = rect.top - 16;
+		return below >= 330 || below >= above
+			? `left:${left}px; top:${rect.bottom + 8}px; max-height:${Math.max(below, 220)}px`
+			: `left:${left}px; bottom:${window.innerHeight - rect.top + 8}px; max-height:${Math.max(above, 220)}px`;
+	}
+	async function addDraft() {
+		if (!partsEditor) return;
+		partsEditor.drafts.push({ amount: String(CYCLE[1]), note: '' });
+		await tick();
+		const inputs = document.querySelectorAll<HTMLInputElement>('.parts-pop [data-part-amount]');
+		inputs[inputs.length - 1]?.focus();
+	}
+	function removeDraft(i: number) {
+		if (!partsEditor) return;
+		partsEditor.drafts.splice(i, 1);
+		if (partsEditor.drafts.length === 0) partsEditor.drafts.push({ amount: String(CYCLE[1]), note: '' });
+	}
+	async function savePartsEditor() {
+		if (!partsEditor) return;
+		const { row, day } = partsEditor;
+		const parts: EntryPart[] = partsEditor.drafts
+			.map((d) => ({ amount: draftAmount(d), note: d.note.trim() || null }))
+			.filter((p) => p.amount > 0);
+		partsEditor = null;
+		const total = round(parts.reduce((a, p) => a + p.amount, 0));
+		const split = parts.length >= 2 || (parts.length === 1 && parts[0].note !== null);
+		row.amounts[day] = total; // optimiste
+		if (split) row.parts = { ...row.parts, [day]: parts };
+		else clearParts(row, day);
+		const body = new FormData();
+		body.set('targetType', row.targetType);
+		body.set('targetId', row.targetId);
+		if (row.activityId) body.set('activityId', row.activityId);
+		const objectiveId = row.objectiveByDay?.[day] ?? row.objectiveId;
+		if (objectiveId) body.set('objectiveId', objectiveId);
+		body.set('day', day);
+		body.set('parts', JSON.stringify(parts));
+		body.set('targetUserId', data.viewedId);
+		await submit('?/setCellParts', { method: 'POST', body });
+	}
+
+	/** Clic sur une case : fait défiler les valeurs, ou ouvre l'éditeur quand elle est découpée — un
+	 * clic ne doit jamais écraser sans le dire des entrées déjà détaillées. */
+	function onCellClick(e: MouseEvent, row: Row, day: string) {
+		if (row.parts?.[day]) openPartsEditor(row, day, (e.currentTarget as HTMLElement).getBoundingClientRect());
+		else cycle(row, day, e.shiftKey);
+	}
+
 	/** Clic = avance dans CYCLE, Shift+clic = recule (pas de conflit avec le clic droit/molette). */
 	function cycle(row: Row, day: string, reverse = false) {
+		if (row.parts?.[day]) return openPartsEditor(row, day, null);
 		setAmount(row, day, cycleNext(CYCLE, row.amounts[day] ?? 0, reverse));
 	}
 
 	/** Clic droit sur une case : popup au-dessus proposant directement toutes les valeurs du CYCLE
 	 * (plus rapide que de cliquer plusieurs fois pour dérouler). */
-	let cellPicker = $state<{ row: Row; day: string; top: number; left: number } | null>(null);
+	let cellPicker = $state<{ row: Row; day: string; top: number; left: number; rect: DOMRect } | null>(null);
+	function showCellPicker(row: Row, day: string, rect: DOMRect) {
+		cellPicker = { row, day, top: rect.top, left: rect.left + rect.width / 2, rect };
+	}
 	function openCellPicker(e: MouseEvent, row: Row, day: string) {
 		e.preventDefault();
-		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-		cellPicker = { row, day, top: rect.top, left: rect.left + rect.width / 2 };
+		showCellPicker(row, day, (e.currentTarget as HTMLElement).getBoundingClientRect());
 	}
 	function pickCellValue(value: number) {
 		if (!cellPicker) return;
@@ -453,6 +564,12 @@
 		const k = amountKey(e);
 		if (row.lockedDays[day] && (k in KEYMAP || e.key === 'Backspace' || e.key === 'Delete')) {
 			e.preventDefault();
+			return;
+		}
+		// Case découpée : saisir un chiffre écraserait ses entrées sans prévenir — on ouvre l'éditeur.
+		if (row.parts?.[day] && (k in KEYMAP || e.key === 'Backspace' || e.key === 'Delete')) {
+			e.preventDefault();
+			openPartsEditor(row, day, (e.currentTarget as HTMLElement).getBoundingClientRect());
 			return;
 		}
 		if (k in KEYMAP) {
@@ -972,7 +1089,7 @@
 								</td>
 								{#each days as d (d)}
 									<td class="day" class:today={d === today} class:wk-end={weekBoundaries.has(d)}>
-										<span class="cell ro" class:val={(row.amounts[d] ?? 0) > 0} class:empty={!(row.amounts[d] ?? 0)}>{fmt(row.amounts[d])}</span>
+										<span class="cell ro" class:val={(row.amounts[d] ?? 0) > 0} class:empty={!(row.amounts[d] ?? 0)} class:has-parts={!!row.parts?.[d]} title={partsTitle(row, d)}>{fmt(row.amounts[d])}{#if row.parts?.[d]}<span class="parts-badge">{row.parts[d].length > 1 ? row.parts[d].length : ''}</span>{/if}</span>
 									</td>
 								{/each}
 								<td class="sum tabnum">{round(days.reduce((a, d) => a + (row.amounts[d] ?? 0), 0))}</td>
@@ -1072,7 +1189,7 @@
 			readOnly={data.readOnly}
 			canManageObjectives={data.canManageObjectives}
 			onCycle={(row, day) => cycle(row, day)}
-			onSetAmount={setAmount}
+			onLongPress={showCellPicker}
 			onDelete={requestDeleteRow}
 			onPickActivity={(row) => (activityPickerRow = row)}
 			{activityLabel}
@@ -1250,7 +1367,7 @@
 							{@const lockedAbsenceId = row.lockedDays[d]}
 							<td class="day" class:today={d === today} class:wk-end={weekBoundaries.has(d)}>
 								{#if data.readOnly}
-									<span class="cell ro" class:val={(row.amounts[d] ?? 0) > 0} class:empty={!(row.amounts[d] ?? 0)}>{fmt(row.amounts[d])}</span>
+									<span class="cell ro" class:val={(row.amounts[d] ?? 0) > 0} class:empty={!(row.amounts[d] ?? 0)} class:has-parts={!!row.parts?.[d]} title={partsTitle(row, d)}>{fmt(row.amounts[d])}{#if row.parts?.[d]}<span class="parts-badge">{row.parts[d].length > 1 ? row.parts[d].length : ''}</span>{/if}</span>
 								{:else if lockedAbsenceId}
 									<a
 										class="cell locked"
@@ -1266,11 +1383,13 @@
 										class="cell"
 										class:val={(row.amounts[d] ?? 0) > 0}
 										class:empty={!(row.amounts[d] ?? 0)}
+										class:has-parts={!!row.parts?.[d]}
 										data-cell="{ri}-{di}"
-										onclick={(e) => cycle(row, d, e.shiftKey)}
+										title={partsTitle(row, d)}
+										onclick={(e) => onCellClick(e, row, d)}
 										onkeydown={(e) => onCellKey(e, ri, di, row, d)}
 										oncontextmenu={(e) => openCellPicker(e, row, d)}
-									>{fmt(row.amounts[d])}</button>
+									>{fmt(row.amounts[d])}{#if row.parts?.[d]}<span class="parts-badge" aria-label="{row.parts[d].length} entrées">{row.parts[d].length > 1 ? row.parts[d].length : ''}</span>{/if}</button>
 								{/if}
 							</td>
 						{/each}
@@ -1318,10 +1437,10 @@
 
 	<div class="legend">
 		{#if isMobile && !data.readOnly}
-			<span class="kbd">Touchez une case pour faire défiler les valeurs · appui long pour vider</span>
+			<span class="kbd">Touchez une case pour faire défiler les valeurs · appui long pour choisir directement ou détailler</span>
 		{:else if !data.readOnly}
 			{@const keyEntries = Object.entries(KEYMAP).filter(([k]) => k !== '0')}
-			<span class="kbd">Clique pour faire défiler <b>·</b> → {CYCLE.slice(1).map((v) => fmt(v)).join(' → ')} <b>·</b> <kbd>Shift</kbd>+clic pour reculer <b>·</b> clic droit pour choisir directement</span>
+			<span class="kbd">Clique pour faire défiler <b>·</b> → {CYCLE.slice(1).map((v) => fmt(v)).join(' → ')} <b>·</b> <kbd>Shift</kbd>+clic pour reculer <b>·</b> clic droit pour choisir directement ou détailler en plusieurs entrées</span>
 			<span class="kbd">Clavier : {#each keyEntries as [k] (k)}<kbd>{k}</kbd> {/each}→ {keyEntries.map(([, v]) => fmt(v)).join(' / ')} · <kbd>0</kbd>/<kbd>Suppr</kbd> vide · <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> naviguer · <kbd>←</kbd>/<kbd>→</kbd> en bord = période ±</span>
 		{/if}
 	</div>
@@ -1330,23 +1449,84 @@
 
 <svelte:window
 	bind:innerWidth
-	onkeydown={(e) => e.key === 'Escape' && ((confirmDelete = null), (activityPickerRow = null), (cellPicker = null))}
+	onkeydown={(e) => e.key === 'Escape' && ((confirmDelete = null), (activityPickerRow = null), (cellPicker = null), (partsEditor = null))}
 />
 
 {#if cellPicker}
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div class="cell-picker-backdrop" onclick={() => (cellPicker = null)} oncontextmenu={(e) => (e.preventDefault(), (cellPicker = null))}>
+	<div class="cell-picker-backdrop" class:dim={isMobile} onclick={() => (cellPicker = null)} oncontextmenu={(e) => (e.preventDefault(), (cellPicker = null))}>
 		<div
 			class="cell-picker"
-			style="top:{cellPicker.top}px; left:{cellPicker.left}px;"
+			class:sheet={isMobile}
+			style={isMobile ? undefined : `top:${cellPicker.top}px; left:${cellPicker.left}px;`}
 			onclick={(e) => e.stopPropagation()}
 		>
+			{#if isMobile}
+				<div class="cell-picker-title">{cellPicker.row.label} · {dayLabel(cellPicker.day)}</div>
+			{/if}
 			{#each CYCLE as v (v)}
 				<button type="button" class="cell-picker-opt" class:sel={(cellPicker.row.amounts[cellPicker.day] ?? 0) === v} onclick={() => pickCellValue(v)}>
 					{fmt(v)}
 				</button>
 			{/each}
+			<button type="button" class="cell-picker-opt more" onclick={() => { const c = cellPicker; cellPicker = null; if (c) openPartsEditor(c.row, c.day, c.rect); }}>Détailler…</button>
+		</div>
+	</div>
+{/if}
+
+{#if partsEditor}
+	{@const pe = partsEditor}
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="cell-picker-backdrop" class:dim={isMobile} onclick={() => (partsEditor = null)}>
+		<div
+			class="parts-pop"
+			class:sheet={isMobile || !pe.rect}
+			style={isMobile
+				? `bottom:${kbOffset}px; max-height:${(vvHeight || window.innerHeight) - 16}px`
+				: pe.rect
+					? partsPopStyle(pe.rect)
+					: undefined}
+			role="dialog"
+			tabindex="-1"
+			aria-label="Détail de la case"
+			onclick={(e) => e.stopPropagation()}
+		>
+			<div class="parts-title">{pe.row.label}{activityLabel(pe.row) ? ` · ${activityLabel(pe.row)}` : ''} · {dayLabel(pe.day)}</div>
+			<div class="parts-list">
+				{#each pe.drafts as d, i (i)}
+					<div class="parts-line">
+						<!-- Mêmes valeurs que le clic droit (CYCLE) : jamais de montant libre. Une valeur déjà
+						     enregistrée hors pas (ancien réglage) reste proposée pour ne pas être perdue. -->
+						<select class="parts-amount tabnum" data-part-amount aria-label="Montant de l'entrée {i + 1}" bind:value={d.amount}>
+							{#each CYCLE.filter((v) => v > 0) as v (v)}
+								<option value={String(v)}>{v}</option>
+							{/each}
+							{#if !CYCLE.includes(draftAmount(d))}
+								<option value={d.amount}>{d.amount}</option>
+							{/if}
+						</select>
+						<input
+							class="parts-note"
+							maxlength="200"
+							placeholder="Ce qui a été fait…"
+							aria-label="Détail de l'entrée {i + 1}"
+							bind:value={d.note}
+							onkeydown={(e) => e.key === 'Enter' && (e.preventDefault(), savePartsEditor())}
+						/>
+						<button type="button" class="parts-x" aria-label="Retirer l'entrée {i + 1}" onclick={() => removeDraft(i)}>×</button>
+					</div>
+				{/each}
+			</div>
+			<button type="button" class="parts-add" onclick={addDraft}>+ Ajouter une entrée</button>
+			<div class="parts-foot">
+				<span class="parts-total">Total de la case <b class="tabnum">{draftsTotal}</b></span>
+				<span class="parts-actions">
+					<button type="button" class="parts-cancel" onclick={() => (partsEditor = null)}>Annuler</button>
+					<button type="button" class="parts-ok" onclick={savePartsEditor}>OK</button>
+				</span>
+			</div>
 		</div>
 	</div>
 {/if}
@@ -1445,6 +1625,252 @@
 	}
 	.cell-picker-opt:hover {
 		background: var(--accent-tint);
+	}
+	.cell-picker-opt.more {
+		margin-left: 2px;
+		border-left: 1px solid var(--border);
+		border-radius: 0 6px 6px 0;
+		color: var(--text-mute);
+		font-size: 12px;
+	}
+	/* Mobile : panneau en bas, cibles de 48 px, valeurs en grille (4 par ligne) puis « Détailler… » pleine largeur. */
+	.cell-picker-backdrop.dim {
+		background: rgba(0, 0, 0, 0.35);
+	}
+	.cell-picker.sheet {
+		left: 0;
+		right: 0;
+		bottom: 0;
+		top: auto;
+		transform: none;
+		flex-wrap: wrap;
+		gap: 6px;
+		padding: 14px 14px calc(14px + env(safe-area-inset-bottom));
+		border-radius: 16px 16px 0 0;
+	}
+	.cell-picker-title {
+		flex: 1 0 100%;
+		font-size: 11px;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--text-mute);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.cell-picker.sheet .cell-picker-opt {
+		flex: 1 0 calc(25% - 6px);
+		height: 48px;
+		border-color: var(--border);
+		border-radius: 10px;
+		font-size: 17px;
+	}
+	.cell-picker.sheet .cell-picker-opt.more {
+		flex: 1 0 100%;
+		margin: 0;
+		border-left: 1px solid var(--border);
+		border-radius: 10px;
+		font-size: 15px;
+		font-weight: 600;
+		color: var(--text);
+	}
+	/* Éditeur de détail sur mobile : cibles de 44 px, police 16 px (iOS zoome sinon au focus d'un champ). */
+	.parts-pop.sheet .parts-amount,
+	.parts-pop.sheet .parts-note {
+		height: 44px;
+		font-size: 16px;
+	}
+	.parts-pop.sheet .parts-amount {
+		width: 92px;
+	}
+	.parts-pop.sheet .parts-x {
+		width: 44px;
+		height: 44px;
+		font-size: 22px;
+	}
+	.parts-pop.sheet .parts-add {
+		padding: 11px 16px;
+		font-size: 14px;
+	}
+	.parts-pop.sheet .parts-cancel,
+	.parts-pop.sheet .parts-ok {
+		padding: 12px 18px;
+		font-size: 14px;
+	}
+	.parts-pop {
+		position: fixed;
+		z-index: 61;
+		transform: translateX(-50%);
+		width: 392px;
+		max-width: calc(100vw - 16px);
+		max-height: calc(100dvh - 16px);
+		display: flex;
+		flex-direction: column;
+		box-sizing: border-box;
+		padding: 14px;
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 14px;
+		box-shadow: 0 12px 32px rgba(0, 0, 0, 0.22);
+	}
+	.parts-pop.sheet {
+		left: 0;
+		right: 0;
+		bottom: 0;
+		top: auto;
+		transform: none;
+		width: auto;
+		max-width: none;
+		border-radius: 16px 16px 0 0;
+		padding-bottom: calc(14px + env(safe-area-inset-bottom));
+	}
+	.parts-title {
+		flex: none;
+		font-size: 11px;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--text-mute);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.parts-list {
+		display: flex;
+		flex-direction: column;
+		flex: 1 1 auto;
+		min-height: 0;
+		overflow-y: auto;
+		overscroll-behavior: contain;
+		gap: 8px;
+		margin-top: 10px;
+	}
+	.parts-line {
+		flex: none;
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+	.parts-amount,
+	.parts-note {
+		box-sizing: border-box;
+		height: 36px;
+		padding: 0 10px;
+		border: 1px solid var(--border);
+		border-radius: 9px;
+		background: var(--surface);
+		color: var(--text);
+		font: inherit;
+		font-size: 13px;
+	}
+	.parts-amount {
+		flex: none;
+		width: 84px;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.parts-note {
+		flex: 1 1 auto;
+		min-width: 0;
+	}
+	.parts-amount:focus,
+	.parts-note:focus {
+		outline: none;
+		border-color: var(--accent);
+	}
+	.parts-x {
+		flex: none;
+		width: 32px;
+		height: 36px;
+		border: none;
+		background: none;
+		color: var(--text-mute);
+		font-size: 18px;
+		cursor: pointer;
+		border-radius: 8px;
+	}
+	.parts-x:hover {
+		background: var(--accent-tint);
+		color: var(--text);
+	}
+	.parts-add {
+		flex: none;
+		align-self: flex-start;
+		margin-top: 10px;
+		padding: 6px 12px;
+		border: 1px dashed var(--border);
+		border-radius: 999px;
+		background: none;
+		color: var(--text);
+		font-size: 12px;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.parts-add:hover {
+		border-color: var(--accent);
+	}
+	.parts-foot {
+		flex: none;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-top: 12px;
+		padding-top: 10px;
+		border-top: 1px solid var(--border);
+		font-size: 12px;
+		color: var(--text-mute);
+	}
+	.parts-total b {
+		color: var(--text);
+		font-size: 14px;
+	}
+	.parts-actions {
+		display: flex;
+		gap: 6px;
+	}
+	.parts-cancel,
+	.parts-ok {
+		padding: 7px 14px;
+		border-radius: 9px;
+		font-size: 12px;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.parts-cancel {
+		border: 1px solid var(--border);
+		background: none;
+		color: var(--text);
+	}
+	.parts-ok {
+		border: 1px solid var(--accent);
+		background: var(--accent);
+		color: #fff;
+	}
+	.cell.has-parts {
+		position: relative;
+	}
+	.parts-badge {
+		position: absolute;
+		top: -6px;
+		right: -6px;
+		min-width: 15px;
+		height: 15px;
+		box-sizing: border-box;
+		padding: 0 3px;
+		border-radius: 999px;
+		background: var(--text);
+		color: var(--surface);
+		font-size: 10px;
+		font-weight: 700;
+		line-height: 15px;
+		text-align: center;
+	}
+	.parts-badge:empty {
+		min-width: 8px;
+		width: 8px;
+		height: 8px;
+		top: -3px;
+		right: -3px;
+		padding: 0;
 	}
 	.cell-picker-opt.sel {
 		border-color: var(--accent);

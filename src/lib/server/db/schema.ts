@@ -735,6 +735,23 @@ export const timeEntry = pgTable(
 	]
 );
 
+// Découpage d'une case en plusieurs entrées, chacune avec son détail (« réunion cadrage » 0.75,
+// « bug export PDF » 0.125). time_entry reste UNE ligne par case : son amount est toujours la somme
+// des parts quand il y en a — tous les cumuls (RAE, conso, dashboards) continuent de lire ce seul montant.
+export const timeEntryPart = pgTable(
+	'time_entry_part',
+	{
+		id: id(),
+		timeEntryId: uuid('time_entry_id')
+			.notNull()
+			.references(() => timeEntry.id, { onDelete: 'cascade' }),
+		amount: numeric('amount', { precision: 5, scale: 3 }).notNull(),
+		note: text('note'),
+		position: integer('position').notNull().default(0)
+	},
+	(t) => [index('time_entry_part_entry_idx').on(t.timeEntryId)]
+);
+
 // Ligne ajoutée à "Mon imputation" (+ Ajouter) sans encore aucune heure saisie dessus : sans cette
 // table, la ligne n'a aucune trace en base et disparaît au prochain chargement/changement de
 // période (aucun time_entry associé). Retirée uniquement via la poubelle (unpinRow), jamais par
