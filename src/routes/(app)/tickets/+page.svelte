@@ -93,6 +93,11 @@
 		['priority_desc', 'moins prioritaire']
 	] as const;
 	const sortLabel = $derived(SORTS.find(([v]) => v === data.sort)?.[1] ?? SORTS[0][1]);
+	// Code SSP (managers/admins) : « none » = tickets sans code. Dans l'URL seulement, pas mémorisé.
+	const sspParam = $derived(data.filters.noSsp ? 'none' : (data.filters.sspId ?? ''));
+	// Replié par défaut pour ne pas ajouter un filtre de plus à tout le monde ; ouvert d'office quand
+	// l'URL en porte un (lien depuis la clôture, filtre partagé).
+	let moreOpen = $state(!!(data.filters.sspId || data.filters.noSsp));
 	function navigateWith(partial: Record<string, string>) {
 		const merged: Record<string, string> = {
 			q: data.filters.query ?? '',
@@ -101,6 +106,7 @@
 			sprint: data.filters.sprintId ?? '',
 			version: data.filters.versionId ?? '',
 			assignee: assigneeParam,
+			ssp: sspParam,
 			view: data.view,
 			sort: data.sort,
 			page: '1', // tout changement de filtre/vue revient en page 1 (sauf override explicite)
@@ -112,7 +118,7 @@
 		// Mémorisation (préférence de compte, § réglages) : même forme que ci-dessus, `page` exclue
 		// (jamais "remembered") — fire-and-forget comme ?/groupReorder plus haut dans ce fichier.
 		const body = new FormData();
-		for (const k of ['q', 'state', 'project', 'sprint', 'version', 'assignee', 'view', 'sort'] as const) {
+		for (const k of ['q', 'state', 'project', 'sprint', 'version', 'assignee', 'ssp', 'view', 'sort'] as const) {
 			if (merged[k]) body.set(k, merged[k]);
 		}
 		fetch('?/rememberFilters', { method: 'POST', body });
@@ -122,7 +128,7 @@
 	// clôture mensuelle ?ssp=none) — sans ça le bouton
 	// Réinitialiser reste invisible et on ne peut plus revenir à la liste complète. Aucun de ces
 	// quatre n'est reconstruit par navigateWith, donc n'importe quelle navigation les efface.
-	const hasFilters = $derived(!!(data.filters.query || data.filters.stateId || data.filters.projectId || data.filters.sprintId || data.filters.versionId || data.filters.assigneeId || data.filters.unassigned || data.filters.exactKey || data.filters.syncRunId || data.filters.importId || data.filters.noSsp || data.filters.keys?.length));
+	const hasFilters = $derived(!!(data.filters.query || data.filters.stateId || data.filters.projectId || data.filters.sprintId || data.filters.versionId || data.filters.assigneeId || data.filters.unassigned || data.filters.exactKey || data.filters.syncRunId || data.filters.importId || data.filters.noSsp || data.filters.sspId || data.filters.keys?.length));
 	// Filtres/vue/pagination naviguent tous via goto() (rechargement serveur) : un fieldset désactive
 	// la barre d'un coup pendant le trajet, pour qu'on ne confonde jamais l'ancienne liste avec la nouvelle.
 	const isNavigating = $derived(!!navigating.to);
@@ -135,7 +141,7 @@
 			goto('/tickets');
 			return;
 		}
-		navigateWith({ q: '', state: '', project: '', sprint: '', version: '', assignee: '' });
+		navigateWith({ q: '', state: '', project: '', sprint: '', version: '', assignee: '', ssp: '' });
 	}
 
 	// Détail par activité (vue tableau) : `compact` est le défaut de compte (persisté, cf.
@@ -1038,6 +1044,34 @@
 			{@render filterPick('project', 'Projet', 'Tous les projets', data.ref.projects.map((x) => ({ id: x.id, text: x.name })))}
 			{@render filterPick('sprint', 'Sprint', 'Tous les sprints', data.ref.sprints.map((x) => ({ id: x.id, text: x.name })))}
 			{@render filterPick('version', 'Version', 'Toutes les versions', data.ref.versions.map((x) => ({ id: x.id, text: x.name })))}
+			{#if data.isAdmin}
+				{#if moreOpen || sspParam}
+					{@const sspText = sspParam === 'none' ? 'Sans code SSP' : (data.ref.ssps.find((x) => x.id === sspParam)?.code ?? 'SSP')}
+					<Tooltip text={sspParam || !labels ? 'Code SSP' : ''}>
+						<span class="fchip" class:on={!!sspParam} class:bare={!sspParam && !labels}>
+							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z" /><circle cx="7.5" cy="7.5" r="1.2" fill="currentColor" stroke="none" /></svg>
+							{#if sspParam}
+								<span class="fchip-v">{sspText}</span>
+							{:else if labels}
+								<span class="fchip-v">Code SSP</span>{@render chevron()}
+							{/if}
+							<select value={sspParam} onchange={(e) => navigateWith({ ssp: e.currentTarget.value })} aria-label="Filtrer par code SSP">
+								<option value="">Tous les codes</option>
+								<option value="none">Sans code SSP</option>
+								{#each data.ref.ssps as x (x.id)}<option value={x.id}>{x.code} — {x.label}</option>{/each}
+							</select>
+							{#if sspParam}<button type="button" class="fchip-x" onclick={() => navigateWith({ ssp: '' })} aria-label="Retirer le filtre code SSP">{@render cross()}</button>{/if}
+						</span>
+					</Tooltip>
+				{/if}
+				{#if !sspParam}
+					<Tooltip text={moreOpen ? 'Masquer les filtres avancés' : 'Plus de filtres'}>
+						<button type="button" class="fchip square" class:on={moreOpen} aria-expanded={moreOpen} aria-label="Plus de filtres" onclick={() => (moreOpen = !moreOpen)}>
+							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>
+						</button>
+					</Tooltip>
+				{/if}
+			{/if}
 			{#if hasFilters}
 				{#if data.filters.keys?.length}
 					<button class="reset-btn" onclick={resetFilters}>✕ Quitter « créés »</button>

@@ -595,6 +595,8 @@ export type TicketFilters = {
 	/** Tickets sans code SSP. URL-only comme les deux ci-dessus (param ?ssp=none) : lien depuis la
 	 *  colonne « Sans code SSP » de la clôture mensuelle, pour aller les corriger. */
 	noSsp?: boolean;
+	/** Tickets d'un code SSP précis (param ?ssp=<id>), filtre des managers/admins. */
+	sspId?: string;
 	/** Tickets créés dans cette session de navigation (param ?created=CLE1,CLE2,…), accumulé côté
 	 *  client à chaque création réussie — permet de retrouver et traiter à la suite un lot de
 	 *  tickets qu'on vient de saisir, sans devoir les rechercher un par un. URL-only comme les
@@ -654,6 +656,7 @@ export function ticketFiltersFromUrl(url: URL, selfId: string): { filters: Ticke
 			// Lien depuis la clôture mensuelle (colonne « Sans code SSP ») : ces tickets ne remontent
 			// dans aucun code budgétaire, on vient les corriger.
 			noSsp: p.get('ssp') === 'none',
+			sspId: isUuid(p.get('ssp') ?? '') ? p.get('ssp')! : undefined,
 			// Lot de tickets tout juste créés (popover « Nouveau ticket ») : accumulé côté client à
 			// chaque création réussie (cf. +page.svelte) pour les retrouver et les traiter à la suite.
 			keys: p.get('created')?.split(',').filter(Boolean)
@@ -671,6 +674,8 @@ export type TicketFiltersSnapshot = {
 	/** Filtre « Assigné à », même vocabulaire que le param d'URL : `me`, `none` ou l'id d'un membre.
 	 *  Optionnel : absent des instantanés enregistrés avant l'ajout du filtre. */
 	assignee?: string | null;
+	/** Code SSP (managers/admins) : `none` ou l'id d'un code. Optionnel : absent des anciens instantanés. */
+	ssp?: string | null;
 	/** Tri de la barre de filtres ("Trier par"). Mémorisé comme le reste : c'est un choix d'affichage
 	 *  persistant au même titre qu'un filtre, et l'oublier revenait à le réinitialiser à chaque
 	 *  arrivée à blanc sur la page. */
@@ -697,6 +702,7 @@ export function parseTicketFiltersSnapshot(raw: string | null): TicketFiltersSna
 			sprintId: str(p.sprintId),
 			versionId: str(p.versionId),
 			assignee: str(p.assignee),
+			ssp: str(p.ssp),
 			// Instantané enregistré avant l'ajout du tri : `sort` absent, on retombe sur le défaut
 			// de la page plutôt que d'invalider tout l'instantané.
 			sort: parseTicketSort(p.sort)
@@ -718,6 +724,7 @@ function ticketFilterConditions(workspaceId: string, filters: TicketFilters) {
 	if (filters.syncRunId) conditions.push(eq(ticket.createdBySyncRunId, filters.syncRunId));
 	if (filters.importId) conditions.push(eq(ticket.createdByImportId, filters.importId));
 	if (filters.noSsp) conditions.push(isNull(ticket.sspId));
+	if (filters.sspId) conditions.push(eq(ticket.sspId, filters.sspId));
 	if (filters.keys?.length) conditions.push(inArray(ticket.key, filters.keys));
 	if (filters.query?.trim()) {
 		const q = `%${filters.query.trim()}%`;

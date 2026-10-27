@@ -81,6 +81,9 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 			// `me` et `none` valent dans tous les espaces ; l'id d'un collègue seulement là où il est membre.
 			if (snapshot.assignee === 'me' || snapshot.assignee === 'none' || ref.members.some((m) => m.id === snapshot.assignee))
 				target.set('assignee', snapshot.assignee!);
+			// Code SSP : filtre réservé aux managers/admins, et l'id doit exister dans l'espace courant.
+			if (isAdmin && (snapshot.ssp === 'none' || (snapshot.ssp && ref.ssps.some((x) => x.id === snapshot.ssp))))
+				target.set('ssp', snapshot.ssp!);
 			// `created` est le défaut de la page : ne poser le paramètre que pour les autres valeurs,
 			// sinon une simple arrivée à blanc déclencherait une redirection qui n'affiche rien de
 			// différent.
@@ -294,6 +297,7 @@ export const actions: Actions = {
 			sprintId: (f.get('sprint') as string) || null,
 			versionId: (f.get('version') as string) || null,
 			assignee: (f.get('assignee') as string) || null,
+			ssp: (f.get('ssp') as string) || null,
 			sort: parseTicketSort(f.get('sort'))
 		});
 		return { ok: true };
