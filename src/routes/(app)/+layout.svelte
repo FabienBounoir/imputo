@@ -17,6 +17,7 @@
 	import MotivationBanner from '$lib/components/MotivationBanner.svelte';
 	import Fireworks from '$lib/components/Fireworks.svelte';
 	import HalloweenCorner from '$lib/components/HalloweenCorner.svelte';
+	import BirthdayOverlay from '$lib/components/BirthdayOverlay.svelte';
 	import Flypast from '$lib/components/Flypast.svelte';
 	import Spring from '$lib/components/Spring.svelte';
 	import Epiphany from '$lib/components/Epiphany.svelte';
@@ -486,6 +487,7 @@
 {#if seasonalVisible && seasonalIds.has('spring')}<Spring />{/if}
 {#if seasonalVisible && seasonalIds.has('epiphany')}<Epiphany />{/if}
 {#if seasonalVisible && seasonalIds.has('halloween')}<HalloweenCorner />{/if}
+<BirthdayOverlay />
 {#if seasonalVisible && seasonalIds.has('autumn')}<Leaves />{/if}
 {#if wrapGlitchActive}
 	<div class="wrap-glitch" class:opening={wrapGlitchOpening} aria-hidden="true">
