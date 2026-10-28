@@ -20,6 +20,7 @@
 		canManageObjectives = false,
 		onCycle,
 		onLongPress,
+		onViewParts,
 		onDelete,
 		onPickActivity,
 		activityLabel,
@@ -38,6 +39,8 @@
 		onCycle: (row: Row, day: string) => void;
 		/** Appui long sur une case : la page ouvre le choix direct des valeurs (et « Détailler… »). */
 		onLongPress: (row: Row, day: string, rect: DOMRect) => void;
+		/** Lecture seule : toucher une case détaillée en affiche les entrées (montant · détail). */
+		onViewParts: (row: Row, day: string, rect: DOMRect) => void;
 		onDelete: (row: Row) => void;
 		onPickActivity: (row: Row) => void;
 		activityLabel: (row: Row) => string | null;
@@ -190,8 +193,15 @@
 						<span class="rsum tabnum">Σ {rowTotal(row)}</span>
 					</span>
 				</div>
-				{#if readOnly}
-					<span class="mcell ro" class:val={v > 0}>{fmt(v)}{#if row.parts?.[selected]}<span class="mbadge">{row.parts[selected].length > 1 ? row.parts[selected].length : ''}</span>{/if}</span>
+				{#if readOnly && row.parts?.[selected]}
+					<button
+						type="button"
+						class="mcell ro val"
+						onclick={(e) => onViewParts(row, selected, e.currentTarget.getBoundingClientRect())}
+						aria-label="Détail de {row.label}">{fmt(v)}<span class="mbadge">{row.parts[selected].length > 1 ? row.parts[selected].length : ''}</span></button
+					>
+				{:else if readOnly}
+					<span class="mcell ro" class:val={v > 0}>{fmt(v)}</span>
 				{:else if locked}
 					<a
 						class="mcell locked"

@@ -341,19 +341,24 @@
 	// est la somme des entrées (cf. setCellParts) ; une seule entrée sans détail n'est pas un découpage.
 	type PartDraft = { amount: string; note: string };
 	type AnchorRect = { top: number; bottom: number; left: number; width: number };
-	let partsEditor = $state<{ row: Row; day: string; rect: AnchorRect | null; drafts: PartDraft[] } | null>(null);
+	// `readonly` : consultation du détail d'une case qu'on ne peut pas modifier (feuille d'un autre
+	// membre, vue équipe) — même popover, sans champs ni boutons d'édition.
+	let partsEditor = $state<{ row: Row; day: string; rect: AnchorRect | null; drafts: PartDraft[]; readonly: boolean } | null>(null);
 	const draftAmount = (d: PartDraft) => Number(d.amount.replace(',', '.')) || 0;
 	const draftsTotal = $derived(partsEditor ? round(partsEditor.drafts.reduce((a, d) => a + draftAmount(d), 0)) : 0);
 
-	function openPartsEditor(row: Row, day: string, rect: AnchorRect | null) {
+	function openPartsEditor(row: Row, day: string, rect: AnchorRect | null, readonly = false) {
 		const existing = row.parts?.[day];
+		if (readonly && !existing) return;
 		const current = row.amounts[day] ?? 0;
 		const drafts: PartDraft[] = existing?.length
 			? existing.map((p) => ({ amount: String(p.amount), note: p.note ?? '' }))
 			: [{ amount: String(current > 0 ? current : CYCLE[1]), note: '' }];
-		partsEditor = { row, day, rect: rect ? { top: rect.top, bottom: rect.bottom, left: rect.left, width: rect.width } : null, drafts };
-		tick().then(() => document.querySelector<HTMLInputElement>('.parts-pop [data-part-amount]')?.focus());
+		partsEditor = { row, day, rect: rect ? { top: rect.top, bottom: rect.bottom, left: rect.left, width: rect.width } : null, drafts, readonly };
+		// Pas de focus auto sur mobile (il ouvre le sélecteur natif dès l'ouverture) ni en lecture seule.
+		if (!isMobile && !readonly) tick().then(() => document.querySelector<HTMLInputElement>('.parts-pop [data-part-amount]')?.focus());
 	}
+	const viewParts = (row: Row, day: string, rect: AnchorRect | null) => openPartsEditor(row, day, rect, true);
 	const dayLabel = (d: string) => `${dayName(parseISODate(d))} ${dayNum(parseISODate(d))}`;
 
 	// Sur mobile le clavier recouvre le bas de l'écran sans déplacer un panneau fixé en bas : on suit la
@@ -391,6 +396,7 @@
 	async function addDraft() {
 		if (!partsEditor) return;
 		partsEditor.drafts.push({ amount: String(CYCLE[1]), note: '' });
+		if (isMobile) return;
 		await tick();
 		const inputs = document.querySelectorAll<HTMLInputElement>('.parts-pop [data-part-amount]');
 		inputs[inputs.length - 1]?.focus();
@@ -401,7 +407,7 @@
 		if (partsEditor.drafts.length === 0) partsEditor.drafts.push({ amount: String(CYCLE[1]), note: '' });
 	}
 	async function savePartsEditor() {
-		if (!partsEditor) return;
+		if (!partsEditor || partsEditor.readonly) return;
 		const { row, day } = partsEditor;
 		const parts: EntryPart[] = partsEditor.drafts
 			.map((d) => ({ amount: draftAmount(d), note: d.note.trim() || null }))
@@ -931,6 +937,23 @@
 	</svg>
 {/snippet}
 
+<!-- Case en lecture seule : une case détaillée s'ouvre au clic (liste « montant · détail »), les autres
+     restent de simples valeurs. -->
+{#snippet roCell(row: Row, d: string)}
+	{#if row.parts?.[d]}
+		<button
+			type="button"
+			class="cell ro val has-parts"
+			title={partsTitle(row, d)}
+			aria-haspopup="dialog"
+			onclick={(e) => viewParts(row, d, e.currentTarget.getBoundingClientRect())}
+			>{fmt(row.amounts[d])}<span class="parts-badge">{row.parts[d].length > 1 ? row.parts[d].length : ''}</span></button
+		>
+	{:else}
+		<span class="cell ro" class:val={(row.amounts[d] ?? 0) > 0} class:empty={!(row.amounts[d] ?? 0)}>{fmt(row.amounts[d])}</span>
+	{/if}
+{/snippet}
+
 {#snippet rowIcon(row: Row)}
 	{#if row.targetType === 'TICKET'}
 		{@render ticketIcon()}
@@ -1089,7 +1112,7 @@
 								</td>
 								{#each days as d (d)}
 									<td class="day" class:today={d === today} class:wk-end={weekBoundaries.has(d)}>
-										<span class="cell ro" class:val={(row.amounts[d] ?? 0) > 0} class:empty={!(row.amounts[d] ?? 0)} class:has-parts={!!row.parts?.[d]} title={partsTitle(row, d)}>{fmt(row.amounts[d])}{#if row.parts?.[d]}<span class="parts-badge">{row.parts[d].length > 1 ? row.parts[d].length : ''}</span>{/if}</span>
+										{@render roCell(row, d)}
 									</td>
 								{/each}
 								<td class="sum tabnum">{round(days.reduce((a, d) => a + (row.amounts[d] ?? 0), 0))}</td>
@@ -1190,6 +1213,7 @@
 			canManageObjectives={data.canManageObjectives}
 			onCycle={(row, day) => cycle(row, day)}
 			onLongPress={showCellPicker}
+			onViewParts={viewParts}
 			onDelete={requestDeleteRow}
 			onPickActivity={(row) => (activityPickerRow = row)}
 			{activityLabel}
@@ -1367,7 +1391,7 @@
 							{@const lockedAbsenceId = row.lockedDays[d]}
 							<td class="day" class:today={d === today} class:wk-end={weekBoundaries.has(d)}>
 								{#if data.readOnly}
-									<span class="cell ro" class:val={(row.amounts[d] ?? 0) > 0} class:empty={!(row.amounts[d] ?? 0)} class:has-parts={!!row.parts?.[d]} title={partsTitle(row, d)}>{fmt(row.amounts[d])}{#if row.parts?.[d]}<span class="parts-badge">{row.parts[d].length > 1 ? row.parts[d].length : ''}</span>{/if}</span>
+									{@render roCell(row, d)}
 								{:else if lockedAbsenceId}
 									<a
 										class="cell locked"
@@ -1494,6 +1518,22 @@
 			onclick={(e) => e.stopPropagation()}
 		>
 			<div class="parts-title">{pe.row.label}{activityLabel(pe.row) ? ` · ${activityLabel(pe.row)}` : ''} · {dayLabel(pe.day)}</div>
+			{#if pe.readonly}
+				<div class="parts-list">
+					{#each pe.drafts as d, i (i)}
+						<div class="parts-line ro">
+							<span class="parts-amount-ro tabnum">{d.amount}</span>
+							<span class="parts-note-ro" class:none={!d.note}>{d.note || 'Sans détail'}</span>
+						</div>
+					{/each}
+				</div>
+				<div class="parts-foot">
+					<span class="parts-total">Total de la case <b class="tabnum">{draftsTotal}</b></span>
+					<span class="parts-actions">
+						<button type="button" class="parts-cancel" onclick={() => (partsEditor = null)}>Fermer</button>
+					</span>
+				</div>
+			{:else}
 			<div class="parts-list">
 				{#each pe.drafts as d, i (i)}
 					<div class="parts-line">
@@ -1527,6 +1567,7 @@
 					<button type="button" class="parts-ok" onclick={savePartsEditor}>OK</button>
 				</span>
 			</div>
+			{/if}
 		</div>
 	</div>
 {/if}
@@ -1749,6 +1790,33 @@
 		display: flex;
 		align-items: center;
 		gap: 6px;
+	}
+	.parts-line.ro {
+		align-items: flex-start;
+		gap: 10px;
+		padding: 5px 0;
+	}
+	.parts-amount-ro {
+		flex: none;
+		min-width: 38px;
+		padding: 3px 8px;
+		border-radius: 8px;
+		background: var(--accent-tint-2);
+		color: var(--accent-ink);
+		font-size: 13px;
+		font-weight: 600;
+		text-align: center;
+	}
+	.parts-note-ro {
+		flex: 1 1 auto;
+		min-width: 0;
+		padding-top: 3px;
+		font-size: 13px;
+		overflow-wrap: anywhere;
+	}
+	.parts-note-ro.none {
+		color: var(--text-mute);
+		font-style: italic;
 	}
 	.parts-amount,
 	.parts-note {
@@ -2516,6 +2584,9 @@
 	}
 	.cell.ro {
 		cursor: default;
+	}
+	button.cell.ro {
+		cursor: pointer;
 	}
 	/* Verrouillée par une absence validée (cf. Row.lockedDays) : fond grisé (jamais la teinte accent
 	   de .cell.val), mais le chiffre reprend la couleur du type d'absence (--absence-color, posée en
