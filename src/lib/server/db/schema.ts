@@ -1127,6 +1127,21 @@ export const wrappedSnapshot = pgTable(
 	(t) => [uniqueIndex('wrapped_snapshot_ws_user_year_uq').on(t.workspaceId, t.userId, t.year)]
 );
 
+export const mcpToken = pgTable(
+	'mcp_token',
+	{
+		id: id(),
+		userId: uuid('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		token: text('token').notNull().unique(),
+		name: text('name').notNull(),
+		createdAt: createdAt(),
+		revokedAt: timestamp('revoked_at', { withTimezone: true })
+	},
+	(t) => [index('mcp_token_user_idx').on(t.userId), index('mcp_token_token_idx').on(t.token)]
+);
+
 // ---------- Relations ----------
 export const ticketRelations = relations(ticket, ({ one, many }) => ({
 	parent: one(ticket, { fields: [ticket.parentId], references: [ticket.id], relationName: 'parent' }),

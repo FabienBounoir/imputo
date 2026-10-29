@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: imputo-mcp
+  labels:
+    app: imputo-mcp
+  annotations:
+    image.openshift.io/triggers: |
+      [{"from":{"kind":"ImageStreamTag","name":"imputo-mcp:latest"},"fieldPath":"spec.template.spec.containers[?(@.name==\"imputo-mcp\")].image"}]
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: imputo-mcp
+  template:
+    metadata:
+      labels:
+        app: imputo-mcp
+    spec:
+      containers:
+        - name: imputo-mcp
+          image: 'image-registry.openshift-image-registry.svc:5000/imputo-mcp/imputo-mcp:latest'
+          ports:
+            - containerPort: 3000
+              protocol: TCP
+          env:
+            - name: PORT
+              value: '3000'
+            # IMPUTO_URL pointe vers l'app via le DNS interne du cluster :
+            #   preprod : http://imputo.imputo-preprod.svc.cluster.local:3000
+            #   prod    : http://imputo.imputo.svc.cluster.local:3000
+            # MCP_TOKEN et MCP_BEARER_TOKEN dans le secret (jamais ici).
+          envFrom:
+            - secretRef:
+                name: imputo-mcp-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi

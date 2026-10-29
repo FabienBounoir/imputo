@@ -1,0 +1,32 @@
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: imputo-mcp
+  labels:
+    app: imputo-mcp
+spec:
+  source:
+    type: Git
+    git:
+      uri: CHANGEME-git-uri
+      ref: main
+    sourceSecret:
+      name: gitlab-innersource-imputo
+    contextDir: mcp
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Dockerfile
+  resources:
+    requests:
+      cpu: 300m
+      memory: 512Mi
+    limits:
+      cpu: 800m
+      memory: 1Gi
+  output:
+    to:
+      kind: ImageStreamTag
+      name: imputo-mcp:latest
+  triggers:
+    - type: ConfigChange

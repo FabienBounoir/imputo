@@ -1,0 +1,9 @@
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: imputo-mcp
+  labels:
+    app: imputo-mcp
+spec:
+  lookupPolicy:
+    local: true

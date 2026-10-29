@@ -1,0 +1,18 @@
+# IP allowlist à ajouter manuellement après déploiement via l'annotation :
+#   oc annotate route imputo-mcp haproxy.router.openshift.io/ip_whitelist="1.2.3.4 5.6.7.8"
+# Ne pas versionner les IPs ici.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: imputo-mcp
+  labels:
+    app: imputo-mcp
+spec:
+  to:
+    kind: Service
+    name: imputo-mcp
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

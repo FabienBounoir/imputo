@@ -202,6 +202,7 @@
 			nav('Suivi annuel', '/admin/suivi-annuel', '📈');
 			nav('Historique', '/admin/history', '🕘');
 			nav('Import de tickets', '/admin/import', '📥');
+			nav('Tokens MCP', '/admin/mcp-tokens', '🔑');
 		}
 		nav('Réglages', '/settings', '👤');
 

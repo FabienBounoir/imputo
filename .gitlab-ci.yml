@@ -52,6 +52,14 @@ variables:
     - .npm/
   policy: pull-push
 
+.npm_cache_mcp: &npm_cache_mcp
+  key:
+    files:
+      - mcp/package-lock.json
+  paths:
+    - mcp/.npm/
+  policy: pull-push
+
 .test_base:
   stage: test
   services:
@@ -121,6 +129,27 @@ audit:
   script:
     - npm ci --cache .npm --prefer-offline
     - npm audit --omit=dev --audit-level=high
+
+# Audit de sécurité du serveur MCP (dépendances séparées dans mcp/).
+# Même logique que `audit` ci-dessus : bloquant sur high/critical, omit=dev.
+audit:mcp:
+  stage: test
+  image: node:22-alpine
+  cache:
+    <<: *npm_cache_mcp
+  script:
+    - cd mcp && npm ci --cache .npm --prefer-offline
+    - cd mcp && npm audit --omit=dev --audit-level=high
+
+# Vérifie que le serveur MCP compile sans erreur TypeScript.
+check:mcp:
+  stage: test
+  image: node:22-alpine
+  cache:
+    <<: *npm_cache_mcp
+  script:
+    - cd mcp && npm ci --cache .npm --prefer-offline
+    - cd mcp && npm run build
 
 .oc_base:
   image: quay.io/openshift/origin-cli:latest
@@ -284,6 +313,49 @@ deploy:production:
     - sed "s#CHANGEME-git-uri#${GIT_SOURCE_URI}#" openshift/buildconfig-tools.yaml | oc apply -f -
     - oc start-build imputo-tools --commit="$CI_COMMIT_TAG" --follow
     - sed "s#CHANGEME-namespace#${NS}#" openshift/cronjob-jira-sync.yaml | oc apply -f -
+
+# Déploiement du serveur MCP dans le namespace imputo-mcp (partagé preprod+prod).
+# Deux deployments dans le même namespace : mcp-preprod pointe sur imputo-preprod,
+# mcp-prod pointe sur imputo. Le secret imputo-mcp-secrets doit exister dans imputo-mcp
+# avant le premier déploiement (voir openshift/mcp/secret.yaml).
+#
+# Variables CI/CD à ajouter :
+#   OPENSHIFT_TOKEN_MCP  token d'un ServiceAccount avec accès edit sur imputo-mcp
+#   OPENSHIFT_NAMESPACE_MCP  (optionnel, défaut imputo-mcp)
+deploy:mcp-preprod:
+  extends: .oc_base
+  stage: deploy
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: on_success
+    - when: manual
+      allow_failure: true
+  variables:
+    OPENSHIFT_TOKEN: $OPENSHIFT_TOKEN_MCP
+  script:
+    - NS="${OPENSHIFT_NAMESPACE_MCP:-imputo-mcp}"
+    - oc project "$NS"
+    - sed "s#CHANGEME-git-uri#${GIT_SOURCE_URI}#" openshift/mcp/buildconfig.yaml | oc apply -f -
+    - oc apply -f openshift/mcp/imagestream.yaml -f openshift/mcp/service.yaml
+        -f openshift/mcp/route.yaml -f openshift/mcp/deployment.yaml
+    - oc start-build imputo-mcp --commit="$CI_COMMIT_SHA" --follow
+    - oc rollout status deployment/imputo-mcp --timeout=3m
+
+deploy:mcp-prod:
+  extends: .oc_base
+  stage: deploy
+  rules:
+    - if: '$CI_COMMIT_TAG'
+  variables:
+    OPENSHIFT_TOKEN: $OPENSHIFT_TOKEN_MCP
+  script:
+    - NS="${OPENSHIFT_NAMESPACE_MCP:-imputo-mcp}"
+    - oc project "$NS"
+    - sed "s#CHANGEME-git-uri#${GIT_SOURCE_URI}#" openshift/mcp/buildconfig.yaml | oc apply -f -
+    - oc apply -f openshift/mcp/imagestream.yaml -f openshift/mcp/service.yaml
+        -f openshift/mcp/route.yaml -f openshift/mcp/deployment.yaml
+    - oc start-build imputo-mcp --commit="$CI_COMMIT_TAG" --follow
+    - oc rollout status deployment/imputo-mcp --timeout=3m
 
 # Manuel uniquement, jamais sur push : écrase ENTIÈREMENT le contenu de imputo-preprod avec celui de
 # imputo (prod) — schéma et données, y compris ce qui existe aujourd'hui sur preprod. Pensé pour
